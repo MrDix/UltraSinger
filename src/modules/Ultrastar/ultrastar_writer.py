@@ -24,8 +24,8 @@ def get_multiplier(real_bpm: float) -> int:
     at least ~6.67 beats per second at the lowest BPM.
     """
 
-    if real_bpm == 0:
-        raise Exception("BPM is 0")
+    if real_bpm <= 0:
+        raise Exception("BPM must be positive")
 
     multiplier = 1
     while real_bpm * multiplier < 400:
@@ -150,7 +150,7 @@ def create_ultrastar_txt(
                         * multiplication
                 )
                 linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
-                            f"{str(round(show_next))}\n"
+                            f"{str(math.floor(show_next))}\n"
                 file.write(linebreak)
             separated_word_silence = []
         file.write(f"{UltrastarTxtTag.FILE_END.value}")
