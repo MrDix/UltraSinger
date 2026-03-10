@@ -177,7 +177,7 @@ Let UltraSinger read cookies directly from your browser. This is the most reliab
 
 Supported browsers: `chrome`, `firefox`, `edge`, `opera`, `brave`, `chromium`, `vivaldi`, `safari`.
 
-> **Note:** The browser must be closed before UltraSinger can read its cookies (some browsers lock their cookie database while running).
+> **Important:** You must **close the browser completely** before running UltraSinger. All major browsers (Chrome, Firefox, Edge, etc.) lock their cookie database while running, which prevents yt-dlp from reading it. Close the browser, start UltraSinger, and you can reopen the browser once the download has begun.
 
 **Option 2: Cookie file**
 
