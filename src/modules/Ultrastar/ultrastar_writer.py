@@ -141,8 +141,9 @@ def create_ultrastar_txt(
                 separated_word_silence.append(silence)
                 continue
 
-            if i != len(midi_segments) - 1 and silence_split_duration != 0 and silence > silence_split_duration or any(
-                    s > silence_split_duration for s in separated_word_silence):
+            if silence_split_duration is not None and (
+                    i != len(midi_segments) - 1 and silence > silence_split_duration
+                    or any(s > silence_split_duration for s in separated_word_silence)):
                 # - 10
                 # '-' end of current sing part
                 # 'n1' show next at time in real beat
@@ -159,7 +160,7 @@ def create_ultrastar_txt(
 
 def silence_threshold(
     silence_parts: list[float], percentile: float = 75
-) -> float:
+) -> float | None:
     """Calculate the silence duration threshold for linebreaks.
 
     Uses a percentile-based approach: only silences above the given
@@ -176,19 +177,19 @@ def silence_threshold(
             become linebreaks).
 
     Returns:
-        The silence duration threshold in seconds.  Returns 0 when
+        The silence duration threshold in seconds, or ``None`` when
         there are fewer than 5 gaps (too few to compute a meaningful
-        threshold).
+        threshold).  Callers must check for ``None`` before comparing.
     """
     if len(silence_parts) < 5:
-        return 0
+        return None
 
     return float(np.percentile(silence_parts, percentile))
 
 
 def calculate_silent_beat_length(
     midi_segments: list[MidiSegment], percentile: float = 75
-) -> float:
+) -> float | None:
     """Extract inter-note silence durations and compute a threshold.
 
     This is a convenience wrapper around :func:`silence_threshold`
@@ -206,7 +207,7 @@ def calculate_silent_beat_length(
     silent_parts = []
     for i, data in enumerate(midi_segments):
         if i < len(midi_segments) - 1:
-            silence = midi_segments[i + 1].start - data.end
+            silence = max(0, midi_segments[i + 1].start - data.end)
             silent_parts.append(silence)
 
     return silence_threshold(silent_parts, percentile)
