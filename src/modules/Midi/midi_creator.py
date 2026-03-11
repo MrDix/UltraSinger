@@ -74,9 +74,25 @@ def confidence_weighted_median_note(
 
     Returns:
         Note name string (e.g. ``"C4"``).
+
+    Raises:
+        ValueError: If *frequencies* or *weights* are empty, have
+            mismatched lengths, or all weights are zero.
     """
+    if not frequencies or not weights:
+        raise ValueError("frequencies and weights must be non-empty")
+    if len(frequencies) != len(weights):
+        raise ValueError(
+            f"frequencies ({len(frequencies)}) and weights ({len(weights)}) "
+            "must have the same length"
+        )
+
     freqs = np.asarray(frequencies, dtype=float)
     wts = np.asarray(weights, dtype=float)
+
+    total_weight = wts.sum()
+    if total_weight == 0:
+        raise ValueError("total weight must be > 0")
 
     # Sort by frequency
     order = np.argsort(freqs)
@@ -85,7 +101,7 @@ def confidence_weighted_median_note(
 
     # Weighted median: first cumulative weight index >= half total weight
     cumulative = np.cumsum(sorted_wts)
-    half = cumulative[-1] / 2.0
+    half = total_weight / 2.0
     median_idx = int(np.searchsorted(cumulative, half))
     # Clamp to valid index range
     median_idx = min(median_idx, len(sorted_freqs) - 1)
@@ -163,7 +179,11 @@ def create_midi_note_from_pitched_data(start_time: float, end_time: float, pitch
 
     conf_f, conf_weights = get_frequencies_with_high_confidence(freqs, confs)
 
-    note = confidence_weighted_median_note(conf_f, conf_weights)
+    if not conf_f:
+        # No valid frequencies found; fall back to a neutral middle note
+        note = "C4"
+    else:
+        note = confidence_weighted_median_note(conf_f, conf_weights)
 
     if allowed_notes is not None:
         note = quantize_note_to_key(note, allowed_notes)
