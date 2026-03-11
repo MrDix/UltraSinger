@@ -160,6 +160,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Hyphenation will not be applied')}")
     if settings.quantize_to_key:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Notes will be quantized to the detected musical key')}")
+    if settings.bpm_override is not None:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'BPM override: {settings.bpm_override}')}")
 
     process_data = InitProcessData()
 
@@ -178,7 +180,11 @@ def run() -> tuple[str, Score, Score]:
 
     # Get BPM from wav file (use un-muted audio — muting can distort librosa.tempo)
     if not settings.input_file_is_ultrastar_txt:
-        process_data.media_info.bpm = get_bpm_from_file(process_data.process_data_paths.whisper_audio_path)
+        if settings.bpm_override is not None:
+            process_data.media_info.bpm = settings.bpm_override
+            print(f"{ULTRASINGER_HEAD} Using manual BPM: {blue_highlighted(str(settings.bpm_override))}")
+        else:
+            process_data.media_info.bpm = get_bpm_from_file(process_data.process_data_paths.whisper_audio_path)
 
     # Detect key (use un-muted audio)
     detected_key, detected_mode = detect_key_from_audio(process_data.process_data_paths.whisper_audio_path)
@@ -805,6 +811,12 @@ def init_settings(argv: list[str]) -> Settings:
             settings.input_file_path = arg
         elif opt in ("-o", "--ofile"):
             settings.output_folder_path = arg
+        elif opt in ("--bpm"):
+            val = float(arg)
+            if val <= 0:
+                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --bpm must be a positive number, got {val}")
+                sys.exit(1)
+            settings.bpm_override = val
         elif opt in ("--whisper"):
             settings.transcriber = "whisper"
 
@@ -912,6 +924,7 @@ def arg_options():
     long = [
         "ifile=",
         "ofile=",
+        "bpm=",
         "crepe=",
         "crepe_step_size=",
         "demucs=",
