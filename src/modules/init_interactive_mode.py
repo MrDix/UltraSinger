@@ -141,18 +141,21 @@ def configure_additional_options(console, settings, header):
             settings.language = language  
   
         # BPM Override
-        bpm_input = console.input(
-            f"\n{header} Enter a manual [green]BPM[/green] value to override auto-detection (leave empty for auto-detect): "
-        ).strip()
-        if bpm_input:
-            try:
-                bpm_val = float(bpm_input)
-                if bpm_val > 0:
-                    settings.bpm_override = bpm_val
-                else:
-                    console.print(f"{header} [bold red]Error:[/bold red] BPM must be positive. Using auto-detection.")
-            except ValueError:
-                console.print(f"{header} [bold red]Error:[/bold red] Invalid BPM value. Using auto-detection.")
+        if settings.bpm_override is None:
+            bpm_input = console.input(
+                f"\n{header} Enter a manual [green]BPM[/green] value to override auto-detection (leave empty for auto-detect): "
+            ).strip()
+            if bpm_input:
+                try:
+                    bpm_val = float(bpm_input)
+                    if bpm_val > 0:
+                        settings.bpm_override = bpm_val
+                    else:
+                        console.print(f"{header} [bold red]Error:[/bold red] BPM must be positive. Using auto-detection.")
+                except ValueError:
+                    console.print(f"{header} [bold red]Error:[/bold red] Invalid BPM value. Using auto-detection.")
+        else:
+            console.print(f"{header} Using CLI BPM override: [cyan]{settings.bpm_override}[/cyan]")
 
         # Transcribe Numbers as Numerics
         keep_numbers_input = console.input(
