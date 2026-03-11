@@ -4,7 +4,7 @@ import unittest
 
 from packaging import version
 from unittest.mock import patch, mock_open
-from src.modules.Ultrastar.ultrastar_writer import create_ultrastar_txt, deviation, format_separated_string
+from src.modules.Ultrastar.ultrastar_writer import create_ultrastar_txt, silence_threshold, format_separated_string
 from src.modules.Midi.MidiSegment import MidiSegment
 from src.modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag
 
@@ -242,11 +242,10 @@ class TestCreateUltrastarTxt(unittest.TestCase):
                0.040000000000020464, 0.040000000000020464]
 
         # Act
-        result = deviation(val)
+        result = silence_threshold(val)
 
-        # Assert
-        self.assertLessEqual(result, 0.45)
-        self.assertGreaterEqual(result, 0.37)
+        # Assert — 75th percentile ≈ 0.12
+        self.assertAlmostEqual(result, 0.12, places=2)
 
     def test_most_common_silent_part_AnenRegnen(self):
         # Arrange
@@ -298,11 +297,10 @@ class TestCreateUltrastarTxt(unittest.TestCase):
                0.03999999999999204, 0.040000000000020464, 0.14500000000001023]
 
         # Act
-        result = deviation(val)
+        result = silence_threshold(val)
 
-        # Assert
-        self.assertGreaterEqual(result, 0.15)
-        self.assertLessEqual(result, 0.35)
+        # Assert — 75th percentile ≈ 0.08
+        self.assertAlmostEqual(result, 0.08, places=2)
 
     def test_most_common_silent_part_discw(self):
         # Arrange
@@ -353,11 +351,10 @@ class TestCreateUltrastarTxt(unittest.TestCase):
                0.14099999999999113]
 
         # Act
-        result = deviation(val)
+        result = silence_threshold(val)
 
-        # Assert
-        self.assertGreaterEqual(result, 0.24)
-        self.assertLessEqual(result, 0.43)
+        # Assert — 75th percentile ≈ 0.18
+        self.assertAlmostEqual(result, 0.18, places=1)
 
     def test_most_common_silent_part_kumr(self):
         # Arrange
@@ -433,11 +430,10 @@ class TestCreateUltrastarTxt(unittest.TestCase):
                0.060000000000002274, 0.01999999999998181]
 
         # Act
-        result = deviation(val)
+        result = silence_threshold(val)
 
-        # Assert
-        self.assertGreaterEqual(result, 0.11)
-        self.assertLessEqual(result, 0.168)
+        # Assert — 75th percentile ≈ 0.04
+        self.assertAlmostEqual(result, 0.04, places=2)
 
     def test_format_separated_string(self):
         self.assertEqual(format_separated_string('rock,pop,rock-pop,'), 'Rock, Pop, Rock-Pop')
