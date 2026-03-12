@@ -299,7 +299,9 @@ def correct_global_octave(
 
 
 def correct_octave_outliers(
-    midi_segments: list[MidiSegment], window: int = 5
+    midi_segments: list[MidiSegment],
+    window: int = 5,
+    passes: int = 2,
 ) -> list[MidiSegment]:
     """Correct octave outliers by comparing each note to its neighbours.
 
@@ -308,9 +310,28 @@ def correct_octave_outliers(
     that is more than 11 semitones away from the local median back to the
     closest octave.
 
+    The correction operates in two phases:
+
+    **Phase 1 — Local passes:**  Multiple passes compare each note to
+    the median of its *window* neighbours.  Notes more than 11 semitones
+    away are shifted by whole octaves toward the local median.  When
+    several candidates are equally valid, the one closest to the *global*
+    median wins.  Multiple passes help because corrections from earlier
+    passes update neighbour values for later passes.
+
+    **Phase 2 — Global consensus:**  After local passes, some clusters
+    may remain uncorrected because the local neighbourhood was dominated
+    by wrong-octave notes (contaminated median).  When the majority of
+    notes agree on a particular octave region, this phase shifts minority
+    notes (more than 6 semitones from the global median) by whole
+    octaves toward the global median.  This only activates when a clear
+    majority exists (> 50 % of notes near the global median).
+
     Args:
         midi_segments: List of MIDI segments with ``.note`` attributes.
         window: Number of neighbours on each side to consider.
+        passes: Number of local correction passes (default 2).  Use
+            ``1`` for the legacy single-pass behaviour.
 
     Returns:
         The same list, with outlier notes corrected in-place.
@@ -318,8 +339,89 @@ def correct_octave_outliers(
     if len(midi_segments) < 3:
         return midi_segments
 
-    print(f"{ULTRASINGER_HEAD} Correcting octave outliers")
+    print(f"{ULTRASINGER_HEAD} Correcting octave outliers ({passes} pass{'es' if passes != 1 else ''})")
 
+    # ── Phase 1: Local outlier correction ────────────────────────────
+    for pass_num in range(passes):
+        # Rebuild MIDI values from current notes at the start of each pass
+        midi_values = []
+        for seg in midi_segments:
+            try:
+                midi_values.append(librosa.note_to_midi(seg.note))
+            except Exception:
+                midi_values.append(None)
+
+        # Compute global median once per pass as tie-breaker reference
+        valid_values = [v for v in midi_values if v is not None]
+        if not valid_values:
+            break
+        global_median = float(np.median(valid_values))
+
+        corrections_this_pass = 0
+
+        for i, seg in enumerate(midi_segments):
+            if midi_values[i] is None:
+                continue
+
+            # Collect valid neighbour MIDI values
+            lo = max(0, i - window)
+            hi = min(len(midi_segments), i + window + 1)
+            neighbours = [
+                midi_values[j]
+                for j in range(lo, hi)
+                if j != i and midi_values[j] is not None
+            ]
+
+            if not neighbours:
+                continue
+
+            median_neighbour = float(np.median(neighbours))
+            current = midi_values[i]
+
+            # Check if note is an outlier (> 11 semitones from local median)
+            if abs(current - median_neighbour) <= 11:
+                continue
+
+            # Generate all octave-shifted candidates within 11 ST of local median
+            candidates = []
+            shifted = current
+            # Shift down
+            while shifted > median_neighbour - 12:
+                if abs(shifted - median_neighbour) <= 11:
+                    candidates.append(shifted)
+                shifted -= 12
+            # Shift up from original
+            shifted = current + 12
+            while shifted < median_neighbour + 12:
+                if abs(shifted - median_neighbour) <= 11:
+                    candidates.append(shifted)
+                shifted += 12
+
+            if not candidates:
+                # Fallback: simple shift toward local median
+                shifted = current
+                while abs(shifted - median_neighbour) > 11:
+                    if shifted > median_neighbour:
+                        shifted -= 12
+                    else:
+                        shifted += 12
+                candidates = [shifted]
+
+            # Pick candidate closest to global median (tie-breaker)
+            best = min(candidates, key=lambda x: abs(x - global_median))
+
+            if best != midi_values[i]:
+                seg.note = librosa.midi_to_note(best)
+                midi_values[i] = best
+                corrections_this_pass += 1
+
+        if corrections_this_pass == 0:
+            # No changes this pass — further passes won't help
+            break
+
+    # ── Phase 2: Global consensus correction ─────────────────────────
+    # Fixes clusters that local correction couldn't handle because the
+    # local neighbourhood median was contaminated by wrong-octave notes.
     midi_values = []
     for seg in midi_segments:
         try:
@@ -327,35 +429,43 @@ def correct_octave_outliers(
         except Exception:
             midi_values.append(None)
 
-    for i, seg in enumerate(midi_segments):
-        if midi_values[i] is None:
-            continue
+    valid_values = [v for v in midi_values if v is not None]
+    if len(valid_values) >= 3:
+        global_median = float(np.median(valid_values))
 
-        # Collect valid neighbour MIDI values
-        lo = max(0, i - window)
-        hi = min(len(midi_segments), i + window + 1)
-        neighbours = [
-            midi_values[j]
-            for j in range(lo, hi)
-            if j != i and midi_values[j] is not None
-        ]
+        # Only apply when there is a clear majority near the global median
+        near_global = sum(
+            1 for v in valid_values if abs(v - global_median) <= 6
+        )
+        if near_global / len(valid_values) > 0.5:
+            consensus_corrections = 0
+            for i, seg in enumerate(midi_segments):
+                if midi_values[i] is None:
+                    continue
+                current = midi_values[i]
 
-        if not neighbours:
-            continue
+                # Skip notes already near the global median
+                if abs(current - global_median) <= 6:
+                    continue
 
-        median_neighbour = float(np.median(neighbours))
-        current = midi_values[i]
+                # Try octave shifts (±12, ±24) to get closer to global median
+                best = current
+                for shift in [-24, -12, 12, 24]:
+                    candidate = current + shift
+                    if abs(candidate - global_median) < abs(best - global_median):
+                        best = candidate
 
-        # Shift by octaves until within 11 semitones of the median
-        while abs(current - median_neighbour) > 11:
-            if current > median_neighbour:
-                current -= 12
-            else:
-                current += 12
+                if best != current:
+                    seg.note = librosa.midi_to_note(best)
+                    midi_values[i] = best
+                    consensus_corrections += 1
 
-        if current != midi_values[i]:
-            seg.note = librosa.midi_to_note(current)
-            midi_values[i] = current
+            if consensus_corrections > 0:
+                print(
+                    f"{ULTRASINGER_HEAD} Global consensus: corrected "
+                    f"{blue_highlighted(str(consensus_corrections))} "
+                    f"cluster note{'s' if consensus_corrections != 1 else ''}"
+                )
 
     return midi_segments
 
