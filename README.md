@@ -239,13 +239,13 @@ For most songs  quantization should produces better results.
 
 ### 🥁 BPM Override
 
-UltraSinger automatically detects the BPM of the song. If the auto-detection gives an incorrect result, you can manually override it with the `--bpm` option.
+UltraSinger automatically detects the BPM of the song. If the auto-detection gives an incorrect result, you can manually override it with the `--bpm` option. The value must be a positive number.
 
 ```commandline
 -i XYZ --bpm 120
 ```
 
-This skips the automatic BPM detection and uses the provided value instead. You can find the correct BPM for most songs on sites like [songbpm.com](https://songbpm.com/) or in the song's metadata.
+This skips the automatic BPM detection and uses the provided value instead. Decimal values are also supported. You can find the correct BPM for most songs on sites like [songbpm.com](https://songbpm.com/) or in the song's metadata.
 
 ### Sheet Music
 
