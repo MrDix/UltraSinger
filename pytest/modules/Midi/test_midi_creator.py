@@ -3,11 +3,11 @@
 import unittest
 
 import librosa
+import numpy as np
 
 from src.modules.Midi.MidiSegment import MidiSegment
 from src.modules.Midi.midi_creator import (
     correct_global_octave,
-    correct_octave_outliers,
     confidence_weighted_median_note,
 )
 
@@ -56,7 +56,7 @@ class TestCorrectGlobalOctave(unittest.TestCase):
             self.assertLessEqual(val, 84)
 
     def test_all_notes_four_octaves_low_shifted_up(self):
-        """Simulate the actual Bring Me to Life problem: MIDI 21-26.
+        """Simulate a real-world sub-harmonic detection problem: MIDI 21-26.
 
         The function shifts all notes so the *median* lands inside the
         vocal range.  Individual notes may still be below ``low`` if
@@ -71,7 +71,6 @@ class TestCorrectGlobalOctave(unittest.TestCase):
         ]
         result = correct_global_octave(segs)
         midi_values = [librosa.note_to_midi(s.note) for s in result]
-        import numpy as np
         median_after = float(np.median(midi_values))
         # Median must be within the default vocal range
         self.assertGreaterEqual(median_after, 48)
@@ -106,7 +105,7 @@ class TestCorrectGlobalOctave(unittest.TestCase):
         result = correct_global_octave(segs)
         shifted_midis = [librosa.note_to_midi(s.note) for s in result]
 
-        for orig, shifted in zip(original_midis, shifted_midis):
+        for orig, shifted in zip(original_midis, shifted_midis, strict=True):
             self.assertEqual((shifted - orig) % 12, 0)
 
     # -- custom range ---------------------------------------------------------

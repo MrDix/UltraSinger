@@ -264,7 +264,7 @@ def correct_global_octave(
     for seg in midi_segments:
         try:
             midi_values.append(librosa.note_to_midi(seg.note))
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
     if not midi_values:
@@ -292,7 +292,7 @@ def correct_global_octave(
         try:
             current = librosa.note_to_midi(seg.note)
             seg.note = librosa.midi_to_note(current + shift)
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
     return midi_segments
