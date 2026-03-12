@@ -38,6 +38,11 @@ def _pick_best_tempo(
     double, third, quarter, etc.) and picks the candidate in the
     expected range that is closest to *target* BPM.
 
+    If the detected tempo already lies inside ``[low, high]`` it is
+    returned unchanged -- ratio correction only applies to values
+    outside the expected range.  This prevents legitimate fast or slow
+    tempos (e.g. 180 BPM punk rock) from being rescaled.
+
     When two candidates are equally close to *target*, the one derived
     from the simpler ratio wins (identity > half/double > third, ...).
 
@@ -53,6 +58,13 @@ def _pick_best_tempo(
     """
     if primary_bpm <= 0:
         return target  # Fallback
+
+    # Already in range -- trust the detector and return as-is.
+    # Ratio correction should only kick in for out-of-range values;
+    # otherwise legitimate fast/slow songs get their tempo rescaled
+    # which breaks all downstream beat-length calculations.
+    if low <= primary_bpm <= high:
+        return primary_bpm
 
     # Generate candidates from all ratios, preserving ratio order
     candidates = [primary_bpm * r for r in _TEMPO_RATIOS]

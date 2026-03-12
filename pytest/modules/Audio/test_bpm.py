@@ -2,7 +2,7 @@
 
 import unittest
 
-from src.modules.Audio.bpm import _pick_best_tempo
+from src.modules.Audio.bpm import _TEMPO_RATIOS, _pick_best_tempo
 
 
 class TestPickBestTempo(unittest.TestCase):
@@ -28,6 +28,22 @@ class TestPickBestTempo(unittest.TestCase):
     def test_moderate_tempo_unchanged(self):
         """100 BPM is in range and closer to 120 than any variant."""
         self.assertEqual(_pick_best_tempo(100.0), 100.0)
+
+    def test_fast_tempo_in_range_unchanged(self):
+        """Fast tempos inside the range must not be rescaled."""
+        for bpm in [150.0, 170.0, 180.0, 195.0, 200.0]:
+            self.assertEqual(
+                _pick_best_tempo(bpm), bpm,
+                f"{bpm} BPM is in range but was rescaled",
+            )
+
+    def test_slow_tempo_in_range_unchanged(self):
+        """Slow tempos inside the range must not be rescaled."""
+        for bpm in [60.0, 65.0, 70.0, 80.0]:
+            self.assertEqual(
+                _pick_best_tempo(bpm), bpm,
+                f"{bpm} BPM is in range but was rescaled",
+            )
 
     # -- half-tempo correction ------------------------------------------------
 
@@ -67,10 +83,17 @@ class TestPickBestTempo(unittest.TestCase):
 
     # -- two-thirds correction ------------------------------------------------
 
-    def test_two_thirds_correction(self):
-        """Detector reports 180 BPM. Identity = 180 (in range),
-        but 180 * 2/3 = 120 is closer to target."""
-        self.assertEqual(_pick_best_tempo(180.0), 120.0)
+    def test_in_range_not_rescaled(self):
+        """180 BPM is in range -- must NOT be rescaled to 120 via 2/3 ratio.
+
+        Legitimate fast songs should keep their detected tempo; ratio
+        correction only applies to out-of-range values.
+        """
+        self.assertEqual(_pick_best_tempo(180.0), 180.0)
+
+    def test_two_thirds_correction_out_of_range(self):
+        """270 BPM is above range. 270 * 2/3 = 180, in range."""
+        self.assertEqual(_pick_best_tempo(270.0), 135.0)  # half = 135, closer to 120
 
     # -- simpler ratios win ties ----------------------------------------------
 
@@ -116,7 +139,7 @@ class TestPickBestTempo(unittest.TestCase):
         for bpm in test_values:
             result = _pick_best_tempo(bpm)
             # Check that result is in range (if any candidate was in range)
-            candidates = [bpm * r for r in [1, 0.5, 2, 1/3, 3, 0.25, 4, 2/3, 1.5, 0.75]]
+            candidates = [bpm * r for r in _TEMPO_RATIOS]
             has_candidate_in_range = any(60 <= c <= 200 for c in candidates)
             if has_candidate_in_range:
                 self.assertGreaterEqual(
