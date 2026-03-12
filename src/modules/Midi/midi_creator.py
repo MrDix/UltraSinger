@@ -245,7 +245,7 @@ def correct_global_octave(
 
     This function computes the median MIDI value of the entire song.
     If that median falls outside the expected vocal range
-    (default ``48``–``84``, i.e. C3–C6), it shifts **all** notes by
+    (default ``48``-``84``, i.e. C3-C6), it shifts **all** notes by
     the smallest multiple of 12 semitones needed to bring the median
     inside the range.
 
@@ -285,7 +285,7 @@ def correct_global_octave(
     print(
         f"{ULTRASINGER_HEAD} Global octave correction: "
         f"shifting all notes by {blue_highlighted(f'{shift:+d}')} semitones "
-        f"(median was MIDI {median_midi:.0f}, target range {low}–{high})"
+        f"(median was MIDI {median_midi:.0f}, target range {low}-{high})"
     )
 
     for seg in midi_segments:
