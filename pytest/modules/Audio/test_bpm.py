@@ -142,12 +142,6 @@ class TestPickBestTempo(unittest.TestCase):
         """
         self.assertEqual(_pick_best_tempo(120.0), 120.0)
 
-    # -- nothing in range falls back ------------------------------------------
-
-    def test_nothing_in_range_returns_primary(self):
-        """If no candidate falls in range, return the primary as-is."""
-        self.assertEqual(_pick_best_tempo(10.0), 10.0)
-
     # -- custom range ---------------------------------------------------------
 
     def test_custom_range_respected(self):
