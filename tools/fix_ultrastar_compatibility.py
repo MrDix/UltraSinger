@@ -526,11 +526,13 @@ def print_summary(
     for r in results:
         for w in r.warnings:
             print(f"  WARNING: [{r.song_info.display_name}] {w}")
+            print(f"           {r.song_info.song_dir}")
 
     # Print errors
     for r in results:
         if r.status == "error":
             print(f"  ERROR:   [{r.song_info.display_name}] {r.error_msg}")
+            print(f"           {r.song_info.song_dir}")
 
 
 def print_song_list(
