@@ -322,10 +322,12 @@ def correct_octave_outliers(
     **Phase 2 — Global consensus:**  After local passes, some clusters
     may remain uncorrected because the local neighbourhood was dominated
     by wrong-octave notes (contaminated median).  When the majority of
-    notes agree on a particular octave region, this phase shifts minority
-    notes (more than 6 semitones from the global median) by whole
-    octaves toward the global median.  This only activates when a clear
-    majority exists (> 50 % of notes near the global median).
+    notes agree on a particular octave region, this phase shifts notes
+    that are a full octave or more (≥ 12 semitones) from the global
+    median by whole octaves toward it.  Legitimate melody intervals
+    (< 12 semitones, e.g. a fifth or sixth) are never touched.
+    This only activates when a clear majority exists (> 50 % of notes
+    near the global median).
 
     Args:
         midi_segments: List of MIDI segments with ``.note`` attributes.
@@ -342,13 +344,13 @@ def correct_octave_outliers(
     print(f"{ULTRASINGER_HEAD} Correcting octave outliers ({passes} pass{'es' if passes != 1 else ''})")
 
     # ── Phase 1: Local outlier correction ────────────────────────────
-    for pass_num in range(passes):
+    for _pass_num in range(passes):
         # Rebuild MIDI values from current notes at the start of each pass
-        midi_values = []
+        midi_values: list[int | None] = []
         for seg in midi_segments:
             try:
                 midi_values.append(librosa.note_to_midi(seg.note))
-            except Exception:
+            except (ValueError, KeyError):
                 midi_values.append(None)
 
         # Compute global median once per pass as tie-breaker reference
@@ -357,7 +359,10 @@ def correct_octave_outliers(
             break
         global_median = float(np.median(valid_values))
 
-        corrections_this_pass = 0
+        # Collect all corrections first, then apply them after the scan.
+        # This prevents earlier corrections from leaking into the
+        # neighbourhood of later notes within the same pass.
+        pending_updates: list[tuple[int, int]] = []
 
         for i, seg in enumerate(midi_segments):
             if midi_values[i] is None:
@@ -411,25 +416,27 @@ def correct_octave_outliers(
             best = min(candidates, key=lambda x: abs(x - global_median))
 
             if best != midi_values[i]:
-                seg.note = librosa.midi_to_note(best)
-                midi_values[i] = best
-                corrections_this_pass += 1
+                pending_updates.append((i, best))
 
-        if corrections_this_pass == 0:
+        # Apply all corrections from this pass at once
+        for i, best in pending_updates:
+            midi_segments[i].note = librosa.midi_to_note(best)
+
+        if not pending_updates:
             # No changes this pass — further passes won't help
             break
 
     # ── Phase 2: Global consensus correction ─────────────────────────
     # Fixes clusters that local correction couldn't handle because the
     # local neighbourhood median was contaminated by wrong-octave notes.
-    midi_values = []
+    midi_values_ph2: list[int | None] = []
     for seg in midi_segments:
         try:
-            midi_values.append(librosa.note_to_midi(seg.note))
-        except Exception:
-            midi_values.append(None)
+            midi_values_ph2.append(librosa.note_to_midi(seg.note))
+        except (ValueError, KeyError):
+            midi_values_ph2.append(None)
 
-    valid_values = [v for v in midi_values if v is not None]
+    valid_values = [v for v in midi_values_ph2 if v is not None]
     if len(valid_values) >= 3:
         global_median = float(np.median(valid_values))
 
@@ -440,12 +447,15 @@ def correct_octave_outliers(
         if near_global / len(valid_values) > 0.5:
             consensus_corrections = 0
             for i, seg in enumerate(midi_segments):
-                if midi_values[i] is None:
+                if midi_values_ph2[i] is None:
                     continue
-                current = midi_values[i]
+                current = midi_values_ph2[i]
 
-                # Skip notes already near the global median
-                if abs(current - global_median) <= 6:
+                # Only target notes that are a full octave or more from the
+                # global median — these are true octave errors.  Notes
+                # within 11 semitones are legitimate melody intervals
+                # (e.g. G4 is 7 ST from C4 and must NOT be shifted).
+                if abs(current - global_median) < 12:
                     continue
 
                 # Try octave shifts (±12, ±24) to get closer to global median
@@ -455,9 +465,10 @@ def correct_octave_outliers(
                     if abs(candidate - global_median) < abs(best - global_median):
                         best = candidate
 
-                if best != current:
+                # Only apply if the shift brings the note reasonably close
+                if best != current and abs(best - global_median) <= 11:
                     seg.note = librosa.midi_to_note(best)
-                    midi_values[i] = best
+                    midi_values_ph2[i] = best
                     consensus_corrections += 1
 
             if consensus_corrections > 0:

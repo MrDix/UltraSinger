@@ -311,6 +311,51 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
                     f"Note {i} changed from {expected} to {midis[i]}"
                 )
 
+    # -- valid minority melody note preserved ---------------------------------
+
+    def test_valid_melody_note_preserved_by_consensus(self):
+        """G4 (MIDI 67) is 7 ST from global median C4 (60).
+
+        Phase 2 must NOT shift it — it is a valid melody interval,
+        not an octave error.  Only notes ≥ 12 ST away should be touched.
+        """
+        # 6x C4, 1x G4, 6x C4  → global median ≈ 60
+        notes = ["C4"] * 6 + ["G4"] + ["C4"] * 6
+        segs = self._make_segs(notes)
+        result = correct_octave_outliers(segs, passes=2)
+        midis = self._get_midis(result)
+        # G4 (67) must remain unchanged
+        self.assertEqual(midis[6], 67, "G4 was incorrectly shifted by consensus")
+
+    def test_phase1_and_phase2_cooperate(self):
+        """Phase 1 (local) and Phase 2 (global consensus) each fix
+        a different kind of outlier.
+
+        Setup: 6x C4, 8x C3 (cluster — too large for local fix),
+               1x C2 (isolated — fixed by Phase 1), 6x C4.
+        Phase 1 corrects C2 → C4 (24 ST from local median, clear outlier).
+        Phase 2 corrects the C3 cluster → C4 (12 ST from global median=60,
+        local windows are contaminated so Phase 1 can't help).
+        """
+        notes = ["C4"] * 6 + ["C3"] * 8 + ["C2"] + ["C4"] * 6
+        segs = self._make_segs(notes)
+        result = correct_octave_outliers(segs, passes=2)
+        midis = self._get_midis(result)
+        # C2 (index 14) should be fixed by Phase 1
+        self.assertEqual(midis[14], 60, "Isolated C2 not fixed by Phase 1")
+        # C3 cluster (indices 6-13) should be fixed by Phase 2
+        for i in range(6, 14):
+            self.assertEqual(
+                midis[i], 60,
+                f"Cluster note {i} is MIDI {midis[i]}, expected 60 (C4)"
+            )
+        # Boundary C4s must remain unchanged
+        for i in list(range(0, 6)) + list(range(15, 21)):
+            self.assertEqual(
+                midis[i], 60,
+                f"Boundary note {i} is MIDI {midis[i]}, expected 60 (C4)"
+            )
+
     # -- shift is always a multiple of 12 ------------------------------------
 
     def test_shifts_are_octave_multiples(self):
