@@ -15,6 +15,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -318,10 +319,13 @@ def parse_ultrastar(path: str | Path) -> ParsedFile:
         # Note line
         parts = line.split(None, 4)
         if len(parts) >= 4 and parts[0] in _NOTE_TYPES:
-            note_type = parts[0]
-            start_beat = int(parts[1])
-            duration = int(parts[2])
-            pitch = int(parts[3])
+            try:
+                note_type = parts[0]
+                start_beat = int(parts[1])
+                duration = int(parts[2])
+                pitch = int(parts[3])
+            except ValueError:
+                continue  # skip malformed note lines gracefully
             word = parts[4] if len(parts) > 4 else ""
             raw_notes.append((note_type, start_beat, duration, pitch, word))
 
@@ -384,8 +388,15 @@ def _group_words(notes: list[Note]) -> list[WordGroup]:
 # ---------------------------------------------------------------------------
 
 def _normalise_word(word: str) -> str:
-    """Normalise a word for fuzzy matching."""
-    return re.sub(r"[^a-z0-9]", "", word.lower())
+    """Normalise a word for fuzzy matching.
+
+    Applies NFKD Unicode decomposition to convert accented characters
+    (e.g. 'é' → 'e') before stripping non-alphanumeric characters.
+    """
+    # Decompose accented characters and remove combining diacritical marks
+    decomposed = unicodedata.normalize("NFKD", word)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]", "", stripped.lower())
 
 
 def align_words(

@@ -663,7 +663,7 @@ class TestEdgeCases:
         assert _normalise_word("Don't") == "dont"
         assert _normalise_word("HELLO!") == "hello"
         assert _normalise_word("  spaces  ") == "spaces"
-        assert _normalise_word("café") == "caf"  # only a-z0-9
+        assert _normalise_word("café") == "cafe"  # accented → decomposed
 
     def test_pct_zero_total(self):
         """Percentage with zero denominator returns 0.0 instead of crashing."""
