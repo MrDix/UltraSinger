@@ -43,10 +43,10 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 
 COMPATIBLE_FORMATS = {"mp3", "ogg", "wav"}
 
-# Formats that are actually compatible despite having a non-standard extension.
-# Some older song collections use renamed files (e.g. .us3 = renamed .mp3).
-# These are playable by UltraStar games and should not trigger a conversion warning.
-RENAMED_COMPATIBLE = {"us3"}
+# Formats that are actually a compatible format with a non-standard extension.
+# These are renamed (not re-encoded) to their real format and the TXT tag updated.
+# Example: .us3 files are renamed .mp3 files used by some older song collections.
+RENAME_TO_COMPATIBLE: dict[str, str] = {"us3": "mp3"}
 
 # UltraStar TXT tags that reference audio files
 AUDIO_TAGS = ("#MP3:", "#AUDIO:", "#VOCALS:", "#INSTRUMENTAL:")
@@ -223,7 +223,7 @@ def parse_song_info(txt_path: Path) -> SongInfo | None:
                 filename=value,
                 extension=ext,
                 full_path=full_path,
-                compatible=ext in COMPATIBLE_FORMATS or ext in RENAMED_COMPATIBLE,
+                compatible=ext in COMPATIBLE_FORMATS,
             ))
 
     return info
@@ -448,11 +448,12 @@ def process_song(
 
     # Build replacements: group by actual file (multiple tags may reference the same file)
     file_replacements: dict[str, str] = {}  # old_filename → new_filename
-    conversions_to_do: list[tuple[AudioFileInfo, Path]] = []  # (info, ogg_output_path)
+    renames_to_do: list[tuple[AudioFileInfo, Path]] = []     # just rename (e.g. .us3 → .mp3)
+    conversions_to_do: list[tuple[AudioFileInfo, Path]] = []  # FFmpeg conversion → .ogg
 
     for af in needs_conversion:
         if af.filename in file_replacements:
-            # Already planned for conversion (another tag references the same file)
+            # Already planned (another tag references the same file)
             new_filename = file_replacements[af.filename]
             result.conversions.append(FileConversion(
                 tag=af.tag,
@@ -463,16 +464,24 @@ def process_song(
             continue
 
         stem = af.full_path.stem
-        ogg_filename = f"{stem}.ogg"
-        ogg_path = af.full_path.parent / ogg_filename
 
-        file_replacements[af.filename] = ogg_filename
-        conversions_to_do.append((af, ogg_path))
+        # Check if this is a renamed compatible format (e.g. .us3 = .mp3)
+        real_ext = RENAME_TO_COMPATIBLE.get(af.extension)
+        if real_ext:
+            new_filename = f"{stem}.{real_ext}"
+            new_path = af.full_path.parent / new_filename
+            renames_to_do.append((af, new_path))
+        else:
+            new_filename = f"{stem}.ogg"
+            new_path = af.full_path.parent / new_filename
+            conversions_to_do.append((af, new_path))
+
+        file_replacements[af.filename] = new_filename
 
         result.conversions.append(FileConversion(
             tag=af.tag,
             old_filename=af.filename,
-            new_filename=ogg_filename,
+            new_filename=new_filename,
             old_ext=af.extension,
         ))
 
@@ -480,8 +489,17 @@ def process_song(
         result.status = "converted"  # would be converted
         return result
 
-    # Perform actual conversions
+    # Perform renames (no re-encoding needed)
     try:
+        for af, new_path in renames_to_do:
+            if new_path.is_file():
+                result.warnings.append(
+                    f"{new_path.name} already exists, skipping rename"
+                )
+            else:
+                af.full_path.rename(new_path)
+
+        # Perform FFmpeg conversions
         for af, ogg_path in conversions_to_do:
             if ogg_path.is_file():
                 # OGG already exists (previous run?) — skip conversion but still update TXT
@@ -599,7 +617,9 @@ def print_song_list(
         for i, r in enumerate(converted, 1):
             print(f"  [{i:>3}] {r.song_info.display_name}")
             for c in r.conversions:
-                print(f"        {c.tag[1:]} {c.old_filename} \u2192 {c.new_filename}")
+                rename = c.old_ext in RENAME_TO_COMPATIBLE
+                label = "rename" if rename else "convert"
+                print(f"        {c.tag[1:]} {c.old_filename} \u2192 {c.new_filename} ({label})")
 
         print()
 
