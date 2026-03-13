@@ -265,7 +265,7 @@ def apply_octave_shift(
             if 0 <= new_midi <= 127:
                 seg.note = librosa.midi_to_note(new_midi)
         except (ValueError, TypeError):
-            pass
+            print(f"{ULTRASINGER_HEAD} Skipping invalid note in octave shift: {seg.note!r}")
 
     return midi_segments
 

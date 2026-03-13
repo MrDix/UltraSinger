@@ -58,6 +58,7 @@ This will help me a lot to keep this project alive and improve it.
     - [👂 Pitcher](#-pitcher)
     - [👄 Separation](#-separation)
     - [🥁 BPM Override](#-bpm-override)
+    - [🎵 Octave Shift](#-octave-shift)
     - [Sheet Music](#sheet-music)
     - [Format Version](#format-version)
     - [🏆 Ultrastar Score Calculation](#-ultrastar-score-calculation)
