@@ -139,8 +139,16 @@ class TestPickBestTempo(unittest.TestCase):
     def test_simpler_ratio_wins_tie(self):
         """When two candidates are equally close to the reference, the simpler
         ratio (earlier in _TEMPO_RATIOS) should win.
+
+        600 BPM with target=350:
+          half  = 300 (ratio 0.5, distance |300-350| = 50)
+          2/3   = 400 (ratio 2/3, distance |400-350| = 50)
+        Both are in range and equidistant from target.  Half (0.5) is
+        listed before two-thirds (2/3) in _TEMPO_RATIOS, so 300 wins.
         """
-        self.assertEqual(_pick_best_tempo(120.0), 120.0)
+        self.assertEqual(
+            _pick_best_tempo(600.0, target=350.0), 300.0
+        )
 
     # -- custom range ---------------------------------------------------------
 
