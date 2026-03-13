@@ -535,6 +535,7 @@ def compare(gen_path: str | Path, ref_path: str | Path) -> ComparisonResult:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """CLI entry point for comparing two UltraStar TXT files."""
     parser = argparse.ArgumentParser(
         description="Compare two UltraStar TXT files (generated vs reference)")
     parser.add_argument("generated", help="Path to generated UltraStar TXT")

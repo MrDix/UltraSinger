@@ -123,17 +123,21 @@ class TestFormatDetection:
 # ── Pitch conversion unit tests ─────────────────────────────────────────────
 
 class TestPitchToMidi:
+    """Unit tests for the _pitch_to_midi helper."""
 
     def test_v120_adds_48(self):
+        """v1.2.0 format adds +48 offset to convert to MIDI."""
         assert _pitch_to_midi(0, "1.2.0") == 48
         assert _pitch_to_midi(12, "1.2.0") == 60
         assert _pitch_to_midi(-12, "1.2.0") == 36
 
     def test_legacy_returns_raw(self):
+        """Legacy format (no version) returns pitch as-is."""
         assert _pitch_to_midi(60, None) == 60
         assert _pitch_to_midi(48, None) == 48
 
     def test_v110_returns_raw(self):
+        """v1.1.0 is below the 1.2.0 threshold, so no offset."""
         assert _pitch_to_midi(60, "1.1.0") == 60
 
     def test_v200_adds_48(self):
@@ -142,17 +146,22 @@ class TestPitchToMidi:
 
 
 class TestVersionGe:
+    """Unit tests for the _version_ge semantic version comparison helper."""
 
     def test_equal(self):
+        """Equal versions return True."""
         assert _version_ge("1.2.0", "1.2.0") is True
 
     def test_greater(self):
+        """Greater version returns True."""
         assert _version_ge("2.0.0", "1.2.0") is True
 
     def test_less(self):
+        """Lesser version returns False."""
         assert _version_ge("1.1.0", "1.2.0") is False
 
     def test_invalid_returns_false(self):
+        """Malformed version string returns False gracefully."""
         assert _version_ge("abc", "1.2.0") is False
 
 
@@ -162,9 +171,11 @@ class TestBeatToMs:
     """UltraStar BPM header represents quarter-notes at 4x the real BPM."""
 
     def test_zero_beat_returns_gap(self):
+        """Beat 0 returns exactly the GAP value."""
         assert _beat_to_ms(0, 300.0, 5000.0) == 5000.0
 
     def test_formula(self):
+        """Verify beat-to-ms formula: gap + (beat * 60000) / (bpm * 4)."""
         # bpm_header=300, real_bpm=1200
         # beat=120 → 5000 + (120 * 60000) / 1200 = 5000 + 6000 = 11000
         assert _beat_to_ms(120, 300.0, 5000.0) == 11000.0
@@ -185,8 +196,10 @@ class TestBeatToMs:
 # ── Tilde note grouping ─────────────────────────────────────────────────────
 
 class TestTildeGrouping:
+    """Tests for grouping continuation notes (~) with their parent word."""
 
     def _make_note(self, word, midi=60, start_ms=0, end_ms=100):
+        """Create a Note instance for testing."""
         return Note(
             note_type=":",
             start_beat=0,
@@ -199,6 +212,7 @@ class TestTildeGrouping:
         )
 
     def test_tilde_groups_with_parent(self):
+        """Tilde notes are appended to the preceding word group."""
         notes = [
             self._make_note("Hel", start_ms=0, end_ms=100),
             self._make_note("~lo", start_ms=100, end_ms=200),
@@ -213,6 +227,7 @@ class TestTildeGrouping:
         assert len(groups[1].notes) == 1
 
     def test_multiple_tildes(self):
+        """Multiple consecutive tildes all attach to the same parent."""
         notes = [
             self._make_note("Beau", start_ms=0, end_ms=50),
             self._make_note("~ti", start_ms=50, end_ms=100),
@@ -246,17 +261,21 @@ class TestTildeGrouping:
 # ── Word alignment ───────────────────────────────────────────────────────────
 
 class TestWordAlignment:
+    """Tests for fuzzy word alignment between generated and reference files."""
 
     def _make_wg(self, word, midi=60, start_ms=0):
+        """Create a WordGroup instance for testing."""
         return WordGroup(word=word, midi=midi, start_ms=start_ms)
 
     def test_exact_match(self):
+        """Identical word sequences yield 1:1 index pairs."""
         gen = [self._make_wg("Hello"), self._make_wg("World")]
         ref = [self._make_wg("Hello"), self._make_wg("World")]
         pairs = align_words(gen, ref)
         assert pairs == [(0, 0), (1, 1)]
 
     def test_partial_match_with_extra_words(self):
+        """Shared words are matched even when surrounding words differ."""
         gen = [self._make_wg("the"), self._make_wg("quick"), self._make_wg("fox")]
         ref = [self._make_wg("quick"), self._make_wg("brown"), self._make_wg("fox")]
         pairs = align_words(gen, ref)
@@ -266,18 +285,21 @@ class TestWordAlignment:
         assert "fox" in matched_gen_words
 
     def test_case_insensitive(self):
+        """Word matching is case-insensitive."""
         gen = [self._make_wg("HELLO")]
         ref = [self._make_wg("hello")]
         pairs = align_words(gen, ref)
         assert len(pairs) == 1
 
     def test_punctuation_ignored(self):
+        """Punctuation is stripped before matching."""
         gen = [self._make_wg("don't")]
         ref = [self._make_wg("dont")]
         pairs = align_words(gen, ref)
         assert len(pairs) == 1
 
     def test_empty_words_skipped(self):
+        """Empty word strings are excluded from alignment."""
         gen = [self._make_wg(""), self._make_wg("Hello")]
         ref = [self._make_wg("Hello"), self._make_wg("")]
         pairs = align_words(gen, ref)
@@ -288,6 +310,7 @@ class TestWordAlignment:
 # ── Timing ───────────────────────────────────────────────────────────────────
 
 class TestTiming:
+    """Tests for timing difference calculations."""
 
     def test_first_word_excluded_from_timing(self, tmp_path):
         """Timing metrics exclude the first matched word (GAP offset effect)."""
@@ -352,6 +375,7 @@ class TestTiming:
 # ── Intervals ────────────────────────────────────────────────────────────────
 
 class TestIntervals:
+    """Tests for pitch interval comparison between consecutive matched words."""
 
     def test_interval_format_independent(self, tmp_path):
         """Intervals cancel out any constant pitch offset between formats.
@@ -420,6 +444,7 @@ class TestIntervals:
 # ── Parsing ──────────────────────────────────────────────────────────────────
 
 class TestParsing:
+    """Tests for UltraStar TXT file parsing."""
 
     def test_note_types_parsed(self, tmp_path):
         """All standard note types are parsed correctly."""
@@ -440,6 +465,7 @@ class TestParsing:
         assert types == [":", "*", "F", "R", "G"]
 
     def test_linebreak_counting(self, tmp_path):
+        """Linebreak markers are counted but not treated as notes."""
         txt = _write_ultrastar(tmp_path, """\
             #TITLE:Test
             #ARTIST:Test
@@ -457,6 +483,7 @@ class TestParsing:
         assert len(parsed.notes) == 3  # linebreaks not counted as notes
 
     def test_headers_collected(self, tmp_path):
+        """All header tags are stored in the headers dict."""
         txt = _write_ultrastar(tmp_path, """\
             #TITLE:My Song
             #ARTIST:Some Artist
@@ -503,8 +530,10 @@ class TestParsing:
 # ── JSON output ──────────────────────────────────────────────────────────────
 
 class TestJsonOutput:
+    """Tests for JSON serialisation of comparison results."""
 
     def test_json_has_expected_structure(self, tmp_path):
+        """JSON output contains all expected top-level sections."""
         gen_txt = _write_ultrastar(tmp_path, """\
             #TITLE:Test
             #ARTIST:Test
@@ -548,6 +577,7 @@ class TestJsonOutput:
 # ── Full comparison integration ──────────────────────────────────────────────
 
 class TestFullComparison:
+    """Integration tests running the full compare() pipeline."""
 
     def test_identical_files_perfect_score(self, tmp_path):
         """Comparing identical files should yield perfect metrics."""
@@ -626,18 +656,22 @@ class TestFullComparison:
 # ── Edge cases ───────────────────────────────────────────────────────────────
 
 class TestEdgeCases:
+    """Edge cases and utility function tests."""
 
     def test_normalise_word(self):
+        """Word normalisation strips punctuation and lowercases."""
         assert _normalise_word("Don't") == "dont"
         assert _normalise_word("HELLO!") == "hello"
         assert _normalise_word("  spaces  ") == "spaces"
         assert _normalise_word("café") == "caf"  # only a-z0-9
 
     def test_pct_zero_total(self):
+        """Percentage with zero denominator returns 0.0 instead of crashing."""
         assert _pct(5, 0) == 0.0
         assert _pct(0, 0) == 0.0
 
     def test_pct_normal(self):
+        """Normal percentage calculation works correctly."""
         assert _pct(1, 4) == 25.0
         assert _pct(3, 3) == 100.0
 
