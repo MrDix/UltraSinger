@@ -294,6 +294,7 @@ def convert_to_ogg(ffmpeg_path: str, input_path: Path, output_path: Path) -> Non
         ffmpeg_path,
         "-i", str(input_path),
         "-y",
+        "-vn",                     # Discard video streams (e.g. from .mp4)
         "-loglevel", "error",
         "-codec:a", "libvorbis",
         "-q:a", "6",               # High quality VBR (~192 kbps)
