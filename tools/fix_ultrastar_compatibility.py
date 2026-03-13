@@ -312,13 +312,15 @@ def convert_to_ogg(ffmpeg_path: str, input_path: Path, output_path: Path) -> Non
 def update_txt_tags(txt_path: Path, replacements: dict[str, str]) -> None:
     """Replace audio filenames in TXT tags.
 
-    Reads the file with encoding auto-detection, writes back in UTF-8.
+    Reads the file with encoding auto-detection and writes back in the
+    *same* encoding to avoid silently changing the file encoding when
+    only an audio tag update is needed (i.e. without --normalize-encoding).
 
     Args:
         txt_path: Path to the UltraStar TXT file.
         replacements: Mapping of old_filename → new_filename.
     """
-    lines, _ = _read_txt_lines(txt_path)
+    lines, detected_enc = _read_txt_lines(txt_path)
 
     updated = False
     new_lines = []
@@ -338,7 +340,9 @@ def update_txt_tags(txt_path: Path, replacements: dict[str, str]) -> None:
         new_lines.append(line)
 
     if updated:
-        with open(txt_path, "w", encoding=TXT_ENCODING_WRITE, newline="") as f:
+        # Preserve original encoding — use detected encoding, not UTF-8
+        write_enc = detected_enc if detected_enc != "utf-8-sig" else "utf-8-sig"
+        with open(txt_path, "w", encoding=write_enc, newline="") as f:
             f.writelines(new_lines)
 
 
@@ -388,7 +392,7 @@ def normalize_txt_encoding(txt_path: Path) -> tuple[bool, bool]:
 
 def process_song(
     song_info: SongInfo,
-    ffmpeg_path: str,
+    ffmpeg_path: str | None,
     dry_run: bool,
     normalize_encoding: bool = False,
 ) -> ConversionResult:
@@ -432,6 +436,7 @@ def process_song(
 
     # Check which files need conversion
     needs_conversion: list[AudioFileInfo] = []
+    has_missing = False
     for af in song_info.audio_files:
         if af.compatible:
             continue
@@ -439,12 +444,18 @@ def process_song(
         # Check if audio file exists
         if not af.full_path.is_file():
             result.warnings.append(f"{af.tag} {af.filename} — file not found, skipping")
+            has_missing = True
             continue
 
         needs_conversion.append(af)
 
     if not needs_conversion:
-        result.status = "already_compatible"
+        # Distinguish: all compatible vs. all missing
+        if has_missing:
+            result.status = "error"
+            result.error_msg = "Incompatible audio file(s) not found on disk"
+        else:
+            result.status = "already_compatible"
         return result
 
     # Build replacements: group by actual file (multiple tags may reference the same file)
@@ -466,17 +477,24 @@ def process_song(
 
         stem = af.full_path.stem
 
+        # Preserve any subdirectory prefix from the original tag value.
+        # E.g. if filename is "audio/song.flac", prefix is "audio/" and
+        # the replacement must be "audio/song.ogg", not just "song.ogg".
+        dir_part = os.path.dirname(af.filename)
+        prefix = f"{dir_part}/" if dir_part else ""
+
         # Check if this is a renamed compatible format (e.g. .us3 = .mp3)
         real_ext = RENAME_TO_COMPATIBLE.get(af.extension)
         if real_ext:
-            new_filename = f"{stem}.{real_ext}"
-            new_path = af.full_path.parent / new_filename
+            new_basename = f"{stem}.{real_ext}"
+            new_path = af.full_path.parent / new_basename
             renames_to_do.append((af, new_path))
         else:
-            new_filename = f"{stem}.ogg"
-            new_path = af.full_path.parent / new_filename
+            new_basename = f"{stem}.ogg"
+            new_path = af.full_path.parent / new_basename
             conversions_to_do.append((af, new_path))
 
+        new_filename = f"{prefix}{new_basename}"
         file_replacements[af.filename] = new_filename
 
         result.conversions.append(FileConversion(
@@ -500,7 +518,7 @@ def process_song(
             else:
                 af.full_path.rename(new_path)
 
-        # Perform FFmpeg conversions
+        # Perform FFmpeg conversions — resolve ffmpeg lazily on first need
         for af, ogg_path in conversions_to_do:
             if ogg_path.is_file():
                 # OGG already exists (previous run?) — skip conversion but still update TXT
@@ -508,6 +526,8 @@ def process_song(
                     f"{ogg_path.name} already exists, skipping conversion"
                 )
             else:
+                if ffmpeg_path is None:
+                    ffmpeg_path = check_ffmpeg()
                 convert_to_ogg(ffmpeg_path, af.full_path, ogg_path)
 
         # Update TXT file with new filenames
@@ -694,8 +714,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: Directory not found: {root}", file=sys.stderr)
         return 1
 
-    # Check FFmpeg availability early
-    ffmpeg_path = check_ffmpeg()
+    # FFmpeg is resolved lazily — only checked when a real conversion is needed.
+    # This allows --dry-run and --normalize-encoding to work without FFmpeg.
+    ffmpeg_path: str | None = None
 
     mode_parts = []
     if args.dry_run:
