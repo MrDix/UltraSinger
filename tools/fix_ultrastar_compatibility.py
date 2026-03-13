@@ -43,6 +43,11 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 
 COMPATIBLE_FORMATS = {"mp3", "ogg", "wav"}
 
+# Formats that are actually compatible despite having a non-standard extension.
+# Some older song collections use renamed files (e.g. .us3 = renamed .mp3).
+# These are playable by UltraStar games and should not trigger a conversion warning.
+RENAMED_COMPATIBLE = {"us3"}
+
 # UltraStar TXT tags that reference audio files
 AUDIO_TAGS = ("#MP3:", "#AUDIO:", "#VOCALS:", "#INSTRUMENTAL:")
 
@@ -211,13 +216,14 @@ def parse_song_info(txt_path: Path) -> SongInfo | None:
             info.title = value
         elif tag_part in ("#MP3:", "#AUDIO:", "#VOCALS:", "#INSTRUMENTAL:"):
             ext = _get_extension(value)
-            full_path = song_dir / value
+            resolved = _resolve_audio_file(song_dir, value)
+            full_path = resolved if resolved is not None else song_dir / value
             info.audio_files.append(AudioFileInfo(
                 tag=tag_part,
                 filename=value,
                 extension=ext,
                 full_path=full_path,
-                compatible=ext in COMPATIBLE_FORMATS,
+                compatible=ext in COMPATIBLE_FORMATS or ext in RENAMED_COMPATIBLE,
             ))
 
     return info
@@ -227,6 +233,46 @@ def _get_extension(filename: str) -> str:
     """Extract lowercase extension without dot from a filename."""
     _, ext = os.path.splitext(filename)
     return ext.lstrip(".").lower()
+
+
+def _resolve_audio_file(song_dir: Path, filename: str) -> Path | None:
+    """Find the actual audio file on disk, handling encoding mismatches.
+
+    UltraStar TXT files may be encoded differently from the filesystem,
+    causing the parsed filename to not match the actual file on disk.
+    For example: TXT in CP1252 references ``byłam`` (byte 0xB3) but the
+    file on disk is named ``byêam`` (UTF-8).
+
+    Strategy:
+      1. Try exact match first (fast path).
+      2. Try case-insensitive match against directory listing.
+      3. If there's exactly one file with the same extension, use that.
+      4. Otherwise return None (truly missing).
+    """
+    exact = song_dir / filename
+    if exact.is_file():
+        return exact
+
+    # List files in song directory once
+    try:
+        dir_files = list(song_dir.iterdir())
+    except OSError:
+        return None
+
+    ext = _get_extension(filename).lower()
+    target_lower = filename.lower()
+
+    # Case-insensitive match
+    for f in dir_files:
+        if f.is_file() and f.name.lower() == target_lower:
+            return f
+
+    # Extension-based fallback: if exactly one file has the same extension, use it
+    same_ext = [f for f in dir_files if f.is_file() and _get_extension(f.name) == ext]
+    if len(same_ext) == 1:
+        return same_ext[0]
+
+    return None
 
 
 # ---------------------------------------------------------------------------
