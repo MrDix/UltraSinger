@@ -182,7 +182,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "ArtistChannel",
         }
 
-        artist, title, video_title = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title = get_youtube_title("https://fakeUrl")
 
         self.assertEqual(artist, "Artist")
         self.assertEqual(title, "Song (Live)")
@@ -209,7 +209,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "ArtistChannel",
         }
 
-        artist, title, video_title = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title = get_youtube_title("https://fakeUrl")
 
         self.assertEqual(artist, "Artist Name")
         self.assertEqual(title, "Song - Part 2")
@@ -237,7 +237,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "SomeChannel",
         }
 
-        artist, title, video_title = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title = get_youtube_title("https://fakeUrl")
 
         # Should fall through to title-split logic
         self.assertEqual(artist, "Some Artist")
@@ -253,7 +253,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "SomeChannel",
         }
 
-        artist, title, video_title = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title = get_youtube_title("https://fakeUrl")
 
         # Should fall through to title-split logic
         self.assertEqual(artist, "Some Artist")

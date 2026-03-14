@@ -68,7 +68,7 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
     return track
 
 
-def get_youtube_title(url: str, cookiefile: str = None) -> tuple[str, str, str]:
+def get_youtube_title(url: str, cookiefile: str | None = None) -> tuple[str, str, str]:
     """Get the title of the YouTube video.
 
     Returns:
