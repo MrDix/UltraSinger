@@ -41,6 +41,7 @@ from modules.Midi.midi_creator import (
     apply_octave_shift,
     correct_global_octave,
     correct_octave_outliers,
+    correct_vocal_center,
     create_midi_file,
 )
 from modules.Midi.MidiSegment import MidiSegment
@@ -234,6 +235,10 @@ def run() -> tuple[str, Score, Score]:
 
     # Correct local octave outliers
     process_data.midi_segments = correct_octave_outliers(process_data.midi_segments)
+
+    # Safety-net: shift notes toward vocal centre if still concentrated
+    # outside the expected range (catches 100%-consistent wrong-octave)
+    process_data.midi_segments = correct_vocal_center(process_data.midi_segments)
 
     # Apply manual octave shift (after automatic correction, so user gets final say)
     if settings.octave_shift is not None:
