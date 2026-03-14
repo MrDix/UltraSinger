@@ -112,6 +112,35 @@ class TestSnapToOnsets(unittest.TestCase):
         self.assertEqual(result[0].word, "hello ")
         self.assertAlmostEqual(result[0].end, 2.0)
 
+    # -- overlap prevention ----------------------------------------------------
+
+    def test_no_snap_before_previous_note_end(self):
+        """Snapping must not move a note before the previous note's end."""
+        data = [
+            self._make_data(1.00, 1.15, "first "),
+            self._make_data(1.16, 1.30, "second "),
+        ]
+        # second note could wrongly snap to 1.05 (before first note ends at 1.15)
+        onsets = np.array([1.00, 1.05])
+        result = snap_to_onsets(data, onsets, max_snap_ms=80.0)
+        # First note snaps to 1.00 — fine
+        self.assertAlmostEqual(result[0].start, 1.00)
+        # Second note must NOT snap to 1.05 (which is before first.end=1.15)
+        self.assertGreaterEqual(result[1].start, result[0].end)
+
+    def test_overlap_prevention_with_valid_later_onset(self):
+        """When the nearest onset would cause overlap, but a valid position
+        exists after clamping to prev_end, the note should still snap."""
+        data = [
+            self._make_data(1.00, 1.10, "first "),
+            self._make_data(1.13, 1.50, "second "),
+        ]
+        # onset at 1.05 would overlap, but clamped to prev_end=1.10
+        # 1.10 < 1.50 - 0.01 = 1.49 → valid
+        onsets = np.array([1.00, 1.05])
+        result = snap_to_onsets(data, onsets, max_snap_ms=80.0)
+        self.assertAlmostEqual(result[1].start, 1.10)
+
     # -- custom max_snap_ms ---------------------------------------------------
 
     def test_custom_max_snap(self):

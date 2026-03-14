@@ -74,6 +74,7 @@ def snap_to_onsets(
     snap_count = 0
     min_duration_s = 0.01  # 10 ms minimum note duration
 
+    prev_end = float("-inf")
     for data in transcribed_data:
         # Binary search for nearest onset
         idx = np.searchsorted(onset_times, data.start)
@@ -85,16 +86,21 @@ def snap_to_onsets(
             candidates.append(float(onset_times[idx]))
 
         if not candidates:
+            prev_end = data.end
             continue
 
         nearest = min(candidates, key=lambda t: abs(t - data.start))
         distance = abs(nearest - data.start)
 
         if distance <= max_snap_s:
+            # Don't snap before the previous note's end (overlap prevention)
+            candidate = max(nearest, prev_end)
             # Don't create zero/negative duration notes
-            if nearest < data.end - min_duration_s:
-                data.start = nearest
+            if candidate < data.end - min_duration_s:
+                data.start = candidate
                 snap_count += 1
+
+        prev_end = data.end
 
     print(
         f"{ULTRASINGER_HEAD} Onset correction: snapped "

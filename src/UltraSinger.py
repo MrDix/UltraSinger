@@ -203,13 +203,16 @@ def run() -> tuple[str, Score, Score]:
 
     # Onset correction — snap note starts to audio onsets for better timing
     if not settings.ignore_audio and settings.onset_correction:
-        from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
-        onset_times = detect_vocal_onsets(
-            process_data.process_data_paths.whisper_audio_path
-        )
-        process_data.transcribed_data = snap_to_onsets(
-            process_data.transcribed_data, onset_times
-        )
+        try:
+            from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
+            onset_times = detect_vocal_onsets(
+                process_data.process_data_paths.whisper_audio_path
+            )
+            process_data.transcribed_data = snap_to_onsets(
+                process_data.transcribed_data, onset_times
+            )
+        except Exception as e:
+            print(f"{ULTRASINGER_HEAD} Onset correction skipped: {e}")
 
     # Split syllables into segments
     if not settings.ignore_audio:
