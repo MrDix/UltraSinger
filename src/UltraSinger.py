@@ -201,6 +201,16 @@ def run() -> tuple[str, Score, Score]:
     if not settings.ignore_audio:
         TranscribeAudio(process_data)
 
+    # Onset correction — snap note starts to audio onsets for better timing
+    if not settings.ignore_audio and settings.onset_correction:
+        from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
+        onset_times = detect_vocal_onsets(
+            process_data.process_data_paths.whisper_audio_path
+        )
+        process_data.transcribed_data = snap_to_onsets(
+            process_data.transcribed_data, onset_times
+        )
+
     # Split syllables into segments
     if not settings.ignore_audio:
         process_data.transcribed_data = split_syllables_into_segments(process_data.transcribed_data,
@@ -912,6 +922,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.interactive_mode = True
         elif opt in ("--disable_quantization"):
             settings.quantize_to_key = False
+        elif opt in ("--disable_onset_correction"):
+            settings.onset_correction = False
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
@@ -966,6 +978,7 @@ def arg_options():
         "musescore_path=",
         "keep_numbers",
         "disable_quantization",
+        "disable_onset_correction",
         "interactive",
         "cookiefile=",
         "ffmpeg=",
