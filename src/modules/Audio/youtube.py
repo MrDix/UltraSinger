@@ -55,7 +55,11 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
         # Only consider known media qualifiers for stripping
         if not _STRIPPABLE_SUFFIXES.match(suffix_content):
             break  # not a known qualifier - leave it alone
-        if suffix_content.lower() in video_title.lower():
+        if re.search(
+            rf"(?<!\w){re.escape(suffix_content)}(?!\w)",
+            video_title,
+            re.IGNORECASE,
+        ):
             break  # suffix is present in video title - keep it
         print(
             f"{ULTRASINGER_HEAD} {red_highlighted(f'Stripped YT Music suffix \"({suffix_content})\" - not in video title')}"
@@ -80,9 +84,12 @@ def get_youtube_title(url: str, cookiefile: str = None) -> tuple[str, str]:
     if artist and track:
         video_title = result.get("title") or ""
         return artist, strip_unmatched_suffixes(track, video_title)
-    if "-" in result["title"]:
-        return result["title"].split("-")[0].strip(), result["title"].split("-")[1].strip()
-    return result["channel"].strip(), result["title"].strip()
+    title = (result.get("title") or "").strip()
+    channel = (result.get("channel") or "").strip()
+    if "-" in title:
+        parts = title.split("-", 1)
+        return parts[0].strip(), parts[1].strip()
+    return channel, title
 
 
 def __download_youtube_video_with_audio(url: str, clear_filename: str, output_path: str, cookiefile: str = None) -> str:

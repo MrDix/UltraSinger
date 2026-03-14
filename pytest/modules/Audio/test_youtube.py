@@ -120,6 +120,19 @@ class TestStripUnmatchedSuffixes(unittest.TestCase):
         video_title = "Artist - Song"
         self.assertEqual(strip_unmatched_suffixes(track, video_title), "Song")
 
+    def test_no_false_positive_substring_match(self):
+        """'live' inside 'delivered' should NOT count as a match."""
+        track = "Song (Live)"
+        video_title = "Artist - Song delivered to you"
+        # "live" appears as substring of "delivered" but NOT as whole word
+        self.assertEqual(strip_unmatched_suffixes(track, video_title), "Song")
+
+    def test_word_boundary_keeps_real_match(self):
+        """'live' as a standalone word in the title should keep the suffix."""
+        track = "Song (Live)"
+        video_title = "Artist - Song live version"
+        self.assertEqual(strip_unmatched_suffixes(track, video_title), "Song (Live)")
+
 
 class TestGetYoutubeTitle(unittest.TestCase):
     @patch("yt_dlp.YoutubeDL")
@@ -183,6 +196,19 @@ class TestGetYoutubeTitle(unittest.TestCase):
 
         self.assertEqual(artist, "Some Artist")
         self.assertEqual(title, "Some Song")
+
+    @patch("yt_dlp.YoutubeDL")
+    def test_get_youtube_title_multi_dash_preserves_title(self, mock_youtube_dl):
+        """Multiple dashes in title: only split on the first one."""
+        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+            "title": "Artist Name - Song - Part 2",
+            "channel": "ArtistChannel",
+        }
+
+        artist, title = get_youtube_title("https://fakeUrl")
+
+        self.assertEqual(artist, "Artist Name")
+        self.assertEqual(title, "Song - Part 2")
 
     @patch("yt_dlp.YoutubeDL")
     def test_get_youtube_title_no_artist_no_dash(self, mock_youtube_dl):
