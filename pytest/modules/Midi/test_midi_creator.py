@@ -519,6 +519,29 @@ class TestCorrectVocalCenter(unittest.TestCase):
         midis = self._get_midis(result)
         self.assertEqual(midis, [79, 79, 77, 79, 79])
 
+    # -- already in valid centre → no shift ------------------------------------
+
+    def test_no_shift_valid_center(self):
+        """Notes already in valid mid-range should not be shifted."""
+        # F#3 = MIDI 54, just inside the broader 48-84 range but
+        # below the default low_threshold of 55.  However, 80% are not
+        # concentrated below 55 because the median check is the first
+        # gate (median must be < low_threshold OR > high_threshold).
+        # Use notes that sit inside 55-79 (centre band).
+        segs = self._make_segs(["G3", "A3", "B3", "G3", "A3"])
+        # G3=55, A3=57, B3=59 → median = 57, within [55, 79] → no shift
+        result = correct_vocal_center(segs)
+        midis = self._get_midis(result)
+        self.assertEqual(midis, [55, 57, 59, 55, 57])
+
+    def test_no_shift_centre_band_high(self):
+        """Notes near the top of the centre band should not be shifted."""
+        segs = self._make_segs(["E5", "F5", "G5", "E5", "F5"])
+        # E5=76, F5=77, G5=79 → median = 77, within [55, 79] → no shift
+        result = correct_vocal_center(segs)
+        midis = self._get_midis(result)
+        self.assertEqual(midis, [76, 77, 79, 76, 77])
+
     # -- all notes low octave → shift up --------------------------------------
 
     def test_all_notes_low_shifted_up(self):
