@@ -364,9 +364,15 @@ def update_txt_tags(txt_path: Path, replacements: dict[str, str]) -> None:
 # Encoding normalization
 # ---------------------------------------------------------------------------
 
-def _is_utf8_encoding(enc: str) -> bool:
-    """Check if an encoding name represents UTF-8 (with or without BOM)."""
-    return enc.lower().replace("-", "").replace("_", "") in ("utf8", "utf8sig")
+def _is_utf8_no_bom(enc: str) -> bool:
+    """Check if an encoding is plain UTF-8 (without BOM).
+
+    Returns False for ``"utf-8-sig"`` because the BOM should be stripped
+    during normalization — UTF-8 without BOM is the universal encoding
+    supported by all UltraStar derivatives (USDX, UltraStar Play,
+    Performous, Vocaluxe).
+    """
+    return enc.lower().replace("-", "").replace("_", "") == "utf8"
 
 
 def normalize_txt_encoding(txt_path: Path) -> tuple[bool, bool]:
@@ -376,7 +382,7 @@ def normalize_txt_encoding(txt_path: Path) -> tuple[bool, bool]:
     """
     lines, detected_enc = _read_txt_lines(txt_path)
 
-    encoding_changed = not _is_utf8_encoding(detected_enc)
+    encoding_changed = not _is_utf8_no_bom(detected_enc)
     encoding_tag_removed = False
 
     # Filter out #ENCODING: lines (deprecated since format v1.0.0)
@@ -419,12 +425,12 @@ def process_song(
 
     # --- Encoding normalization ---
     needs_encoding_fix = normalize_encoding and (
-        not _is_utf8_encoding(song_info.file_encoding)
+        not _is_utf8_no_bom(song_info.file_encoding)
         or song_info.has_encoding_tag
     )
 
     if needs_encoding_fix:
-        if not _is_utf8_encoding(song_info.file_encoding):
+        if not _is_utf8_no_bom(song_info.file_encoding):
             result.encoding_normalized = True
             result.encoding_from = song_info.file_encoding
         if song_info.has_encoding_tag:
@@ -620,7 +626,7 @@ def print_summary(
             print("  Encoding distribution:")
             for enc_name in sorted(enc_counts, key=lambda e: -enc_counts[e]):
                 count = enc_counts[enc_name]
-                marker = "" if _is_utf8_encoding(enc_name) else " ←"
+                marker = "" if _is_utf8_no_bom(enc_name) else " ←"
                 print(f"    {enc_name:<15} {count:>5}{marker}")
 
     print("=" * 55)
