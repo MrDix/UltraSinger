@@ -359,8 +359,7 @@ def update_txt_tags(txt_path: Path, replacements: dict[str, str]) -> None:
 
     if updated:
         # Preserve original encoding — use detected encoding, not UTF-8
-        write_enc = detected_enc if detected_enc != "utf-8-sig" else "utf-8-sig"
-        with open(txt_path, "w", encoding=write_enc, newline="") as f:
+        with open(txt_path, "w", encoding=detected_enc, newline="") as f:
             f.writelines(new_lines)
 
 
@@ -440,8 +439,7 @@ def remove_non_standard_tags(txt_path: Path) -> bool:
         new_lines.append(line)
 
     if removed:
-        write_enc = detected_enc if detected_enc != "utf-8-sig" else "utf-8-sig"
-        with open(txt_path, "w", encoding=write_enc, newline="") as f:
+        with open(txt_path, "w", encoding=detected_enc, newline="") as f:
             f.writelines(new_lines)
 
     return removed
@@ -470,7 +468,7 @@ def process_song(
             try:
                 removed = remove_non_standard_tags(song_info.txt_path)
                 result.comment_tag_removed = removed
-            except Exception as e:
+            except OSError as e:
                 result.warnings.append(f"#COMMENT removal failed: {e}")
         else:
             result.comment_tag_removed = True
@@ -491,7 +489,7 @@ def process_song(
         if not dry_run:
             try:
                 normalize_txt_encoding(song_info.txt_path)
-            except Exception as e:
+            except OSError as e:
                 result.warnings.append(f"Encoding normalization failed: {e}")
                 result.encoding_normalized = False
                 result.encoding_tag_removed = False
