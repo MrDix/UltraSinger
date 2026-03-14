@@ -76,8 +76,13 @@ def _read_txt_lines(path: Path) -> tuple[list[str], str]:
     We detect "bad" UTF-8 decoding by checking for the replacement
     character U+FFFD which appears when errors="replace" substitutes
     undecodable bytes.
+
+    The returned encoding distinguishes ``"utf-8-sig"`` (BOM present)
+    from ``"utf-8"`` (no BOM) so that writers can preserve the original
+    byte layout.
     """
     raw = path.read_bytes()
+    has_bom = raw.startswith(b"\xef\xbb\xbf")
 
     for enc in _TXT_ENCODINGS:
         try:
@@ -85,6 +90,10 @@ def _read_txt_lines(path: Path) -> tuple[list[str], str]:
             # If the codec had to replace bytes we get U+FFFD — try next
             if "\ufffd" in text and enc != _TXT_ENCODINGS[-1]:
                 continue
+            # Report "utf-8" when no BOM was present, even though the
+            # utf-8-sig codec decoded successfully (it accepts both).
+            if enc == "utf-8-sig" and not has_bom:
+                enc = "utf-8"
             return text.splitlines(keepends=True), enc
         except (UnicodeDecodeError, LookupError):
             continue
@@ -218,6 +227,11 @@ def parse_song_info(txt_path: Path) -> SongInfo | None:
             ext = _get_extension(value)
             resolved = _resolve_audio_file(song_dir, value)
             full_path = resolved if resolved is not None else song_dir / value
+            # Reject paths that escape the song directory (path traversal)
+            try:
+                full_path.resolve().relative_to(song_dir.resolve())
+            except ValueError:
+                continue
             info.audio_files.append(AudioFileInfo(
                 tag=tag_part,
                 filename=value,
@@ -508,17 +522,8 @@ def process_song(
         result.status = "converted"  # would be converted
         return result
 
-    # Perform renames (no re-encoding needed)
     try:
-        for af, new_path in renames_to_do:
-            if new_path.is_file():
-                result.warnings.append(
-                    f"{new_path.name} already exists, skipping rename"
-                )
-            else:
-                af.full_path.rename(new_path)
-
-        # Perform FFmpeg conversions — resolve ffmpeg lazily on first need
+        # Perform FFmpeg conversions first — resolve ffmpeg lazily on first need
         for af, ogg_path in conversions_to_do:
             if ogg_path.is_file():
                 # OGG already exists (previous run?) — skip conversion but still update TXT
@@ -530,8 +535,21 @@ def process_song(
                     ffmpeg_path = check_ffmpeg()
                 convert_to_ogg(ffmpeg_path, af.full_path, ogg_path)
 
-        # Update TXT file with new filenames
+        # Update TXT file with new filenames — before renames so that on
+        # failure the original filenames still match the files on disk.
         update_txt_tags(song_info.txt_path, file_replacements)
+
+        # Perform renames last (no re-encoding needed).  Done after TXT
+        # update so the TXT already points to the new name if this step
+        # fails partially.
+        for af, new_path in renames_to_do:
+            if new_path.is_file():
+                result.warnings.append(
+                    f"{new_path.name} already exists, skipping rename"
+                )
+            else:
+                af.full_path.rename(new_path)
+
         result.status = "converted"
 
     except Exception as e:
@@ -646,7 +664,8 @@ def print_song_list(
 
     # Encoding normalizations (only when --normalize-encoding is active)
     if normalize_encoding:
-        enc_fixed = [r for r in results if r.encoding_normalized]
+        enc_fixed = [r for r in results
+                     if r.encoding_normalized or r.encoding_tag_removed]
         if enc_fixed:
             print()
             if dry_run:
@@ -658,9 +677,10 @@ def print_song_list(
                 extra = ""
                 if r.encoding_tag_removed:
                     extra = " + #ENCODING: removed"
+                enc_label = r.encoding_from or "utf-8"
                 print(
                     f"  [{i:>3}] {r.song_info.display_name}"
-                    f"  ({r.encoding_from} \u2192 utf-8{extra})"
+                    f"  ({enc_label} \u2192 utf-8{extra})"
                 )
 
             print()
