@@ -79,6 +79,12 @@ def correct_lyrics_with_llm(
 
         try:
             response_text = _call_llm_api(prompt, config)
+        except (urllib.error.URLError, TimeoutError) as e:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM network error: {e}')}")
+            continue
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM response parse error: {e}')}")
+            continue
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM API error: {e}')}")
             continue
@@ -156,6 +162,10 @@ def _call_llm_api(user_prompt: str, config: LLMConfig) -> str:
     Uses ``urllib.request`` (stdlib) to avoid adding dependencies.
     """
     url = config.api_base_url.rstrip("/") + "/chat/completions"
+
+    # Validate URL scheme to prevent SSRF
+    if not url.startswith(("https://", "http://")):
+        raise ValueError(f"Invalid URL scheme: {url} (only http/https allowed)")
 
     payload = {
         "model": config.model,
