@@ -15,6 +15,24 @@ from modules.musicbrainz_client import search_musicbrainz
 from modules.ffmpeg_helper import separate_audio_video
 
 
+# Suffixes that YouTube Music commonly adds to track names which may not
+# reflect the actual video content.  Only these are considered for removal;
+# arbitrary parenthetical metadata like "(feat. …)" or "(Part 2)" is kept.
+_STRIPPABLE_SUFFIXES = re.compile(
+    r"^("
+    r"live(?:\s.+)?|"           # live, live at …, live from …
+    r"acoustic(?:\s.+)?|"       # acoustic, acoustic version
+    r"remaster(?:ed)?(?:\s.+)?|"  # remastered, remastered 2024
+    r"(?:official\s)?(?:video|audio|music\svideo)|"
+    r"lyrics?(?:\svideo)?|"     # lyric, lyrics, lyric video
+    r"explicit|clean|"
+    r"radio\s?edit|"
+    r"single\sversion"
+    r")$",
+    re.IGNORECASE,
+)
+
+
 def strip_unmatched_suffixes(track: str, video_title: str) -> str:
     """Remove trailing parenthetical suffixes from the YT Music track name
     that do not appear in the actual video title.
@@ -24,8 +42,9 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
     against the video title we can strip these misleading suffixes while
     keeping legitimate ones like '(feat. …)'.
 
-    Only *trailing* parenthesised groups are considered so that inner parts
-    of a title (e.g. 'Song (Part 2) - Remix') are never touched.
+    Only *trailing* parenthesised groups whose content matches a known
+    set of media qualifiers are considered, so arbitrary metadata like
+    '(feat. Guest)' or '(Part 2)' is never touched.
     """
     # Iteratively strip trailing (...) groups that are absent from the title
     while True:
@@ -33,10 +52,13 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
         if not m:
             break
         suffix_content = m.group(1).strip()
+        # Only consider known media qualifiers for stripping
+        if not _STRIPPABLE_SUFFIXES.match(suffix_content):
+            break  # not a known qualifier - leave it alone
         if suffix_content.lower() in video_title.lower():
-            break  # suffix is present in video title → keep it
+            break  # suffix is present in video title - keep it
         print(
-            f"{ULTRASINGER_HEAD} {red_highlighted(f'Stripped YT Music suffix \"({suffix_content})\" – not in video title')}"
+            f"{ULTRASINGER_HEAD} {red_highlighted(f'Stripped YT Music suffix \"({suffix_content})\" - not in video title')}"
         )
         track = track[: m.start()].strip()
     return track
@@ -53,11 +75,11 @@ def get_youtube_title(url: str, cookiefile: str = None) -> tuple[str, str]:
             url, download=False  # We just want to extract the info
         )
 
-    if "artist" in result:
-        track = result["track"].strip()
-        video_title = result.get("title", "")
-        track = strip_unmatched_suffixes(track, video_title)
-        return result["artist"].strip(), track
+    artist = (result.get("artist") or "").strip()
+    track = (result.get("track") or "").strip()
+    if artist and track:
+        video_title = result.get("title") or ""
+        return artist, strip_unmatched_suffixes(track, video_title)
     if "-" in result["title"]:
         return result["title"].split("-")[0].strip(), result["title"].split("-")[1].strip()
     return result["channel"].strip(), result["title"].strip()
