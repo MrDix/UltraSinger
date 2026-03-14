@@ -563,16 +563,27 @@ class TestCorrectVocalCenter(unittest.TestCase):
         # Median is 48, 70% below 55 → NOT enough, no shift
         self.assertEqual(midis, [48] * 7 + [60] * 3)
 
-    def test_exactly_80_percent_triggers_shift(self):
-        """Exactly 80% concentration should trigger the shift."""
-        # 8 low + 2 normal = 80% below → exactly at threshold
+    def test_exactly_80_percent_does_not_trigger(self):
+        """Exactly 80% concentration should NOT trigger (need >80%)."""
+        # 8 low + 2 normal = 80% below → exactly at threshold, not exceeded
         low_notes = ["C3"] * 8   # MIDI 48
         normal_notes = ["C4"] * 2  # MIDI 60
         segs = self._make_segs(low_notes + normal_notes)
         result = correct_vocal_center(segs)
         midis = self._get_midis(result)
-        # Median is 48, 80% below 55 → triggers shift +12
-        self.assertEqual(midis, [60] * 8 + [72] * 2)
+        # Median is 48, 80% below 55 → exactly at threshold, NO shift
+        self.assertEqual(midis, [48] * 8 + [60] * 2)
+
+    def test_above_80_percent_triggers_shift(self):
+        """More than 80% concentration should trigger the shift."""
+        # 9 low + 1 normal = 90% below → exceeds 80% threshold
+        low_notes = ["C3"] * 9   # MIDI 48
+        normal_notes = ["C4"] * 1  # MIDI 60
+        segs = self._make_segs(low_notes + normal_notes)
+        result = correct_vocal_center(segs)
+        midis = self._get_midis(result)
+        # Median is 48, 90% below 55 → triggers shift +12
+        self.assertEqual(midis, [60] * 9 + [72] * 1)
 
     # -- preserves intervals --------------------------------------------------
 

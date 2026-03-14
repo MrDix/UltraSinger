@@ -288,7 +288,7 @@ def correct_vocal_center(
     # Check for suspiciously low concentration
     if median_midi < low_threshold:
         below = sum(1 for v in midi_values if v < low_threshold)
-        if below / total >= concentration_pct:
+        if below / total > concentration_pct:
             shift = 12
             print(
                 f"{ULTRASINGER_HEAD} Vocal-centre correction: "
@@ -307,7 +307,7 @@ def correct_vocal_center(
     # Check for suspiciously high concentration
     if median_midi > high_threshold:
         above = sum(1 for v in midi_values if v > high_threshold)
-        if above / total >= concentration_pct:
+        if above / total > concentration_pct:
             shift = -12
             print(
                 f"{ULTRASINGER_HEAD} Vocal-centre correction: "
