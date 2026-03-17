@@ -32,12 +32,22 @@ for %%V in (3.13 3.12) do (
     )
 )
 
-:: Fallback to direct Python installations
+:: Fallback to direct Python installations (verify version before accepting)
 for %%P in (python3.13 python3.12 python3 python) do (
     where %%P >nul 2>&1
     if !errorlevel! equ 0 (
-        set "PYTHON_EXE=%%P"
-        goto :found_python
+        set "PY_VER="
+        for /f "delims=" %%V in ('%%P -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2^>nul') do (
+            set "PY_VER=%%V"
+        )
+        if "!PY_VER!"=="3.13" (
+            set "PYTHON_EXE=%%P"
+            goto :found_python
+        )
+        if "!PY_VER!"=="3.12" (
+            set "PYTHON_EXE=%%P"
+            goto :found_python
+        )
     )
 )
 
