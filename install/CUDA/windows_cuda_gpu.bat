@@ -21,7 +21,7 @@ if exist .venv (
 :: First, find Python using to get full path
 set "PYTHON_EXE="
 
-for %%V in (3.12) do (
+for %%V in (3.13 3.12) do (
     py -%%V --version >nul 2>&1
     if !errorlevel! equ 0 (
         :: Get the full path to the Python executable
@@ -33,7 +33,7 @@ for %%V in (3.12) do (
 )
 
 :: Fallback to direct Python installations
-for %%P in (python3.12 python3 python) do (
+for %%P in (python3.13 python3.12 python3 python) do (
     where %%P >nul 2>&1
     if !errorlevel! equ 0 (
         set "PYTHON_EXE=%%P"
@@ -43,9 +43,8 @@ for %%P in (python3.12 python3 python) do (
 
 :found_python
 if "!PYTHON_EXE!"=="" (
-    echo Error: No Python 3.12 installation found
-    echo Please install Python 3.12 from python.org
-    echo Note: Python 3.13 is not yet supported due to dependency constraints
+    echo Error: No Python 3.12 or 3.13 installation found
+    echo Please install Python 3.12 or 3.13 from python.org
     pause
     exit /b 1
 )
