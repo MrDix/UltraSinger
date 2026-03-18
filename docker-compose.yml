@@ -8,12 +8,13 @@
 #   docker compose run ultrasinger bash
 #
 #   # Convert a YouTube video
-#   docker compose run ultrasinger uv run python src/UltraSinger.py \
-#       -i "https://www.youtube.com/watch?v=XXXXX" -o output/ --cookiefile cookies.txt
+#   docker compose run ultrasinger uv run python /app/UltraSinger/src/UltraSinger.py \
+#       -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/ \
+#       --cookiefile /app/UltraSinger/cookies.txt
 #
 #   # Convert a local file (place it in ./input/ first)
-#   docker compose run ultrasinger uv run python src/UltraSinger.py \
-#       -i input/song.mp3 -o output/
+#   docker compose run ultrasinger uv run python /app/UltraSinger/src/UltraSinger.py \
+#       -i /app/UltraSinger/input/song.mp3 -o /app/UltraSinger/output/
 
 services:
   ultrasinger:

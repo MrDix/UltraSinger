@@ -101,6 +101,10 @@ class QueueTab(QWidget):
     def runner(self) -> UltraSingerRunner:
         return self._runner
 
+    def append_log(self, text: str):
+        """Append a line to the log viewer (public API)."""
+        self._log.append_line(text)
+
     def start_conversion(self, args: list[str], output_folder: str = ""):
         """Start a new conversion with the given CLI arguments."""
         if self._runner.is_running:

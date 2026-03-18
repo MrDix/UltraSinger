@@ -2,6 +2,9 @@
 
 import json
 import logging
+import os
+import sys
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -72,18 +75,41 @@ def load_config() -> dict:
             with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
                 stored = json.load(f)
             config.update(stored)
-        except Exception:
-            logger.warning("Failed to load config from %s", _CONFIG_FILE, exc_info=True)
+        except (json.JSONDecodeError, TypeError, OSError) as exc:
+            logger.warning("Failed to load config from %s: %s", _CONFIG_FILE, exc)
     return config
 
 
 def save_config(config: dict):
-    """Save configuration to disk."""
+    """Save configuration to disk.
+
+    Uses atomic write (write to temp file then rename) and restricts
+    file permissions to owner-only on non-Windows platforms, since the
+    config may contain an API key.
+    """
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-    except Exception:
+        # Atomic write: write to a temp file in the same directory, then rename
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(_CONFIG_DIR), suffix=".tmp", prefix="config_"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            # Restrict permissions on non-Windows (owner read/write only)
+            if sys.platform != "win32":
+                os.chmod(tmp_path, 0o600)
+            # Atomic rename (on POSIX; on Windows this replaces if target exists
+            # starting with Python 3.3+)
+            os.replace(tmp_path, str(_CONFIG_FILE))
+        except BaseException:
+            # Clean up temp file on any failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except OSError:
         logger.warning("Failed to save config to %s", _CONFIG_FILE, exc_info=True)
 
 

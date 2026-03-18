@@ -1,6 +1,7 @@
 """Conversion settings panel with all UltraSinger parameters."""
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -437,6 +438,9 @@ class SettingsTab(QWidget):
         # BPM override
         self._bpm_override = QLineEdit()
         self._bpm_override.setPlaceholderText("Auto-detect")
+        bpm_validator = QDoubleValidator(1.0, 500.0, 2, self)
+        bpm_validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self._bpm_override.setValidator(bpm_validator)
         bpm_val = self._config.get("bpm_override", "")
         if bpm_val:
             self._bpm_override.setText(str(bpm_val))
@@ -446,6 +450,7 @@ class SettingsTab(QWidget):
         # Octave shift
         self._octave_shift = QLineEdit()
         self._octave_shift.setPlaceholderText("None")
+        self._octave_shift.setValidator(QIntValidator(-10, 10, self))
         oct_val = self._config.get("octave_shift", "")
         if oct_val:
             self._octave_shift.setText(str(oct_val))
@@ -472,7 +477,7 @@ class SettingsTab(QWidget):
         ms_row.addWidget(ms_browse)
         card.add_row("MuseScore Path", QWidget())
         # Replace the empty widget with the row
-        card._layout.removeItem(card._layout.itemAt(card._layout.count() - 1))
+        card.remove_last_item()
         card.add_layout(ms_row)
 
         # FFmpeg

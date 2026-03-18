@@ -85,7 +85,7 @@ class PreferencesTab(QWidget):
         key_row.addWidget(self._key_visible_btn)
 
         llm_card.add_row("API Key", QWidget())
-        llm_card._layout.removeItem(llm_card._layout.itemAt(llm_card._layout.count() - 1))
+        llm_card.remove_last_item()
         llm_card.add_layout(key_row)
 
         self._llm_model_pref = QLineEdit()
@@ -192,10 +192,7 @@ class PreferencesTab(QWidget):
         """Save current preferences to config."""
         from .config import save_config
 
-        self._config["output_folder"] = self._output_folder.text()
-        self._config["llm_api_base_url"] = self._llm_url.text()
-        self._config["llm_api_key"] = self._llm_key.text()
-        self._config["llm_model"] = self._llm_model_pref.text()
+        self._config.update(self.collect_preferences())
         save_config(self._config)
 
     def collect_preferences(self) -> dict:

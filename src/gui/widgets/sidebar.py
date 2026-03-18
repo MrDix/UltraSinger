@@ -1,5 +1,7 @@
 """Sidebar navigation widget with icon + label buttons."""
 
+import importlib.metadata
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -56,7 +58,7 @@ class Sidebar(QWidget):
         self._buttons.append(btn)
         # Insert before the spacer (if exists) at the end
         self.layout().addWidget(btn)
-        btn.clicked.connect(lambda: self.section_changed.emit(index))
+        btn.clicked.connect(lambda _checked=False, idx=index: self.section_changed.emit(idx))
         if index == 0:
             btn.setChecked(True)
         return index
@@ -66,7 +68,11 @@ class Sidebar(QWidget):
         self.layout().addStretch(1)
 
         # Version label at bottom
-        version_label = QLabel("v0.0.13.dev16")
+        try:
+            _version = importlib.metadata.version("ultrasinger")
+        except importlib.metadata.PackageNotFoundError:
+            _version = "dev"
+        version_label = QLabel(f"v{_version}")
         version_label.setObjectName("caption")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout().addWidget(version_label)

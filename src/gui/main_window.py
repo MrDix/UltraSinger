@@ -85,14 +85,17 @@ class MainWindow(QMainWindow):
         # Auto-export cookies
         cookie_path = self._config.get("cookie_file", "")
         if cookie_path and self._browser_tab.cookie_manager.has_youtube_cookies:
-            self._browser_tab.cookie_manager.export_netscape(cookie_path)
-            logger.info("Cookies exported to %s", cookie_path)
+            try:
+                self._browser_tab.cookie_manager.export_netscape(cookie_path)
+                logger.info("Cookies exported to %s", cookie_path)
+            except OSError:
+                logger.warning("Failed to export cookies to %s", cookie_path, exc_info=True)
 
     def _on_start_conversion(self):
         """Start the conversion with current settings."""
         input_source = self._settings_tab.get_input_source()
         if not input_source:
-            self._queue_tab._log.append_line(
+            self._queue_tab.append_log(
                 "[Error] No input source selected. "
                 "Select a YouTube URL or local file first."
             )
@@ -111,7 +114,10 @@ class MainWindow(QMainWindow):
         # Auto-export cookies if available
         cookie_file = merged.get("cookie_file", "")
         if cookie_file and self._browser_tab.cookie_manager.has_youtube_cookies:
-            self._browser_tab.cookie_manager.export_netscape(cookie_file)
+            try:
+                self._browser_tab.cookie_manager.export_netscape(cookie_file)
+            except OSError:
+                logger.warning("Failed to export cookies to %s", cookie_file, exc_info=True)
 
         # Build CLI args
         runner = self._queue_tab.runner
@@ -129,6 +135,6 @@ class MainWindow(QMainWindow):
             self._config.update(settings)
             self._config.update(prefs)
             save_config(self._config)
-        except Exception:
+        except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
         super().closeEvent(event)

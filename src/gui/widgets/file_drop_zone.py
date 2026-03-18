@@ -22,6 +22,7 @@ class FileDropZone(QWidget):
         self.setAcceptDrops(True)
         self.setMinimumHeight(120)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setProperty("dragOver", False)
 
         layout = QVBoxLayout(self)
@@ -67,6 +68,13 @@ class FileDropZone(QWidget):
 
     def mousePressEvent(self, _event):
         self._open_file_dialog()
+
+    def keyPressEvent(self, event):
+        """Open file dialog on Enter or Space key press."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self._open_file_dialog()
+        else:
+            super().keyPressEvent(event)
 
     def _open_file_dialog(self):
         ext_list = " ".join(f"*{e}" for e in sorted(ALL_EXTENSIONS))

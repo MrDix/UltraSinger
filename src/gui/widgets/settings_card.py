@@ -54,6 +54,7 @@ class SettingsCard(QWidget):
         label = QLabel(label_text)
         if tooltip:
             label.setToolTip(tooltip)
+            toggle.setToolTip(tooltip)
         row.addWidget(label, 1)
         row.addWidget(toggle)
         self._layout.addLayout(row)
@@ -64,6 +65,12 @@ class SettingsCard(QWidget):
         info.setObjectName("infoLabel")
         info.setWordWrap(True)
         self._layout.addWidget(info)
+
+    def remove_last_item(self):
+        """Remove the last item from the card layout."""
+        last = self._layout.itemAt(self._layout.count() - 1)
+        if last:
+            self._layout.removeItem(last)
 
     def add_separator(self):
         """Add a subtle horizontal separator."""

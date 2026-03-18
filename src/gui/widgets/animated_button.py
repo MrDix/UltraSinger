@@ -1,11 +1,11 @@
-"""Primary action button with hover animation effects."""
+"""Styled primary action button (CSS hover transitions applied via QSS)."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
 
 class AnimatedButton(QPushButton):
-    """A styled primary action button."""
+    """A styled primary action button with CSS hover transitions."""
 
     def __init__(self, text: str, primary: bool = True, parent=None):
         super().__init__(text, parent)

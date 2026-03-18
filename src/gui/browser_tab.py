@@ -141,6 +141,7 @@ class BrowserTab(QWidget):
 
         # Track cookie status
         self.cookie_manager.cookies_changed.connect(self._update_cookie_status)
+        self._update_cookie_status()
 
         # Load YouTube
         self._view.setUrl(QUrl("https://www.youtube.com"))

@@ -46,10 +46,19 @@ class ConversionWorker(QObject):
 
     def run(self):
         """Execute UltraSinger and stream output."""
+        if self._cancelled:
+            self.finished.emit(-2)
+            return
+
         project_root = _find_project_root()
         cmd = _build_command(project_root) + self._args
 
-        self.line_output.emit(f"[GUI] Running: {' '.join(cmd)}")
+        # Redact --llm_api_key value from logged command
+        display_cmd = list(cmd)
+        for i, token in enumerate(display_cmd):
+            if token == "--llm_api_key" and i + 1 < len(display_cmd):
+                display_cmd[i + 1] = "***"
+        self.line_output.emit(f"[GUI] Running: {' '.join(display_cmd)}")
         self.line_output.emit("")
 
         try:
