@@ -51,6 +51,10 @@ if command -v git &> /dev/null && git rev-parse --is-inside-work-tree &> /dev/nu
 fi
 
 echo "Installation completed successfully!"
+echo ""
+echo "Optional: Install ultrastar-score for scoring support:"
+echo "  uv pip install ultrastar-score"
+echo ""
 echo "To run UltraSinger:"
 echo "  source .venv/bin/activate"
 echo "  cd src"
