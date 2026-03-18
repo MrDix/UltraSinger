@@ -115,4 +115,8 @@ if !errorlevel! neq 0 (
 )
 
 echo Installation completed successfully!
+echo.
+echo Optional: Install ultrastar-score for scoring support:
+echo   uv pip install ultrastar-score
+echo.
 pause
