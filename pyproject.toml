@@ -68,7 +68,6 @@ explicit = true
 torch = [{ index = "pytorch" }]
 torchaudio = [{ index = "pytorch" }]
 torchvision = [{ index = "pytorch" }]
-ultrastar-score = { git = "https://github.com/MrDix/ultrastar-score.git", branch = "main" }
 
 [tool.uv]
 # torchcodec (pulled in by pyannote-audio) is incompatible with PyTorch 2.8.x
