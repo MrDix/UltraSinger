@@ -49,6 +49,10 @@ echo "Syncing dependencies..."
 uv sync --extra linux
 
 echo "Installation completed successfully!"
+echo ""
+echo "Optional: Install scoring support:"
+echo "  uv sync --extra linux --extra scoring"
+echo ""
 echo "To run UltraSinger:"
 echo "  source .venv/bin/activate"
 echo "  cd src"
