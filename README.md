@@ -316,16 +316,20 @@ Related flags:
 
 | Scenario | Provider | Model | Notes |
 |----------|----------|-------|-------|
-| Best quality | Groq | `qwen/qwen3-32b` | 99% accuracy, ~$0.29/M input tokens |
+| Best quality | Groq | `qwen/qwen3-32b` | 99% accuracy, 0 degradations |
 | Fastest | Groq | `meta-llama/llama-4-scout-17b-16e-instruct` | 96% accuracy, 0.2s latency |
 | Safe choice | Groq | `llama-3.3-70b-versatile` | 90% accuracy, 0 degradations |
-| Default | OpenAI | `gpt-4o-mini` | Good quality, $0.15/M input tokens |
-| Local (Ollama) | Ollama | >=32B models recommended | Free, but 8B models may degrade lyrics |
+| Default | OpenAI | `gpt-4o-mini` | Good quality, pay-per-use |
+| Local (Ollama) | Ollama | >=32B models recommended | ⚠️ 8B models may degrade lyrics |
 
-All cloud providers charge per token, but costs are negligible (~$0.0003 per song).
+**Cost:** Groq offers a free plan (no credit card required) that is sufficient for typical UltraSinger usage.
+A typical song requires ~5 API requests and ~700 tokens. With the free plan limits for `qwen/qwen3-32b`
+(1,000 requests/day, 500K tokens/day as of March 2026), you can process **~200 songs per day** at no cost.
+Paid plans are only needed for bulk processing well beyond that. See
+[Groq rate limits](https://console.groq.com/docs/rate-limits) for current limits.
 
 ```bash
-# With Groq (free, recommended)
+# With Groq (free plan available, recommended)
 UltraSinger.py -i song.mp3 --llm_correct \
   --llm_api_base_url https://api.groq.com/openai/v1 \
   --llm_api_key gsk_xxx \
