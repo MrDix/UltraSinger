@@ -316,11 +316,13 @@ Related flags:
 
 | Scenario | Provider | Model | Notes |
 |----------|----------|-------|-------|
-| Free + best quality | Groq | `qwen/qwen3-32b` | 99% accuracy, 0 degradations |
-| Free + fastest | Groq | `meta-llama/llama-4-scout-17b-16e-instruct` | 96% accuracy, 0.2s latency |
-| Free + safe | Groq | `llama-3.3-70b-versatile` | 90% accuracy, 0 degradations |
-| Commercial (default) | OpenAI | `gpt-4o-mini` | Good quality, pay-per-use |
-| Local (Ollama) | Ollama | >=32B models recommended | 8B models may degrade lyrics |
+| Best quality | Groq | `qwen/qwen3-32b` | 99% accuracy, ~$0.29/M input tokens |
+| Fastest | Groq | `meta-llama/llama-4-scout-17b-16e-instruct` | 96% accuracy, 0.2s latency |
+| Safe choice | Groq | `llama-3.3-70b-versatile` | 90% accuracy, 0 degradations |
+| Default | OpenAI | `gpt-4o-mini` | Good quality, $0.15/M input tokens |
+| Local (Ollama) | Ollama | >=32B models recommended | Free, but 8B models may degrade lyrics |
+
+All cloud providers charge per token, but costs are negligible (~$0.0003 per song).
 
 ```bash
 # With Groq (free, recommended)
