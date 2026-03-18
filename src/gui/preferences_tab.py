@@ -136,11 +136,13 @@ class PreferencesTab(QWidget):
 
         export_btn = QPushButton("Export Cookies")
         export_btn.clicked.connect(self._export_cookies)
+        export_btn.setEnabled(bool(cookie_manager))
         btn_row.addWidget(export_btn)
 
         clear_btn = QPushButton("Clear Cookies")
         clear_btn.setObjectName("dangerButton")
         clear_btn.clicked.connect(self._clear_cookies)
+        clear_btn.setEnabled(bool(cookie_manager))
         btn_row.addWidget(clear_btn)
 
         btn_row.addStretch()

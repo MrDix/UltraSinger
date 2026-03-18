@@ -1,6 +1,9 @@
 """Conversion queue and progress tab with log output."""
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -178,9 +181,13 @@ class QueueTab(QWidget):
         if not folder or not Path(folder).exists():
             return
 
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", folder])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", folder])
-        else:
-            subprocess.Popen(["xdg-open", folder])
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", folder])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except OSError as e:
+            logger.error("Failed to open folder %s: %s", folder, e)
+            self._log.append_line(f"[Error] Could not open folder: {e}")
