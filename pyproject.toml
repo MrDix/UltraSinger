@@ -42,7 +42,7 @@ dependencies = [
 windows = []
 linux = []
 macos = []
-scoring = ["ultrastar-score>=0.2.0"]
+scoring = ["ultrastar-score>=0.2.0,<0.3.0"]
 dev = ["pytest", "isort", "black", "pylint"]
 
 [dependency-groups]

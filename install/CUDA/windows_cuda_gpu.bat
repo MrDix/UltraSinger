@@ -118,7 +118,7 @@ if !errorlevel! equ 0 (
 
 echo Installation completed successfully!
 echo.
-echo Optional: Install ultrastar-score for scoring support:
-echo   uv pip install ultrastar-score
+echo Optional: Install scoring support:
+echo   uv sync --extra windows --extra scoring
 echo.
 pause

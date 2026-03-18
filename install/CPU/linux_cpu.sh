@@ -50,8 +50,8 @@ uv sync --extra linux
 
 echo "Installation completed successfully!"
 echo ""
-echo "Optional: Install ultrastar-score for scoring support:"
-echo "  uv pip install ultrastar-score"
+echo "Optional: Install scoring support:"
+echo "  uv sync --extra linux --extra scoring"
 echo ""
 echo "To run UltraSinger:"
 echo "  source .venv/bin/activate"
