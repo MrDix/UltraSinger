@@ -137,7 +137,6 @@ _Not all options working now!_
     --disable_quantization  Disable key quantization. Key quantization is enabled by default and removes pitch slides and out-of-key notes.
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
     --musescore_path        path to MuseScore executable
-    --keep_numbers          Transcribe numbers as digits and not words
     --ffmpeg                Path to ffmpeg and ffprobe executable
 
     [experimental]
@@ -325,23 +324,23 @@ Related flags:
 
 ```bash
 # With Groq (free, recommended)
-ultrasinger -i song.mp3 --llm_correct \
+UltraSinger.py -i song.mp3 --llm_correct \
   --llm_api_base_url https://api.groq.com/openai/v1 \
   --llm_api_key gsk_xxx \
   --llm_model qwen/qwen3-32b
 
 # With OpenAI
-ultrasinger -i song.mp3 --llm_correct --llm_api_key sk-xxx
+UltraSinger.py -i song.mp3 --llm_correct --llm_api_key sk-xxx
 
 # With local Ollama (>=32B model recommended)
-ultrasinger -i song.mp3 --llm_correct \
+UltraSinger.py -i song.mp3 --llm_correct \
   --llm_api_base_url http://localhost:11434/v1 \
   --llm_api_key ollama \
   --llm_model qwen2.5:32b
 
 # API key via environment variable
 export LLM_API_KEY=gsk_xxx
-ultrasinger -i song.mp3 --llm_correct --llm_api_base_url https://api.groq.com/openai/v1
+UltraSinger.py -i song.mp3 --llm_correct --llm_api_base_url https://api.groq.com/openai/v1
 ```
 
 #### Syllable-Level Note Splitting (`--syllable_split`)
