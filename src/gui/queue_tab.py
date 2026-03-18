@@ -120,6 +120,7 @@ class QueueTab(QWidget):
         self._stage_label.setText("")
         self._cancel_btn.setEnabled(True)
         self._open_folder_btn.setEnabled(False)
+        self._elapsed_label.setText("00:00")
 
         self._elapsed_timer.start()
         self._tick_timer.start()

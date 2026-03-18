@@ -1,6 +1,9 @@
 """Application preferences and configuration tab."""
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -84,9 +87,14 @@ class PreferencesTab(QWidget):
         self._key_visible_btn.clicked.connect(self._toggle_key_visibility)
         key_row.addWidget(self._key_visible_btn)
 
-        llm_card.add_row("API Key", QWidget())
-        llm_card.remove_last_item()
-        llm_card.add_layout(key_row)
+        # Add labeled key row with visibility toggle
+        labeled_key_row = QHBoxLayout()
+        labeled_key_row.setSpacing(12)
+        key_label = QLabel("API Key")
+        key_label.setMinimumWidth(180)
+        labeled_key_row.addWidget(key_label)
+        labeled_key_row.addLayout(key_row, 1)
+        llm_card.add_layout(labeled_key_row)
 
         self._llm_model_pref = QLineEdit()
         self._llm_model_pref.setText(config.get("llm_model", "qwen/qwen3-32b"))
@@ -186,8 +194,9 @@ class PreferencesTab(QWidget):
                     exported = self._cookie_manager.export_netscape(cookie_path)
                     self._cookie_path.setText(str(exported))
                 except OSError as e:
-                    logging.getLogger(__name__).error(
-                        "Failed to export cookies to %s: %s", cookie_path, e
+                    logger.error(
+                        "Failed to export cookies to %s: %s", cookie_path, e,
+                        exc_info=True,
                     )
 
     def _clear_cookies(self):

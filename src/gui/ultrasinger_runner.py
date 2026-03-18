@@ -44,6 +44,7 @@ class ConversionWorker(QObject):
         self._args = args
         self._process: subprocess.Popen | None = None
         self._cancelled = False
+        self._terminated_by_cancel = False
 
     def run(self):
         """Execute UltraSinger and stream output."""
@@ -74,6 +75,14 @@ class ConversionWorker(QObject):
                 errors="replace",
             )
 
+            # Re-check cancellation after process started
+            if self._cancelled:
+                self._process.terminate()
+                self._terminated_by_cancel = True
+                self.line_output.emit("[GUI] Conversion cancelled by user.")
+                self.finished.emit(-2)
+                return
+
             for line in self._process.stdout:
                 line = line.rstrip("\n\r")
                 self.line_output.emit(line)
@@ -89,7 +98,7 @@ class ConversionWorker(QObject):
             self.line_output.emit(f"[Error] {e}")
             exit_code = -1
 
-        if self._cancelled:
+        if self._terminated_by_cancel:
             self.line_output.emit("[GUI] Conversion cancelled by user.")
             exit_code = -2
 
@@ -98,6 +107,7 @@ class ConversionWorker(QObject):
     def cancel(self):
         """Terminate the subprocess (non-blocking)."""
         self._cancelled = True
+        self._terminated_by_cancel = True
         if self._process and self._process.poll() is None:
             self._process.terminate()
             threading.Thread(

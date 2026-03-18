@@ -67,8 +67,18 @@ class FileDropZone(QWidget):
             self._text_label.setText("Drag file here or click to select")
             self._icon_label.setText("\U0001F4C1")
 
-    def mousePressEvent(self, _event):
-        self._open_file_dialog()
+    def _validate_and_set(self, path: str):
+        """Validate extension, set file, and emit signal."""
+        ext = Path(path).suffix.lower()
+        if ext in ALL_EXTENSIONS:
+            self.set_file(path)
+            self.file_selected.emit(path)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._open_file_dialog()
+        else:
+            super().mousePressEvent(event)
 
     def keyPressEvent(self, event):
         """Open file dialog on Enter or Space key press."""
@@ -76,8 +86,7 @@ class FileDropZone(QWidget):
             self._open_file_dialog()
             event.accept()
             return
-        else:
-            super().keyPressEvent(event)
+        super().keyPressEvent(event)
 
     def _open_file_dialog(self):
         ext_list = " ".join(f"*{e}" for e in sorted(ALL_EXTENSIONS))
@@ -88,8 +97,13 @@ class FileDropZone(QWidget):
             f"Media Files ({ext_list});;All Files (*)",
         )
         if path:
-            self.set_file(path)
-            self.file_selected.emit(path)
+            self._validate_and_set(path)
+
+    def _set_drag_over(self, active: bool):
+        """Update the drag-over visual state."""
+        self.setProperty("dragOver", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -98,26 +112,17 @@ class FileDropZone(QWidget):
                 ext = Path(url.toLocalFile()).suffix.lower()
                 if ext in ALL_EXTENSIONS:
                     event.acceptProposedAction()
-                    self.setProperty("dragOver", True)
-                    self.style().unpolish(self)
-                    self.style().polish(self)
+                    self._set_drag_over(True)
                     return
         event.ignore()
 
     def dragLeaveEvent(self, _event):
-        self.setProperty("dragOver", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        self._set_drag_over(False)
 
     def dropEvent(self, event):
-        self.setProperty("dragOver", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
-
+        self._set_drag_over(False)
         if event.mimeData().hasUrls():
             url = event.mimeData().urls()[0]
             if url.isLocalFile():
-                path = url.toLocalFile()
-                self.set_file(path)
-                self.file_selected.emit(path)
+                self._validate_and_set(url.toLocalFile())
                 event.acceptProposedAction()
