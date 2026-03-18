@@ -179,10 +179,16 @@ class PreferencesTab(QWidget):
 
     def _export_cookies(self):
         if self._cookie_manager:
-            cookie_path = self._config.get("cookie_file", "")
+            # Prefer UI path, fall back to config
+            cookie_path = self._cookie_path.text() or self._config.get("cookie_file", "")
             if cookie_path:
-                exported = self._cookie_manager.export_netscape(cookie_path)
-                self._cookie_path.setText(str(exported))
+                try:
+                    exported = self._cookie_manager.export_netscape(cookie_path)
+                    self._cookie_path.setText(str(exported))
+                except OSError as e:
+                    logging.getLogger(__name__).error(
+                        "Failed to export cookies to %s: %s", cookie_path, e
+                    )
 
     def _clear_cookies(self):
         if self._cookie_manager:

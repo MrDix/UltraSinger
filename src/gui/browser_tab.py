@@ -77,10 +77,8 @@ class BrowserTab(QWidget):
         self._profile = QWebEngineProfile("ultrasinger", self)
         self._profile.setPersistentStoragePath(profile_path)
         self._profile.setCachePath(profile_path + "/cache")
-        self._profile.setHttpUserAgent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        )
+        # Use the default Chromium UA from Qt WebEngine (stays current with Qt updates)
+        # No custom override needed — Qt's default UA matches the bundled Chromium version
 
         # Cookie manager
         self.cookie_manager = CookieManager(self._profile, self)
@@ -109,14 +107,17 @@ class BrowserTab(QWidget):
         tb_layout.setSpacing(6)
 
         self._back_btn = QPushButton("\u25C0")
+        self._back_btn.setAccessibleName("Back")
         self._back_btn.clicked.connect(self._view.back)
         tb_layout.addWidget(self._back_btn)
 
         self._fwd_btn = QPushButton("\u25B6")
+        self._fwd_btn.setAccessibleName("Forward")
         self._fwd_btn.clicked.connect(self._view.forward)
         tb_layout.addWidget(self._fwd_btn)
 
         self._refresh_btn = QPushButton("\u21BB")
+        self._refresh_btn.setAccessibleName("Refresh")
         self._refresh_btn.clicked.connect(self._view.reload)
         tb_layout.addWidget(self._refresh_btn)
 

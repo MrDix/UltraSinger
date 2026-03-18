@@ -74,7 +74,10 @@ def load_config() -> dict:
         try:
             with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
                 stored = json.load(f)
-            config.update(stored)
+            if isinstance(stored, dict):
+                config.update(stored)
+            else:
+                logger.warning("Config file %s has unexpected format, ignoring", _CONFIG_FILE)
         except (json.JSONDecodeError, TypeError, OSError) as exc:
             logger.warning("Failed to load config from %s: %s", _CONFIG_FILE, exc)
     return config

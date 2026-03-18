@@ -1,5 +1,6 @@
 """Main application window with sidebar navigation."""
 
+import importlib.metadata
 import logging
 from pathlib import Path
 
@@ -26,7 +27,11 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("UltraSinger v0.0.13.dev16")
+        try:
+            _version = importlib.metadata.version("ultrasinger")
+        except importlib.metadata.PackageNotFoundError:
+            _version = "dev"
+        self.setWindowTitle(f"UltraSinger v{_version}")
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
 

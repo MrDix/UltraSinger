@@ -67,10 +67,18 @@ class SettingsCard(QWidget):
         self._layout.addWidget(info)
 
     def remove_last_item(self):
-        """Remove the last item from the card layout."""
-        last = self._layout.itemAt(self._layout.count() - 1)
-        if last:
-            self._layout.removeItem(last)
+        """Remove and clean up the last item from the card layout."""
+        if self._layout.count() == 0:
+            return
+        last = self._layout.takeAt(self._layout.count() - 1)
+        if last.widget():
+            last.widget().hide()
+            last.widget().deleteLater()
+        elif last.layout():
+            while last.layout().count():
+                child = last.layout().takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
 
     def add_separator(self):
         """Add a subtle horizontal separator."""

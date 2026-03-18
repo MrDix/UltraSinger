@@ -4,6 +4,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -95,14 +96,24 @@ class ConversionWorker(QObject):
         self.finished.emit(exit_code)
 
     def cancel(self):
-        """Terminate the subprocess."""
+        """Terminate the subprocess (non-blocking)."""
         self._cancelled = True
         if self._process and self._process.poll() is None:
             self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
+            threading.Thread(
+                target=self._wait_and_kill, daemon=True
+            ).start()
+
+    def _wait_and_kill(self):
+        """Wait for process to terminate; force-kill if it doesn't."""
+        proc = self._process
+        if not proc:
+            return
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if proc.poll() is None:
+                proc.kill()
 
     _STAGE_KEYWORDS = [
         ("Separating vocals", "Separating Vocals..."),

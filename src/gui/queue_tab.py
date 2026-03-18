@@ -116,6 +116,7 @@ class QueueTab(QWidget):
         self._status_icon.setText("\u23F3")
         self._status_icon.setStyleSheet("font-size: 20px; color: #ffa726;")
         self._status_label.setText("Converting...")
+        self._status_label.setStyleSheet("font-size: 16px; font-weight: 600;")
         self._stage_label.setText("")
         self._cancel_btn.setEnabled(True)
         self._open_folder_btn.setEnabled(False)
