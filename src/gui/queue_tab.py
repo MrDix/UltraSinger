@@ -148,7 +148,10 @@ class QueueTab(QWidget):
             self._status_label.setStyleSheet(
                 "font-size: 16px; font-weight: 600; color: #4caf50;"
             )
-            self._open_folder_btn.setEnabled(bool(self._current_output_folder))
+            self._open_folder_btn.setEnabled(
+                bool(self._current_output_folder)
+                and Path(self._current_output_folder).exists()
+            )
             self._log.append_line("")
             self._log.append_line("[Success] Conversion completed successfully!")
         elif exit_code == -2:
@@ -174,20 +177,16 @@ class QueueTab(QWidget):
         self._elapsed_label.setText(f"{mins:02d}:{secs:02d}")
 
     def _open_output_folder(self):
-        import subprocess
-        import sys
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
 
         folder = self._current_output_folder
         if not folder or not Path(folder).exists():
             return
 
-        try:
-            if sys.platform == "win32":
-                subprocess.Popen(["explorer", folder])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", folder])
-            else:
-                subprocess.Popen(["xdg-open", folder])
-        except OSError as e:
-            logger.error("Failed to open folder %s: %s", folder, e)
-            self._log.append_line(f"[Error] Could not open folder: {e}")
+        opened = QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(Path(folder).resolve()))
+        )
+        if not opened:
+            logger.error("Failed to open folder %s", folder)
+            self._log.append_line("[Error] Could not open folder.")

@@ -3,8 +3,6 @@
 import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -18,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from .widgets import AnimatedButton, SettingsCard, ToggleSwitch
+
+logger = logging.getLogger(__name__)
 
 
 class PreferencesTab(QWidget):
@@ -177,6 +177,8 @@ class PreferencesTab(QWidget):
             self._key_visible_btn.setText("\U0001F441")
 
     def _update_cookie_status(self):
+        if not hasattr(self, "_cookie_status"):
+            return
         if self._cookie_manager and self._cookie_manager.has_youtube_cookies:
             count = self._cookie_manager.youtube_cookie_count
             self._cookie_status.setText(
