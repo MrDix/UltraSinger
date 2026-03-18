@@ -1,0 +1,43 @@
+# Docker Compose for UltraSinger (CLI mode, GPU-accelerated)
+#
+# Usage:
+#   # Build the image
+#   docker compose build
+#
+#   # Run interactively
+#   docker compose run ultrasinger bash
+#
+#   # Convert a YouTube video
+#   docker compose run ultrasinger uv run python src/UltraSinger.py \
+#       -i "https://www.youtube.com/watch?v=XXXXX" -o output/ --cookiefile cookies.txt
+#
+#   # Convert a local file (place it in ./input/ first)
+#   docker compose run ultrasinger uv run python src/UltraSinger.py \
+#       -i input/song.mp3 -o output/
+
+services:
+  ultrasinger:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # GPU support via NVIDIA Container Toolkit
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      # Mount input folder for local files
+      - ./input:/app/UltraSinger/input
+      # Mount output folder for results
+      - ./output:/app/UltraSinger/output
+      # Mount cookies file if available
+      - ./cookies.txt:/app/UltraSinger/cookies.txt:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    # Default: interactive shell. Override with specific command.
+    stdin_open: true
+    tty: true
