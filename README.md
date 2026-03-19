@@ -49,7 +49,7 @@ This will help me a lot to keep this project alive and improve it.
     - [🎶 Input](#-input)
       - [Audio (full automatic)](#audio-full-automatic)
         - [Local file](#local-file)
-        - [Youtube](#youtube)
+        - [Video URL](#video-url)
       - [UltraStar (re-pitch)](#ultrastar-re-pitch)
     - [🗣 Transcriber](#-transcriber)
       - [Whisper](#whisper)
@@ -89,7 +89,7 @@ This will help me a lot to keep this project alive and improve it.
 
 ### 🖥️ Run (GUI)
 
-UltraSinger includes an optional graphical interface with an embedded YouTube browser,
+UltraSinger includes an optional graphical interface with an embedded video browser,
 full settings panel, and real-time conversion log.
 
 #### Install GUI dependencies
@@ -108,7 +108,7 @@ uv run python src/gui_main.py
 
 #### Features
 
-- **YouTube Browser** — Browse YouTube, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads.
+- **Video Browser** — Browse video platforms, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads.
 - **Settings Panel** — All CLI parameters available as form controls: Whisper model, language, post-processing options, experimental features, LLM lyric correction, and more.
 - **Conversion Queue** — Real-time color-coded log output with stage detection (Separating Vocals → Transcribing → Pitching → …), elapsed timer, and cancel support.
 - **Preferences** — Default output folder, LLM/Groq API configuration, cookie management.
@@ -124,7 +124,7 @@ _Not all options working now!_
     [opt]
     -h      This help text.
     -i      Ultrastar.txt
-            audio/video like .mp3, .mp4, .wav, youtube link
+            audio/video like .mp3, .mp4, .wav, video platform link
     -o      Output folder
 
     [mode]
@@ -202,7 +202,7 @@ default (Full Automatic Mode) - Creates all, depending on command line options
 -i "input/music.mp3"
 ```
 
-##### Youtube
+##### Video URL
 
 ```commandline
 -i https://www.youtube.com/watch?v=YwNs1Z0qRY0
@@ -436,7 +436,7 @@ Run UltraSinger in a container — no local Python install required.
 # Build the image (once)
 docker compose -f container/compose-cpu.yml build
 
-# Convert a YouTube video (CPU)
+# Convert a video URL (CPU)
 docker compose -f container/compose-cpu.yml run --rm ultrasinger \
     uv run python /app/UltraSinger/src/UltraSinger.py \
     -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/

@@ -111,11 +111,11 @@ podman run --rm -it --name ultrasinger \
 |-----------|---------------|---------|
 | `input/` | `/app/UltraSinger/input` | Local audio/video files to convert |
 | `output/` | `/app/UltraSinger/output` | Generated UltraStar txt + audio files |
-| `cookies.txt` | `/app/UltraSinger/cookies.txt` | YouTube cookies (optional, read-only) |
+| `cookies.txt` | `/app/UltraSinger/cookies.txt` | Video platform cookies (optional, read-only) |
 
-## YouTube cookies
+## Video platform cookies
 
-For age-restricted or authenticated YouTube downloads, export your cookies with a browser
+For age-restricted or authenticated video downloads, export your cookies with a browser
 extension like [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
 and save the file as `cookies.txt` in the project root.
 

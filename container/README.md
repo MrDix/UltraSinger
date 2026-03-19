@@ -8,7 +8,7 @@ Run UltraSinger in a Docker or Podman container — no local Python install requ
 # Build the image (once)
 docker compose -f container/compose-cpu.yml build
 
-# Convert a YouTube video (CPU)
+# Convert a video URL (CPU)
 docker compose -f container/compose-cpu.yml run --rm ultrasinger \
     uv run python /app/UltraSinger/src/UltraSinger.py \
     -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
