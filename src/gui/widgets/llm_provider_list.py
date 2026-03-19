@@ -7,13 +7,11 @@ import urllib.request
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
@@ -85,11 +83,15 @@ class LLMProviderRow(QWidget):
         header = QHBoxLayout()
         header.setSpacing(8)
 
-        self._default_radio = QRadioButton()
-        self._default_radio.setToolTip("Set as default provider")
-        self._default_radio.setChecked(provider.is_default)
-        self._default_radio.toggled.connect(self._on_default_changed)
-        header.addWidget(self._default_radio)
+        self._star_btn = QPushButton()
+        self._star_btn.setObjectName("starButton")
+        self._star_btn.setFixedSize(36, 36)
+        self._star_btn.setToolTip("Set as default provider")
+        self._star_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._star_btn.clicked.connect(self._on_star_clicked)
+        self._is_default = provider.is_default
+        self._update_star()
+        header.addWidget(self._star_btn)
 
         self._name_edit = QLineEdit(provider.name)
         self._name_edit.setPlaceholderText("Provider name (e.g. Groq Free)")
@@ -199,8 +201,12 @@ class LLMProviderRow(QWidget):
         return self._provider.id
 
     @property
-    def default_radio(self) -> QRadioButton:
-        return self._default_radio
+    def is_default(self) -> bool:
+        return self._is_default
+
+    def set_default(self, value: bool):
+        self._is_default = value
+        self._update_star()
 
     def get_api_key(self) -> str:
         return self._key_edit.text()
@@ -213,16 +219,31 @@ class LLMProviderRow(QWidget):
         self._provider.name = self._name_edit.text()
         self._provider.api_base_url = self._url_edit.text()
         self._provider.default_model = self._model_combo.currentText()
-        self._provider.is_default = self._default_radio.isChecked()
+        self._provider.is_default = self._is_default
         return self._provider
 
     def _on_field_changed(self):
         self.changed.emit()
 
-    def _on_default_changed(self, checked):
-        if checked:
-            self._provider.is_default = True
+    def _on_star_clicked(self):
+        if not self._is_default:
+            self._is_default = True
+            self._update_star()
             self.changed.emit()
+
+    def _update_star(self):
+        if self._is_default:
+            self._star_btn.setText("\u2605")  # ★ filled
+            self._star_btn.setStyleSheet(
+                "font-size: 22px; color: #f7d547; padding: 0px; "
+                "background: transparent; border: none;"
+            )
+        else:
+            self._star_btn.setText("\u2606")  # ☆ outline
+            self._star_btn.setStyleSheet(
+                "font-size: 22px; color: #a09888; padding: 0px; "
+                "background: transparent; border: none;"
+            )
 
     def _toggle_key_visibility(self):
         if self._key_edit.echoMode() == QLineEdit.EchoMode.Password:
@@ -343,17 +364,12 @@ class LLMProviderListWidget(QWidget):
         add_btn.clicked.connect(self._add_default_provider)
         layout.addWidget(add_btn)
 
-        # Radio button group for default selection
-        self._radio_group = QButtonGroup(self)
-        self._radio_group.setExclusive(True)
-
         self._update_empty_state()
 
     def set_providers(self, providers: list[LLMProvider], api_keys: dict[str, str] | None = None):
         """Populate with a list of providers. api_keys maps provider_id -> key."""
         # Clear existing rows
         for row in self._rows:
-            self._radio_group.removeButton(row.default_radio)
             self._rows_container.removeWidget(row)
             row.deleteLater()
         self._rows.clear()
@@ -380,7 +396,7 @@ class LLMProviderListWidget(QWidget):
     def get_default_provider_id(self) -> str:
         """Return the ID of the default provider, or empty string."""
         for row in self._rows:
-            if row.default_radio.isChecked():
+            if row.is_default:
                 return row.provider_id
         return ""
 
@@ -388,10 +404,18 @@ class LLMProviderListWidget(QWidget):
         """Add a provider row to the UI."""
         row = LLMProviderRow(provider, self)
         row.removed.connect(self._remove_provider)
-        row.changed.connect(self.providers_changed.emit)
-        self._radio_group.addButton(row.default_radio)
+        row.changed.connect(self._on_row_changed)
         self._rows.append(row)
         self._rows_container.addWidget(row)
+
+    def _on_row_changed(self):
+        """Ensure only one star is active (exclusive default selection)."""
+        sender = self.sender()
+        if isinstance(sender, LLMProviderRow) and sender.is_default:
+            for row in self._rows:
+                if row is not sender and row.is_default:
+                    row.set_default(False)
+        self.providers_changed.emit()
 
     def _add_default_provider(self):
         """Add a new provider with Groq defaults."""
@@ -410,15 +434,14 @@ class LLMProviderListWidget(QWidget):
         """Remove a provider row by ID."""
         for i, row in enumerate(self._rows):
             if row.provider_id == provider_id:
-                was_default = row.default_radio.isChecked()
-                self._radio_group.removeButton(row.default_radio)
+                was_default = row.is_default
                 self._rows_container.removeWidget(row)
                 row.deleteLater()
                 self._rows.pop(i)
 
                 # If we removed the default, make the first remaining one default
                 if was_default and self._rows:
-                    self._rows[0].default_radio.setChecked(True)
+                    self._rows[0].set_default(True)
 
                 self._update_empty_state()
                 self.providers_changed.emit()
