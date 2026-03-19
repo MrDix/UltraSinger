@@ -31,7 +31,7 @@ class QueueTab(QWidget):
         layout.setSpacing(16)
 
         # Header
-        header = QLabel("Conversion Queue")
+        header = QLabel("Console")
         header.setObjectName("sectionHeader")
         layout.addWidget(header)
 

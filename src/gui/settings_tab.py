@@ -6,11 +6,9 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QRadioButton,
     QScrollArea,
     QSpinBox,
@@ -96,7 +94,6 @@ class SettingsTab(QWidget):
         header.setObjectName("sectionHeader")
         self._main_layout.addWidget(header)
 
-        self._build_output_folder_section()
         self._build_transcription_section()
         self._build_language_section()
         self._build_pitch_section()
@@ -111,29 +108,6 @@ class SettingsTab(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
-
-    # ─── Output Folder ──────────────────────────────────────────────────
-
-    def _build_output_folder_section(self):
-        card = SettingsCard("Output Folder")
-
-        out_row = QHBoxLayout()
-        out_row.setSpacing(8)
-        self._output_field = QLineEdit()
-        self._output_field.setPlaceholderText("Output folder...")
-        self._output_field.setText(self._config.get("output_folder", ""))
-        out_row.addWidget(self._output_field, 1)
-        browse_btn = QPushButton("Browse")
-        browse_btn.clicked.connect(self._browse_output)
-        out_row.addWidget(browse_btn)
-        card.add_layout(out_row)
-
-        self._main_layout.addWidget(card)
-
-    def _browse_output(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Output Folder")
-        if path:
-            self._output_field.setText(path)
 
     # ─── Transcription ────────────────────────────────────────────────────
 
@@ -360,21 +334,6 @@ class SettingsTab(QWidget):
                            reset_callback=lambda: self._llm_correct.setChecked(
                                _DEFAULTS["llm_correct"]))
 
-        self._llm_api_url = QLineEdit()
-        self._llm_api_url.setText(
-            self._config.get("llm_api_base_url", "https://api.groq.com/openai/v1")
-        )
-        self._llm_api_url.setPlaceholderText("https://api.groq.com/openai/v1")
-        card.add_row("API Base URL", self._llm_api_url,
-                     reset_callback=lambda: self._llm_api_url.setText(
-                         _DEFAULTS["llm_api_base_url"]))
-
-        self._llm_api_key = QLineEdit()
-        self._llm_api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._llm_api_key.setText(self._config.get("llm_api_key", ""))
-        self._llm_api_key.setPlaceholderText("Enter API key...")
-        card.add_row("API Key", self._llm_api_key)
-
         self._llm_model = _NoScrollComboBox()
         self._llm_model.setEditable(True)
         self._llm_model.addItems([
@@ -389,16 +348,17 @@ class SettingsTab(QWidget):
         card.add_row("Model", self._llm_model,
                      reset_callback=lambda: self._llm_model.setCurrentText(
                          _DEFAULTS["llm_model"]))
+        self._llm_model.setEnabled(self._llm_correct.isChecked())
 
         card.add_info(
-            "Uses an OpenAI-compatible LLM API to post-correct Whisper transcription. "
-            "Recommended: Groq with qwen/qwen3-32b (free plan). "
-            "Get a free API key at https://console.groq.com"
+            "API URL and API key are configured in Preferences. "
+            "Recommended: Groq with qwen/qwen3-32b (free plan)."
         )
 
-        # Wire LLM toggle to enable/disable sub-fields
-        self._llm_correct.toggled_signal.connect(self._on_llm_toggled)
-        self._on_llm_toggled(self._llm_correct.isChecked())
+        # Wire LLM toggle to enable/disable model selector
+        self._llm_correct.toggled_signal.connect(
+            lambda on: self._llm_model.setEnabled(on)
+        )
 
         card.add_separator()
 
@@ -420,11 +380,6 @@ class SettingsTab(QWidget):
         )
 
         self._main_layout.addWidget(card)
-
-    def _on_llm_toggled(self, enabled: bool):
-        self._llm_api_url.setEnabled(enabled)
-        self._llm_api_key.setEnabled(enabled)
-        self._llm_model.setEnabled(enabled)
 
     # ─── Output ───────────────────────────────────────────────────────────
 
@@ -570,9 +525,12 @@ class SettingsTab(QWidget):
     # ─── Public API ───────────────────────────────────────────────────────
 
     def collect_config(self) -> dict:
-        """Collect all settings into a config dictionary."""
+        """Collect all conversion settings into a config dictionary.
+
+        Note: output_folder, llm_api_base_url, llm_api_key and cookie_file
+        are managed exclusively by the Preferences tab to avoid conflicts.
+        """
         return {
-            "output_folder": self._output_field.text(),
             "whisper_model": self._whisper_model.currentText(),
             "whisper_batch_size": self._whisper_batch_size.value(),
             "whisper_compute_type": self._whisper_compute.currentText(),
@@ -592,8 +550,6 @@ class SettingsTab(QWidget):
             "vocal_gap_fill": self._vocal_gap_fill.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "llm_correct": self._llm_correct.isChecked(),
-            "llm_api_base_url": self._llm_api_url.text(),
-            "llm_api_key": self._llm_api_key.text(),
             "llm_model": self._llm_model.currentText(),
             "calculate_score": self._calculate_score.isChecked(),
             "format_version": self._format_version.currentText(),

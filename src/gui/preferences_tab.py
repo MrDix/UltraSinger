@@ -42,7 +42,7 @@ class PreferencesTab(QWidget):
         main_layout.addWidget(header)
 
         # ── Output Folder ────────────────────────────────────────────────
-        card = SettingsCard("Default Output Folder")
+        card = SettingsCard("Output Folder")
         row = QHBoxLayout()
         self._output_folder = QLineEdit()
         self._output_folder.setText(config.get("output_folder", ""))

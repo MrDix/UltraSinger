@@ -53,7 +53,7 @@ class MainWindow(QMainWindow):
         self._sidebar = Sidebar()
         self._sidebar.add_section("\U0001F310", "YouTube")
         self._sidebar.add_section("\u2699\uFE0F", "Settings")
-        self._sidebar.add_section("\U0001F3B5", "Queue")
+        self._sidebar.add_section("\U0001F4BB", "Console")
         self._sidebar.add_section("\U0001F527", "Preferences")
         self._sidebar.finalize()
         main_layout.addWidget(self._sidebar)
@@ -112,7 +112,9 @@ class MainWindow(QMainWindow):
             self._sidebar.set_active(2)
             return
 
-        # Collect all settings
+        # Collect settings (conversion options) and preferences (global config).
+        # Preferences are applied last so output_folder, API keys etc. are
+        # never overwritten by empty Settings values.
         settings = self._settings_tab.collect_config()
         prefs = self._preferences_tab.collect_preferences()
         merged = {**self._config, **settings, **prefs}

@@ -132,9 +132,18 @@ class Sidebar(QWidget):
         """Set a YouTube URL as the input source."""
         self._current_input = url
         self._input_type = "youtube"
-        display = url
-        if len(display) > 35:
-            display = display[:32] + "..."
+        # Show a compact display: "YT: /watch?v=abc123"
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            path_and_query = parsed.path
+            if parsed.query:
+                path_and_query += "?" + parsed.query
+            display = f"YT: {path_and_query}"
+        except Exception:
+            display = url
+            if len(display) > 35:
+                display = display[:32] + "..."
         self._input_label.setText(f"\U0001F310 {display}")
         self._input_label.show()
         self._convert_btn.show()
