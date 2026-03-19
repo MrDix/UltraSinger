@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .config import get_browser_profile_path
 from .cookie_manager import CookieManager
 
 logger = logging.getLogger(__name__)
@@ -153,11 +152,12 @@ class BrowserTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Persistent browser profile
-        profile_path = get_browser_profile_path()
+        # Persistent browser profile — use a named profile so Qt/Chromium
+        # manages its own storage location automatically.  Do NOT override
+        # setPersistentStoragePath: Qt's Chromium backend may initialise the
+        # cookie store in the constructor, and overriding the path afterwards
+        # can silently break cookie persistence across restarts.
         self._profile = QWebEngineProfile("ultrasinger", self)
-        self._profile.setPersistentStoragePath(profile_path)
-        self._profile.setCachePath(profile_path + "/cache")
         self._profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
