@@ -70,7 +70,7 @@ class Sidebar(QWidget):
         layout.addWidget(logo)
 
         # ── Drag Files Zone ───────────────────────────────────────────
-        drop_frame = _SidebarSection("Drag Files")
+        drop_frame = _SidebarSection("Drop Files")
         self._drop_zone = FileDropZone()
         self._drop_zone.setMinimumHeight(70)
         self._drop_zone.setMaximumHeight(90)

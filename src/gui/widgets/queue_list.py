@@ -164,7 +164,7 @@ class QueueListWidget(QWidget):
         layout.addWidget(scroll, 1)  # stretch=1 → fills parent
 
         # Empty state label
-        self._empty_label = QLabel("Drop files or queue from browser")
+        self._empty_label = QLabel("Queue is empty")
         self._empty_label.setObjectName("caption")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet(
