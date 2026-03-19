@@ -1,27 +1,37 @@
-# Docker Compose for UltraSinger (CLI mode, GPU-accelerated)
+# Docker Compose for UltraSinger (CLI mode)
 #
-# Usage:
-#   # Build the image
-#   docker compose build
-#
-#   # Run interactively
-#   docker compose run ultrasinger bash
-#
-#   # Convert a YouTube video
+# CPU usage (works everywhere):
 #   docker compose run ultrasinger uv run python /app/UltraSinger/src/UltraSinger.py \
-#       -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/ \
-#       --cookiefile /app/UltraSinger/cookies.txt
+#       -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
 #
-#   # Convert a local file (place it in ./input/ first)
+# GPU usage (requires NVIDIA Container Toolkit):
+#   docker compose --profile gpu run ultrasinger-gpu uv run python /app/UltraSinger/src/UltraSinger.py \
+#       -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
+#
+# Convert a local file (place it in ./input/ first):
 #   docker compose run ultrasinger uv run python /app/UltraSinger/src/UltraSinger.py \
 #       -i /app/UltraSinger/input/song.mp3 -o /app/UltraSinger/output/
 
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  volumes:
+    - ./input:/app/UltraSinger/input
+    - ./output:/app/UltraSinger/output
+    - ./cookies.txt:/app/UltraSinger/cookies.txt:ro
+  stdin_open: true
+  tty: true
+
 services:
+  # CPU mode (default) — works without NVIDIA drivers
   ultrasinger:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    # GPU support via NVIDIA Container Toolkit
+    <<: *common
+
+  # GPU mode — requires NVIDIA Container Toolkit
+  ultrasinger-gpu:
+    <<: *common
+    profiles: [gpu]
     deploy:
       resources:
         reservations:
@@ -29,16 +39,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    volumes:
-      # Mount input folder for local files
-      - ./input:/app/UltraSinger/input
-      # Mount output folder for results
-      - ./output:/app/UltraSinger/output
-      # Mount cookies file if available
-      - ./cookies.txt:/app/UltraSinger/cookies.txt:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-    # Default: interactive shell. Override with specific command.
-    stdin_open: true
-    tty: true
