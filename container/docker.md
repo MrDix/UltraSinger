@@ -1,47 +1,132 @@
 # Containerized UltraSinger (Docker)
 
-To run the docker run `git clone https://github.com/rakuri255/UltraSinger.git`
-enter the UltraSinger folder.
-run this command to build the docker
-`docker build -t ultrasinger .` make sure to include the "." at the end
-let this run till complete.
-then run this command
-`docker run --gpus all -it --name UltraSinger -v  $pwd/src/output:/app/src/output ultrasinger`
+## Prerequisites
 
-Docker-Compose
-- there are two files that you can pick from.
-- cd into the `container` folder
-- to download and setup, run either
-  - `docker-compose -f compose-gpu.yml up` if you have an nvidia gpu to use with UltraSinger 
-  - or`docker-compose -f compose-nogpu.yml up` if you wish to only use the CPU for UltraSinger
+- [Docker Engine](https://docs.docker.com/engine/install/) installed
+- (optional) [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) for GPU acceleration
 
-Output
-by default the docker-compose will setup the output folder as `/output` inside the docker.
-on the host machine it will map to the folder with the `compose<gpu|nogpu>.yml` file under `output`
-you may change this by editing the `compose<gpu|nogpu>.yml`
+## Setup
 
-to edit the file.
-use any text editor you wish. i would recoment nano.
-run `nano compose<gpu|nogpu>.yml`
-then change this line
-`            -  ./output:/app/UltraSinger/src/output`
-to anything you line for on your host machine.
-`            -  /yourfolderpathhere:/app/UltraSinger/src/output`
-sample
-`            -  /mnt/user/appdata/UltraSinger:/output`
-note the blank space before the `-`
-formating is important here in this file.
+All commands are run from the **project root** directory.
 
-this will create and drop you into the docker.
-now run this command.
-`python3 UltraSinger.py -i file`
-or
-`python3 UltraSinger.py -i youtube_url`
-to use mp3's in the folder you git cloned you must place all songs you like in UltraSinger/src/output.
-this will be the place for youtube links aswell.
+### 1. Build the image
 
+```bash
+docker compose -f container/compose-cpu.yml build
+```
 
-to quit the docker just type exit.
+> Both compose files share the same `Dockerfile`, so you only need to build once.
 
-to reenter docker run this command
-`docker start UltraSinger && Docker exec -it UltraSinger /bin/bash`
+### 2. Choose CPU or GPU
+
+| Setup | Compose file | Requires |
+|-------|-------------|----------|
+| CPU | `container/compose-cpu.yml` | Docker only |
+| GPU | `container/compose-gpu.yml` | Docker + NVIDIA Container Toolkit |
+
+## Usage
+
+### One-off conversion (CLI)
+
+Use `docker compose run --rm` to convert a single song and remove the container afterwards.
+
+**Convert a YouTube video:**
+
+```bash
+# CPU
+docker compose -f container/compose-cpu.yml run --rm ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
+
+# GPU
+docker compose -f container/compose-gpu.yml run --rm ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
+```
+
+**Convert a local file:**
+
+Place the file in the `input/` folder, then:
+
+```bash
+docker compose -f container/compose-cpu.yml run --rm ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i /app/UltraSinger/input/song.mp3 -o /app/UltraSinger/output/
+```
+
+**Interactive shell** (for exploring or debugging):
+
+```bash
+docker compose -f container/compose-cpu.yml run --rm ultrasinger bash
+```
+
+### Long-running service
+
+Use `docker compose up -d` to start the container in the background. This keeps
+the container available for multiple conversions without rebuilding each time.
+
+```bash
+# Start in background
+docker compose -f container/compose-gpu.yml up -d
+
+# Run a conversion inside the running container
+docker compose -f container/compose-gpu.yml exec ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
+
+# View logs
+docker compose -f container/compose-gpu.yml logs -f
+
+# Stop and remove
+docker compose -f container/compose-gpu.yml down
+```
+
+## Volumes
+
+All paths are relative to the project root directory.
+
+| Host path | Container path | Purpose |
+|-----------|---------------|---------|
+| `input/` | `/app/UltraSinger/input` | Local audio/video files to convert |
+| `output/` | `/app/UltraSinger/output` | Generated UltraStar txt + audio files |
+| `cookies.txt` | `/app/UltraSinger/cookies.txt` | YouTube cookies (optional, read-only) |
+
+## YouTube cookies
+
+For age-restricted or authenticated YouTube downloads, export your cookies with a browser
+extension like [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
+and save the file as `cookies.txt` in the project root.
+
+Then add `--cookiefile /app/UltraSinger/cookies.txt` to the command:
+
+```bash
+docker compose -f container/compose-cpu.yml run --rm ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/ \
+    --cookiefile /app/UltraSinger/cookies.txt
+```
+
+## Building without Compose
+
+If you prefer to use `docker build` and `docker run` directly:
+
+```bash
+# Build
+docker build -t ultrasinger .
+
+# Run (CPU)
+docker run --rm -it \
+    -v ./input:/app/UltraSinger/input \
+    -v ./output:/app/UltraSinger/output \
+    ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i /app/UltraSinger/input/song.mp3 -o /app/UltraSinger/output/
+
+# Run (GPU)
+docker run --rm -it --gpus all \
+    -v ./input:/app/UltraSinger/input \
+    -v ./output:/app/UltraSinger/output \
+    ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i /app/UltraSinger/input/song.mp3 -o /app/UltraSinger/output/
+```
