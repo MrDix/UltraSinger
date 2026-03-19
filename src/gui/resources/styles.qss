@@ -65,7 +65,7 @@ QLabel#infoLabel {
 
 /* --- Sidebar --- */
 #sidebar {
-    background-color: #363652;
+    background-color: #363847;
     border-right: 1px solid rgba(240, 223, 192, 0.06);
     min-width: 56px;
 }
@@ -166,17 +166,19 @@ QComboBox:focus {
 
 QComboBox::drop-down {
     subcontrol-origin: padding;
-    subcontrol-position: top right;
-    width: 30px;
+    subcontrol-position: center right;
+    width: 32px;
     border: none;
+    border-left: 1px solid rgba(240, 223, 192, 0.08);
 }
 
 QComboBox::down-arrow {
     image: none;
-    border-left: 7px solid transparent;
-    border-right: 7px solid transparent;
-    border-top: 8px solid #a09888;
-    margin-right: 10px;
+    width: 0px;
+    height: 0px;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 7px solid #f0dfc0;
 }
 
 QComboBox QAbstractItemView {
