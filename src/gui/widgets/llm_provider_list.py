@@ -23,6 +23,20 @@ from ..models import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+class _NoScrollComboBox(QComboBox):
+    """QComboBox that ignores wheel events unless explicitly focused."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
 class _ModelFetcher(QObject):
     """Fetches available models from an OpenAI-compatible /v1/models endpoint."""
 
@@ -147,7 +161,7 @@ class LLMProviderRow(QWidget):
         model_label.setObjectName("caption")
         fields_model.addWidget(model_label)
 
-        self._model_combo = QComboBox()
+        self._model_combo = _NoScrollComboBox()
         self._model_combo.setEditable(True)
         self._model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._model_combo.lineEdit().setPlaceholderText("qwen/qwen3-32b")
