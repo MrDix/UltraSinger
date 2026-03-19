@@ -3,7 +3,7 @@
 import logging
 from urllib.parse import parse_qs, urlparse
 
-from PySide6.QtCore import QUrl, Signal, Qt
+from PySide6.QtCore import QTimer, QUrl, Signal, Qt
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
@@ -90,8 +90,9 @@ class BrowserTab(QWidget):
         self._view = QWebEngineView(self)
         self._view.setPage(self._page)
 
-        # Inject convert overlay on page load
+        # Inject convert overlay on page load and SPA navigation
         self._page.loadFinished.connect(self._inject_overlay)
+        self._page.urlChanged.connect(self._on_spa_navigation)
 
         # Build UI
         layout = QVBoxLayout(self)
@@ -154,6 +155,16 @@ class BrowserTab(QWidget):
         """Inject the Convert button overlay after page load."""
         if ok:
             self._page.runJavaScript(_CONVERT_OVERLAY_JS)
+
+    def _on_spa_navigation(self, url: QUrl):
+        """Re-inject overlay after YouTube SPA navigation.
+
+        YouTube is a single-page app — clicking a video doesn't trigger
+        ``loadFinished``, only ``urlChanged``.  We wait briefly for the
+        SPA transition to settle, then re-inject the Convert button.
+        """
+        if "youtube.com" in url.host():
+            QTimer.singleShot(1500, lambda: self._page.runJavaScript(_CONVERT_OVERLAY_JS))
 
     def _update_cookie_status(self):
         if self.cookie_manager.has_youtube_cookies:
