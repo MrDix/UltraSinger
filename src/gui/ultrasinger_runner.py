@@ -1,6 +1,7 @@
 """QThread-based runner for UltraSinger CLI subprocess."""
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Signal
 
 logger = logging.getLogger(__name__)
+
+_IS_WINDOWS = sys.platform == "win32"
 
 
 def _find_project_root() -> Path:
@@ -64,6 +67,15 @@ class ConversionWorker(QObject):
         self.line_output.emit("")
 
         try:
+            # On Windows, create a new process group so we can kill the
+            # entire tree (Python + yt-dlp + ffmpeg children) on cancel.
+            # On Unix, use a new session via os.setsid.
+            kwargs: dict = {}
+            if _IS_WINDOWS:
+                kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                kwargs["start_new_session"] = True
+
             self._process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -73,6 +85,7 @@ class ConversionWorker(QObject):
                 cwd=str(project_root),
                 encoding="utf-8",
                 errors="replace",
+                **kwargs,
             )
 
             # Re-check cancellation after process started
@@ -105,14 +118,37 @@ class ConversionWorker(QObject):
         self.finished.emit(exit_code)
 
     def cancel(self):
-        """Terminate the subprocess (non-blocking)."""
+        """Terminate the subprocess and all its children (non-blocking)."""
         self._cancelled = True
         self._terminated_by_cancel = True
         if self._process and self._process.poll() is None:
-            self._process.terminate()
+            self._kill_tree(self._process)
             threading.Thread(
                 target=self._wait_and_kill, daemon=True
             ).start()
+
+    @staticmethod
+    def _kill_tree(proc: subprocess.Popen):
+        """Kill the process and its entire child tree.
+
+        On Windows, ``taskkill /F /T`` kills the tree.
+        On Unix, ``os.killpg`` sends SIGTERM to the process group.
+        """
+        pid = proc.pid
+        try:
+            if _IS_WINDOWS:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                os.killpg(os.getpgid(pid), 15)  # SIGTERM
+        except (OSError, subprocess.SubprocessError):
+            # Fallback: just terminate the main process
+            try:
+                proc.terminate()
+            except OSError:
+                pass
 
     def _wait_and_kill(self):
         """Wait for process to terminate; force-kill if it doesn't."""
@@ -123,7 +159,10 @@ class ConversionWorker(QObject):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             if proc.poll() is None:
-                proc.kill()
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
 
     _STAGE_KEYWORDS = [
         ("Separating vocals", "Separating Vocals..."),

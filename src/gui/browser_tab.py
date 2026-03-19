@@ -38,6 +38,11 @@ _YOUTUBE_URL_RE = re.compile(
 # Only shows the Convert button on YouTube video pages (/watch?v=...).
 # Uses YouTube's ``yt-navigate-finish`` event for SPA re-injection and a
 # periodic poll as fallback in case YouTube removes the element.
+#
+# IMPORTANT: The click handler builds a *clean* URL containing only the
+# video ID (``?v=...``).  YouTube URLs often carry ``&list=...``,
+# ``&index=...`` etc. which would cause yt-dlp to download entire
+# playlists/mixes instead of the single selected video.
 _CONVERT_OVERLAY_JS = r"""
 (function() {
     'use strict';
@@ -50,7 +55,7 @@ _CONVERT_OVERLAY_JS = r"""
     function updateBtn() {
         var existing = document.getElementById('ultrasinger-convert-btn');
         if (isVideoPage()) {
-            if (existing) return;  // already visible
+            if (existing) return;
             if (!document.body) return;
 
             var btn = document.createElement('div');
@@ -73,13 +78,17 @@ _CONVERT_OVERLAY_JS = r"""
                 this.style.boxShadow = '0 4px 16px rgba(233,30,99,0.4)';
             });
             btn.addEventListener('click', function() {
+                // Extract only the video ID — strip &list=, &index= etc.
+                // to prevent yt-dlp from downloading an entire playlist.
+                var params = new URLSearchParams(window.location.search);
+                var videoId = params.get('v');
+                var cleanUrl = 'https://www.youtube.com/watch?v=' + videoId;
                 window.location.href = 'ultrasinger://convert?url=' +
-                    encodeURIComponent(window.location.href);
+                    encodeURIComponent(cleanUrl);
             });
             document.body.appendChild(btn);
             console.log('[UltraSinger] Convert button injected');
         } else {
-            // Not a video page — remove the button if it exists
             if (existing) {
                 existing.remove();
                 console.log('[UltraSinger] Convert button removed (not a video page)');
@@ -101,6 +110,23 @@ _CONVERT_OVERLAY_JS = r"""
 """
 
 
+def _clean_youtube_url(url: str) -> str:
+    """Strip playlist/mix parameters from a YouTube URL.
+
+    YouTube watch URLs often contain ``&list=``, ``&index=``,
+    ``&start_radio=`` etc. which cause yt-dlp to download the entire
+    playlist instead of a single video.  This function keeps only the
+    video ID parameter.
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    video_id = params.get("v", [""])[0]
+    if video_id:
+        return f"https://www.youtube.com/watch?v={video_id}"
+    # Not a standard watch URL — return as-is (e.g. youtu.be short links)
+    return url
+
+
 class UltraSingerWebPage(QWebEnginePage):
     """Custom web page that intercepts the ultrasinger:// URL scheme."""
 
@@ -111,7 +137,8 @@ class UltraSingerWebPage(QWebEnginePage):
             query = parse_qs(urlparse(url.toString()).query)
             youtube_url = query.get("url", [""])[0]
             if youtube_url:
-                self.convert_requested.emit(youtube_url)
+                # Double-safety: clean the URL in Python too
+                self.convert_requested.emit(_clean_youtube_url(youtube_url))
             return False
         return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
