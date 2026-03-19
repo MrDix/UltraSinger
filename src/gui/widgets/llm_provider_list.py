@@ -149,6 +149,7 @@ class LLMProviderRow(QWidget):
         self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._key_edit.setPlaceholderText("gsk_...")
         self._key_edit.textChanged.connect(self._on_field_changed)
+        self._key_edit.editingFinished.connect(self._on_key_editing_finished)
         fields2.addWidget(self._key_edit, 1)
 
         self._key_toggle = QPushButton("\U0001F441")
@@ -211,6 +212,16 @@ class LLMProviderRow(QWidget):
         url = self._url_edit.text().strip()
         if url and url != self._last_fetched_url:
             self._last_fetched_url = url
+            self._fetch_models()
+
+    def _on_key_editing_finished(self):
+        """Auto-fetch models when the key field loses focus, if no models loaded yet."""
+        if self._model_combo.count() <= 1 and self._url_edit.text().strip():
+            self._fetch_models()
+
+    def fetch_models_if_ready(self):
+        """Trigger a model fetch if URL and key are available. Called after key is loaded."""
+        if self._url_edit.text().strip() and self._key_edit.text().strip():
             self._fetch_models()
 
     def _fetch_models(self):
@@ -330,6 +341,10 @@ class LLMProviderListWidget(QWidget):
                 self._rows[-1].set_api_key(api_keys[provider.id])
 
         self._update_empty_state()
+
+        # Auto-fetch models for rows that have URL + key but no model list
+        for row in self._rows:
+            row.fetch_models_if_ready()
 
     def get_providers(self) -> list[LLMProvider]:
         """Return the current list of providers from the UI."""
