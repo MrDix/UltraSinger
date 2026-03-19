@@ -63,6 +63,20 @@ class QueueItemWidget(QWidget):
         self._title.setWordWrap(False)
         layout.addWidget(self._title, 1)
 
+        # Settings gear button (only for pending items)
+        self._gear_btn = QPushButton("\u2699")
+        self._gear_btn.setObjectName("ghostButton")
+        self._gear_btn.setFixedSize(20, 20)
+        self._gear_btn.setToolTip("Per-song settings")
+        self._gear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._gear_btn.setStyleSheet(
+            "font-size: 12px; color: #a09888; background: transparent;"
+        )
+        self._gear_btn.clicked.connect(
+            lambda: self.settings_requested.emit(self._item_id)
+        )
+        layout.addWidget(self._gear_btn)
+
         # Remove button (only for pending items)
         style = QApplication.style()
         self._remove_btn = QPushButton()
@@ -92,7 +106,8 @@ class QueueItemWidget(QWidget):
             f"font-size: 12px; color: {color}; background: transparent;"
         )
 
-        # Only show remove button for pending items
+        # Only show gear/remove buttons for pending items
+        self._gear_btn.setVisible(status == "pending")
         self._remove_btn.setVisible(status == "pending")
 
         # Dim completed/cancelled items
@@ -109,6 +124,17 @@ class QueueItemWidget(QWidget):
             self._title.setStyleSheet(
                 "font-size: 11px; color: #f0dfc0; background: transparent;"
             )
+
+    def set_has_overrides(self, has_overrides: bool):
+        """Show visual indicator when per-song overrides are active."""
+        color = "#00d4d4" if has_overrides else "#a09888"
+        self._gear_btn.setStyleSheet(
+            f"font-size: 12px; color: {color}; background: transparent;"
+        )
+        self._gear_btn.setToolTip(
+            "Per-song settings (custom)" if has_overrides
+            else "Per-song settings"
+        )
 
 
 class QueueListWidget(QWidget):
@@ -182,6 +208,12 @@ class QueueListWidget(QWidget):
         widget = self._item_widgets.get(item_id)
         if widget:
             widget.update_status(status)
+
+    def set_has_overrides(self, item_id: str, has_overrides: bool):
+        """Update the override indicator for a queue item."""
+        widget = self._item_widgets.get(item_id)
+        if widget:
+            widget.set_has_overrides(has_overrides)
 
     def _update_empty_state(self):
         """Show/hide empty state label."""

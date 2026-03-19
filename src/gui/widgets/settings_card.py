@@ -111,7 +111,7 @@ class SettingsCard(QWidget):
         """Add a subtle horizontal separator."""
         sep = QWidget()
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.06);")
+        sep.setStyleSheet("background-color: rgba(240, 223, 192, 0.06);")
         self._layout.addWidget(sep)
 
 

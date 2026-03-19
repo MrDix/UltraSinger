@@ -1,4 +1,11 @@
-"""Conversion settings panel with all UltraSinger parameters."""
+"""Reusable conversion settings form.
+
+``ConversionSettingsForm`` is embedded both in the unified Settings tab
+and in the per-song override dialog.  The old standalone ``SettingsTab``
+is replaced by this form.
+"""
+
+from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDoubleValidator, QIntValidator
@@ -12,21 +19,18 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
-    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from .config import _DEFAULTS
+from .models import LLMProvider
 from .widgets import SettingsCard, ToggleSwitch
 
 
 # ── Scroll-safe spin boxes ───────────────────────────────────────────────
 # Prevent accidental value changes when scrolling the settings page.
-# The wheel event is only accepted when the widget has explicit focus
-# (i.e. the user clicked into it), not when it merely receives focus
-# from being under the mouse cursor while scrolling.
 
 class _NoScrollSpinBox(QSpinBox):
     """QSpinBox that ignores wheel events unless explicitly focused."""
@@ -70,31 +74,20 @@ class _NoScrollComboBox(QComboBox):
             event.ignore()
 
 
-class SettingsTab(QWidget):
-    """Conversion settings form with all UltraSinger CLI parameters.
+class ConversionSettingsForm(QWidget):
+    """Reusable conversion settings form.
 
-    Input source selection (video URL / local file) is handled by
-    the sidebar, not by this tab. This tab only contains conversion options.
+    Used both inline in the unified Settings tab and inside the
+    per-song override dialog.
     """
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
         self._config = config
 
-        # Main scroll area
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        container = QWidget()
-        self._main_layout = QVBoxLayout(container)
-        self._main_layout.setContentsMargins(24, 24, 24, 24)
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.setSpacing(16)
-
-        # Section header
-        header = QLabel("Conversion Settings")
-        header.setObjectName("sectionHeader")
-        self._main_layout.addWidget(header)
 
         self._build_transcription_section()
         self._build_language_section()
@@ -103,13 +96,6 @@ class SettingsTab(QWidget):
         self._build_output_section()
         self._build_device_section()
         self._build_paths_section()
-
-        self._main_layout.addStretch(1)
-
-        scroll.setWidget(container)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
 
     # ─── Transcription ────────────────────────────────────────────────────
 
@@ -336,30 +322,14 @@ class SettingsTab(QWidget):
                            reset_callback=lambda: self._llm_correct.setChecked(
                                _DEFAULTS["llm_correct"]))
 
-        self._llm_model = _NoScrollComboBox()
-        self._llm_model.setEditable(True)
-        self._llm_model.addItems([
-            "qwen/qwen3-32b",
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-            "meta-llama/llama-3.3-70b-versatile",
-            "gpt-4o-mini",
-        ])
-        self._llm_model.setCurrentText(
-            self._config.get("llm_model", "qwen/qwen3-32b")
-        )
-        card.add_row("Model", self._llm_model,
-                     reset_callback=lambda: self._llm_model.setCurrentText(
-                         _DEFAULTS["llm_model"]))
-        self._llm_model.setEnabled(self._llm_correct.isChecked())
+        # Provider selector (populated externally via set_llm_providers)
+        self._llm_provider = _NoScrollComboBox()
+        self._llm_provider.setEnabled(self._llm_correct.isChecked())
+        card.add_row("LLM Provider", self._llm_provider,
+                     "Select which LLM provider to use for lyric correction")
 
-        card.add_info(
-            "API URL and API key are configured in Preferences. "
-            "Recommended: Groq with qwen/qwen3-32b (free plan)."
-        )
-
-        # Wire LLM toggle to enable/disable model selector
         self._llm_correct.toggled_signal.connect(
-            lambda on: self._llm_model.setEnabled(on)
+            lambda on: self._llm_provider.setEnabled(on)
         )
 
         card.add_separator()
@@ -524,14 +494,37 @@ class SettingsTab(QWidget):
         if path:
             line_edit.setText(path)
 
+    # ─── LLM Provider API ────────────────────────────────────────────────
+
+    def set_llm_providers(self, providers: list[LLMProvider],
+                          selected_id: str = ""):
+        """Populate the LLM provider combobox.
+
+        Args:
+            providers: Available LLM providers.
+            selected_id: ID of the provider to pre-select.  If empty,
+                         the default provider is selected.
+        """
+        self._llm_provider.clear()
+        default_idx = 0
+        for i, p in enumerate(providers):
+            label = f"{p.name} ({p.default_model})" if p.name else p.default_model
+            self._llm_provider.addItem(label, userData=p.id)
+            if selected_id and p.id == selected_id:
+                default_idx = i
+            elif not selected_id and p.is_default:
+                default_idx = i
+        if self._llm_provider.count() > 0:
+            self._llm_provider.setCurrentIndex(default_idx)
+
+    def get_selected_provider_id(self) -> str:
+        """Return the ID of the currently selected LLM provider."""
+        return self._llm_provider.currentData() or ""
+
     # ─── Public API ───────────────────────────────────────────────────────
 
     def collect_config(self) -> dict:
-        """Collect all conversion settings into a config dictionary.
-
-        Note: output_folder, llm_api_base_url, llm_api_key and cookie_file
-        are managed exclusively by the Preferences tab to avoid conflicts.
-        """
+        """Collect all conversion settings into a config dictionary."""
         return {
             "whisper_model": self._whisper_model.currentText(),
             "whisper_batch_size": self._whisper_batch_size.value(),
@@ -553,7 +546,7 @@ class SettingsTab(QWidget):
             "vocal_gap_fill": self._vocal_gap_fill.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "llm_correct": self._llm_correct.isChecked(),
-            "llm_model": self._llm_model.currentText(),
+            "llm_provider_id": self.get_selected_provider_id(),
             "calculate_score": self._calculate_score.isChecked(),
             "format_version": self._format_version.currentText(),
             "create_plot": self._create_plot.isChecked(),

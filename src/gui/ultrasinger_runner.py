@@ -319,12 +319,38 @@ class UltraSingerRunner(QObject):
         # LLM correction
         if config.get("llm_correct"):
             args.append("--llm_correct")
-            if config.get("llm_api_base_url"):
-                args.extend(["--llm_api_base_url", config["llm_api_base_url"]])
-            if config.get("llm_api_key"):
-                args.extend(["--llm_api_key", config["llm_api_key"]])
-            if config.get("llm_model"):
-                args.extend(["--llm_model", config["llm_model"]])
+
+            # Resolve LLM provider: look up by provider ID, fall back to
+            # flat config keys for backward compatibility.
+            provider_id = config.get("llm_provider_id", "")
+            providers = config.get("llm_providers", [])
+            provider = None
+            if provider_id and providers:
+                provider = next(
+                    (p for p in providers
+                     if (p.get("id") if isinstance(p, dict) else getattr(p, "id", "")) == provider_id),
+                    None,
+                )
+
+            if provider:
+                p = provider if isinstance(provider, dict) else provider.__dict__
+                url = p.get("api_base_url", "")
+                model = p.get("default_model", "")
+                api_key = config.get(f"llm_api_key_{provider_id}", "")
+                if url:
+                    args.extend(["--llm_api_base_url", url])
+                if api_key:
+                    args.extend(["--llm_api_key", api_key])
+                if model:
+                    args.extend(["--llm_model", model])
+            else:
+                # Flat keys (legacy / no provider selected)
+                if config.get("llm_api_base_url"):
+                    args.extend(["--llm_api_base_url", config["llm_api_base_url"]])
+                if config.get("llm_api_key"):
+                    args.extend(["--llm_api_key", config["llm_api_key"]])
+                if config.get("llm_model"):
+                    args.extend(["--llm_model", config["llm_model"]])
 
         # Paths
         if config.get("musescore_path"):

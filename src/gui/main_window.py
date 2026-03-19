@@ -13,10 +13,11 @@ from PySide6.QtWidgets import (
 
 from .browser_tab import BrowserTab
 from .config import load_config, save_config
+from .models import LLMProvider
 from .preferences_tab import PreferencesTab
 from .queue_manager import QueueManager
 from .queue_tab import QueueTab
-from .settings_tab import SettingsTab
+from .settings_dialog import PerSongSettingsDialog
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
@@ -25,18 +26,16 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     """Main UltraSinger GUI window with sidebar navigation.
 
-    Input flow:
-      - Drop a file on the sidebar drop zone -> added to queue
-      - Browse video platform -> click Convert overlay -> added to queue
-      - Click "Start All" in sidebar to process queue sequentially
-      - Settings tab contains conversion parameters, Preferences has global config
+    Three-tab layout:
+      - Video: embedded browser for video platform navigation
+      - Console: log output and batch progress
+      - Settings: unified conversion defaults, LLM providers, cookies
     """
 
     # Tab indices
     _TAB_VIDEO = 0
-    _TAB_SETTINGS = 1
-    _TAB_CONSOLE = 2
-    _TAB_PREFERENCES = 3
+    _TAB_CONSOLE = 1
+    _TAB_SETTINGS = 2
 
     def __init__(self):
         super().__init__()
@@ -61,9 +60,8 @@ class MainWindow(QMainWindow):
         # Sidebar (with drop zone and queue list)
         self._sidebar = Sidebar()
         self._sidebar.add_section("\U0001F310", "Video")
-        self._sidebar.add_section("\u2699\uFE0F", "Settings")
         self._sidebar.add_section("\U0001F4BB", "Console")
-        self._sidebar.add_section("\U0001F527", "Preferences")
+        self._sidebar.add_section("\u2699\uFE0F", "Settings")
         self._sidebar.finalize()
         main_layout.addWidget(self._sidebar)
 
@@ -72,18 +70,16 @@ class MainWindow(QMainWindow):
         self._stack.setObjectName("contentArea")
         main_layout.addWidget(self._stack, 1)
 
-        # Create tabs
+        # Create tabs (3 tabs: Video, Console, Settings)
         self._browser_tab = BrowserTab()
-        self._settings_tab = SettingsTab(self._config)
         self._queue_tab = QueueTab()
-        self._preferences_tab = PreferencesTab(
+        self._settings_tab = PreferencesTab(
             self._config, self._browser_tab.cookie_manager
         )
 
         self._stack.addWidget(self._browser_tab)
-        self._stack.addWidget(self._settings_tab)
         self._stack.addWidget(self._queue_tab)
-        self._stack.addWidget(self._preferences_tab)
+        self._stack.addWidget(self._settings_tab)
 
         # Queue manager (owns the runner, drives batch execution)
         self._queue_mgr = QueueManager(self)
@@ -103,6 +99,10 @@ class MainWindow(QMainWindow):
         )
         self._sidebar.queue_list.remove_requested.connect(
             self._on_remove_from_queue
+        )
+        # Wire per-song settings gear icon
+        self._sidebar.queue_list.settings_requested.connect(
+            self._on_per_song_settings
         )
 
         # Wire Start All / Clear buttons
@@ -149,6 +149,36 @@ class MainWindow(QMainWindow):
         self._queue_mgr.clear_pending()
         self._update_queue_buttons()
 
+    def _on_per_song_settings(self, item_id: str):
+        """Open the per-song settings override dialog."""
+        item = next(
+            (it for it in self._queue_mgr.items if it.id == item_id), None
+        )
+        if item is None or item.status != "pending":
+            return
+
+        # Collect current global config from the settings tab
+        global_config = {**self._config, **self._settings_tab.collect_all()}
+        providers = self._settings_tab.get_llm_providers()
+
+        dialog = PerSongSettingsDialog(
+            global_config=global_config,
+            overrides=item.settings_overrides,
+            llm_providers=providers,
+            title=item.title,
+            parent=self,
+        )
+
+        if dialog.exec():
+            item.settings_overrides = dialog.get_overrides()
+            # Visual indicator: mark items with overrides
+            has_overrides = bool(item.settings_overrides)
+            self._sidebar.queue_list.set_has_overrides(item_id, has_overrides)
+            logger.info(
+                "Per-song overrides for '%s': %d keys",
+                item.title, len(item.settings_overrides),
+            )
+
     def _on_start_all(self):
         """Start processing all pending queue items."""
         if self._queue_mgr.pending_count() == 0:
@@ -159,18 +189,16 @@ class MainWindow(QMainWindow):
             self._sidebar.set_active(self._TAB_CONSOLE)
             return
 
-        # Collect and save current config
-        settings = self._settings_tab.collect_config()
-        prefs = self._preferences_tab.collect_preferences()
-        merged = {**self._config, **settings, **prefs}
-        self._config.update(merged)
+        # Collect and save current config from unified settings tab
+        all_settings = self._settings_tab.collect_all()
+        self._config.update(all_settings)
         save_config(self._config)
 
         # Auto-export cookies
         self._auto_export_cookies()
 
         # Set global config on queue manager and start
-        self._queue_mgr.set_global_config(merged)
+        self._queue_mgr.set_global_config(self._config)
 
         # Switch to console tab
         self._sidebar.set_active(self._TAB_CONSOLE)
@@ -212,10 +240,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Save configuration on close."""
         try:
-            settings = self._settings_tab.collect_config()
-            prefs = self._preferences_tab.collect_preferences()
-            self._config.update(settings)
-            self._config.update(prefs)
+            all_settings = self._settings_tab.collect_all()
+            self._config.update(all_settings)
             save_config(self._config)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)

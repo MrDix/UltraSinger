@@ -138,6 +138,17 @@ class QueueManager(QObject):
         # Merge global config with per-song overrides
         merged = {**self._global_config, **next_item.settings_overrides}
 
+        # Ensure per-provider API keys are available for build_args
+        provider_id = merged.get("llm_provider_id", "")
+        if provider_id and f"llm_api_key_{provider_id}" not in merged:
+            try:
+                from .secrets import get_secret
+                key = get_secret(f"llm_api_key_{provider_id}", merged)
+                if key:
+                    merged[f"llm_api_key_{provider_id}"] = key
+            except ImportError:
+                pass
+
         self.line_output.emit(
             f"[Queue] Starting: {next_item.title}"
         )

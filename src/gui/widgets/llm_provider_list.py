@@ -1,0 +1,272 @@
+"""Widget for managing multiple LLM API providers."""
+
+import logging
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QRadioButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..models import LLMProvider
+
+logger = logging.getLogger(__name__)
+
+
+class LLMProviderRow(QWidget):
+    """A single editable row representing one LLM provider."""
+
+    removed = Signal(str)  # provider_id
+    changed = Signal()
+
+    def __init__(self, provider: LLMProvider, parent=None):
+        super().__init__(parent)
+        self._provider = provider
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(6)
+
+        # Header row: radio (default) + name + delete button
+        header = QHBoxLayout()
+        header.setSpacing(8)
+
+        self._default_radio = QRadioButton()
+        self._default_radio.setToolTip("Set as default provider")
+        self._default_radio.setChecked(provider.is_default)
+        self._default_radio.toggled.connect(self._on_default_changed)
+        header.addWidget(self._default_radio)
+
+        self._name_edit = QLineEdit(provider.name)
+        self._name_edit.setPlaceholderText("Provider name (e.g. Groq Free)")
+        self._name_edit.setStyleSheet("font-weight: bold;")
+        self._name_edit.textChanged.connect(self._on_field_changed)
+        header.addWidget(self._name_edit, 1)
+
+        delete_btn = QPushButton("\u2715")
+        delete_btn.setObjectName("ghostButton")
+        delete_btn.setFixedSize(28, 28)
+        delete_btn.setToolTip("Remove provider")
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.clicked.connect(lambda: self.removed.emit(self._provider.id))
+        header.addWidget(delete_btn)
+
+        layout.addLayout(header)
+
+        # Fields row 1: URL + Model
+        fields1 = QHBoxLayout()
+        fields1.setSpacing(8)
+
+        url_label = QLabel("URL")
+        url_label.setFixedWidth(40)
+        url_label.setObjectName("caption")
+        fields1.addWidget(url_label)
+
+        self._url_edit = QLineEdit(provider.api_base_url)
+        self._url_edit.setPlaceholderText("https://api.groq.com/openai/v1")
+        self._url_edit.textChanged.connect(self._on_field_changed)
+        fields1.addWidget(self._url_edit, 2)
+
+        model_label = QLabel("Model")
+        model_label.setFixedWidth(45)
+        model_label.setObjectName("caption")
+        fields1.addWidget(model_label)
+
+        self._model_edit = QLineEdit(provider.default_model)
+        self._model_edit.setPlaceholderText("qwen/qwen3-32b")
+        self._model_edit.textChanged.connect(self._on_field_changed)
+        fields1.addWidget(self._model_edit, 1)
+
+        layout.addLayout(fields1)
+
+        # Fields row 2: API Key
+        fields2 = QHBoxLayout()
+        fields2.setSpacing(8)
+
+        key_label = QLabel("Key")
+        key_label.setFixedWidth(40)
+        key_label.setObjectName("caption")
+        fields2.addWidget(key_label)
+
+        self._key_edit = QLineEdit()
+        self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._key_edit.setPlaceholderText("gsk_...")
+        self._key_edit.textChanged.connect(self._on_field_changed)
+        fields2.addWidget(self._key_edit, 1)
+
+        self._key_toggle = QPushButton("\U0001F441")
+        self._key_toggle.setObjectName("ghostButton")
+        self._key_toggle.setFixedSize(28, 28)
+        self._key_toggle.setToolTip("Show/hide API key")
+        self._key_toggle.clicked.connect(self._toggle_key_visibility)
+        fields2.addWidget(self._key_toggle)
+
+        layout.addLayout(fields2)
+
+        # Bottom separator
+        sep = QWidget()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: rgba(240, 223, 192, 0.06);")
+        layout.addWidget(sep)
+
+    @property
+    def provider(self) -> LLMProvider:
+        return self._provider
+
+    @property
+    def provider_id(self) -> str:
+        return self._provider.id
+
+    @property
+    def default_radio(self) -> QRadioButton:
+        return self._default_radio
+
+    def get_api_key(self) -> str:
+        return self._key_edit.text()
+
+    def set_api_key(self, key: str):
+        self._key_edit.setText(key)
+
+    def collect(self) -> LLMProvider:
+        """Return an updated LLMProvider from current field values."""
+        self._provider.name = self._name_edit.text()
+        self._provider.api_base_url = self._url_edit.text()
+        self._provider.default_model = self._model_edit.text()
+        self._provider.is_default = self._default_radio.isChecked()
+        return self._provider
+
+    def _on_field_changed(self):
+        self.changed.emit()
+
+    def _on_default_changed(self, checked):
+        if checked:
+            self._provider.is_default = True
+            self.changed.emit()
+
+    def _toggle_key_visibility(self):
+        if self._key_edit.echoMode() == QLineEdit.EchoMode.Password:
+            self._key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+        else:
+            self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+
+
+class LLMProviderListWidget(QWidget):
+    """Widget for managing multiple LLM providers with add/edit/remove."""
+
+    providers_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows: list[LLMProviderRow] = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # Container for provider rows
+        self._rows_container = QVBoxLayout()
+        self._rows_container.setContentsMargins(0, 0, 0, 0)
+        self._rows_container.setSpacing(2)
+        layout.addLayout(self._rows_container)
+
+        # Empty state
+        self._empty_label = QLabel("No LLM providers configured")
+        self._empty_label.setObjectName("caption")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setStyleSheet(
+            "color: #605848; font-size: 12px; padding: 12px;"
+        )
+        layout.addWidget(self._empty_label)
+
+        # Add button
+        add_btn = QPushButton("+ Add LLM Provider")
+        add_btn.setObjectName("ghostButton")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(self._add_default_provider)
+        layout.addWidget(add_btn)
+
+        # Radio button group for default selection
+        self._radio_group = QButtonGroup(self)
+        self._radio_group.setExclusive(True)
+
+        self._update_empty_state()
+
+    def set_providers(self, providers: list[LLMProvider], api_keys: dict[str, str] | None = None):
+        """Populate with a list of providers. api_keys maps provider_id -> key."""
+        # Clear existing rows
+        for row in self._rows:
+            self._radio_group.removeButton(row.default_radio)
+            self._rows_container.removeWidget(row)
+            row.deleteLater()
+        self._rows.clear()
+
+        for provider in providers:
+            self._add_row(provider)
+            if api_keys and provider.id in api_keys:
+                self._rows[-1].set_api_key(api_keys[provider.id])
+
+        self._update_empty_state()
+
+    def get_providers(self) -> list[LLMProvider]:
+        """Return the current list of providers from the UI."""
+        return [row.collect() for row in self._rows]
+
+    def get_api_keys(self) -> dict[str, str]:
+        """Return provider_id -> api_key mapping."""
+        return {row.provider_id: row.get_api_key() for row in self._rows}
+
+    def get_default_provider_id(self) -> str:
+        """Return the ID of the default provider, or empty string."""
+        for row in self._rows:
+            if row.default_radio.isChecked():
+                return row.provider_id
+        return ""
+
+    def _add_row(self, provider: LLMProvider):
+        """Add a provider row to the UI."""
+        row = LLMProviderRow(provider, self)
+        row.removed.connect(self._remove_provider)
+        row.changed.connect(self.providers_changed.emit)
+        self._radio_group.addButton(row.default_radio)
+        self._rows.append(row)
+        self._rows_container.addWidget(row)
+
+    def _add_default_provider(self):
+        """Add a new provider with Groq defaults."""
+        is_first = len(self._rows) == 0
+        provider = LLMProvider(
+            name="Groq",
+            api_base_url="https://api.groq.com/openai/v1",
+            default_model="qwen/qwen3-32b",
+            is_default=is_first,
+        )
+        self._add_row(provider)
+        self._update_empty_state()
+        self.providers_changed.emit()
+
+    def _remove_provider(self, provider_id: str):
+        """Remove a provider row by ID."""
+        for i, row in enumerate(self._rows):
+            if row.provider_id == provider_id:
+                was_default = row.default_radio.isChecked()
+                self._radio_group.removeButton(row.default_radio)
+                self._rows_container.removeWidget(row)
+                row.deleteLater()
+                self._rows.pop(i)
+
+                # If we removed the default, make the first remaining one default
+                if was_default and self._rows:
+                    self._rows[0].default_radio.setChecked(True)
+
+                self._update_empty_state()
+                self.providers_changed.emit()
+                return
+
+    def _update_empty_state(self):
+        self._empty_label.setVisible(len(self._rows) == 0)

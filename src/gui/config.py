@@ -20,9 +20,6 @@ logger = logging.getLogger(__name__)
 _CONFIG_DIR = Path.home() / ".ultrasinger"
 _CONFIG_FILE = _CONFIG_DIR / "config.json"
 
-# Keys that must never be written to config.json (stored in keyring instead)
-_SECRET_KEYS = frozenset({"llm_api_key"})
-
 # Defaults for all settings
 _DEFAULTS = {
     # Output
@@ -49,6 +46,8 @@ _DEFAULTS = {
     "keep_numbers": False,
     # LLM
     "llm_correct": False,
+    "llm_providers": [],  # list of LLMProvider dicts
+    # Legacy single-LLM keys (kept for migration detection)
     "llm_api_base_url": "https://api.groq.com/openai/v1",
     "llm_model": "qwen/qwen3-32b",
     # Scoring
@@ -75,6 +74,76 @@ _DEFAULTS = {
     # Cookie
     "cookie_file": str(_CONFIG_DIR / "cookies.txt"),
 }
+
+
+def _is_secret_key(key: str) -> bool:
+    """Check whether a config key holds secret data (API keys)."""
+    return key == "llm_api_key" or key.startswith("llm_api_key_")
+
+
+def _get_secret_keys(config: dict) -> set[str]:
+    """Collect all secret key names from config (legacy + per-provider)."""
+    keys = set()
+    if "llm_api_key" in config:
+        keys.add("llm_api_key")
+    for provider in config.get("llm_providers", []):
+        pid = provider.get("id", "") if isinstance(provider, dict) else ""
+        if pid:
+            keys.add(f"llm_api_key_{pid}")
+    # Also catch any llm_api_key_* that are directly in the config dict
+    for k in config:
+        if _is_secret_key(k):
+            keys.add(k)
+    return keys
+
+
+def _migrate_single_llm_to_provider(config: dict) -> None:
+    """Auto-create an LLM provider from legacy single-LLM config fields.
+
+    Called when ``llm_providers`` is empty but legacy fields exist.
+    """
+    from .models import LLMProvider
+
+    url = config.get("llm_api_base_url", "")
+    model = config.get("llm_model", "")
+    if not url and not model:
+        return
+
+    # Derive a display name from the URL
+    name = "Groq"
+    if url and "groq" not in url.lower():
+        from urllib.parse import urlparse
+        try:
+            name = urlparse(url).hostname or "Custom"
+        except Exception:
+            name = "Custom"
+
+    provider = LLMProvider(
+        name=name,
+        api_base_url=url,
+        default_model=model,
+        is_default=True,
+    )
+    config["llm_providers"] = [provider.to_dict()]
+
+    # Migrate API key in keyring: llm_api_key → llm_api_key_{provider.id}
+    try:
+        from .secrets import get_secret, store_secret
+
+        legacy_key = get_secret("llm_api_key", config)
+        if legacy_key:
+            store_secret(f"llm_api_key_{provider.id}", legacy_key)
+            logger.info(
+                "Migrated LLM API key to provider '%s' (%s)",
+                provider.name, provider.id,
+            )
+    except ImportError:
+        pass
+
+    logger.info(
+        "Migrated legacy LLM config to provider: %s (%s, %s)",
+        provider.name, url, model,
+    )
 
 
 def _secure_directory(path: Path) -> None:
@@ -139,11 +208,17 @@ def load_config() -> dict:
         except (json.JSONDecodeError, TypeError, OSError) as exc:
             logger.warning("Failed to load config from %s: %s", _CONFIG_FILE, exc)
 
-    # Load secrets from keyring (with legacy migration from config.json)
+    # Migrate legacy single-LLM to multi-provider
+    providers = config.get("llm_providers", [])
+    if not providers:
+        _migrate_single_llm_to_provider(config)
+
+    # Load secrets from keyring (legacy key + per-provider keys)
     try:
         from .secrets import get_secret
 
-        for key in _SECRET_KEYS:
+        secret_keys = _get_secret_keys(config)
+        for key in secret_keys:
             config[key] = get_secret(key, config)
     except ImportError:
         logger.debug("secrets module not available, skipping keyring integration")
@@ -164,14 +239,15 @@ def save_config(config: dict) -> None:
     try:
         from .secrets import store_secret
 
-        for key in _SECRET_KEYS:
+        secret_keys = _get_secret_keys(config)
+        for key in secret_keys:
             value = config.get(key, "")
             store_secret(key, value)
     except ImportError:
         logger.debug("secrets module not available, skipping keyring storage")
 
     # Build JSON-safe copy without secret keys
-    json_config = {k: v for k, v in config.items() if k not in _SECRET_KEYS}
+    json_config = {k: v for k, v in config.items() if not _is_secret_key(k)}
 
     try:
         fd, tmp_path = tempfile.mkstemp(
