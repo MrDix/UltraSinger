@@ -3,8 +3,12 @@
 import logging
 from urllib.parse import parse_qs, urlparse
 
-from PySide6.QtCore import QTimer, QUrl, Signal, Qt
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from PySide6.QtCore import QUrl, Signal, Qt
+from PySide6.QtWebEngineCore import (
+    QWebEnginePage,
+    QWebEngineProfile,
+    QWebEngineScript,
+)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -20,31 +24,54 @@ from .cookie_manager import CookieManager
 
 logger = logging.getLogger(__name__)
 
-_CONVERT_OVERLAY_JS = """
+# Persistent overlay script — injected via QWebEngineScript (user-script API).
+# Uses YouTube's own ``yt-navigate-finish`` event for SPA re-injection and a
+# periodic poll as fallback in case YouTube removes the element.
+_CONVERT_OVERLAY_JS = r"""
 (function() {
-    if (document.getElementById('ultrasinger-convert-btn')) return;
-    var btn = document.createElement('div');
-    btn.id = 'ultrasinger-convert-btn';
-    btn.innerHTML = '\\uD83C\\uDFA4 Convert';
-    btn.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:99999;' +
-        'background:linear-gradient(135deg,#e91e63,#c2185b);color:white;' +
-        'padding:14px 28px;border-radius:28px;cursor:pointer;font-size:16px;' +
-        'font-weight:bold;box-shadow:0 4px 16px rgba(233,30,99,0.4);' +
-        'transition:transform 0.2s,box-shadow 0.2s;user-select:none;' +
-        'font-family:system-ui,sans-serif;letter-spacing:0.5px;';
-    btn.onmouseover = function() {
-        this.style.transform = 'scale(1.08)';
-        this.style.boxShadow = '0 6px 24px rgba(233,30,99,0.6)';
-    };
-    btn.onmouseout = function() {
-        this.style.transform = 'scale(1)';
-        this.style.boxShadow = '0 4px 16px rgba(233,30,99,0.4)';
-    };
-    btn.onclick = function() {
-        window.location.href = 'ultrasinger://convert?url=' +
-            encodeURIComponent(window.location.href);
-    };
-    document.body.appendChild(btn);
+    'use strict';
+
+    function injectBtn() {
+        if (document.getElementById('ultrasinger-convert-btn')) return;
+        if (!document.body) return;
+
+        var btn = document.createElement('div');
+        btn.id = 'ultrasinger-convert-btn';
+        btn.textContent = '\uD83C\uDFA4 Convert';
+        btn.style.cssText =
+            'position:fixed;bottom:24px;right:24px;z-index:2147483647;' +
+            'background:linear-gradient(135deg,#e91e63,#c2185b);color:#fff;' +
+            'padding:14px 28px;border-radius:28px;cursor:pointer;font-size:16px;' +
+            'font-weight:bold;box-shadow:0 4px 16px rgba(233,30,99,0.4);' +
+            'transition:transform 0.2s,box-shadow 0.2s;user-select:none;' +
+            'font-family:system-ui,sans-serif;letter-spacing:0.5px;' +
+            'pointer-events:auto;';
+        btn.addEventListener('mouseover', function() {
+            this.style.transform = 'scale(1.08)';
+            this.style.boxShadow = '0 6px 24px rgba(233,30,99,0.6)';
+        });
+        btn.addEventListener('mouseout', function() {
+            this.style.transform = 'scale(1)';
+            this.style.boxShadow = '0 4px 16px rgba(233,30,99,0.4)';
+        });
+        btn.addEventListener('click', function() {
+            window.location.href = 'ultrasinger://convert?url=' +
+                encodeURIComponent(window.location.href);
+        });
+        document.body.appendChild(btn);
+        console.log('[UltraSinger] Convert button injected');
+    }
+
+    // Inject immediately
+    injectBtn();
+
+    // Re-inject after YouTube SPA navigation (fires on every page transition)
+    window.addEventListener('yt-navigate-finish', function() {
+        setTimeout(injectBtn, 500);
+    });
+
+    // Fallback: periodic poll every 3 s in case YouTube removes the element
+    setInterval(injectBtn, 3000);
 })();
 """
 
@@ -90,9 +117,10 @@ class BrowserTab(QWidget):
         self._view = QWebEngineView(self)
         self._view.setPage(self._page)
 
-        # Inject convert overlay on page load and SPA navigation
-        self._page.loadFinished.connect(self._inject_overlay)
-        self._page.urlChanged.connect(self._on_spa_navigation)
+        # Inject convert overlay via user-script API (Tampermonkey-equivalent).
+        # This is more reliable than manual runJavaScript() calls because
+        # Chromium automatically re-injects on every full navigation.
+        self._setup_overlay_script()
 
         # Build UI
         layout = QVBoxLayout(self)
@@ -151,20 +179,22 @@ class BrowserTab(QWidget):
     def _on_url_changed(self, url: QUrl):
         self._url_bar.setText(url.toString())
 
-    def _inject_overlay(self, ok: bool):
-        """Inject the Convert button overlay after page load."""
-        if ok:
-            self._page.runJavaScript(_CONVERT_OVERLAY_JS)
+    def _setup_overlay_script(self):
+        """Register the Convert-button overlay as a persistent user script.
 
-    def _on_spa_navigation(self, url: QUrl):
-        """Re-inject overlay after YouTube SPA navigation.
-
-        YouTube is a single-page app — clicking a video doesn't trigger
-        ``loadFinished``, only ``urlChanged``.  We wait briefly for the
-        SPA transition to settle, then re-inject the Convert button.
+        Uses ``QWebEngineScript`` (Chromium's user-script API) so the
+        overlay is automatically injected on every full page load.  The
+        JS itself also listens for YouTube's ``yt-navigate-finish`` custom
+        event and polls periodically to survive SPA navigation.
         """
-        if "youtube.com" in url.host():
-            QTimer.singleShot(1500, lambda: self._page.runJavaScript(_CONVERT_OVERLAY_JS))
+        script = QWebEngineScript()
+        script.setName("ultrasinger-overlay")
+        script.setSourceCode(_CONVERT_OVERLAY_JS)
+        script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentReady)
+        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        script.setRunsOnSubFrames(False)
+        self._page.scripts().insert(script)
+        logger.debug("Overlay user-script registered")
 
     def _update_cookie_status(self):
         if self.cookie_manager.has_youtube_cookies:
