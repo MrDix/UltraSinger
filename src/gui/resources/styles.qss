@@ -173,9 +173,9 @@ QComboBox::drop-down {
 
 QComboBox::down-arrow {
     image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #a09888;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 8px solid #a09888;
     margin-right: 10px;
 }
 

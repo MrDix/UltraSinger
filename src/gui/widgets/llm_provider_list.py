@@ -86,11 +86,10 @@ class LLMProviderRow(QWidget):
         self._star_btn = QPushButton()
         self._star_btn.setObjectName("starButton")
         self._star_btn.setFixedSize(36, 36)
-        self._star_btn.setToolTip("Set as default provider")
         self._star_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._star_btn.clicked.connect(self._on_star_clicked)
         self._is_default = provider.is_default
-        self._update_star()
+        self._update_star()  # sets text, style, and tooltip
         header.addWidget(self._star_btn)
 
         self._name_edit = QLineEdit(provider.name)
@@ -186,6 +185,17 @@ class LLMProviderRow(QWidget):
 
         layout.addLayout(fields_model)
 
+        # Model hint text
+        model_hint = QLabel(
+            "Models are fetched automatically when URL and Key are set."
+        )
+        model_hint.setObjectName("caption")
+        model_hint.setStyleSheet(
+            "font-size: 10px; color: #605848; background: transparent; "
+            "padding: 0px 0px 0px 48px;"
+        )
+        layout.addWidget(model_hint)
+
         # Bottom separator
         sep = QWidget()
         sep.setFixedHeight(1)
@@ -238,12 +248,14 @@ class LLMProviderRow(QWidget):
                 "font-size: 22px; color: #f7d547; padding: 0px; "
                 "background: transparent; border: none;"
             )
+            self._star_btn.setToolTip("Current default provider")
         else:
             self._star_btn.setText("\u2606")  # ☆ outline
             self._star_btn.setStyleSheet(
                 "font-size: 22px; color: #a09888; padding: 0px; "
                 "background: transparent; border: none;"
             )
+            self._star_btn.setToolTip("Set as default provider")
 
     def _toggle_key_visibility(self):
         if self._key_edit.echoMode() == QLineEdit.EchoMode.Password:

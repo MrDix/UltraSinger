@@ -39,7 +39,7 @@ def main():
         )
         sys.exit(1)
 
-    from PySide6.QtGui import QIcon
+    from PySide6.QtGui import QFont, QIcon
 
     # Load stylesheet and icon
     resources = Path(__file__).parent / "gui" / "resources"
@@ -58,6 +58,11 @@ def main():
 
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
+
+    # Set default font — ensures tooltips and all widgets use consistent sizing
+    font = QFont("Segoe UI Variable", 10)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    app.setFont(font)
 
     if qss_path.exists():
         app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
