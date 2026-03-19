@@ -1,4 +1,4 @@
-"""Sidebar navigation widget with file drop zone and convert button."""
+"""Sidebar navigation widget with file drop zone and conversion queue."""
 
 import importlib.metadata
 from pathlib import Path
@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from .file_drop_zone import FileDropZone
+from .queue_list import QueueListWidget
 
 
 class SidebarButton(QPushButton):
@@ -29,10 +31,11 @@ class SidebarButton(QPushButton):
 
 
 class Sidebar(QWidget):
-    """Sidebar navigation panel with drop zone and convert button."""
+    """Sidebar navigation panel with drop zone and conversion queue."""
 
     section_changed = Signal(int)
-    convert_requested = Signal()  # user wants to start conversion
+    start_all_requested = Signal()
+    file_dropped = Signal(str)  # file path from drop zone
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -55,26 +58,33 @@ class Sidebar(QWidget):
         self._drop_zone.setMaximumHeight(110)
         layout.addWidget(self._drop_zone)
 
-        # ── Input indicator (shows current source) ─────────────────────
-        self._input_label = QLabel("")
-        self._input_label.setObjectName("caption")
-        self._input_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._input_label.setWordWrap(True)
-        self._input_label.setStyleSheet(
-            "color: #e91e63; font-size: 11px; padding: 2px 4px;"
-        )
-        self._input_label.hide()
-        layout.addWidget(self._input_label)
+        # Wire drop zone → emit file_dropped signal
+        self._drop_zone.file_selected.connect(self._on_file_dropped)
 
-        # ── Convert Button ─────────────────────────────────────────────
-        self._convert_btn = QPushButton("\u25B6  Start Conversion")
-        self._convert_btn.setObjectName("primaryButton")
-        self._convert_btn.setMinimumHeight(40)
-        self._convert_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._convert_btn.hide()
-        self._convert_btn.clicked.connect(self.convert_requested.emit)
-        layout.addWidget(self._convert_btn)
+        # ── Queue List ─────────────────────────────────────────────────
+        self._queue_list = QueueListWidget()
+        layout.addWidget(self._queue_list)
 
+        # ── Queue Action Buttons ───────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
+
+        self._start_btn = QPushButton("\u25B6  Start All")
+        self._start_btn.setObjectName("primaryButton")
+        self._start_btn.setMinimumHeight(36)
+        self._start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._start_btn.setEnabled(False)
+        self._start_btn.clicked.connect(self.start_all_requested.emit)
+        btn_row.addWidget(self._start_btn, 1)
+
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setObjectName("ghostButton")
+        self._clear_btn.setMinimumHeight(36)
+        self._clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_btn.setEnabled(False)
+        btn_row.addWidget(self._clear_btn)
+
+        layout.addLayout(btn_row)
         layout.addSpacing(8)
 
         # ── Navigation Buttons ─────────────────────────────────────────
@@ -82,17 +92,20 @@ class Sidebar(QWidget):
         self._button_group.setExclusive(True)
         self._buttons: list[SidebarButton] = []
 
-        # Track input source
-        self._current_input: str = ""
-        self._input_type: str = ""  # "file" or "url"
-
-        # Wire drop zone
-        self._drop_zone.file_selected.connect(self._on_file_dropped)
-
     @property
     def drop_zone(self) -> FileDropZone:
         """Access the sidebar's file drop zone."""
         return self._drop_zone
+
+    @property
+    def queue_list(self) -> QueueListWidget:
+        """Access the sidebar's queue list widget."""
+        return self._queue_list
+
+    @property
+    def clear_button(self) -> QPushButton:
+        """Access the Clear button for external wiring."""
+        return self._clear_btn
 
     def add_section(self, icon_text: str, label: str) -> int:
         """Add a navigation section. Returns the section index."""
@@ -101,7 +114,9 @@ class Sidebar(QWidget):
         self._button_group.addButton(btn, index)
         self._buttons.append(btn)
         self.layout().addWidget(btn)
-        btn.clicked.connect(lambda _checked=False, idx=index: self.section_changed.emit(idx))
+        btn.clicked.connect(
+            lambda _checked=False, idx=index: self.section_changed.emit(idx)
+        )
         if index == 0:
             btn.setChecked(True)
         return index
@@ -126,49 +141,17 @@ class Sidebar(QWidget):
             self._buttons[index].setChecked(True)
             self.section_changed.emit(index)
 
-    # ── Input Source Management ─────────────────────────────────────────
-
-    def set_video_input(self, url: str):
-        """Set a video URL as the input source."""
-        self._current_input = url
-        self._input_type = "url"
-        # Show a compact display: "YT: /watch?v=abc123"
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            path_and_query = parsed.path
-            if parsed.query:
-                path_and_query += "?" + parsed.query
-            display = f"YT: {path_and_query}"
-        except Exception:
-            display = url
-            if len(display) > 35:
-                display = display[:32] + "..."
-        self._input_label.setText(f"\U0001F310 {display}")
-        self._input_label.show()
-        self._convert_btn.show()
-
-    def get_input_source(self) -> str:
-        """Return the current input source (URL or file path)."""
-        return self._current_input
-
-    def get_input_type(self) -> str:
-        """Return the input type: 'file', 'url', or ''."""
-        return self._input_type
+    def update_queue_buttons(self, has_pending: bool, is_running: bool):
+        """Update Start All / Clear button states."""
+        self._start_btn.setEnabled(has_pending and not is_running)
+        self._clear_btn.setEnabled(not is_running)
+        if is_running:
+            self._start_btn.setText("\u23F3  Running...")
+        else:
+            self._start_btn.setText("\u25B6  Start All")
 
     def _on_file_dropped(self, path: str):
-        """Handle file selected via drop zone."""
-        self._current_input = path
-        self._input_type = "file"
-        name = Path(path).name
-        self._input_label.setText(f"\U0001F3B5 {name}")
-        self._input_label.show()
-        self._convert_btn.show()
-
-    def clear_input(self):
-        """Reset input state after conversion or cancel."""
-        self._current_input = ""
-        self._input_type = ""
-        self._input_label.hide()
-        self._convert_btn.hide()
+        """Forward file selection to parent via signal."""
+        self.file_dropped.emit(path)
+        # Reset drop zone visual (file is now in the queue)
         self._drop_zone.set_file("")

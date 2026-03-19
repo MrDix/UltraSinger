@@ -1,7 +1,8 @@
-"""Main application window with sidebar navigation."""
+"""Main application window with sidebar navigation and conversion queue."""
 
 import importlib.metadata
 import logging
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
 from .browser_tab import BrowserTab
 from .config import load_config, save_config
 from .preferences_tab import PreferencesTab
+from .queue_manager import QueueManager
 from .queue_tab import QueueTab
 from .settings_tab import SettingsTab
 from .widgets.sidebar import Sidebar
@@ -24,10 +26,17 @@ class MainWindow(QMainWindow):
     """Main UltraSinger GUI window with sidebar navigation.
 
     Input flow:
-      - Drop a file on the sidebar drop zone -> Convert button appears -> click to start
-      - Browse video platform -> click Convert overlay -> Convert button appears -> click to start
-      - Both flows: settings are read from the Settings tab, conversion runs in Queue tab
+      - Drop a file on the sidebar drop zone -> added to queue
+      - Browse video platform -> click Convert overlay -> added to queue
+      - Click "Start All" in sidebar to process queue sequentially
+      - Settings tab contains conversion parameters, Preferences has global config
     """
+
+    # Tab indices
+    _TAB_VIDEO = 0
+    _TAB_SETTINGS = 1
+    _TAB_CONSOLE = 2
+    _TAB_PREFERENCES = 3
 
     def __init__(self):
         super().__init__()
@@ -49,7 +58,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Sidebar (with drop zone and convert button)
+        # Sidebar (with drop zone and queue list)
         self._sidebar = Sidebar()
         self._sidebar.add_section("\U0001F310", "Video")
         self._sidebar.add_section("\u2699\uFE0F", "Settings")
@@ -76,68 +85,129 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._queue_tab)
         self._stack.addWidget(self._preferences_tab)
 
+        # Queue manager (owns the runner, drives batch execution)
+        self._queue_mgr = QueueManager(self)
+
         # Wire sidebar navigation
         self._sidebar.section_changed.connect(self._stack.setCurrentIndex)
 
-        # Wire Convert flows
-        self._browser_tab.convert_requested.connect(self._on_convert_from_browser)
-        self._sidebar.convert_requested.connect(self._on_start_conversion)
+        # Wire queue add flows
+        self._browser_tab.convert_requested.connect(self._on_add_from_browser)
+        self._sidebar.file_dropped.connect(self._on_add_from_file)
 
-    def _on_convert_from_browser(self, url: str):
-        """Handle Convert button click from video browser.
+        # Wire queue list ↔ queue manager
+        self._queue_mgr.item_added.connect(self._sidebar.queue_list.add_item)
+        self._queue_mgr.item_removed.connect(self._sidebar.queue_list.remove_item)
+        self._queue_mgr.item_status_changed.connect(
+            self._sidebar.queue_list.update_status
+        )
+        self._sidebar.queue_list.remove_requested.connect(
+            self._on_remove_from_queue
+        )
 
-        Sets the URL as input in the sidebar. The user can then click
-        the sidebar Convert button to start, or adjust settings first.
-        """
-        logger.info("Convert requested for URL: %s", url)
-        self._sidebar.set_video_input(url)
+        # Wire Start All / Clear buttons
+        self._sidebar.start_all_requested.connect(self._on_start_all)
+        self._sidebar.clear_button.clicked.connect(self._on_clear_queue)
+
+        # Wire queue manager → console tab
+        self._queue_mgr.line_output.connect(self._queue_tab.append_log)
+        self._queue_mgr.stage_changed.connect(self._queue_tab.on_stage_changed)
+        self._queue_mgr.queue_started.connect(self._on_queue_started)
+        self._queue_mgr.queue_finished.connect(self._on_queue_finished)
+        self._queue_mgr.item_status_changed.connect(self._on_item_status_changed)
+
+        # Wire console cancel → queue manager
+        self._queue_tab.cancel_requested.connect(self._queue_mgr.cancel_all)
+
+        # Initial button state
+        self._update_queue_buttons()
+
+    # ── Queue operations ───────────────────────────────────────────────
+
+    def _on_add_from_browser(self, url: str, title: str):
+        """Add a video URL to the queue (from browser Convert button)."""
+        logger.info("Add to queue from browser: %s", url)
+        self._auto_export_cookies()
+        self._queue_mgr.add_item(url, "url", title)
+        self._update_queue_buttons()
+
+    def _on_add_from_file(self, path: str):
+        """Add a local file to the queue (from drop zone)."""
+        title = Path(path).stem
+        logger.info("Add to queue from file: %s", title)
+        self._queue_mgr.add_item(path, "file", title)
+        self._update_queue_buttons()
+
+    def _on_remove_from_queue(self, item_id: str):
+        """Remove a pending item from the queue."""
+        self._queue_mgr.remove_item(item_id)
+        self._update_queue_buttons()
+
+    def _on_clear_queue(self):
+        """Clear completed and pending items from the queue."""
+        self._queue_mgr.clear_completed()
+        self._queue_mgr.clear_pending()
+        self._update_queue_buttons()
+
+    def _on_start_all(self):
+        """Start processing all pending queue items."""
+        if self._queue_mgr.pending_count() == 0:
+            self._queue_tab.append_log(
+                "[Error] No items in queue. "
+                "Drop a file or select a video first."
+            )
+            self._sidebar.set_active(self._TAB_CONSOLE)
+            return
+
+        # Collect and save current config
+        settings = self._settings_tab.collect_config()
+        prefs = self._preferences_tab.collect_preferences()
+        merged = {**self._config, **settings, **prefs}
+        self._config.update(merged)
+        save_config(self._config)
 
         # Auto-export cookies
+        self._auto_export_cookies()
+
+        # Set global config on queue manager and start
+        self._queue_mgr.set_global_config(merged)
+
+        # Switch to console tab
+        self._sidebar.set_active(self._TAB_CONSOLE)
+        self._queue_tab.on_queue_started()
+        self._queue_mgr.start_all()
+
+    def _on_queue_started(self):
+        """Handle queue batch start."""
+        self._update_queue_buttons()
+
+    def _on_queue_finished(self):
+        """Handle queue batch completion."""
+        self._queue_tab.on_queue_finished()
+        self._update_queue_buttons()
+
+    def _on_item_status_changed(self, item_id: str, status: str):
+        """Update queue buttons when item status changes."""
+        self._update_queue_buttons()
+
+    def _update_queue_buttons(self):
+        """Sync Start All / Clear button states with queue state."""
+        has_pending = self._queue_mgr.pending_count() > 0
+        is_running = self._queue_mgr.is_running
+        self._sidebar.update_queue_buttons(has_pending, is_running)
+
+    def _auto_export_cookies(self):
+        """Export browser cookies to file if available."""
         cookie_path = self._config.get("cookie_file", "")
         if cookie_path and self._browser_tab.cookie_manager.has_video_cookies:
             try:
                 self._browser_tab.cookie_manager.export_netscape(cookie_path)
                 logger.info("Cookies exported to %s", cookie_path)
             except OSError:
-                logger.warning("Failed to export cookies to %s", cookie_path, exc_info=True)
-
-    def _on_start_conversion(self):
-        """Start the conversion with current input and settings."""
-        input_source = self._sidebar.get_input_source()
-        if not input_source:
-            self._queue_tab.append_log(
-                "[Error] No input source selected. "
-                "Drop a file or select a video first."
-            )
-            self._sidebar.set_active(2)
-            return
-
-        # Collect settings (conversion options) and preferences (global config).
-        # Preferences are applied last so output_folder, API keys etc. are
-        # never overwritten by empty Settings values.
-        settings = self._settings_tab.collect_config()
-        prefs = self._preferences_tab.collect_preferences()
-        merged = {**self._config, **settings, **prefs}
-
-        # Save config for next time
-        self._config.update(merged)
-        save_config(self._config)
-
-        # Auto-export cookies if available
-        cookie_file = merged.get("cookie_file", "")
-        if cookie_file and self._browser_tab.cookie_manager.has_video_cookies:
-            try:
-                self._browser_tab.cookie_manager.export_netscape(cookie_file)
-            except OSError:
-                logger.warning("Failed to export cookies to %s", cookie_file, exc_info=True)
-
-        # Build CLI args
-        runner = self._queue_tab.runner
-        args = runner.build_args(merged, input_source)
-
-        # Switch to queue tab and start
-        self._sidebar.set_active(2)
-        self._queue_tab.start_conversion(args, merged.get("output_folder", ""))
+                logger.warning(
+                    "Failed to export cookies to %s", cookie_path,
+                    exc_info=True,
+                )
 
     def closeEvent(self, event):
         """Save configuration on close."""

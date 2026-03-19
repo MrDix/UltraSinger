@@ -1,11 +1,9 @@
-"""Conversion queue and progress tab with log output."""
+"""Console tab with log output and batch progress."""
 
 import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QElapsedTimer, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -14,17 +12,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .ultrasinger_runner import UltraSingerRunner
 from .widgets import AnimatedButton, LogViewer
+
+logger = logging.getLogger(__name__)
 
 
 class QueueTab(QWidget):
-    """Displays conversion progress, log output, and completed conversions."""
+    """Displays conversion progress, log output, and batch status."""
+
+    cancel_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._runner = UltraSingerRunner(self)
-        self._current_output_folder = ""
+        self._output_folder = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -67,7 +67,7 @@ class QueueTab(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
 
-        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn = QPushButton("Cancel All")
         self._cancel_btn.setObjectName("dangerButton")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.clicked.connect(self._on_cancel)
@@ -87,87 +87,57 @@ class QueueTab(QWidget):
 
         layout.addLayout(btn_row)
 
-        # Connect runner signals
-        self._runner.line_output.connect(self._log.append_line)
-        self._runner.stage_changed.connect(self._on_stage_changed)
-        self._runner.finished.connect(self._on_finished)
-
         # Timer for elapsed time
-        from PySide6.QtCore import QTimer, QElapsedTimer
-
         self._elapsed_timer = QElapsedTimer()
         self._tick_timer = QTimer(self)
         self._tick_timer.setInterval(1000)
         self._tick_timer.timeout.connect(self._update_elapsed)
 
-    @property
-    def runner(self) -> UltraSingerRunner:
-        return self._runner
-
     def append_log(self, text: str):
-        """Append a line to the log viewer (public API)."""
+        """Append a line to the log viewer (public API for QueueManager)."""
         self._log.append_line(text)
 
-    def start_conversion(self, args: list[str], output_folder: str = ""):
-        """Start a new conversion with the given CLI arguments."""
-        if self._runner.is_running:
-            self._log.append_line("[GUI] A conversion is already running!")
-            return
+    def on_stage_changed(self, stage: str):
+        """Update the current stage label."""
+        self._stage_label.setText(stage)
 
-        self._current_output_folder = output_folder
+    def on_queue_started(self):
+        """Handle batch processing start."""
         self._log.clear_log()
         self._status_icon.setText("\u23F3")
         self._status_icon.setStyleSheet("font-size: 20px; color: #ffa726;")
-        self._status_label.setText("Converting...")
+        self._status_label.setText("Processing queue...")
         self._status_label.setStyleSheet("font-size: 16px; font-weight: 600;")
         self._stage_label.setText("")
         self._cancel_btn.setEnabled(True)
         self._open_folder_btn.setEnabled(False)
         self._elapsed_label.setText("00:00")
-
         self._elapsed_timer.start()
         self._tick_timer.start()
 
-        self._runner.start(args)
-
-    def _on_stage_changed(self, stage: str):
-        self._stage_label.setText(stage)
-
-    def _on_cancel(self):
-        self._runner.cancel()
-        self._status_label.setText("Cancelling...")
-
-    def _on_finished(self, exit_code: int):
+    def on_queue_finished(self):
+        """Handle batch processing completion."""
         self._tick_timer.stop()
         self._cancel_btn.setEnabled(False)
 
-        if exit_code == 0:
-            self._status_icon.setText("\u2705")
-            self._status_icon.setStyleSheet("font-size: 20px;")
-            self._status_label.setText("Completed!")
-            self._status_label.setStyleSheet(
-                "font-size: 16px; font-weight: 600; color: #4caf50;"
-            )
-            self._open_folder_btn.setEnabled(
-                bool(self._current_output_folder)
-                and Path(self._current_output_folder).exists()
-            )
-            self._log.append_line("")
-            self._log.append_line("[Success] Conversion completed successfully!")
-        elif exit_code == -2:
-            self._status_icon.setText("\u23F9")
-            self._status_icon.setStyleSheet("font-size: 20px;")
-            self._status_label.setText("Cancelled")
-            self._status_label.setStyleSheet(
-                "font-size: 16px; font-weight: 600; color: #ffa726;"
-            )
-        else:
-            self._status_icon.setText("\u274C")
-            self._status_icon.setStyleSheet("font-size: 20px;")
-            self._status_label.setText(f"Failed (exit code {exit_code})")
-            self._status_label.setStyleSheet(
-                "font-size: 16px; font-weight: 600; color: #ef5350;"
-            )
+        self._status_icon.setText("\u2705")
+        self._status_icon.setStyleSheet("font-size: 20px;")
+        self._status_label.setText("Queue completed!")
+        self._status_label.setStyleSheet(
+            "font-size: 16px; font-weight: 600; color: #4caf50;"
+        )
+        self._stage_label.setText("")
+
+    def set_output_folder(self, folder: str):
+        """Set the output folder for the Open Output Folder button."""
+        self._output_folder = folder
+        self._open_folder_btn.setEnabled(
+            bool(folder) and Path(folder).exists()
+        )
+
+    def _on_cancel(self):
+        self._status_label.setText("Cancelling...")
+        self.cancel_requested.emit()
 
     def _update_elapsed(self):
         elapsed_ms = self._elapsed_timer.elapsed()
@@ -180,7 +150,7 @@ class QueueTab(QWidget):
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
 
-        folder = self._current_output_folder
+        folder = self._output_folder
         if not folder or not Path(folder).exists():
             return
 

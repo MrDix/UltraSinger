@@ -148,7 +148,7 @@ class UltraSingerWebPage(QWebEnginePage):
 class BrowserTab(QWidget):
     """Video browser with navigation bar, cookie management, and Convert overlay."""
 
-    convert_requested = Signal(str)
+    convert_requested = Signal(str, str)  # url, page_title
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -164,7 +164,7 @@ class BrowserTab(QWidget):
 
         # Web page + view
         self._page = UltraSingerWebPage(self._profile, self)
-        self._page.convert_requested.connect(self.convert_requested.emit)
+        self._page.convert_requested.connect(self._on_convert_with_title)
 
         self._view = QWebEngineView(self)
         self._view.setPage(self._page)
@@ -285,6 +285,18 @@ class BrowserTab(QWidget):
         else:
             self._cookie_dot.setStyleSheet("color: #616161; font-size: 14px;")
             self._cookie_dot.setToolTip("Not logged in")
+
+    def _on_convert_with_title(self, url: str):
+        """Extract the page title asynchronously, then emit convert_requested."""
+        def _callback(title):
+            # Clean up common suffixes from video platform titles
+            if title and " - " in title:
+                title = title.rsplit(" - ", 1)[0].strip()
+            if not title:
+                title = url
+            self.convert_requested.emit(url, title)
+
+        self._page.runJavaScript("document.title", _callback)
 
     def current_url(self) -> str:
         return self._page.url().toString()

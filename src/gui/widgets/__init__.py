@@ -6,6 +6,7 @@ from .log_viewer import LogViewer
 from .settings_card import SettingsCard
 from .animated_button import AnimatedButton
 from .file_drop_zone import FileDropZone
+from .queue_list import QueueListWidget
 
 __all__ = [
     "ToggleSwitch",
@@ -14,4 +15,5 @@ __all__ = [
     "SettingsCard",
     "AnimatedButton",
     "FileDropZone",
+    "QueueListWidget",
 ]
