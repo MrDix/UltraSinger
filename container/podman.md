@@ -69,9 +69,9 @@ podman run --rm -it --name ultrasinger `
     -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
 ```
 
-### Long-running service (GUI)
+### Long-running service
 
-Start the container in the background for repeated conversions or GUI usage:
+Start the container in the background for repeated conversions:
 
 ```bash
 # Start detached

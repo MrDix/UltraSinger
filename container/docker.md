@@ -60,10 +60,10 @@ docker compose -f container/compose-cpu.yml run --rm ultrasinger \
 docker compose -f container/compose-cpu.yml run --rm ultrasinger bash
 ```
 
-### Long-running service (GUI)
+### Long-running service
 
-Use `docker compose up -d` to start the container in the background. This is useful when
-running the GUI or when you want the container to stay available for multiple conversions.
+Use `docker compose up -d` to start the container in the background. This keeps
+the container available for multiple conversions without rebuilding each time.
 
 ```bash
 # Start in background

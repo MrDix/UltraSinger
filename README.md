@@ -69,6 +69,7 @@ This will help me a lot to keep this project alive and improve it.
     - [📟 Use GPU](#-use-gpu)
       - [Considerations for Windows users](#considerations-for-windows-users)
       - [Crashes due to low VRAM](#crashes-due-to-low-vram)
+    - [🖥️ GUI](#️-run-gui)
     - [📦 Containerized](#containerized-docker-or-podman)
 
 ## 💻 How to use this source code
@@ -81,10 +82,38 @@ This will help me a lot to keep this project alive and improve it.
   * Choose `GPU` if you have an NVIDIA CUDA GPU.
   * Choose `CPU` if you don't have an NVIDIA GPU or want CPU-only processing.
 
-### Run
+### Run (CLI)
 
 * In root folder just run `run_on_windows.bat`, `run_on_linux.sh` or `run_on_mac.command` to start the app.
 * Now you can use the UltraSinger source code with `py UltraSinger.py [opt] [mode] [transcription] [pitcher] [extra]`. See [How to use](#-how-to-use-the-app) for more information.
+
+### 🖥️ Run (GUI)
+
+UltraSinger includes an optional graphical interface with an embedded YouTube browser,
+full settings panel, and real-time conversion log.
+
+#### Install GUI dependencies
+
+```bash
+uv sync --extra gui
+```
+
+> This installs [PySide6](https://doc.qt.io/qtforpython-6/) (Qt 6 for Python) including WebEngine for the embedded browser.
+
+#### Start the GUI
+
+```bash
+uv run python src/gui_main.py
+```
+
+#### Features
+
+- **YouTube Browser** — Browse YouTube, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads.
+- **Settings Panel** — All CLI parameters available as form controls: Whisper model, language, post-processing options, experimental features, LLM lyric correction, and more.
+- **Conversion Queue** — Real-time color-coded log output with stage detection (Separating Vocals → Transcribing → Pitching → …), elapsed timer, and cancel support.
+- **Preferences** — Default output folder, LLM/Groq API configuration, cookie management.
+
+> **Note:** The GUI is a native desktop application (Qt). It requires a display and cannot run inside a Docker container. Use the [CLI](#run-cli) for containerized workflows.
 
 ## 📖 How to use the App
 
@@ -418,4 +447,4 @@ docker compose -f container/compose-gpu.yml run --rm ultrasinger \
     -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
 ```
 
-For detailed setup (volumes, cookies, GUI mode, Podman), see [container/README.md](container/README.md)
+For detailed setup (volumes, cookies, Podman), see [container/README.md](container/README.md)
