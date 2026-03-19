@@ -135,12 +135,12 @@ class SettingsTab(QWidget):
                          _DEFAULTS["whisper_batch_size"]))
 
         self._whisper_compute = _NoScrollComboBox()
-        self._whisper_compute.addItems(["", "float32", "float16", "int8"])
-        self._whisper_compute.setCurrentText(self._config.get("whisper_compute_type", ""))
+        self._whisper_compute.addItems(["auto", "float32", "float16", "int8"])
+        raw_ct = self._config.get("whisper_compute_type", "")
+        self._whisper_compute.setCurrentText(raw_ct if raw_ct else "auto")
         card.add_row("Compute Type", self._whisper_compute,
-                     "Leave empty for auto-detection (float16 on GPU, int8 on CPU)",
-                     reset_callback=lambda: self._whisper_compute.setCurrentText(
-                         _DEFAULTS["whisper_compute_type"]))
+                     "Auto = float16 on GPU, int8 on CPU",
+                     reset_callback=lambda: self._whisper_compute.setCurrentText("auto"))
 
         self._align_model = QLineEdit()
         self._align_model.setPlaceholderText("e.g., gigant/romanian-wav2vec2")
@@ -535,7 +535,8 @@ class SettingsTab(QWidget):
         return {
             "whisper_model": self._whisper_model.currentText(),
             "whisper_batch_size": self._whisper_batch_size.value(),
-            "whisper_compute_type": self._whisper_compute.currentText(),
+            "whisper_compute_type": "" if self._whisper_compute.currentText() == "auto"
+                                   else self._whisper_compute.currentText(),
             "whisper_align_model": self._align_model.text(),
             "demucs_model": self._demucs_model.currentText(),
             "language_mode": "manual" if self._lang_manual.isChecked() else "auto",
