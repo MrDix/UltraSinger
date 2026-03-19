@@ -99,8 +99,8 @@ class LLMProviderRow(QWidget):
 
         delete_btn = QPushButton("\u2715")
         delete_btn.setObjectName("ghostButton")
-        delete_btn.setFixedSize(28, 28)
-        delete_btn.setStyleSheet("font-size: 16px;")
+        delete_btn.setFixedSize(36, 36)
+        delete_btn.setStyleSheet("font-size: 18px; padding: 0px;")
         delete_btn.setToolTip("Remove provider")
         delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_btn.clicked.connect(lambda: self.removed.emit(self._provider.id))
@@ -126,8 +126,8 @@ class LLMProviderRow(QWidget):
 
         self._key_toggle = QPushButton("\U0001F441")
         self._key_toggle.setObjectName("ghostButton")
-        self._key_toggle.setFixedSize(28, 28)
-        self._key_toggle.setStyleSheet("font-size: 16px;")
+        self._key_toggle.setFixedSize(36, 36)
+        self._key_toggle.setStyleSheet("font-size: 18px; padding: 0px;")
         self._key_toggle.setToolTip("Show/hide API key")
         self._key_toggle.clicked.connect(self._toggle_key_visibility)
         fields_key.addWidget(self._key_toggle)
@@ -173,8 +173,8 @@ class LLMProviderRow(QWidget):
 
         self._fetch_btn = QPushButton("\u21BB")
         self._fetch_btn.setObjectName("ghostButton")
-        self._fetch_btn.setFixedSize(28, 28)
-        self._fetch_btn.setStyleSheet("font-size: 16px;")
+        self._fetch_btn.setFixedSize(36, 36)
+        self._fetch_btn.setStyleSheet("font-size: 18px; padding: 0px;")
         self._fetch_btn.setToolTip("Fetch available models from API")
         self._fetch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._fetch_btn.clicked.connect(self._fetch_models)

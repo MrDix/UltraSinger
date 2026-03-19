@@ -118,9 +118,9 @@ def _make_reset_button(callback) -> QPushButton:
     btn = QPushButton("\u21BA")  # ↺ counterclockwise arrow
     btn.setObjectName("ghostButton")
     btn.setToolTip("Reset to default")
-    btn.setFixedSize(28, 28)
+    btn.setFixedSize(36, 36)
     btn.setStyleSheet(
-        "font-size: 16px; padding: 0px; background: transparent; border: none;"
+        "font-size: 18px; padding: 0px; background: transparent; border: none;"
     )
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.clicked.connect(lambda: callback())
