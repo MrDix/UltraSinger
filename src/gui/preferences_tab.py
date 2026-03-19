@@ -134,8 +134,8 @@ class PreferencesTab(QWidget):
             self._update_cookie_status()
 
         cookie_card.add_info(
-            "Cookies are used for YouTube Premium authentication. "
-            "Log in via the YouTube browser tab to capture cookies automatically. "
+            "Cookies are used for premium account authentication. "
+            "Log in via the Video browser tab to capture cookies automatically. "
             "They are exported in Netscape format for yt-dlp."
         )
 
@@ -180,7 +180,13 @@ class PreferencesTab(QWidget):
         outer.addWidget(scroll)
 
     def _browse_output(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+        start = self._output_folder.text() or str(Path.home())
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Folder",
+            start,
+            QFileDialog.Option.DontUseNativeDialog,
+        )
         if path:
             self._output_folder.setText(path)
 
@@ -195,14 +201,14 @@ class PreferencesTab(QWidget):
     def _update_cookie_status(self):
         if not hasattr(self, "_cookie_status"):
             return
-        if self._cookie_manager and self._cookie_manager.has_youtube_cookies:
-            count = self._cookie_manager.youtube_cookie_count
+        if self._cookie_manager and self._cookie_manager.has_video_cookies:
+            count = self._cookie_manager.video_cookie_count
             self._cookie_status.setText(
-                f"\u2705 {count} YouTube cookies captured"
+                f"\u2705 {count} cookies captured"
             )
             self._cookie_status.setStyleSheet("color: #4caf50;")
         else:
-            self._cookie_status.setText("\u26A0 No YouTube cookies (log in via browser tab)")
+            self._cookie_status.setText("\u26A0 No cookies (log in via Video browser tab)")
             self._cookie_status.setStyleSheet("color: #ffa726;")
 
     def _export_cookies(self):

@@ -1,4 +1,4 @@
-"""YouTube browser tab with embedded Chromium, navigation, and Convert overlay."""
+"""Video browser tab with embedded Chromium, navigation, and Convert overlay."""
 
 import logging
 import re
@@ -12,10 +12,12 @@ from PySide6.QtWebEngineCore import (
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -25,8 +27,8 @@ from .cookie_manager import CookieManager
 
 logger = logging.getLogger(__name__)
 
-# Regex for accepted YouTube URL patterns (used to validate user-pasted URLs).
-_YOUTUBE_URL_RE = re.compile(
+# Regex for accepted video URL patterns (used to validate user-pasted URLs).
+_VIDEO_URL_RE = re.compile(
     r"^https?://"
     r"(?:(?:www\.|m\.|music\.)?youtube\.com"
     r"|youtu\.be)"
@@ -35,12 +37,12 @@ _YOUTUBE_URL_RE = re.compile(
 )
 
 # Persistent overlay script — injected via QWebEngineScript (user-script API).
-# Only shows the Convert button on YouTube video pages (/watch?v=...).
-# Uses YouTube's ``yt-navigate-finish`` event for SPA re-injection and a
-# periodic poll as fallback in case YouTube removes the element.
+# Only shows the Convert button on video pages (/watch?v=...).
+# Uses the ``yt-navigate-finish`` event for SPA re-injection and a
+# periodic poll as fallback in case the platform removes the element.
 #
 # IMPORTANT: The click handler builds a *clean* URL containing only the
-# video ID (``?v=...``).  YouTube URLs often carry ``&list=...``,
+# video ID (``?v=...``).  Watch URLs often carry ``&list=...``,
 # ``&index=...`` etc. which would cause yt-dlp to download entire
 # playlists/mixes instead of the single selected video.
 _CONVERT_OVERLAY_JS = r"""
@@ -99,7 +101,7 @@ _CONVERT_OVERLAY_JS = r"""
     // Run immediately
     updateBtn();
 
-    // Re-check after YouTube SPA navigation
+    // Re-check after SPA navigation
     window.addEventListener('yt-navigate-finish', function() {
         setTimeout(updateBtn, 500);
     });
@@ -110,10 +112,10 @@ _CONVERT_OVERLAY_JS = r"""
 """
 
 
-def _clean_youtube_url(url: str) -> str:
-    """Strip playlist/mix parameters from a YouTube URL.
+def _clean_video_url(url: str) -> str:
+    """Strip playlist/mix parameters from a video watch URL.
 
-    YouTube watch URLs often contain ``&list=``, ``&index=``,
+    Watch URLs often contain ``&list=``, ``&index=``,
     ``&start_radio=`` etc. which cause yt-dlp to download the entire
     playlist instead of a single video.  This function keeps only the
     video ID parameter.
@@ -135,16 +137,16 @@ class UltraSingerWebPage(QWebEnginePage):
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame):
         if url.scheme() == "ultrasinger":
             query = parse_qs(urlparse(url.toString()).query)
-            youtube_url = query.get("url", [""])[0]
-            if youtube_url:
+            video_url = query.get("url", [""])[0]
+            if video_url:
                 # Double-safety: clean the URL in Python too
-                self.convert_requested.emit(_clean_youtube_url(youtube_url))
+                self.convert_requested.emit(_clean_video_url(video_url))
             return False
         return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
 
 class BrowserTab(QWidget):
-    """YouTube browser with navigation bar, cookie management, and Convert overlay."""
+    """Video browser with navigation bar, cookie management, and Convert overlay."""
 
     convert_requested = Signal(str)
 
@@ -183,17 +185,22 @@ class BrowserTab(QWidget):
         tb_layout.setContentsMargins(8, 4, 8, 4)
         tb_layout.setSpacing(6)
 
-        self._back_btn = QPushButton("\u25C0")
+        style = QApplication.style()
+
+        self._back_btn = QPushButton()
+        self._back_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
         self._back_btn.setAccessibleName("Back")
         self._back_btn.clicked.connect(self._view.back)
         tb_layout.addWidget(self._back_btn)
 
-        self._fwd_btn = QPushButton("\u25B6")
+        self._fwd_btn = QPushButton()
+        self._fwd_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
         self._fwd_btn.setAccessibleName("Forward")
         self._fwd_btn.clicked.connect(self._view.forward)
         tb_layout.addWidget(self._fwd_btn)
 
-        self._refresh_btn = QPushButton("\u21BB")
+        self._refresh_btn = QPushButton()
+        self._refresh_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         self._refresh_btn.setAccessibleName("Refresh")
         self._refresh_btn.clicked.connect(self._view.reload)
         tb_layout.addWidget(self._refresh_btn)
@@ -201,7 +208,7 @@ class BrowserTab(QWidget):
         self._url_bar = QLineEdit()
         self._url_bar.setObjectName("browserUrlBar")
         self._url_bar.setPlaceholderText(
-            "Paste a YouTube URL or navigate below..."
+            "Paste a video URL or navigate below..."
         )
         self._url_bar.returnPressed.connect(self._on_url_bar_submit)
         tb_layout.addWidget(self._url_bar, 1)
@@ -223,7 +230,7 @@ class BrowserTab(QWidget):
         self.cookie_manager.cookies_changed.connect(self._update_cookie_status)
         self._update_cookie_status()
 
-        # Load YouTube
+        # Load default video platform
         self._view.setUrl(QUrl("https://www.youtube.com"))
 
     # ── URL bar ──────────────────────────────────────────────────────────
@@ -238,13 +245,13 @@ class BrowserTab(QWidget):
         if not text:
             return
 
-        # Accept youtu.be short links, youtube.com, music.youtube.com, m.youtube.com
-        if _YOUTUBE_URL_RE.match(text):
+        # Accept supported video platform URLs
+        if _VIDEO_URL_RE.match(text):
             self._view.setUrl(QUrl(text))
         else:
             self._url_bar.setText(self._page.url().toString())
             self._url_bar.setToolTip(
-                "Only YouTube URLs are allowed "
+                "Only supported video URLs are allowed "
                 "(youtube.com, youtu.be, music.youtube.com)"
             )
 
@@ -255,7 +262,7 @@ class BrowserTab(QWidget):
 
         Uses ``QWebEngineScript`` (Chromium's user-script API) so the
         overlay is automatically injected on every full page load.  The
-        JS itself also listens for YouTube's ``yt-navigate-finish`` custom
+        JS itself also listens for the ``yt-navigate-finish`` custom
         event and polls periodically to survive SPA navigation.
         """
         script = QWebEngineScript()
@@ -270,10 +277,10 @@ class BrowserTab(QWidget):
     # ── Cookie status ────────────────────────────────────────────────────
 
     def _update_cookie_status(self):
-        if self.cookie_manager.has_youtube_cookies:
+        if self.cookie_manager.has_video_cookies:
             self._cookie_dot.setStyleSheet("color: #4caf50; font-size: 14px;")
             self._cookie_dot.setToolTip(
-                f"Logged in ({self.cookie_manager.youtube_cookie_count} cookies)"
+                f"Logged in ({self.cookie_manager.video_cookie_count} cookies)"
             )
         else:
             self._cookie_dot.setStyleSheet("color: #616161; font-size: 14px;")

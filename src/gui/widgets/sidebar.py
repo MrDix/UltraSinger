@@ -84,7 +84,7 @@ class Sidebar(QWidget):
 
         # Track input source
         self._current_input: str = ""
-        self._input_type: str = ""  # "file" or "youtube"
+        self._input_type: str = ""  # "file" or "url"
 
         # Wire drop zone
         self._drop_zone.file_selected.connect(self._on_file_dropped)
@@ -128,10 +128,10 @@ class Sidebar(QWidget):
 
     # ── Input Source Management ─────────────────────────────────────────
 
-    def set_youtube_input(self, url: str):
-        """Set a YouTube URL as the input source."""
+    def set_video_input(self, url: str):
+        """Set a video URL as the input source."""
         self._current_input = url
-        self._input_type = "youtube"
+        self._input_type = "url"
         # Show a compact display: "YT: /watch?v=abc123"
         try:
             from urllib.parse import urlparse
@@ -153,7 +153,7 @@ class Sidebar(QWidget):
         return self._current_input
 
     def get_input_type(self) -> str:
-        """Return the input type: 'file', 'youtube', or ''."""
+        """Return the input type: 'file', 'url', or ''."""
         return self._input_type
 
     def _on_file_dropped(self, path: str):

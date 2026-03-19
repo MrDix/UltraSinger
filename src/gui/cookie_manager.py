@@ -51,8 +51,8 @@ class CookieManager(QObject):
         self.cookies_changed.emit()
 
     @property
-    def youtube_cookie_count(self) -> int:
-        """Number of cookies for .youtube.com domain."""
+    def video_cookie_count(self) -> int:
+        """Number of cookies for the video platform domain."""
         return sum(
             1
             for c in self._cookies
@@ -60,8 +60,8 @@ class CookieManager(QObject):
         )
 
     @property
-    def has_youtube_cookies(self) -> bool:
-        return self.youtube_cookie_count > 0
+    def has_video_cookies(self) -> bool:
+        return self.video_cookie_count > 0
 
     def export_netscape(self, filepath: str | Path) -> Path:
         """Export all cookies in Netscape format compatible with yt-dlp.

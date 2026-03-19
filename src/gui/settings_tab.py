@@ -73,7 +73,7 @@ class _NoScrollComboBox(QComboBox):
 class SettingsTab(QWidget):
     """Conversion settings form with all UltraSinger CLI parameters.
 
-    Input source selection (YouTube URL / local file) is handled by
+    Input source selection (video URL / local file) is handled by
     the sidebar, not by this tab. This tab only contains conversion options.
     """
 

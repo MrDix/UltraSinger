@@ -25,7 +25,7 @@ class MainWindow(QMainWindow):
 
     Input flow:
       - Drop a file on the sidebar drop zone -> Convert button appears -> click to start
-      - Browse YouTube -> click Convert overlay -> Convert button appears -> click to start
+      - Browse video platform -> click Convert overlay -> Convert button appears -> click to start
       - Both flows: settings are read from the Settings tab, conversion runs in Queue tab
     """
 
@@ -51,7 +51,7 @@ class MainWindow(QMainWindow):
 
         # Sidebar (with drop zone and convert button)
         self._sidebar = Sidebar()
-        self._sidebar.add_section("\U0001F310", "YouTube")
+        self._sidebar.add_section("\U0001F310", "Video")
         self._sidebar.add_section("\u2699\uFE0F", "Settings")
         self._sidebar.add_section("\U0001F4BB", "Console")
         self._sidebar.add_section("\U0001F527", "Preferences")
@@ -84,17 +84,17 @@ class MainWindow(QMainWindow):
         self._sidebar.convert_requested.connect(self._on_start_conversion)
 
     def _on_convert_from_browser(self, url: str):
-        """Handle Convert button click from YouTube browser.
+        """Handle Convert button click from video browser.
 
         Sets the URL as input in the sidebar. The user can then click
         the sidebar Convert button to start, or adjust settings first.
         """
         logger.info("Convert requested for URL: %s", url)
-        self._sidebar.set_youtube_input(url)
+        self._sidebar.set_video_input(url)
 
         # Auto-export cookies
         cookie_path = self._config.get("cookie_file", "")
-        if cookie_path and self._browser_tab.cookie_manager.has_youtube_cookies:
+        if cookie_path and self._browser_tab.cookie_manager.has_video_cookies:
             try:
                 self._browser_tab.cookie_manager.export_netscape(cookie_path)
                 logger.info("Cookies exported to %s", cookie_path)
@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         if not input_source:
             self._queue_tab.append_log(
                 "[Error] No input source selected. "
-                "Drop a file or select a YouTube video first."
+                "Drop a file or select a video first."
             )
             self._sidebar.set_active(2)
             return
@@ -125,7 +125,7 @@ class MainWindow(QMainWindow):
 
         # Auto-export cookies if available
         cookie_file = merged.get("cookie_file", "")
-        if cookie_file and self._browser_tab.cookie_manager.has_youtube_cookies:
+        if cookie_file and self._browser_tab.cookie_manager.has_video_cookies:
             try:
                 self._browser_tab.cookie_manager.export_netscape(cookie_file)
             except OSError:

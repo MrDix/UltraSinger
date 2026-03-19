@@ -1,7 +1,15 @@
 """Reusable card container for grouping settings."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QStyle,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class SettingsCard(QWidget):
@@ -108,8 +116,10 @@ class SettingsCard(QWidget):
 
 
 def _make_reset_button(callback) -> QPushButton:
-    """Create a small ghost-style reset button."""
-    btn = QPushButton("\u21BA")
+    """Create a small ghost-style reset button with a platform-native icon."""
+    style = QApplication.style()
+    btn = QPushButton()
+    btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
     btn.setObjectName("ghostButton")
     btn.setToolTip("Reset to default")
     btn.setFixedSize(28, 28)
