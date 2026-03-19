@@ -158,6 +158,9 @@ class BrowserTab(QWidget):
         self._profile = QWebEngineProfile("ultrasinger", self)
         self._profile.setPersistentStoragePath(profile_path)
         self._profile.setCachePath(profile_path + "/cache")
+        self._profile.setPersistentCookiesPolicy(
+            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+        )
 
         # Cookie manager
         self.cookie_manager = CookieManager(self._profile, self)
