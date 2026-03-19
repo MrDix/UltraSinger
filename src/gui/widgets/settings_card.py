@@ -2,11 +2,9 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -116,13 +114,14 @@ class SettingsCard(QWidget):
 
 
 def _make_reset_button(callback) -> QPushButton:
-    """Create a small ghost-style reset button with a platform-native icon."""
-    style = QApplication.style()
-    btn = QPushButton()
-    btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
+    """Create a small ghost-style reset button."""
+    btn = QPushButton("\u21BA")  # ↺ counterclockwise arrow
     btn.setObjectName("ghostButton")
     btn.setToolTip("Reset to default")
     btn.setFixedSize(28, 28)
+    btn.setStyleSheet(
+        "font-size: 16px; padding: 0px; background: transparent; border: none;"
+    )
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.clicked.connect(lambda: callback())
     return btn

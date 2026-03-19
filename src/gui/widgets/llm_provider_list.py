@@ -86,6 +86,7 @@ class LLMProviderRow(QWidget):
         delete_btn = QPushButton("\u2715")
         delete_btn.setObjectName("ghostButton")
         delete_btn.setFixedSize(28, 28)
+        delete_btn.setStyleSheet("font-size: 16px;")
         delete_btn.setToolTip("Remove provider")
         delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_btn.clicked.connect(lambda: self.removed.emit(self._provider.id))
@@ -93,26 +94,58 @@ class LLMProviderRow(QWidget):
 
         layout.addLayout(header)
 
-        # Fields row 1: URL + Model
-        fields1 = QHBoxLayout()
-        fields1.setSpacing(8)
+        # Fields row 1: Key
+        fields_key = QHBoxLayout()
+        fields_key.setSpacing(8)
+
+        key_label = QLabel("Key")
+        key_label.setFixedWidth(40)
+        key_label.setObjectName("caption")
+        fields_key.addWidget(key_label)
+
+        self._key_edit = QLineEdit()
+        self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._key_edit.setPlaceholderText("gsk_...")
+        self._key_edit.textChanged.connect(self._on_field_changed)
+        self._key_edit.editingFinished.connect(self._on_key_editing_finished)
+        fields_key.addWidget(self._key_edit, 1)
+
+        self._key_toggle = QPushButton("\U0001F441")
+        self._key_toggle.setObjectName("ghostButton")
+        self._key_toggle.setFixedSize(28, 28)
+        self._key_toggle.setStyleSheet("font-size: 16px;")
+        self._key_toggle.setToolTip("Show/hide API key")
+        self._key_toggle.clicked.connect(self._toggle_key_visibility)
+        fields_key.addWidget(self._key_toggle)
+
+        layout.addLayout(fields_key)
+
+        # Fields row 2: URL
+        fields_url = QHBoxLayout()
+        fields_url.setSpacing(8)
 
         url_label = QLabel("URL")
         url_label.setFixedWidth(40)
         url_label.setObjectName("caption")
-        fields1.addWidget(url_label)
+        fields_url.addWidget(url_label)
 
         self._url_edit = QLineEdit(provider.api_base_url)
         self._url_edit.setPlaceholderText("https://api.groq.com/openai/v1")
         self._url_edit.textChanged.connect(self._on_field_changed)
         self._url_edit.editingFinished.connect(self._on_url_editing_finished)
         self._last_fetched_url = provider.api_base_url
-        fields1.addWidget(self._url_edit, 2)
+        fields_url.addWidget(self._url_edit, 1)
+
+        layout.addLayout(fields_url)
+
+        # Fields row 3: Model
+        fields_model = QHBoxLayout()
+        fields_model.setSpacing(8)
 
         model_label = QLabel("Model")
-        model_label.setFixedWidth(45)
+        model_label.setFixedWidth(40)
         model_label.setObjectName("caption")
-        fields1.addWidget(model_label)
+        fields_model.addWidget(model_label)
 
         self._model_combo = QComboBox()
         self._model_combo.setEditable(True)
@@ -122,44 +155,20 @@ class LLMProviderRow(QWidget):
             self._model_combo.addItem(provider.default_model)
             self._model_combo.setCurrentText(provider.default_model)
         self._model_combo.currentTextChanged.connect(self._on_field_changed)
-        fields1.addWidget(self._model_combo, 1)
+        fields_model.addWidget(self._model_combo, 1)
 
         self._fetch_btn = QPushButton("\u21BB")
         self._fetch_btn.setObjectName("ghostButton")
         self._fetch_btn.setFixedSize(28, 28)
+        self._fetch_btn.setStyleSheet("font-size: 16px;")
         self._fetch_btn.setToolTip("Fetch available models from API")
         self._fetch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._fetch_btn.clicked.connect(self._fetch_models)
-        fields1.addWidget(self._fetch_btn)
+        fields_model.addWidget(self._fetch_btn)
 
         self._fetch_thread: QThread | None = None
 
-        layout.addLayout(fields1)
-
-        # Fields row 2: API Key
-        fields2 = QHBoxLayout()
-        fields2.setSpacing(8)
-
-        key_label = QLabel("Key")
-        key_label.setFixedWidth(40)
-        key_label.setObjectName("caption")
-        fields2.addWidget(key_label)
-
-        self._key_edit = QLineEdit()
-        self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_edit.setPlaceholderText("gsk_...")
-        self._key_edit.textChanged.connect(self._on_field_changed)
-        self._key_edit.editingFinished.connect(self._on_key_editing_finished)
-        fields2.addWidget(self._key_edit, 1)
-
-        self._key_toggle = QPushButton("\U0001F441")
-        self._key_toggle.setObjectName("ghostButton")
-        self._key_toggle.setFixedSize(28, 28)
-        self._key_toggle.setToolTip("Show/hide API key")
-        self._key_toggle.clicked.connect(self._toggle_key_visibility)
-        fields2.addWidget(self._key_toggle)
-
-        layout.addLayout(fields2)
+        layout.addLayout(fields_model)
 
         # Bottom separator
         sep = QWidget()
