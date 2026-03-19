@@ -4,6 +4,7 @@ import importlib.metadata
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -46,9 +47,19 @@ class Sidebar(QWidget):
         layout.setContentsMargins(6, 0, 6, 12)
         layout.setSpacing(2)
 
-        # Logo / title
-        logo = QLabel("\U0001F3A4 UltraSinger")
+        # Logo image
+        logo = QLabel()
         logo.setObjectName("sidebarLogo")
+        logo_path = Path(__file__).parent.parent / "resources" / "icons" / "logo.jpg"
+        if logo_path.exists():
+            pixmap = QPixmap(str(logo_path))
+            scaled = pixmap.scaledToWidth(
+                196, Qt.TransformationMode.SmoothTransformation
+            )
+            logo.setPixmap(scaled)
+        else:
+            logo.setText("UltraSinger")
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(logo)
         layout.addSpacing(8)
 

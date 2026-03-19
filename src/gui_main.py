@@ -39,12 +39,19 @@ def main():
         )
         sys.exit(1)
 
-    # Load stylesheet
-    qss_path = Path(__file__).parent / "gui" / "resources" / "styles.qss"
+    from PySide6.QtGui import QIcon
+
+    # Load stylesheet and icon
+    resources = Path(__file__).parent / "gui" / "resources"
+    qss_path = resources / "styles.qss"
+    icon_path = resources / "icons" / "logo.jpg"
 
     app = QApplication(sys.argv)
     app.setApplicationName("UltraSinger")
     app.setOrganizationName("UltraSinger")
+
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     if qss_path.exists():
         app.setStyleSheet(qss_path.read_text(encoding="utf-8"))

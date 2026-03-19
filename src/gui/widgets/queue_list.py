@@ -23,11 +23,11 @@ _STATUS_ICONS = {
 }
 
 _STATUS_COLORS = {
-    "pending": "#9e9e9e",
+    "pending": "#a09888",
     "running": "#ffa726",
     "done": "#4caf50",
     "failed": "#ef5350",
-    "cancelled": "#9e9e9e",
+    "cancelled": "#a09888",
 }
 
 
@@ -58,7 +58,7 @@ class QueueItemWidget(QWidget):
         type_icon = "\U0001F310" if item.input_type == "url" else "\U0001F3B5"
         self._title = QLabel(f"{type_icon} {item.title}")
         self._title.setStyleSheet(
-            "font-size: 11px; color: #e0e0e0; background: transparent;"
+            "font-size: 11px; color: #f0dfc0; background: transparent;"
         )
         self._title.setWordWrap(False)
         layout.addWidget(self._title, 1)
@@ -87,7 +87,7 @@ class QueueItemWidget(QWidget):
     def update_status(self, status: str):
         """Update the visual status of this item."""
         self._status_icon.setText(_STATUS_ICONS.get(status, ""))
-        color = _STATUS_COLORS.get(status, "#9e9e9e")
+        color = _STATUS_COLORS.get(status, "#a09888")
         self._status_icon.setStyleSheet(
             f"font-size: 12px; color: {color}; background: transparent;"
         )
@@ -98,7 +98,7 @@ class QueueItemWidget(QWidget):
         # Dim completed/cancelled items
         if status in ("done", "failed", "cancelled"):
             self._title.setStyleSheet(
-                "font-size: 11px; color: #616161; background: transparent;"
+                "font-size: 11px; color: #605848; background: transparent;"
             )
         elif status == "running":
             self._title.setStyleSheet(
@@ -107,7 +107,7 @@ class QueueItemWidget(QWidget):
             )
         else:
             self._title.setStyleSheet(
-                "font-size: 11px; color: #e0e0e0; background: transparent;"
+                "font-size: 11px; color: #f0dfc0; background: transparent;"
             )
 
 
@@ -151,7 +151,7 @@ class QueueListWidget(QWidget):
         self._empty_label.setObjectName("caption")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet(
-            "color: #616161; font-size: 11px; padding: 8px;"
+            "color: #605848; font-size: 11px; padding: 8px;"
         )
         layout.addWidget(self._empty_label)
 

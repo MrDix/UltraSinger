@@ -12,9 +12,9 @@ _PATTERNS = [
     (re.compile(r"\[error\]|error:|traceback|exception", re.IGNORECASE), QColor("#ef5350")),
     (re.compile(r"\[warn(?:ing)?\]|warn(?:ing)?:", re.IGNORECASE), QColor("#ffa726")),
     (re.compile(r"\[success\]|completed|done|finished", re.IGNORECASE), QColor("#4caf50")),
-    (re.compile(r"\[UltraSinger\]", re.IGNORECASE), QColor("#29b6f6")),
+    (re.compile(r"\[UltraSinger\]", re.IGNORECASE), QColor("#00d4d4")),
 ]
-_DEFAULT_COLOR = QColor("#b0b0b0")
+_DEFAULT_COLOR = QColor("#a09888")
 
 
 class LogViewer(QPlainTextEdit):

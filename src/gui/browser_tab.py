@@ -216,7 +216,7 @@ class BrowserTab(QWidget):
         # Cookie status indicator
         self._cookie_dot = QLabel("\u25CF")
         self._cookie_dot.setObjectName("statusDot")
-        self._cookie_dot.setStyleSheet("color: #616161; font-size: 14px;")
+        self._cookie_dot.setStyleSheet("color: #605848; font-size: 14px;")
         self._cookie_dot.setToolTip("Not logged in")
         tb_layout.addWidget(self._cookie_dot)
 
@@ -283,7 +283,7 @@ class BrowserTab(QWidget):
                 f"Logged in ({self.cookie_manager.video_cookie_count} cookies)"
             )
         else:
-            self._cookie_dot.setStyleSheet("color: #616161; font-size: 14px;")
+            self._cookie_dot.setStyleSheet("color: #605848; font-size: 14px;")
             self._cookie_dot.setToolTip("Not logged in")
 
     def _on_convert_with_title(self, url: str):
