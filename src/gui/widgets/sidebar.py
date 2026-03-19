@@ -50,24 +50,31 @@ class Sidebar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedWidth(250)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 0, 6, 8)
-        layout.setSpacing(4)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # Logo image
+        # Logo image — full width, no margins
         logo = QLabel()
         logo.setObjectName("sidebarLogo")
         logo_path = Path(__file__).parent.parent / "resources" / "icons" / "logo.jpg"
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path))
             scaled = pixmap.scaledToWidth(
-                226, Qt.TransformationMode.SmoothTransformation
+                250, Qt.TransformationMode.SmoothTransformation
             )
             logo.setPixmap(scaled)
         else:
             logo.setText("UltraSinger")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(logo)
+        outer.addWidget(logo)
+
+        # Content area with side margins
+        self._content_layout = QVBoxLayout()
+        self._content_layout.setContentsMargins(6, 4, 6, 8)
+        self._content_layout.setSpacing(4)
+        outer.addLayout(self._content_layout, 1)
+        layout = self._content_layout
 
         # ── Drag Files Zone ───────────────────────────────────────────
         drop_frame = _SidebarSection("Drop Files")
@@ -155,7 +162,7 @@ class Sidebar(QWidget):
         version_label = QLabel(f"v{_version}")
         version_label.setObjectName("caption")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.layout().addWidget(version_label)
+        self._content_layout.addWidget(version_label)
 
     def set_active(self, index: int):
         """Programmatically set the active section."""
