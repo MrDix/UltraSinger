@@ -1,7 +1,7 @@
 """Reusable card container for grouping settings."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 
 class SettingsCard(QWidget):
@@ -28,10 +28,17 @@ class SettingsCard(QWidget):
         """Add a sub-layout to the card."""
         self._layout.addLayout(layout)
 
-    def add_row(self, label_text: str, widget, tooltip: str = ""):
-        """Add a labeled row with a widget."""
-        from PySide6.QtWidgets import QHBoxLayout
+    def add_row(self, label_text: str, widget, tooltip: str = "",
+                *, reset_callback=None):
+        """Add a labeled row with a widget.
 
+        Parameters
+        ----------
+        reset_callback:
+            If provided, a small reset button (``\u21BA``) is appended to
+            the row.  Clicking it calls *reset_callback()* which should
+            restore the widget's default value.
+        """
         row = QHBoxLayout()
         row.setSpacing(12)
 
@@ -42,12 +49,15 @@ class SettingsCard(QWidget):
             widget.setToolTip(tooltip)
         row.addWidget(label)
         row.addWidget(widget, 1)
+
+        if reset_callback is not None:
+            row.addWidget(_make_reset_button(reset_callback))
+
         self._layout.addLayout(row)
 
-    def add_toggle_row(self, label_text: str, toggle, tooltip: str = ""):
+    def add_toggle_row(self, label_text: str, toggle, tooltip: str = "",
+                       *, reset_callback=None):
         """Add a row with a label and toggle switch (right-aligned toggle)."""
-        from PySide6.QtWidgets import QHBoxLayout
-
         row = QHBoxLayout()
         row.setSpacing(12)
 
@@ -57,13 +67,22 @@ class SettingsCard(QWidget):
             toggle.setToolTip(tooltip)
         row.addWidget(label, 1)
         row.addWidget(toggle)
+
+        if reset_callback is not None:
+            row.addWidget(_make_reset_button(reset_callback))
+
         self._layout.addLayout(row)
 
     def add_info(self, text: str):
-        """Add an info label to the card."""
+        """Add an info label to the card (text is selectable for copy)."""
         info = QLabel(text)
         info.setObjectName("infoLabel")
         info.setWordWrap(True)
+        info.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        info.setCursor(Qt.CursorShape.IBeamCursor)
         self._layout.addWidget(info)
 
     def remove_last_item(self):
@@ -86,3 +105,14 @@ class SettingsCard(QWidget):
         sep.setFixedHeight(1)
         sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.06);")
         self._layout.addWidget(sep)
+
+
+def _make_reset_button(callback) -> QPushButton:
+    """Create a small ghost-style reset button."""
+    btn = QPushButton("\u21BA")
+    btn.setObjectName("ghostButton")
+    btn.setToolTip("Reset to default")
+    btn.setFixedSize(28, 28)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.clicked.connect(lambda: callback())
+    return btn
