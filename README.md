@@ -399,35 +399,23 @@ Whisper needs more than 8GB VRAM in the `large` model!
 
 You can also force CPU usage with the extra option `--force_cpu`.
 
-### 📦 Docker Compose (recommended)
+### 📦 Containerized (Docker or Podman)
 
-The included `docker-compose.yml` is the easiest way to run UltraSinger in a container.
+Run UltraSinger in a container — no local Python install required.
 
 ```bash
-# Build the image once
-docker compose build
+# Build the image (once)
+docker compose -f container/compose-cpu.yml build
 
-# CPU mode (works everywhere)
-docker compose run ultrasinger uv run python /app/UltraSinger/src/UltraSinger.py \
+# Convert a YouTube video (CPU)
+docker compose -f container/compose-cpu.yml run --rm ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
     -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
 
-# GPU mode (requires NVIDIA Container Toolkit)
-docker compose --profile gpu run ultrasinger-gpu uv run python /app/UltraSinger/src/UltraSinger.py \
+# With NVIDIA GPU
+docker compose -f container/compose-gpu.yml run --rm ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
     -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
 ```
 
-**Volumes** (auto-created in the project directory):
-
-| Host path | Container path | Purpose |
-|-----------|---------------|---------|
-| `./input/` | `/app/UltraSinger/input` | Local audio/video files |
-| `./output/` | `/app/UltraSinger/output` | Generated UltraStar files |
-| `./cookies.txt` | `/app/UltraSinger/cookies.txt` | YouTube cookies (optional, read-only) |
-
-> **Tip:** For authenticated YouTube downloads, export your cookies with a browser extension like
-> "Get cookies.txt LOCALLY" and place the file as `cookies.txt` in the project root.
-> Then add `--cookiefile /app/UltraSinger/cookies.txt` to the command.
-
-### 📦 Containerized (Docker or Podman) — manual setup
-
-For advanced setups without Docker Compose, see [container/README.md](container/README.md)
+For detailed setup (volumes, cookies, GUI mode, Podman), see [container/README.md](container/README.md)
