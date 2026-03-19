@@ -44,7 +44,13 @@ def main():
     # Load stylesheet and icon
     resources = Path(__file__).parent / "gui" / "resources"
     qss_path = resources / "styles.qss"
-    icon_path = resources / "icons" / "logo.jpg"
+    icons_dir = resources / "icons"
+
+    # Use .ico on Windows (taskbar/title bar), .png elsewhere
+    if sys.platform == "win32":
+        icon_path = icons_dir / "logo.ico"
+    else:
+        icon_path = icons_dir / "logo.png"
 
     app = QApplication(sys.argv)
     app.setApplicationName("UltraSinger")
