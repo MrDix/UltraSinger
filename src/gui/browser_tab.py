@@ -133,6 +133,12 @@ class UltraSingerWebPage(QWebEnginePage):
 
     convert_requested = Signal(str)
 
+    def javaScriptConsoleMessage(self, level, message, line, source):
+        """Suppress noisy JS console messages from embedded websites."""
+        # Only forward errors from our own overlay script
+        if source and "userscript" in source.lower():
+            logger.debug("JS [%s:%d]: %s", source, line, message)
+
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame):
         if url.scheme() == "ultrasinger":
             query = parse_qs(urlparse(url.toString()).query)
