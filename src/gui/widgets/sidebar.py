@@ -57,7 +57,7 @@ class Sidebar(QWidget):
         # Logo image — full width, no margins
         logo = QLabel()
         logo.setObjectName("sidebarLogo")
-        logo_path = Path(__file__).parent.parent / "resources" / "icons" / "logo.jpg"
+        logo_path = Path(__file__).parent.parent / "resources" / "icons" / "logo.png"
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path))
             scaled = pixmap.scaledToWidth(
