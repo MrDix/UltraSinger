@@ -1,10 +1,14 @@
 """Widget for managing multiple LLM API providers."""
 
+import json
 import logging
+import urllib.error
+import urllib.request
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -17,6 +21,36 @@ from PySide6.QtWidgets import (
 from ..models import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+
+class _ModelFetcher(QObject):
+    """Fetches available models from an OpenAI-compatible /v1/models endpoint."""
+
+    finished = Signal(list)  # list of model ID strings
+    error = Signal(str)
+
+    def __init__(self, base_url: str, api_key: str):
+        super().__init__()
+        self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
+
+    def run(self):
+        url = f"{self._base_url}/models"
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("User-Agent", "UltraSinger-GUI/1.0")
+        if self._api_key:
+            req.add_header("Authorization", f"Bearer {self._api_key}")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            models = sorted(
+                m["id"] for m in data.get("data", []) if m.get("id")
+            )
+            self.finished.emit(models)
+        except (urllib.error.URLError, json.JSONDecodeError, KeyError, OSError) as e:
+            self.error.emit(str(e))
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class LLMProviderRow(QWidget):
@@ -78,10 +112,25 @@ class LLMProviderRow(QWidget):
         model_label.setObjectName("caption")
         fields1.addWidget(model_label)
 
-        self._model_edit = QLineEdit(provider.default_model)
-        self._model_edit.setPlaceholderText("qwen/qwen3-32b")
-        self._model_edit.textChanged.connect(self._on_field_changed)
-        fields1.addWidget(self._model_edit, 1)
+        self._model_combo = QComboBox()
+        self._model_combo.setEditable(True)
+        self._model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._model_combo.lineEdit().setPlaceholderText("qwen/qwen3-32b")
+        if provider.default_model:
+            self._model_combo.addItem(provider.default_model)
+            self._model_combo.setCurrentText(provider.default_model)
+        self._model_combo.currentTextChanged.connect(self._on_field_changed)
+        fields1.addWidget(self._model_combo, 1)
+
+        self._fetch_btn = QPushButton("\u21BB")
+        self._fetch_btn.setObjectName("ghostButton")
+        self._fetch_btn.setFixedSize(28, 28)
+        self._fetch_btn.setToolTip("Fetch available models from API")
+        self._fetch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._fetch_btn.clicked.connect(self._fetch_models)
+        fields1.addWidget(self._fetch_btn)
+
+        self._fetch_thread: QThread | None = None
 
         layout.addLayout(fields1)
 
@@ -137,7 +186,7 @@ class LLMProviderRow(QWidget):
         """Return an updated LLMProvider from current field values."""
         self._provider.name = self._name_edit.text()
         self._provider.api_base_url = self._url_edit.text()
-        self._provider.default_model = self._model_edit.text()
+        self._provider.default_model = self._model_combo.currentText()
         self._provider.is_default = self._default_radio.isChecked()
         return self._provider
 
@@ -154,6 +203,53 @@ class LLMProviderRow(QWidget):
             self._key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
         else:
             self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+
+    def _fetch_models(self):
+        """Fetch available models from the provider's API."""
+        url = self._url_edit.text().strip()
+        if not url:
+            return
+
+        self._fetch_btn.setEnabled(False)
+        self._fetch_btn.setToolTip("Fetching models...")
+
+        self._fetch_thread = QThread()
+        self._fetcher = _ModelFetcher(url, self._key_edit.text())
+        self._fetcher.moveToThread(self._fetch_thread)
+
+        self._fetch_thread.started.connect(self._fetcher.run)
+        self._fetcher.finished.connect(self._on_models_fetched)
+        self._fetcher.error.connect(self._on_fetch_error)
+        self._fetcher.finished.connect(self._cleanup_fetch)
+        self._fetcher.error.connect(self._cleanup_fetch)
+
+        self._fetch_thread.start()
+
+    def _on_models_fetched(self, models: list[str]):
+        """Populate the model combobox with fetched models."""
+        current = self._model_combo.currentText()
+        self._model_combo.clear()
+        self._model_combo.addItems(models)
+        # Restore previous selection if it exists in the new list
+        idx = self._model_combo.findText(current)
+        if idx >= 0:
+            self._model_combo.setCurrentIndex(idx)
+        elif current:
+            self._model_combo.setEditText(current)
+        self._fetch_btn.setToolTip(
+            f"Fetch available models from API ({len(models)} found)"
+        )
+
+    def _on_fetch_error(self, error: str):
+        logger.warning("Failed to fetch models: %s", error)
+        self._fetch_btn.setToolTip(f"Fetch failed: {error}")
+
+    def _cleanup_fetch(self):
+        self._fetch_btn.setEnabled(True)
+        if self._fetch_thread:
+            self._fetch_thread.quit()
+            self._fetch_thread.wait(2000)
+            self._fetch_thread = None
 
 
 class LLMProviderListWidget(QWidget):
