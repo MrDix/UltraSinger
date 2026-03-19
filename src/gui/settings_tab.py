@@ -1,6 +1,6 @@
 """Conversion settings panel with all UltraSinger parameters."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -18,13 +18,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .widgets import AnimatedButton, FileDropZone, SettingsCard, ToggleSwitch
+from .widgets import SettingsCard, ToggleSwitch
 
 
 class SettingsTab(QWidget):
-    """Conversion settings form with all UltraSinger CLI parameters."""
+    """Conversion settings form with all UltraSinger CLI parameters.
 
-    convert_requested = Signal()  # user clicked Convert
+    Input source selection (YouTube URL / local file) is handled by
+    the sidebar, not by this tab. This tab only contains conversion options.
+    """
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
@@ -45,7 +47,7 @@ class SettingsTab(QWidget):
         header.setObjectName("sectionHeader")
         self._main_layout.addWidget(header)
 
-        self._build_input_section()
+        self._build_output_folder_section()
         self._build_transcription_section()
         self._build_language_section()
         self._build_pitch_section()
@@ -54,13 +56,6 @@ class SettingsTab(QWidget):
         self._build_device_section()
         self._build_paths_section()
 
-        # Convert button
-        self._main_layout.addSpacing(8)
-        self._convert_btn = AnimatedButton("\U0001F3A4  Start Conversion")
-        self._convert_btn.setMinimumHeight(48)
-        self._convert_btn.clicked.connect(self.convert_requested.emit)
-        self._main_layout.addWidget(self._convert_btn)
-
         self._main_layout.addStretch(1)
 
         scroll.setWidget(container)
@@ -68,51 +63,16 @@ class SettingsTab(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
 
-    # ─── Input ────────────────────────────────────────────────────────────
+    # ─── Output Folder ──────────────────────────────────────────────────
 
-    def _build_input_section(self):
-        card = SettingsCard("Input")
+    def _build_output_folder_section(self):
+        card = SettingsCard("Output Folder")
 
-        # Mode toggle
-        mode_row = QHBoxLayout()
-        self._input_mode_group = QButtonGroup(self)
-        self._youtube_radio = QRadioButton("YouTube")
-        self._local_radio = QRadioButton("Local File")
-        self._input_mode_group.addButton(self._youtube_radio, 0)
-        self._input_mode_group.addButton(self._local_radio, 1)
-        self._youtube_radio.setChecked(True)
-        mode_row.addWidget(self._youtube_radio)
-        mode_row.addWidget(self._local_radio)
-        mode_row.addStretch()
-        card.add_layout(mode_row)
-
-        # YouTube URL display
-        self._youtube_url_widget = QWidget()
-        yt_layout = QHBoxLayout(self._youtube_url_widget)
-        yt_layout.setContentsMargins(0, 0, 0, 0)
-        self._url_field = QLineEdit()
-        self._url_field.setPlaceholderText("Select a song from the YouTube browser...")
-        self._url_field.setReadOnly(True)
-        yt_layout.addWidget(self._url_field, 1)
-        card.add_widget(self._youtube_url_widget)
-
-        # Local file drop zone
-        self._file_drop_zone = FileDropZone()
-        self._file_drop_zone.hide()
-        card.add_widget(self._file_drop_zone)
-
-        # Toggle visibility based on mode
-        self._input_mode_group.idClicked.connect(self._on_input_mode_changed)
-
-        card.add_separator()
-
-        # Output folder
         out_row = QHBoxLayout()
         out_row.setSpacing(8)
         self._output_field = QLineEdit()
         self._output_field.setPlaceholderText("Output folder...")
         self._output_field.setText(self._config.get("output_folder", ""))
-        out_row.addWidget(QLabel("Output Folder"))
         out_row.addWidget(self._output_field, 1)
         browse_btn = QPushButton("Browse")
         browse_btn.clicked.connect(self._browse_output)
@@ -120,10 +80,6 @@ class SettingsTab(QWidget):
         card.add_layout(out_row)
 
         self._main_layout.addWidget(card)
-
-    def _on_input_mode_changed(self, mode_id: int):
-        self._youtube_url_widget.setVisible(mode_id == 0)
-        self._file_drop_zone.setVisible(mode_id == 1)
 
     def _browse_output(self):
         path = QFileDialog.getExistingDirectory(self, "Select Output Folder")
@@ -501,18 +457,6 @@ class SettingsTab(QWidget):
             line_edit.setText(path)
 
     # ─── Public API ───────────────────────────────────────────────────────
-
-    def set_youtube_url(self, url: str):
-        """Set the YouTube URL from the browser tab."""
-        self._url_field.setText(url)
-        self._youtube_radio.setChecked(True)
-        self._on_input_mode_changed(0)
-
-    def get_input_source(self) -> str:
-        """Return the current input source (URL or file path)."""
-        if self._youtube_radio.isChecked():
-            return self._url_field.text()
-        return self._file_drop_zone.current_file
 
     def collect_config(self) -> dict:
         """Collect all settings into a config dictionary."""
