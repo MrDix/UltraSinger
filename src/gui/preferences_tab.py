@@ -67,6 +67,22 @@ class PreferencesTab(QWidget):
             "4. Model: qwen/qwen3-32b (best quality, 0 degradations in testing)"
         )
 
+        # Show keyring storage status
+        try:
+            from .secrets import get_keyring_backend_name, is_keyring_available
+
+            if is_keyring_available():
+                llm_card.add_info(
+                    f"\U0001F512 API key stored securely in: {get_keyring_backend_name()}"
+                )
+            else:
+                llm_card.add_info(
+                    "\u26A0 No system keyring available. Set ULTRASINGER_LLM_API_KEY "
+                    "environment variable as a secure alternative."
+                )
+        except ImportError:
+            pass
+
         self._llm_url = QLineEdit()
         self._llm_url.setText(config.get("llm_api_base_url", "https://api.groq.com/openai/v1"))
         self._llm_url.setPlaceholderText("https://api.groq.com/openai/v1")
