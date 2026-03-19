@@ -417,11 +417,21 @@ class LLMProviderListWidget(QWidget):
                     row.set_default(False)
         self.providers_changed.emit()
 
+    def _unique_name(self, base: str) -> str:
+        """Generate a unique provider name by appending a number if needed."""
+        existing = {row.collect().name for row in self._rows}
+        if base not in existing:
+            return base
+        n = 2
+        while f"{base} ({n})" in existing:
+            n += 1
+        return f"{base} ({n})"
+
     def _add_default_provider(self):
         """Add a new provider with Groq defaults."""
         is_first = len(self._rows) == 0
         provider = LLMProvider(
-            name="Groq",
+            name=self._unique_name("Groq"),
             api_base_url="https://api.groq.com/openai/v1",
             default_model="qwen/qwen3-32b",
             is_default=is_first,

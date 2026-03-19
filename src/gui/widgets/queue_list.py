@@ -33,7 +33,7 @@ class QueueItemWidget(QWidget):
     def __init__(self, item: QueueItem, parent=None):
         super().__init__(parent)
         self._item_id = item.id
-        self.setFixedHeight(28)
+        self.setFixedHeight(32)
         self.setToolTip(item.input_source)
 
         layout = QHBoxLayout(self)
@@ -57,11 +57,11 @@ class QueueItemWidget(QWidget):
         # Settings gear button (only for pending items)
         self._gear_btn = QPushButton("\u2699")
         self._gear_btn.setObjectName("ghostButton")
-        self._gear_btn.setFixedSize(20, 20)
+        self._gear_btn.setFixedSize(26, 26)
         self._gear_btn.setToolTip("Per-song settings (click to override defaults)")
         self._gear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear_btn.setStyleSheet(
-            "font-size: 13px; color: #f0dfc0; background: transparent; "
+            "font-size: 16px; color: #f0dfc0; background: transparent; "
             "padding: 0px;"
         )
         self._gear_btn.clicked.connect(
@@ -72,11 +72,11 @@ class QueueItemWidget(QWidget):
         # Remove button (only for pending items)
         self._remove_btn = QPushButton("\u2715")
         self._remove_btn.setObjectName("ghostButton")
-        self._remove_btn.setFixedSize(20, 20)
+        self._remove_btn.setFixedSize(26, 26)
         self._remove_btn.setToolTip("Remove from queue")
         self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._remove_btn.setStyleSheet(
-            "font-size: 11px; color: #a09888; background: transparent; "
+            "font-size: 14px; color: #a09888; background: transparent; "
             "padding: 0px;"
         )
         self._remove_btn.clicked.connect(
@@ -120,7 +120,7 @@ class QueueItemWidget(QWidget):
         """Show visual indicator when per-song overrides are active."""
         color = "#00d4d4" if has_overrides else "#f0dfc0"
         self._gear_btn.setStyleSheet(
-            f"font-size: 13px; color: {color}; background: transparent; "
+            f"font-size: 16px; color: {color}; background: transparent; "
             "padding: 0px;"
         )
         self._gear_btn.setToolTip(
