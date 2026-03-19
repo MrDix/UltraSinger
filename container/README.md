@@ -1,16 +1,32 @@
 # Containerized UltraSinger
 
-## Getting started
+Run UltraSinger in a Docker or Podman container — no local Python install required.
 
-1. There are specific instructions for either Docker or Podman:
-    1. [Docker](docker.md)
-    1. [Podman](podman.md)
+## Quick start (Docker Compose)
 
-## Why run UltraSinger as a container?
+```bash
+# Build the image (once)
+docker compose -f container/compose-cpu.yml build
 
-Running UltraSinger in a container bears the following advantages
+# Convert a YouTube video (CPU)
+docker compose -f container/compose-cpu.yml run --rm ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
 
-- Environment Consistency: Containers ensure that the application runs in the same environment across different machines, reducing the "it works on my machine" problem.
-- Isolation: Containers isolate the application from the host system, preventing conflicts with other applications and dependencies.
-- Simplified Deployment: Containers package the application and its dependencies together, simplifying the deployment process.
-- Security: Containers provide an additional layer of security by isolating applications from the host system and each other.
+# With NVIDIA GPU
+docker compose -f container/compose-gpu.yml run --rm ultrasinger \
+    uv run python /app/UltraSinger/src/UltraSinger.py \
+    -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
+```
+
+## Detailed guides
+
+- [Docker](docker.md) — Docker and Docker Compose setup
+- [Podman](podman.md) — Podman setup (rootless, WSL2)
+
+## Why run as a container?
+
+- **Environment Consistency:** Same environment across different machines
+- **Isolation:** No conflicts with other Python packages or system dependencies
+- **Simplified Deployment:** Image contains all dependencies (FFmpeg, PyTorch, models)
+- **Security:** Application is isolated from the host system
