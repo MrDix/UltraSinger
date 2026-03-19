@@ -14,20 +14,13 @@ from PySide6.QtWidgets import (
 
 from ..models import QueueItem
 
-_STATUS_ICONS = {
-    "pending": "\u23F3",    # hourglass
-    "running": "\u25B6",    # play
-    "done": "\u2705",       # check
-    "failed": "\u274C",     # cross
-    "cancelled": "\u23F9",  # stop
-}
-
+# Simple colored dot for status (no confusing emoji)
 _STATUS_COLORS = {
     "pending": "#a09888",
     "running": "#ffa726",
     "done": "#4caf50",
     "failed": "#ef5350",
-    "cancelled": "#a09888",
+    "cancelled": "#605848",
 }
 
 
@@ -40,25 +33,23 @@ class QueueItemWidget(QWidget):
     def __init__(self, item: QueueItem, parent=None):
         super().__init__(parent)
         self._item_id = item.id
-        self.setFixedHeight(32)
+        self.setFixedHeight(28)
         self.setToolTip(item.input_source)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(4)
 
-        # Status icon
-        self._status_icon = QLabel(_STATUS_ICONS.get(item.status, ""))
-        self._status_icon.setFixedWidth(18)
-        self._status_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_icon.setStyleSheet("font-size: 12px; background: transparent;")
-        layout.addWidget(self._status_icon)
+        # Status dot (small colored circle)
+        self._status_dot = QLabel("\u2B24")  # ⬤
+        self._status_dot.setFixedWidth(14)
+        self._status_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._status_dot)
 
-        # Title (truncated)
-        type_icon = "\U0001F310" if item.input_type == "url" else "\U0001F3B5"
-        self._title = QLabel(f"{type_icon} {item.title}")
+        # Title (just the name, no type emoji)
+        self._title = QLabel(item.title)
         self._title.setStyleSheet(
-            "font-size: 11px; color: #f0dfc0; background: transparent;"
+            "font-size: 12px; color: #f0dfc0; background: transparent;"
         )
         self._title.setWordWrap(False)
         layout.addWidget(self._title, 1)
@@ -67,10 +58,11 @@ class QueueItemWidget(QWidget):
         self._gear_btn = QPushButton("\u2699")
         self._gear_btn.setObjectName("ghostButton")
         self._gear_btn.setFixedSize(20, 20)
-        self._gear_btn.setToolTip("Per-song settings")
+        self._gear_btn.setToolTip("Per-song settings (click to override defaults)")
         self._gear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear_btn.setStyleSheet(
-            "font-size: 12px; color: #a09888; background: transparent;"
+            "font-size: 13px; color: #f0dfc0; background: transparent; "
+            "padding: 0px;"
         )
         self._gear_btn.clicked.connect(
             lambda: self.settings_requested.emit(self._item_id)
@@ -78,15 +70,15 @@ class QueueItemWidget(QWidget):
         layout.addWidget(self._gear_btn)
 
         # Remove button (only for pending items)
-        style = QApplication.style()
-        self._remove_btn = QPushButton()
-        self._remove_btn.setIcon(
-            style.standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton)
-        )
+        self._remove_btn = QPushButton("\u2715")
         self._remove_btn.setObjectName("ghostButton")
         self._remove_btn.setFixedSize(20, 20)
         self._remove_btn.setToolTip("Remove from queue")
         self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._remove_btn.setStyleSheet(
+            "font-size: 11px; color: #a09888; background: transparent; "
+            "padding: 0px;"
+        )
         self._remove_btn.clicked.connect(
             lambda: self.remove_requested.emit(self._item_id)
         )
@@ -100,10 +92,9 @@ class QueueItemWidget(QWidget):
 
     def update_status(self, status: str):
         """Update the visual status of this item."""
-        self._status_icon.setText(_STATUS_ICONS.get(status, ""))
         color = _STATUS_COLORS.get(status, "#a09888")
-        self._status_icon.setStyleSheet(
-            f"font-size: 12px; color: {color}; background: transparent;"
+        self._status_dot.setStyleSheet(
+            f"font-size: 8px; color: {color}; background: transparent;"
         )
 
         # Only show gear/remove buttons for pending items
@@ -113,27 +104,28 @@ class QueueItemWidget(QWidget):
         # Dim completed/cancelled items
         if status in ("done", "failed", "cancelled"):
             self._title.setStyleSheet(
-                "font-size: 11px; color: #605848; background: transparent;"
+                "font-size: 12px; color: #605848; background: transparent;"
             )
         elif status == "running":
             self._title.setStyleSheet(
-                "font-size: 11px; color: #ffa726; font-weight: bold; "
+                "font-size: 12px; color: #ffa726; font-weight: bold; "
                 "background: transparent;"
             )
         else:
             self._title.setStyleSheet(
-                "font-size: 11px; color: #f0dfc0; background: transparent;"
+                "font-size: 12px; color: #f0dfc0; background: transparent;"
             )
 
     def set_has_overrides(self, has_overrides: bool):
         """Show visual indicator when per-song overrides are active."""
-        color = "#00d4d4" if has_overrides else "#a09888"
+        color = "#00d4d4" if has_overrides else "#f0dfc0"
         self._gear_btn.setStyleSheet(
-            f"font-size: 12px; color: {color}; background: transparent;"
+            f"font-size: 13px; color: {color}; background: transparent; "
+            "padding: 0px;"
         )
         self._gear_btn.setToolTip(
             "Per-song settings (custom)" if has_overrides
-            else "Per-song settings"
+            else "Per-song settings (click to override defaults)"
         )
 
 
@@ -151,7 +143,7 @@ class QueueListWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Scroll area for items
+        # Scroll area for items — no max height, fills available space
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(
@@ -160,7 +152,6 @@ class QueueListWidget(QWidget):
         scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
-        scroll.setMaximumHeight(200)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         self._container = QWidget()
@@ -170,10 +161,10 @@ class QueueListWidget(QWidget):
         self._items_layout.addStretch(1)
 
         scroll.setWidget(self._container)
-        layout.addWidget(scroll)
+        layout.addWidget(scroll, 1)  # stretch=1 → fills parent
 
         # Empty state label
-        self._empty_label = QLabel("Queue is empty")
+        self._empty_label = QLabel("Drop files or queue from browser")
         self._empty_label.setObjectName("caption")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet(

@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -28,11 +29,16 @@ class SidebarButton(QPushButton):
         self.label = label
         self.setText(f"  {icon_text}  {label}")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(44)
+        self.setMinimumHeight(40)
 
 
 class Sidebar(QWidget):
-    """Sidebar navigation panel with drop zone and conversion queue."""
+    """Sidebar navigation panel with drop zone and conversion queue.
+
+    Layout (top to bottom):
+      Logo → Drag Files zone → Convert Queue (fills space) →
+      Start/Clear buttons → Navigation buttons → Version
+    """
 
     section_changed = Signal(int)
     start_all_requested = Signal()
@@ -42,11 +48,11 @@ class Sidebar(QWidget):
         super().__init__(parent)
         self.setObjectName("sidebar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedWidth(220)
+        self.setFixedWidth(250)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 0, 6, 12)
-        layout.setSpacing(2)
+        layout.setContentsMargins(6, 0, 6, 8)
+        layout.setSpacing(4)
 
         # Logo image
         logo = QLabel()
@@ -55,35 +61,38 @@ class Sidebar(QWidget):
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path))
             scaled = pixmap.scaledToWidth(
-                196, Qt.TransformationMode.SmoothTransformation
+                226, Qt.TransformationMode.SmoothTransformation
             )
             logo.setPixmap(scaled)
         else:
             logo.setText("UltraSinger")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(logo)
-        layout.addSpacing(8)
 
-        # ── File Drop Zone ─────────────────────────────────────────────
+        # ── Drag Files Zone ───────────────────────────────────────────
+        drop_frame = _SidebarSection("Drag Files")
         self._drop_zone = FileDropZone()
-        self._drop_zone.setMinimumHeight(90)
-        self._drop_zone.setMaximumHeight(110)
-        layout.addWidget(self._drop_zone)
+        self._drop_zone.setMinimumHeight(70)
+        self._drop_zone.setMaximumHeight(90)
+        drop_frame.add_widget(self._drop_zone)
+        layout.addWidget(drop_frame)
 
         # Wire drop zone → emit file_dropped signal
         self._drop_zone.file_selected.connect(self._on_file_dropped)
 
-        # ── Queue List ─────────────────────────────────────────────────
+        # ── Convert Queue (fills available space) ─────────────────────
+        queue_frame = _SidebarSection("Convert Queue")
         self._queue_list = QueueListWidget()
-        layout.addWidget(self._queue_list)
+        queue_frame.add_widget(self._queue_list, stretch=1)
+        layout.addWidget(queue_frame, 1)  # stretch=1 → takes all space
 
-        # ── Queue Action Buttons ───────────────────────────────────────
+        # ── Queue Action Buttons ──────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
 
         self._start_btn = QPushButton("\u25B6  Start All")
         self._start_btn.setObjectName("primaryButton")
-        self._start_btn.setMinimumHeight(36)
+        self._start_btn.setMinimumHeight(34)
         self._start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._start_btn.setEnabled(False)
         self._start_btn.clicked.connect(self.start_all_requested.emit)
@@ -91,15 +100,18 @@ class Sidebar(QWidget):
 
         self._clear_btn = QPushButton("Clear")
         self._clear_btn.setObjectName("ghostButton")
-        self._clear_btn.setMinimumHeight(36)
+        self._clear_btn.setMinimumHeight(34)
         self._clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._clear_btn.setEnabled(False)
         btn_row.addWidget(self._clear_btn)
 
         layout.addLayout(btn_row)
-        layout.addSpacing(8)
 
-        # ── Navigation Buttons ─────────────────────────────────────────
+        # ── Navigation Buttons (at the bottom) ────────────────────────
+        self._nav_container = QVBoxLayout()
+        self._nav_container.setSpacing(2)
+        layout.addLayout(self._nav_container)
+
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
         self._buttons: list[SidebarButton] = []
@@ -125,7 +137,7 @@ class Sidebar(QWidget):
         index = len(self._buttons)
         self._button_group.addButton(btn, index)
         self._buttons.append(btn)
-        self.layout().addWidget(btn)
+        self._nav_container.addWidget(btn)
         btn.clicked.connect(
             lambda _checked=False, idx=index: self.section_changed.emit(idx)
         )
@@ -134,10 +146,8 @@ class Sidebar(QWidget):
         return index
 
     def finalize(self):
-        """Call after all sections are added to push remaining space down."""
-        self.layout().addStretch(1)
-
-        # Version label at bottom
+        """Call after all sections are added."""
+        # Version label at very bottom
         try:
             _version = importlib.metadata.version("ultrasinger")
         except importlib.metadata.PackageNotFoundError:
@@ -167,3 +177,26 @@ class Sidebar(QWidget):
         self.file_dropped.emit(path)
         # Reset drop zone visual (file is now in the queue)
         self._drop_zone.set_file("")
+
+
+class _SidebarSection(QFrame):
+    """A labeled frame container for sidebar sections."""
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("sidebarSection")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(6, 4, 6, 6)
+        self._layout.setSpacing(2)
+
+        label = QLabel(title)
+        label.setObjectName("caption")
+        label.setStyleSheet(
+            "font-size: 11px; font-weight: 600; color: #a09888; "
+            "letter-spacing: 0.5px; text-transform: uppercase; "
+            "background: transparent;"
+        )
+        self._layout.addWidget(label)
+
+    def add_widget(self, widget, stretch=0):
+        self._layout.addWidget(widget, stretch)

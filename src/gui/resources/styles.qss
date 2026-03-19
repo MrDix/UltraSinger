@@ -93,7 +93,13 @@ QLabel#infoLabel {
 }
 
 #sidebarLogo {
-    padding: 8px 4px 4px 4px;
+    padding: 4px 4px 0px 4px;
+}
+
+#sidebarSection {
+    border: 1px solid rgba(240, 223, 192, 0.08);
+    border-radius: 8px;
+    background-color: rgba(240, 223, 192, 0.03);
 }
 
 /* --- Content area --- */

@@ -61,7 +61,7 @@ _CONVERT_OVERLAY_JS = r"""
 
             var btn = document.createElement('div');
             btn.id = 'ultrasinger-convert-btn';
-            btn.textContent = '\uD83C\uDFA4 Convert';
+            btn.textContent = '\uD83C\uDFA4 Queue';
             btn.style.cssText =
                 'position:fixed;bottom:24px;right:24px;z-index:2147483647;' +
                 'background:linear-gradient(135deg,#e91e63,#c2185b);color:#fff;' +

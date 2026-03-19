@@ -132,8 +132,21 @@ class MainWindow(QMainWindow):
         self._update_queue_buttons()
 
     def _on_add_from_file(self, path: str):
-        """Add a local file to the queue (from drop zone)."""
-        title = Path(path).stem
+        """Add a local file to the queue (from drop zone).
+
+        For UltraStar .txt files, validates that the referenced media
+        file exists before queueing.
+        """
+        p = Path(path)
+        if p.suffix.lower() == ".txt":
+            title, error = _validate_ultrastar_txt(p)
+            if error:
+                self._queue_tab.append_log(f"[Error] {error}")
+                self._sidebar.set_active(self._TAB_CONSOLE)
+                return
+        else:
+            title = p.stem
+
         logger.info("Add to queue from file: %s", title)
         self._queue_mgr.add_item(path, "file", title)
         self._update_queue_buttons()
@@ -246,3 +259,59 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
         super().closeEvent(event)
+
+
+def _validate_ultrastar_txt(txt_path: Path) -> tuple[str, str]:
+    """Validate an UltraStar TXT file and extract its title.
+
+    Returns (title, error_message).  If error_message is non-empty,
+    the file should not be queued.
+    """
+    try:
+        # Try UTF-8 first, fall back to latin-1
+        try:
+            lines = txt_path.read_text(encoding="utf-8").splitlines()
+        except UnicodeDecodeError:
+            lines = txt_path.read_text(encoding="latin-1").splitlines()
+    except OSError as e:
+        return "", f"Cannot read {txt_path.name}: {e}"
+
+    # Check it looks like an UltraStar file (has # tags)
+    tags = {}
+    for line in lines:
+        if not line.startswith("#"):
+            break
+        if ":" in line:
+            key, _, value = line[1:].partition(":")
+            tags[key.strip().upper()] = value.strip()
+
+    if not tags:
+        return "", f"{txt_path.name} does not appear to be an UltraStar TXT file."
+
+    # Extract title
+    title = tags.get("TITLE", txt_path.stem)
+    artist = tags.get("ARTIST", "")
+    display_title = f"{artist} - {title}" if artist else title
+
+    # Check for referenced media files relative to the TXT
+    txt_dir = txt_path.parent
+    media_keys = ["MP3", "AUDIO", "VIDEO"]
+    found_media = False
+    for key in media_keys:
+        if key in tags:
+            media_path = txt_dir / tags[key]
+            if media_path.exists():
+                found_media = True
+            else:
+                return "", (
+                    f"{txt_path.name}: referenced {key} file "
+                    f"'{tags[key]}' not found in {txt_dir}"
+                )
+
+    if not found_media:
+        return "", (
+            f"{txt_path.name}: no #MP3, #AUDIO, or #VIDEO tag found. "
+            "UltraSinger needs a media file reference."
+        )
+
+    return display_title, ""
