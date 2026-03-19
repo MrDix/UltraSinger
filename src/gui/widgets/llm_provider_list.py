@@ -105,6 +105,8 @@ class LLMProviderRow(QWidget):
         self._url_edit = QLineEdit(provider.api_base_url)
         self._url_edit.setPlaceholderText("https://api.groq.com/openai/v1")
         self._url_edit.textChanged.connect(self._on_field_changed)
+        self._url_edit.editingFinished.connect(self._on_url_editing_finished)
+        self._last_fetched_url = provider.api_base_url
         fields1.addWidget(self._url_edit, 2)
 
         model_label = QLabel("Model")
@@ -204,6 +206,13 @@ class LLMProviderRow(QWidget):
         else:
             self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
 
+    def _on_url_editing_finished(self):
+        """Auto-fetch models when the URL field loses focus and changed."""
+        url = self._url_edit.text().strip()
+        if url and url != self._last_fetched_url:
+            self._last_fetched_url = url
+            self._fetch_models()
+
     def _fetch_models(self):
         """Fetch available models from the provider's API."""
         url = self._url_edit.text().strip()
@@ -225,17 +234,30 @@ class LLMProviderRow(QWidget):
 
         self._fetch_thread.start()
 
+    _FALLBACK_MODEL = "qwen/qwen3-32b"
+
     def _on_models_fetched(self, models: list[str]):
-        """Populate the model combobox with fetched models."""
-        current = self._model_combo.currentText()
+        """Populate the model combobox with fetched models.
+
+        Selection priority: previous model → qwen/qwen3-32b → first model.
+        """
+        previous = self._model_combo.currentText()
         self._model_combo.clear()
         self._model_combo.addItems(models)
-        # Restore previous selection if it exists in the new list
-        idx = self._model_combo.findText(current)
+
+        # Try to keep previous selection
+        idx = self._model_combo.findText(previous)
         if idx >= 0:
             self._model_combo.setCurrentIndex(idx)
-        elif current:
-            self._model_combo.setEditText(current)
+        else:
+            # Previous model not available — try fallback
+            idx = self._model_combo.findText(self._FALLBACK_MODEL)
+            if idx >= 0:
+                self._model_combo.setCurrentIndex(idx)
+            elif models:
+                # Neither previous nor fallback found — select first
+                self._model_combo.setCurrentIndex(0)
+
         self._fetch_btn.setToolTip(
             f"Fetch available models from API ({len(models)} found)"
         )
