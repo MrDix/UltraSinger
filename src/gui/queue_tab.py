@@ -115,17 +115,39 @@ class QueueTab(QWidget):
         self._elapsed_timer.start()
         self._tick_timer.start()
 
-    def on_queue_finished(self):
-        """Handle batch processing completion."""
+    def on_queue_finished(self, failed_count: int = 0, cancelled: bool = False):
+        """Handle batch processing completion.
+
+        Args:
+            failed_count: Number of items that failed.
+            cancelled: Whether the queue was cancelled by the user.
+        """
         self._tick_timer.stop()
         self._cancel_btn.setEnabled(False)
 
-        self._status_icon.setText("\u2705")
-        self._status_icon.setStyleSheet("font-size: 20px;")
-        self._status_label.setText("Queue completed!")
-        self._status_label.setStyleSheet(
-            "font-size: 16px; font-weight: 600; color: #4caf50;"
-        )
+        if cancelled:
+            self._status_icon.setText("\u23F9")
+            self._status_icon.setStyleSheet("font-size: 20px;")
+            self._status_label.setText("Queue cancelled")
+            self._status_label.setStyleSheet(
+                "font-size: 16px; font-weight: 600; color: #9e9e9e;"
+            )
+        elif failed_count > 0:
+            self._status_icon.setText("\u26A0")
+            self._status_icon.setStyleSheet("font-size: 20px;")
+            self._status_label.setText(
+                f"Completed with {failed_count} error(s)"
+            )
+            self._status_label.setStyleSheet(
+                "font-size: 16px; font-weight: 600; color: #ef5350;"
+            )
+        else:
+            self._status_icon.setText("\u2705")
+            self._status_icon.setStyleSheet("font-size: 20px;")
+            self._status_label.setText("Queue completed!")
+            self._status_label.setStyleSheet(
+                "font-size: 16px; font-weight: 600; color: #4caf50;"
+            )
         self._stage_label.setText("")
 
     def set_output_folder(self, folder: str):

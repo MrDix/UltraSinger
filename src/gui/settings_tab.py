@@ -691,8 +691,8 @@ class ConversionSettingsForm(QWidget):
         return {
             "whisper_model": self._whisper_model.currentText(),
             "whisper_batch_size": self._whisper_batch_size.value(),
-            "whisper_compute_type": "" if self._whisper_compute.currentText() == "auto"
-                                   else self._whisper_compute.currentText(),
+            "whisper_compute_type": None if self._whisper_compute.currentText() == "auto"
+                                     else self._whisper_compute.currentText(),
             "whisper_align_model": self._align_model.text(),
             "demucs_model": self._demucs_model.currentText(),
             "language_mode": "manual" if self._lang_manual.isChecked() else "auto",

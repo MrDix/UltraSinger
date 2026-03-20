@@ -215,6 +215,9 @@ class MainWindow(QMainWindow):
         # Set global config on queue manager and start
         self._queue_mgr.set_global_config(self._config)
 
+        # Set output folder for the Open Folder button
+        self._queue_tab.set_output_folder(self._config.get("output_folder", ""))
+
         # Switch to console tab
         self._sidebar.set_active(self._TAB_CONSOLE)
         self._queue_tab.on_queue_started()
@@ -224,9 +227,9 @@ class MainWindow(QMainWindow):
         """Handle queue batch start."""
         self._update_queue_buttons()
 
-    def _on_queue_finished(self):
+    def _on_queue_finished(self, failed_count: int, cancelled: bool):
         """Handle queue batch completion."""
-        self._queue_tab.on_queue_finished()
+        self._queue_tab.on_queue_finished(failed_count, cancelled)
         self._update_queue_buttons()
 
     def _on_item_status_changed(self, item_id: str, status: str):

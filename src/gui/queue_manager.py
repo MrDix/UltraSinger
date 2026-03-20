@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 
 from .models import QueueItem
 from .ultrasinger_runner import UltraSingerRunner
@@ -18,7 +18,7 @@ class QueueManager(QObject):
     item_removed = Signal(str)  # item_id
     item_status_changed = Signal(str, str)  # item_id, new_status
     queue_started = Signal()
-    queue_finished = Signal()
+    queue_finished = Signal(int, bool)  # failed_count, was_cancelled
 
     # Forwarded from the runner for the currently active item
     line_output = Signal(str)
@@ -34,7 +34,11 @@ class QueueManager(QObject):
 
         self._runner.line_output.connect(self.line_output.emit)
         self._runner.stage_changed.connect(self.stage_changed.emit)
-        self._runner.finished.connect(self._on_item_finished)
+        # Use QueuedConnection so _on_item_finished runs on the main thread,
+        # avoiding races with add_item/remove_item/cancel_all.
+        self._runner.finished.connect(
+            self._on_item_finished, Qt.ConnectionType.QueuedConnection
+        )
 
     @property
     def runner(self) -> UltraSingerRunner:
@@ -120,6 +124,11 @@ class QueueManager(QObject):
                 item.status = "cancelled"
                 self.item_status_changed.emit(item.id, "cancelled")
 
+    def _emit_finished(self, cancelled: bool = False):
+        """Emit queue_finished with summary counts."""
+        failed = sum(1 for it in self._items if it.status == "failed")
+        self.queue_finished.emit(failed, cancelled)
+
     def _run_next(self):
         """Pick the next pending item and start conversion."""
         next_item = next(
@@ -128,7 +137,7 @@ class QueueManager(QObject):
         if next_item is None:
             self._running = False
             self._current_item = None
-            self.queue_finished.emit()
+            self._emit_finished()
             return
 
         self._current_item = next_item
@@ -201,7 +210,7 @@ class QueueManager(QObject):
                     self.item_status_changed.emit(it.id, "cancelled")
             self._running = False
             self._current_item = None
-            self.queue_finished.emit()
+            self._emit_finished(cancelled=True)
             return
 
         # Run next pending item

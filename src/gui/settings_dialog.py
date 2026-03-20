@@ -53,7 +53,7 @@ class PerSongSettingsDialog(QDialog):
         self._form = ConversionSettingsForm(merged)
         self._form.set_llm_providers(
             llm_providers,
-            selected_id=overrides.get("llm_provider_id", ""),
+            selected_id=merged.get("llm_provider_id", ""),
         )
 
         scroll.setWidget(self._form)

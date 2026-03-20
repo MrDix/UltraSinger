@@ -102,7 +102,7 @@ class Sidebar(QWidget):
         self._start_btn.setMinimumHeight(34)
         self._start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._start_btn.setEnabled(False)
-        self._start_btn.clicked.connect(self.start_all_requested.emit)
+        self._start_btn.clicked.connect(lambda: self.start_all_requested.emit())
         btn_row.addWidget(self._start_btn, 1)
 
         self._clear_btn = QPushButton("Clear")
