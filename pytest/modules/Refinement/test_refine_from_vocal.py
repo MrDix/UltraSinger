@@ -331,4 +331,24 @@ class TestRefineTiming:
         assert result[0].start == 1.48
         assert corrections == 0
 
+    def test_end_refinement_on_confidence_drop(self):
+        """Note end should snap to confidence drop-off."""
+        # 100 frames over 2s → 20ms per frame, drop at frame 50 = 1.0s
+        n = 100
+        times = np.linspace(0.0, 2.0, n).tolist()
+        confidences = [0.9] * 50 + [0.2] * 50
+        pitched = PitchedData(
+            times=times, frequencies=[440.0] * n, confidence=confidences
+        )
+
+        # Note end at 1.03s, drop at ~1.01s → within 50ms threshold
+        segments = [MidiSegment(note="C4", start=0.5, end=1.03, word="test")]
+
+        result, corrections = refine_timing(
+            segments, np.array([]), pitched,
+            timing_threshold_ms=50.0,
+        )
+        assert corrections >= 1
+        assert result[0].end < 1.03
+
 
