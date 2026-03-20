@@ -293,13 +293,14 @@ def run() -> tuple[str, Score, Score]:
             midi_segments=process_data.midi_segments,
             pitched_data=process_data.pitched_data,
             vocal_audio_path=process_data.process_data_paths.whisper_audio_path,
+            bpm=process_data.media_info.bpm,
             refine_pitch_enabled=settings.refine_pitch,
             refine_timing_enabled=settings.refine_timing,
-            pitch_threshold_ht=settings.refine_pitch_threshold,
             timing_threshold_ms=settings.refine_timing_threshold,
+            difficulty=settings.refine_difficulty,
+            hit_ratio_threshold=settings.refine_hit_ratio,
             vibrato_window=settings.refine_vibrato_window,
             vibrato_threshold_cents=settings.refine_vibrato_threshold,
-            difficulty=settings.refine_difficulty,
         )
 
     # Create plot
@@ -1229,8 +1230,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.refine_pitch = False
         elif opt in ("--disable_refine_timing"):
             settings.refine_timing = False
-        elif opt in ("--refine_pitch_threshold"):
-            settings.refine_pitch_threshold = float(arg)
+        elif opt in ("--refine_hit_ratio"):
+            settings.refine_hit_ratio = float(arg)
         elif opt in ("--refine_timing_threshold"):
             settings.refine_timing_threshold = float(arg)
         elif opt in ("--refine_vibrato_window"):
@@ -1302,7 +1303,7 @@ def arg_options():
         "refine_from_vocal",
         "disable_refine_pitch",
         "disable_refine_timing",
-        "refine_pitch_threshold=",
+        "refine_hit_ratio=",
         "refine_timing_threshold=",
         "refine_vibrato_window=",
         "refine_vibrato_threshold=",

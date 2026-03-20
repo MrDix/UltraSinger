@@ -83,7 +83,7 @@ _DEFAULTS = {
     "refine_pitch": True,
     "refine_timing": True,
     "refine_difficulty": "easy",
-    "refine_pitch_threshold": 1.0,
+    "refine_hit_ratio": 0.5,
     "refine_timing_threshold": 30.0,
     "refine_vibrato_window": 5,
     "refine_vibrato_threshold": 50.0,

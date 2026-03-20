@@ -1,31 +1,39 @@
-"""Reverse-scoring refinement — uses the vocal audio as ground truth to
-correct pitch values and note timings in an already-generated note list.
+"""Reverse-scoring refinement — uses ultrastar-score's C++ ptAKF pitch
+detection (the same algorithm as Vocaluxe/USDX) to identify notes that
+would score poorly, then corrects them.
 
-This runs as a post-processing pass *after* the initial pitch detection,
-octave correction, and syllable merging, but *before* the UltraStar TXT
-is written to disk.  It re-analyses the SwiftF0 pitched data for each note
-window and corrects values that deviate beyond configurable thresholds.
+Pitch refinement:
+    1. Write a temporary UltraStar TXT from the current midi_segments
+    2. Score it against the vocal audio using ultrastar-score's ``score_song()``
+    3. For notes with low ``hit_ratio``: replace the pitch with the median
+       of ``detected_tones`` from the ptAKF detector
+    4. Convert back to note names on the MidiSegments
+
+Timing refinement remains librosa-based (onset detection), since ptAKF
+only provides pitch, not onset timing.
+
+This ensures the refinement uses the *exact same* pitch detection and
+tolerance logic that the games use, eliminating systematic bias from
+Python pitch libraries like librosa/SwiftF0.
 """
 
 from __future__ import annotations
 
 import math
+import os
+import tempfile
 
 import librosa
 import numpy as np
 
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
-from modules.Pitcher.pitched_data_helper import get_frequencies_with_high_confidence
-from modules.Midi.midi_creator import (
-    confidence_weighted_median_note,
-    find_nearest_index,
-)
+from modules.Midi.midi_creator import find_nearest_index
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 
 
 # Difficulty presets: how many semitones off a note must be before correcting.
-# Easy = lenient (only fix gross errors), Hard = strict (fix everything).
+# These mirror ultrastar-score's Difficulty enum but as a simple mapping.
 DIFFICULTY_TOLERANCE = {
     "easy": 2.0,
     "medium": 1.0,
@@ -83,93 +91,143 @@ def damp_vibrato(
     return smoothed.tolist(), confidence
 
 
-def _get_note_pitch_from_window(
-    pitched_data: PitchedData,
-    start_time: float,
-    end_time: float,
-    vibrato_window: int = 5,
-    vibrato_threshold_cents: float = 50.0,
-) -> str | None:
-    """Extract the detected note for a time window from pitched data.
+def _ptakf_tone_to_midi(tone: int) -> int:
+    """Convert ptAKF tone index to MIDI note number.
 
-    Returns None if no confident frequencies are found.
+    ptAKF: tone 0 = C2 = MIDI 36.
     """
-    start_idx = find_nearest_index(pitched_data.times, start_time)
-    end_idx = find_nearest_index(pitched_data.times, end_time)
-
-    if start_idx == end_idx:
-        freqs = [pitched_data.frequencies[start_idx]]
-        confs = [pitched_data.confidence[start_idx]]
-    else:
-        freqs = list(pitched_data.frequencies[start_idx:end_idx])
-        confs = list(pitched_data.confidence[start_idx:end_idx])
-
-    if not freqs:
-        return None
-
-    # Apply vibrato damping before note extraction
-    freqs, confs = damp_vibrato(
-        freqs, confs,
-        smoothing_window=vibrato_window,
-        vibrato_threshold_cents=vibrato_threshold_cents,
-    )
-
-    # Filter by confidence
-    conf_f, conf_w = get_frequencies_with_high_confidence(freqs, confs)
-    if not conf_f:
-        return None
-
-    return confidence_weighted_median_note(conf_f, conf_w)
+    return tone + 36
 
 
-def refine_pitch(
+def _write_temp_ultrastar_txt(
     midi_segments: list[MidiSegment],
-    pitched_data: PitchedData,
-    pitch_threshold_ht: float = 1.0,
-    difficulty: str = "easy",
-    vibrato_window: int = 5,
-    vibrato_threshold_cents: float = 50.0,
-) -> tuple[list[MidiSegment], int]:
-    """Refine note pitches by comparing against the vocal audio.
+    bpm: float,
+    gap_ms: float = 0.0,
+) -> str:
+    """Write a minimal UltraStar TXT file from midi_segments for scoring.
 
-    For each note, the detected pitch from the vocal audio is compared
-    against the current MIDI value.  If the deviation exceeds the
-    threshold (adjusted by difficulty tolerance), the note is corrected.
+    Returns the path to the temporary file.
+    """
+    from modules.Ultrastar.coverter.ultrastar_converter import (
+        real_bpm_to_ultrastar_bpm,
+        second_to_beat,
+    )
+    from modules.Ultrastar.coverter.ultrastar_midi_converter import (
+        convert_midi_note_to_ultrastar_note,
+    )
+    from modules.Ultrastar.ultrastar_writer import get_multiplier
+
+    multiplier = get_multiplier(bpm)
+    ultrastar_bpm = real_bpm_to_ultrastar_bpm(bpm, multiplier)
+
+    lines = []
+    lines.append("#TITLE:_refine_temp")
+    lines.append("#ARTIST:_refine_temp")
+    lines.append(f"#BPM:{ultrastar_bpm}")
+    lines.append(f"#GAP:{gap_ms}")
+    lines.append("#VERSION:1.2.0")
+    lines.append("#MP3:_refine_temp.mp3")
+
+    for seg in midi_segments:
+        start_beat = second_to_beat(seg.start, ultrastar_bpm, gap_ms)
+        end_beat = second_to_beat(seg.end, ultrastar_bpm, gap_ms)
+        duration = max(1, end_beat - start_beat)
+        pitch = convert_midi_note_to_ultrastar_note(seg)
+        word = seg.word if seg.word else "~"
+        lines.append(f": {start_beat} {duration} {pitch} {word}")
+
+    lines.append("E")
+
+    fd, path = tempfile.mkstemp(suffix=".txt", prefix="usinger_refine_")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    return path
+
+
+def refine_pitch_with_uscore(
+    midi_segments: list[MidiSegment],
+    vocal_audio_path: str,
+    bpm: float,
+    difficulty: str = "easy",
+    hit_ratio_threshold: float = 0.5,
+) -> tuple[list[MidiSegment], int]:
+    """Refine note pitches using ultrastar-score's C++ ptAKF detector.
+
+    Scores the current notes against the vocal audio using the same
+    algorithm as Vocaluxe/USDX.  Notes that score poorly (low hit_ratio)
+    are corrected by taking the median of the ptAKF-detected tones.
 
     Args:
         midi_segments: Notes to refine (modified in-place).
-        pitched_data: SwiftF0 pitch contour from the vocal audio.
-        pitch_threshold_ht: Base threshold in semitones before correcting.
-        difficulty: Tolerance preset — ``"easy"`` (lenient), ``"medium"``,
-            or ``"hard"`` (strict).
-        vibrato_window: Smoothing window for vibrato damping.
-        vibrato_threshold_cents: Vibrato detection threshold in cents.
+        vocal_audio_path: Path to vocal-only audio file.
+        bpm: Song BPM for beat/time conversion.
+        difficulty: Tolerance preset (``"easy"``, ``"medium"``, ``"hard"``).
+        hit_ratio_threshold: Notes below this hit ratio are corrected.
 
     Returns:
         Tuple of (midi_segments, number of corrections made).
     """
-    tolerance = DIFFICULTY_TOLERANCE.get(difficulty, 2.0)
-    effective_threshold = pitch_threshold_ht + tolerance
-    corrections = 0
+    from ultrastar_score import score_song, Difficulty
+    from ultrastar_score.parser import parse_ultrastar
 
-    for seg in midi_segments:
-        detected_note = _get_note_pitch_from_window(
-            pitched_data, seg.start, seg.end,
-            vibrato_window=vibrato_window,
-            vibrato_threshold_cents=vibrato_threshold_cents,
+    # Map difficulty string to ultrastar-score enum
+    diff_map = {
+        "easy": Difficulty.EASY,
+        "medium": Difficulty.MEDIUM,
+        "hard": Difficulty.HARD,
+    }
+    uscore_difficulty = diff_map.get(difficulty, Difficulty.EASY)
+
+    # Write temporary TXT for scoring
+    tmp_txt = _write_temp_ultrastar_txt(midi_segments, bpm)
+    try:
+        song = parse_ultrastar(tmp_txt)
+        result = score_song(song, vocal_audio_path, difficulty=uscore_difficulty)
+    finally:
+        try:
+            os.unlink(tmp_txt)
+        except OSError:
+            pass
+
+    # Flatten all NoteScores to match midi_segments order
+    all_note_scores = [
+        ns for ls in result.line_scores for ns in ls.note_scores
+    ]
+
+    if len(all_note_scores) != len(midi_segments):
+        print(
+            f"{ULTRASINGER_HEAD} Warning: note count mismatch "
+            f"(segments={len(midi_segments)}, scores={len(all_note_scores)}), "
+            f"skipping pitch refinement"
         )
-        if detected_note is None:
+        return midi_segments, 0
+
+    corrections = 0
+    for seg, ns in zip(midi_segments, all_note_scores):
+        if ns.beats_total == 0:
             continue
+
+        # Note already scores well — skip
+        if ns.hit_ratio >= hit_ratio_threshold:
+            continue
+
+        # Get the ptAKF-detected tones for this note (excluding unvoiced = -1)
+        voiced_tones = [t for t in ns.detected_tones if t >= 0]
+        if not voiced_tones:
+            continue
+
+        # Median of detected tones (ptAKF tone index)
+        median_tone = int(np.median(voiced_tones))
+        detected_midi = _ptakf_tone_to_midi(median_tone)
 
         try:
             current_midi = librosa.note_to_midi(seg.note)
-            detected_midi = librosa.note_to_midi(detected_note)
         except (ValueError, TypeError):
             continue
 
-        deviation = abs(current_midi - detected_midi)
-        if deviation > effective_threshold:
-            seg.note = detected_note
+        if detected_midi != current_midi:
+            seg.note = librosa.midi_to_note(detected_midi)
             corrections += 1
 
     return midi_segments, corrections
@@ -270,28 +328,39 @@ def refine_notes(
     midi_segments: list[MidiSegment],
     pitched_data: PitchedData,
     vocal_audio_path: str,
+    bpm: float,
     *,
     refine_pitch_enabled: bool = True,
     refine_timing_enabled: bool = True,
-    pitch_threshold_ht: float = 1.0,
     timing_threshold_ms: float = 30.0,
+    difficulty: str = "easy",
+    hit_ratio_threshold: float = 0.5,
     vibrato_window: int = 5,
     vibrato_threshold_cents: float = 50.0,
-    difficulty: str = "easy",
 ) -> list[MidiSegment]:
     """Orchestrate all refinement passes on the note list.
 
+    Pitch refinement uses ultrastar-score's C++ ptAKF detector (the same
+    algorithm as Vocaluxe/USDX) to identify poorly-scoring notes, then
+    corrects them based on what the game would actually detect.
+
+    Timing refinement uses librosa onset detection (since ptAKF only
+    provides pitch, not onset timing).
+
     Args:
         midi_segments: Notes to refine (modified in-place).
-        pitched_data: SwiftF0 pitch contour.
-        vocal_audio_path: Path to vocal-only audio (for onset detection).
+        pitched_data: SwiftF0 pitch contour (for timing refinement).
+        vocal_audio_path: Path to vocal-only audio.
+        bpm: Song BPM for beat/time conversion.
         refine_pitch_enabled: Whether to run pitch refinement.
         refine_timing_enabled: Whether to run timing refinement.
-        pitch_threshold_ht: Semitone threshold for pitch correction.
         timing_threshold_ms: Millisecond threshold for timing correction.
-        vibrato_window: Smoothing window for vibrato damping.
-        vibrato_threshold_cents: Vibrato detection threshold in cents.
         difficulty: Tolerance preset (``"easy"``, ``"medium"``, ``"hard"``).
+        hit_ratio_threshold: Notes below this hit ratio are pitch-corrected.
+        vibrato_window: Smoothing window for vibrato damping (unused in
+            uscore pitch path, kept for timing confidence analysis).
+        vibrato_threshold_cents: Vibrato detection threshold (unused in
+            uscore pitch path).
 
     Returns:
         The refined midi_segments list.
@@ -300,7 +369,7 @@ def refine_notes(
         return midi_segments
 
     print(
-        f"{ULTRASINGER_HEAD} Refining notes from vocal audio "
+        f"{ULTRASINGER_HEAD} Refining notes using game scoring engine "
         f"(difficulty={blue_highlighted(difficulty)}, "
         f"pitch={blue_highlighted(str(refine_pitch_enabled))}, "
         f"timing={blue_highlighted(str(refine_timing_enabled))})"
@@ -309,16 +378,21 @@ def refine_notes(
     pitch_corrections = 0
     timing_corrections = 0
 
-    # Phase 1: Pitch refinement
+    # Phase 1: Pitch refinement via ultrastar-score (C++ ptAKF)
     if refine_pitch_enabled:
-        midi_segments, pitch_corrections = refine_pitch(
-            midi_segments,
-            pitched_data,
-            pitch_threshold_ht=pitch_threshold_ht,
-            difficulty=difficulty,
-            vibrato_window=vibrato_window,
-            vibrato_threshold_cents=vibrato_threshold_cents,
-        )
+        try:
+            midi_segments, pitch_corrections = refine_pitch_with_uscore(
+                midi_segments,
+                vocal_audio_path,
+                bpm=bpm,
+                difficulty=difficulty,
+                hit_ratio_threshold=hit_ratio_threshold,
+            )
+        except Exception as e:
+            print(
+                f"{ULTRASINGER_HEAD} Warning: uscore pitch refinement failed: {e}. "
+                f"Skipping pitch refinement."
+            )
 
     # Phase 2: Timing refinement (requires onset detection)
     if refine_timing_enabled:

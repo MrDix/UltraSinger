@@ -408,17 +408,17 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._refine_difficulty.setCurrentText(
                          _DEFAULTS.get("refine_difficulty", "easy")))
 
-        # Pitch threshold
-        self._refine_pitch_threshold = _NoScrollDoubleSpinBox()
-        self._refine_pitch_threshold.setRange(0.0, 12.0)
-        self._refine_pitch_threshold.setSingleStep(0.5)
-        self._refine_pitch_threshold.setSuffix(" HT")
-        self._refine_pitch_threshold.setValue(
-            self._config.get("refine_pitch_threshold", 1.0))
-        card.add_row("Pitch Threshold", self._refine_pitch_threshold,
-                     "Base semitone deviation before correcting (added to difficulty tolerance).",
-                     reset_callback=lambda: self._refine_pitch_threshold.setValue(
-                         _DEFAULTS.get("refine_pitch_threshold", 1.0)))
+        # Hit ratio threshold
+        self._refine_hit_ratio = _NoScrollDoubleSpinBox()
+        self._refine_hit_ratio.setRange(0.0, 1.0)
+        self._refine_hit_ratio.setSingleStep(0.05)
+        self._refine_hit_ratio.setDecimals(2)
+        self._refine_hit_ratio.setValue(
+            self._config.get("refine_hit_ratio", 0.5))
+        card.add_row("Hit Ratio Threshold", self._refine_hit_ratio,
+                     "Notes scoring below this hit ratio (0.0-1.0) are pitch-corrected by the game engine.",
+                     reset_callback=lambda: self._refine_hit_ratio.setValue(
+                         _DEFAULTS.get("refine_hit_ratio", 0.5)))
 
         # Timing threshold
         self._refine_timing_threshold = _NoScrollDoubleSpinBox()
@@ -460,7 +460,7 @@ class ConversionSettingsForm(QWidget):
             self._refine_pitch.setEnabled(on)
             self._refine_timing.setEnabled(on)
             self._refine_difficulty.setEnabled(on)
-            self._refine_pitch_threshold.setEnabled(on)
+            self._refine_hit_ratio.setEnabled(on)
             self._refine_timing_threshold.setEnabled(on)
             self._refine_vibrato_window.setEnabled(on)
             self._refine_vibrato_threshold.setEnabled(on)
@@ -843,7 +843,7 @@ class ConversionSettingsForm(QWidget):
             "refine_pitch": self._refine_pitch.isChecked(),
             "refine_timing": self._refine_timing.isChecked(),
             "refine_difficulty": self._refine_difficulty.currentText(),
-            "refine_pitch_threshold": self._refine_pitch_threshold.value(),
+            "refine_hit_ratio": self._refine_hit_ratio.value(),
             "refine_timing_threshold": self._refine_timing_threshold.value(),
             "refine_vibrato_window": self._refine_vibrato_window.value(),
             "refine_vibrato_threshold": self._refine_vibrato_threshold.value(),

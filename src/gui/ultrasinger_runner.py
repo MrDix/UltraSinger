@@ -380,9 +380,9 @@ class UltraSingerRunner(QObject):
             difficulty = config.get("refine_difficulty", "easy")
             if difficulty != "easy":
                 args.extend(["--refine_difficulty", difficulty])
-            pitch_thr = config.get("refine_pitch_threshold", 1.0)
-            if pitch_thr != 1.0:
-                args.extend(["--refine_pitch_threshold", str(pitch_thr)])
+            hit_ratio = config.get("refine_hit_ratio", 0.5)
+            if hit_ratio != 0.5:
+                args.extend(["--refine_hit_ratio", str(hit_ratio)])
             timing_thr = config.get("refine_timing_threshold", 30.0)
             if timing_thr != 30.0:
                 args.extend(["--refine_timing_threshold", str(timing_thr)])
