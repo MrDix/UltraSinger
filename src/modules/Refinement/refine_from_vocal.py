@@ -240,7 +240,7 @@ def refine_pitch_with_uscore(
             continue
 
         # Median of detected tones (ptAKF tone index)
-        median_tone = int(np.median(voiced_tones))
+        median_tone = int(round(float(np.median(voiced_tones))))
         detected_midi = _ptakf_tone_to_midi(median_tone)
 
         try:
@@ -313,6 +313,10 @@ def refine_timing(
                             corrections += 1
 
         # --- End refinement: detect confidence drop-off ---
+        if len(pitched_data.times) == 0 or len(pitched_data.confidence) == 0:
+            prev_end = seg.end
+            continue
+
         # Look ahead up to threshold_s for confidence drop
         search_end_idx = find_nearest_index(
             pitched_data.times, seg.end + threshold_s
