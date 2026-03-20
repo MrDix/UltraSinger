@@ -204,7 +204,7 @@ def refine_pitch_with_uscore(
         return midi_segments, 0
 
     corrections = 0
-    for seg, ns in zip(midi_segments, all_note_scores):
+    for seg, ns in zip(midi_segments, all_note_scores, strict=True):
         if ns.beats_total == 0:
             continue
 
@@ -357,10 +357,10 @@ def refine_notes(
         timing_threshold_ms: Millisecond threshold for timing correction.
         difficulty: Tolerance preset (``"easy"``, ``"medium"``, ``"hard"``).
         hit_ratio_threshold: Notes below this hit ratio are pitch-corrected.
-        vibrato_window: Smoothing window for vibrato damping (unused in
-            uscore pitch path, kept for timing confidence analysis).
-        vibrato_threshold_cents: Vibrato detection threshold (unused in
-            uscore pitch path).
+        vibrato_window: Smoothing window for vibrato damping (reserved
+            for future timing confidence analysis).
+        vibrato_threshold_cents: Vibrato detection threshold (reserved
+            for future timing confidence analysis).
 
     Returns:
         The refined midi_segments list.
@@ -388,7 +388,7 @@ def refine_notes(
                 difficulty=difficulty,
                 hit_ratio_threshold=hit_ratio_threshold,
             )
-        except Exception as e:
+        except (ImportError, OSError, ValueError, RuntimeError) as e:
             print(
                 f"{ULTRASINGER_HEAD} Warning: uscore pitch refinement failed: {e}. "
                 f"Skipping pitch refinement."

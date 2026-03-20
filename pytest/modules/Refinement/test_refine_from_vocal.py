@@ -218,7 +218,7 @@ class TestRefinePitchWithUscore:
             FakeNoteScore(beats_hit=0, beats_total=0, detected_tones=[]),
         ]
 
-        result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
+        _result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
         assert corrections == 0
 
     def test_multiple_segments(self):
@@ -263,7 +263,7 @@ class TestRefinePitchWithUscore:
             FakeNoteScore(beats_hit=5, beats_total=10, detected_tones=[26] * 10),
         ]
 
-        result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
+        _result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
         assert corrections == 0
 
     def test_median_of_mixed_tones(self):
