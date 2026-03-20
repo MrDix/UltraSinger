@@ -222,12 +222,15 @@ class UltraSingerRunner(QObject):
             self._worker.cancel()
 
     def _on_finished(self, exit_code: int):
-        self.finished.emit(exit_code)
+        # Clean up the thread BEFORE emitting finished, so that
+        # is_running returns False when the QueueManager calls start()
+        # for the next item in the slot connected to finished.
         if self._thread:
             self._thread.quit()
             self._thread.wait(3000)
             self._thread = None
-            self._worker = None
+        self._worker = None
+        self.finished.emit(exit_code)
 
     def build_args(self, config: dict, input_source: str) -> list[str]:
         """Build CLI argument list from configuration dictionary."""
@@ -305,6 +308,10 @@ class UltraSingerRunner(QObject):
             args.append("--create_audio_chunks")
         if config.get("keep_numbers"):
             args.append("--keep_numbers")
+        if config.get("keep_audio_in_video"):
+            args.append("--keep_audio_in_video")
+        if config.get("write_settings_info"):
+            args.append("--write_settings_info")
         if config.get("force_cpu"):
             args.append("--force_cpu")
         if config.get("force_whisper_cpu"):
@@ -351,6 +358,17 @@ class UltraSingerRunner(QObject):
                     args.extend(["--llm_api_key", config["llm_api_key"]])
                 if config.get("llm_model"):
                     args.extend(["--llm_model", config["llm_model"]])
+
+            # Retry settings
+            if not config.get("llm_retry_on_rate_limit", True):
+                args.append("--llm_no_retry")
+            else:
+                retry_wait = config.get("llm_retry_wait", 60)
+                if retry_wait != 60:
+                    args.extend(["--llm_retry_wait", str(retry_wait)])
+                retry_max = config.get("llm_retry_max", 3)
+                if retry_max != 3:
+                    args.extend(["--llm_retry_max", str(retry_max)])
 
         # Paths
         if config.get("musescore_path"):

@@ -4,18 +4,11 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Check if .venv exists
-if [ ! -d ".venv" ]; then
-    echo "Error: Virtual environment not found at .venv"
-    echo "Please run the installation script first:"
-    echo "  - install/CPU/macos_cpu.sh"
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed or not in PATH."
+    echo "Install uv: https://docs.astral.sh/uv/getting-started/installation/"
     exit 1
 fi
 
-# Activate virtual environment
-source .venv/bin/activate
-
-# Navigate to src and start UltraSinger GUI
-cd src
 echo "Starting UltraSinger GUI..."
-python gui_main.py
+uv run --extra gui python src/gui_main.py

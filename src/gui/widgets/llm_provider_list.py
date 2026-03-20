@@ -22,17 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 class _NoScrollComboBox(QComboBox):
-    """QComboBox that ignores wheel events unless explicitly focused."""
+    """QComboBox that never reacts to mouse wheel.
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    Prevents accidental value changes when scrolling a settings page.
+    """
 
     def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
+        event.ignore()
 
 
 class _ModelFetcher(QObject):

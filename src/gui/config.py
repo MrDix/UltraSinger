@@ -50,6 +50,9 @@ _DEFAULTS = {
     # Legacy single-LLM keys (kept for migration detection)
     "llm_api_base_url": "https://api.groq.com/openai/v1",
     "llm_model": "qwen/qwen3-32b",
+    "llm_retry_on_rate_limit": True,
+    "llm_retry_wait": 60,
+    "llm_retry_max": 3,
     # Scoring
     "calculate_score": False,
     # Output options
@@ -58,6 +61,8 @@ _DEFAULTS = {
     "create_midi": True,
     "create_audio_chunks": False,
     "create_karaoke": True,
+    "keep_audio_in_video": False,
+    "write_settings_info": False,
     # Device
     "force_cpu": False,
     "force_whisper_cpu": False,

@@ -6,7 +6,7 @@ from modules.console_colors import ULTRASINGER_HEAD, gold_highlighted, light_blu
 def print_help() -> None:
     """Print help text"""
     help_string = """
-    UltraSinger.py [opt] [mode] [transcription] [pitcher] [extra]
+    UltraSinger.py [opt] [mode] [transcription] [post-processing] [output]
     
     [opt]
     -h      This help text.
@@ -44,23 +44,34 @@ def print_help() -> None:
     --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words >> True|False >> ((default) is False)
     
-    [extra]
+    [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 340)
+    --octave                Shift all notes by N octaves after pitch detection (e.g., --octave 1 for up, --octave -1 for down)
     --disable_hyphenation   Disable word hyphenation. Hyphenation is enabled by default.
     --disable_separation    Disable track separation. Track separation is enabled by default.
     --disable_karaoke       Disable creation of karaoke style txt file. Karaoke is enabled by default.
     --disable_onset_correction  Disable onset-based timing correction. Enabled by default.
-    --create_audio_chunks   Enable creation of audio chunks. Audio chunks are disabled by default.
-    --keep_cache            Keep cache folder after creation. Cache folder is removed by default.
-    --plot                  Enable creation of plots. Plots are disabled by default.
     --disable_quantization  Disable key quantization. Key quantization is enabled by default and removes slides and out-of-key notes.
     --disable_vocal_center  Disable vocal-centre octave correction. Enabled by default.
     --syllable_split        Preserve syllable-level note splits at pitch changes (experimental). Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
+
+    [llm lyric correction]
+    --llm_correct           Enable LLM-based lyric correction (requires API key)
+    --llm_api_base_url      OpenAI-compatible API base URL >> ((default) is https://api.openai.com/v1)
+    --llm_api_key           API key for LLM service (or set LLM_API_KEY env var)
+    --llm_model             LLM model name >> ((default) is gpt-4o-mini)
+    --llm_no_retry          Disable automatic retry on rate limit (HTTP 429). Retry is enabled by default.
+    --llm_retry_wait        Seconds to wait between retries >> ((default) is 60)
+    --llm_retry_max         Maximum retries per text chunk >> ((default) is 3)
+
+    [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
-    --musescore_path        path to MuseScore executable
-    --keep_numbers          Transcribe numbers as digits and not words
-    --ffmpeg                Path to ffmpeg and ffprobe executable
+    --create_audio_chunks   Enable creation of audio chunks. Audio chunks are disabled by default.
+    --keep_cache            Keep cache folder after creation. Cache folder is removed by default.
+    --keep_audio_in_video   Keep full audio (vocals+instrumental) in the output video. Disabled by default.
+    --write_settings_info   Write ultrasinger_parameter.info with all settings and scores to output dir. Disabled by default.
+    --plot                  Enable creation of plots. Plots are disabled by default.
 
     [denoise]
     --denoise_nr            Noise reduction in dB (0.01-97). Lower preserves more vocal detail. >> ((default) is 20)
@@ -69,12 +80,10 @@ def print_help() -> None:
 
     [yt-dlp]
     --cookiefile            File name where cookies should be read from and dumped to.
-    
-    [llm]
-    --llm_correct           Enable LLM-based lyric correction (requires API key)
-    --llm_api_base_url      OpenAI-compatible API base URL >> ((default) is https://api.openai.com/v1)
-    --llm_api_key           API key for LLM service (or set LLM_API_KEY env var)
-    --llm_model             LLM model name >> ((default) is gpt-4o-mini)
+
+    [paths]
+    --musescore_path        Path to MuseScore executable
+    --ffmpeg                Path to ffmpeg and ffprobe executable
 
     [device]
     --force_cpu             Force all steps to be processed on CPU.

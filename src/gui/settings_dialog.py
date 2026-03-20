@@ -59,7 +59,7 @@ class PerSongSettingsDialog(QDialog):
         scroll.setWidget(self._form)
         layout.addWidget(scroll, 1)
 
-        # Dialog buttons
+        # Dialog buttons — styled consistently with app theme
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
@@ -67,10 +67,21 @@ class PerSongSettingsDialog(QDialog):
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+
+        ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_btn:
+            ok_btn.setObjectName("primaryButton")
+            ok_btn.setText("Save")
+
+        cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if cancel_btn:
+            cancel_btn.setObjectName("ghostButton")
+
         restore_btn = buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults)
         if restore_btn:
             restore_btn.setToolTip("Clear all per-song overrides (use global defaults)")
             restore_btn.clicked.connect(self._restore_defaults)
+
         layout.addWidget(buttons)
 
         self._cleared = False

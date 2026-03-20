@@ -2,7 +2,8 @@
    UltraSinger Dark Theme — derived from official logo palette
    Color Palette:
      Background:  #2d2d44 (dark slate, logo background tone)
-     Surface:     #363652 (card backgrounds, lighter slate)
+     Surface:     #363847 (sidebar/toolbar/menu backgrounds)
+     Card:        #363652 (card backgrounds, lighter slate)
      Input:       #22223a (input fields, deeper)
      Accent:      #e91e63 (hot pink, logo primary)
      Accent Hover:#f06292
@@ -20,7 +21,7 @@
 
 /* --- Global --- */
 QMainWindow {
-    background-color: #2d2d44;
+    background-color: #363847;
 }
 
 QWidget {
@@ -43,10 +44,17 @@ QLabel#sectionHeader {
 }
 
 QLabel#subsectionHeader {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 600;
     color: #f0dfc0;
-    padding: 2px 0px;
+    padding: 6px 0px 2px 0px;
+}
+
+QLabel#cardHeader {
+    font-size: 14px;
+    font-weight: 600;
+    color: #d4c4a8;
+    padding: 6px 0px 2px 0px;
 }
 
 QLabel#caption {
@@ -66,7 +74,7 @@ QLabel#infoLabel {
 /* --- Sidebar --- */
 #sidebar {
     background-color: #363847;
-    border-right: 1px solid rgba(240, 223, 192, 0.06);
+    border: none;
     min-width: 56px;
 }
 
@@ -104,7 +112,7 @@ QLabel#infoLabel {
 
 /* --- Content area --- */
 #contentArea {
-    background-color: #2d2d44;
+    background-color: #363847;
 }
 
 /* --- Scroll areas --- */
@@ -173,12 +181,9 @@ QComboBox::drop-down {
 }
 
 QComboBox::down-arrow {
-    image: none;
-    width: 0px;
-    height: 0px;
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-top: 7px solid #f0dfc0;
+    image: url("{{CHEVRON_DOWN}}");
+    width: 14px;
+    height: 14px;
 }
 
 QComboBox QAbstractItemView {
@@ -376,6 +381,21 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
     background: transparent;
 }
 
+/* --- Dialogs --- */
+QDialog {
+    background-color: #2d2d44;
+}
+
+QDialogButtonBox {
+    background-color: #363847;
+    padding: 10px 16px;
+}
+
+QDialogButtonBox QPushButton {
+    min-width: 90px;
+    padding: 8px 24px;
+}
+
 /* --- Tab Widget (fallback if used) --- */
 QTabWidget::pane {
     border: none;
@@ -461,8 +481,8 @@ QProgressBar::chunk {
 
 /* --- Menu Bar --- */
 QMenuBar {
-    background-color: #363652;
-    border-bottom: 1px solid rgba(240, 223, 192, 0.06);
+    background-color: #363847;
+    border: none;
 }
 
 QMenuBar::item {
@@ -476,7 +496,7 @@ QMenuBar::item:selected {
 }
 
 QMenu {
-    background-color: #363652;
+    background-color: #363847;
     border: 1px solid rgba(240, 223, 192, 0.10);
     border-radius: 8px;
     padding: 4px;
@@ -521,8 +541,8 @@ QMenu::separator {
 
 /* --- Browser toolbar --- */
 #browserToolbar {
-    background-color: #363652;
-    border-bottom: 1px solid rgba(240, 223, 192, 0.06);
+    background-color: #363847;
+    border: none;
     padding: 4px 8px;
 }
 

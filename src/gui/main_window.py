@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QMainWindow,
     QStackedWidget,
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow):
         # Content stack
         self._stack = QStackedWidget()
         self._stack.setObjectName("contentArea")
+        self._stack.setFrameShape(QFrame.Shape.NoFrame)
         main_layout.addWidget(self._stack, 1)
 
         # Create tabs (3 tabs: Video, Console, Settings)
@@ -251,13 +253,23 @@ class MainWindow(QMainWindow):
                 )
 
     def closeEvent(self, event):
-        """Save configuration on close."""
+        """Save configuration and shut down the browser cleanly on close.
+
+        The browser must be shut down explicitly so Chromium's renderer
+        subprocess can flush cookies and persistent storage to disk
+        before the process exits.  Without this, the subprocess stays
+        alive and locks the database files, preventing persistence.
+        """
         try:
             all_settings = self._settings_tab.collect_all()
             self._config.update(all_settings)
             save_config(self._config)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
+
+        # Shut down the browser engine so Chromium can flush cookies
+        self._browser_tab.shutdown()
+
         super().closeEvent(event)
 
 

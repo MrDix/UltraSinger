@@ -7,7 +7,10 @@ from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QPlainTextEdit
 
 
-# Log level patterns and their colors
+# Strip ANSI escape sequences (SGR codes, cursor movement, etc.)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+# Log level patterns and their colors (matched AFTER ANSI stripping)
 _PATTERNS = [
     (re.compile(r"\[error\]|error:|traceback|exception", re.IGNORECASE), QColor("#ef5350")),
     (re.compile(r"\[warn(?:ing)?\]|warn(?:ing)?:", re.IGNORECASE), QColor("#ffa726")),
@@ -33,7 +36,13 @@ class LogViewer(QPlainTextEdit):
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
     def append_line(self, text: str):
-        """Append a colored log line."""
+        """Append a colored log line.
+
+        ANSI escape codes from the CLI subprocess are stripped before
+        display.  Color is determined by keyword matching instead.
+        """
+        text = _ANSI_RE.sub("", text)
+
         color = _DEFAULT_COLOR
         for pattern, c in _PATTERNS:
             if pattern.search(text):

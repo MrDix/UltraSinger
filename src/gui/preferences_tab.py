@@ -47,13 +47,21 @@ class PreferencesTab(QWidget):
         main_layout.addWidget(header)
 
         # ── Output Folder ────────────────────────────────────────────────
-        card = SettingsCard("Output Folder")
+        output_header = QLabel("Output Folder")
+        output_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(output_header)
+        card = SettingsCard()
         row = QHBoxLayout()
         self._output_folder = QLineEdit()
         self._output_folder.setText(config.get("output_folder", ""))
         self._output_folder.setPlaceholderText("Select default output folder...")
+        self._output_folder.setToolTip(
+            "Where converted UltraStar files are saved. "
+            "Each song gets its own subfolder with TXT, audio, and optional MIDI/plots."
+        )
         row.addWidget(self._output_folder, 1)
         browse = QPushButton("Browse")
+        browse.setToolTip("Open a folder picker to select the output directory.")
         browse.clicked.connect(self._browse_output)
         row.addWidget(browse)
         card.add_layout(row)
@@ -62,14 +70,16 @@ class PreferencesTab(QWidget):
         # ── Conversion Defaults (embedded form) ──────────────────────────
         defaults_header = QLabel("Default Conversion Settings")
         defaults_header.setObjectName("subsectionHeader")
-        defaults_header.setStyleSheet("padding-top: 8px;")
         main_layout.addWidget(defaults_header)
 
         self._conversion_form = ConversionSettingsForm(config)
         main_layout.addWidget(self._conversion_form)
 
         # ── LLM Providers ────────────────────────────────────────────────
-        llm_card = SettingsCard("LLM Providers")
+        llm_header = QLabel("LLM Providers")
+        llm_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(llm_header)
+        llm_card = SettingsCard()
 
         llm_card.add_info(
             "Configure one or more LLM API providers for lyric correction. "
@@ -108,7 +118,10 @@ class PreferencesTab(QWidget):
         main_layout.addWidget(llm_card)
 
         # ── Cookie Management ────────────────────────────────────────────
-        cookie_card = SettingsCard("Cookie Management")
+        cookie_header = QLabel("Cookie Management")
+        cookie_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(cookie_header)
+        cookie_card = SettingsCard()
 
         if cookie_manager:
             self._cookie_status = QLabel("Checking...")
@@ -127,6 +140,10 @@ class PreferencesTab(QWidget):
         self._cookie_path.setText(config.get("cookie_file", ""))
         self._cookie_path.setPlaceholderText("Cookie file path...")
         self._cookie_path.setReadOnly(True)
+        self._cookie_path.setToolTip(
+            "Path to the exported Netscape cookie file. "
+            "This file is passed to yt-dlp for authenticated downloads."
+        )
         cookie_path_row.addWidget(self._cookie_path, 1)
         cookie_card.add_layout(cookie_path_row)
 
@@ -134,12 +151,20 @@ class PreferencesTab(QWidget):
         btn_row.setSpacing(8)
 
         export_btn = QPushButton("Export Cookies")
+        export_btn.setToolTip(
+            "Save all browser cookies to a Netscape-format file. "
+            "The file is used by yt-dlp for premium content downloads."
+        )
         export_btn.clicked.connect(self._export_cookies)
         export_btn.setEnabled(bool(cookie_manager))
         btn_row.addWidget(export_btn)
 
         clear_btn = QPushButton("Clear Cookies")
         clear_btn.setObjectName("dangerButton")
+        clear_btn.setToolTip(
+            "Delete all stored browser cookies. "
+            "You will need to log in again via the Video browser tab."
+        )
         clear_btn.clicked.connect(self._clear_cookies)
         clear_btn.setEnabled(bool(cookie_manager))
         btn_row.addWidget(clear_btn)
@@ -152,6 +177,10 @@ class PreferencesTab(QWidget):
         # ── Save Button ──────────────────────────────────────────────────
         main_layout.addSpacing(8)
         save_btn = AnimatedButton("Save Settings")
+        save_btn.setToolTip(
+            "Save all settings to disk. "
+            "Settings are also auto-saved when you start a conversion or close the app."
+        )
         save_btn.clicked.connect(self._save)
         main_layout.addWidget(save_btn)
 

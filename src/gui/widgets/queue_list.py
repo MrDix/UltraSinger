@@ -1,12 +1,14 @@
 """Compact queue list widget for the sidebar."""
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -33,7 +35,7 @@ class QueueItemWidget(QWidget):
     def __init__(self, item: QueueItem, parent=None):
         super().__init__(parent)
         self._item_id = item.id
-        self.setFixedHeight(32)
+        self.setFixedHeight(30)
         self.setToolTip(item.input_source)
 
         layout = QHBoxLayout(self)
@@ -46,38 +48,40 @@ class QueueItemWidget(QWidget):
         self._status_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._status_dot)
 
-        # Title (just the name, no type emoji)
-        self._title = QLabel(item.title)
+        # Title — must shrink so gear+remove buttons stay visible
+        self._full_title = item.title
+        self._title = _ElidingLabel(item.title)
         self._title.setStyleSheet(
             "font-size: 12px; color: #f0dfc0; background: transparent;"
         )
-        self._title.setWordWrap(False)
-        layout.addWidget(self._title, 1)
+        sp = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        sp.setHorizontalStretch(1)
+        self._title.setSizePolicy(sp)
+        self._title.setMinimumWidth(30)
+        layout.addWidget(self._title)
 
         # Settings gear button (only for pending items)
         self._gear_btn = QPushButton("\u2699")
-        self._gear_btn.setObjectName("ghostButton")
-        self._gear_btn.setFixedSize(26, 26)
+        self._gear_btn.setFixedSize(22, 22)
         self._gear_btn.setToolTip("Per-song settings (click to override defaults)")
         self._gear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear_btn.setStyleSheet(
-            "font-size: 16px; color: #f0dfc0; background: transparent; "
-            "padding: 0px;"
+            "font-size: 13px; color: #a09888; background: transparent; "
+            "border: none; padding: 0px; margin: 0px;"
         )
         self._gear_btn.clicked.connect(
             lambda: self.settings_requested.emit(self._item_id)
         )
         layout.addWidget(self._gear_btn)
 
-        # Remove button (only for pending items)
-        self._remove_btn = QPushButton("\u2715")
-        self._remove_btn.setObjectName("ghostButton")
-        self._remove_btn.setFixedSize(26, 26)
+        # Remove button — U+00D7 (clean ×, no serifs)
+        self._remove_btn = QPushButton("\u00D7")
+        self._remove_btn.setFixedSize(22, 22)
         self._remove_btn.setToolTip("Remove from queue")
         self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._remove_btn.setStyleSheet(
-            "font-size: 14px; color: #a09888; background: transparent; "
-            "padding: 0px;"
+            "font-size: 15px; color: #a09888; background: transparent; "
+            "border: none; padding: 0px; margin: 0px;"
         )
         self._remove_btn.clicked.connect(
             lambda: self.remove_requested.emit(self._item_id)
@@ -118,15 +122,51 @@ class QueueItemWidget(QWidget):
 
     def set_has_overrides(self, has_overrides: bool):
         """Show visual indicator when per-song overrides are active."""
-        color = "#00d4d4" if has_overrides else "#f0dfc0"
+        color = "#00d4d4" if has_overrides else "#a09888"
         self._gear_btn.setStyleSheet(
-            f"font-size: 16px; color: {color}; background: transparent; "
-            "padding: 0px;"
+            f"font-size: 13px; color: {color}; background: transparent; "
+            "border: none; padding: 0px; margin: 0px;"
         )
         self._gear_btn.setToolTip(
             "Per-song settings (custom)" if has_overrides
             else "Per-song settings (click to override defaults)"
         )
+
+
+class _ElidingLabel(QLabel):
+    """QLabel that truncates text with '…' when space is tight."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._full_text = text
+        self.setWordWrap(False)
+
+    def set_full_text(self, text: str):
+        self._full_text = text
+        self.update()
+
+    def paintEvent(self, event):
+        """Draw elided text instead of default rendering."""
+        from PySide6.QtGui import QPainter
+
+        painter = QPainter(self)
+        fm = self.fontMetrics()
+        elided = fm.elidedText(
+            self._full_text, Qt.TextElideMode.ElideRight, self.width()
+        )
+        painter.setPen(self.palette().windowText().color())
+        # Respect stylesheet color by parsing it
+        ss = self.styleSheet()
+        if "color:" in ss:
+            import re
+
+            m = re.search(r"color:\s*(#[0-9a-fA-F]+)", ss)
+            if m:
+                from PySide6.QtGui import QColor
+
+                painter.setPen(QColor(m.group(1)))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.end()
 
 
 class QueueListWidget(QWidget):

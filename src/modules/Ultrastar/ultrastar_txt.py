@@ -131,6 +131,7 @@ class UltrastarTxtValue:
     cover = None
     coverUrl = None
     background = None
+    backgroundUrl = None
     vocals = None
     instrumental = None
     tags = None

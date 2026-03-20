@@ -2,16 +2,14 @@
 :: Launch UltraSinger GUI on Windows
 cd /d "%~dp0"
 
-if not exist ".venv\Scripts\activate.bat" (
-    echo Error: Virtual environment not found at .venv
-    echo Please run one of the installation scripts first:
-    echo   - install\CPU\windows_cpu.bat ^(for CPU^)
-    echo   - install\CUDA\windows_cuda_gpu.bat ^(for GPU with CUDA^)
+where uv >nul 2>&1
+if errorlevel 1 (
+    echo Error: uv is not installed or not in PATH.
+    echo Install uv: https://docs.astral.sh/uv/getting-started/installation/
     pause
     exit /b 1
 )
 
-call .venv\Scripts\activate.bat
-cd src
+set UV_LINK_MODE=copy
 echo Starting UltraSinger GUI...
-python gui_main.py
+uv run --extra gui python src/gui_main.py

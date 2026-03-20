@@ -63,20 +63,47 @@ _CONVERT_OVERLAY_JS = r"""
             btn.id = 'ultrasinger-convert-btn';
             btn.textContent = '\uD83C\uDFA4 Queue';
             btn.style.cssText =
-                'position:fixed;bottom:24px;right:24px;z-index:2147483647;' +
+                'position:fixed;top:80px;left:16px;z-index:2147483647;' +
                 'background:linear-gradient(135deg,#e91e63,#c2185b);color:#fff;' +
-                'padding:14px 28px;border-radius:28px;cursor:pointer;font-size:16px;' +
-                'font-weight:bold;box-shadow:0 4px 16px rgba(233,30,99,0.4);' +
-                'transition:transform 0.2s,box-shadow 0.2s;user-select:none;' +
+                'padding:10px 24px;border-radius:24px;cursor:pointer;font-size:15px;' +
+                'font-weight:bold;user-select:none;line-height:1;' +
+                'display:flex;align-items:center;justify-content:center;' +
                 'font-family:system-ui,sans-serif;letter-spacing:0.5px;' +
-                'pointer-events:auto;';
+                'pointer-events:auto;' +
+                'box-shadow:0 0 16px 5px rgba(233,30,99,0.6),' +
+                '0 0 35px 10px rgba(233,30,99,0.4),' +
+                '0 0 60px 18px rgba(233,30,99,0.2);' +
+                'animation:ultrasinger-glow 2s ease-in-out infinite alternate;' +
+                'transition:transform 0.2s,box-shadow 0.2s;';
+
+            /* Inject glow keyframes once */
+            if (!document.getElementById('ultrasinger-glow-style')) {
+                var style = document.createElement('style');
+                style.id = 'ultrasinger-glow-style';
+                style.textContent =
+                    '@keyframes ultrasinger-glow {' +
+                    '  0% { box-shadow: 0 0 14px 4px rgba(233,30,99,0.5),' +
+                    '       0 0 30px 8px rgba(233,30,99,0.3),' +
+                    '       0 0 50px 14px rgba(233,30,99,0.15); }' +
+                    '  100% { box-shadow: 0 0 20px 7px rgba(233,30,99,0.7),' +
+                    '       0 0 42px 14px rgba(233,30,99,0.45),' +
+                    '       0 0 70px 22px rgba(233,30,99,0.25); }' +
+                    '}';
+                document.head.appendChild(style);
+            }
+
             btn.addEventListener('mouseover', function() {
                 this.style.transform = 'scale(1.08)';
-                this.style.boxShadow = '0 6px 24px rgba(233,30,99,0.6)';
+                this.style.animationPlayState = 'paused';
+                this.style.boxShadow =
+                    '0 0 25px 8px rgba(233,30,99,0.8),' +
+                    '0 0 50px 16px rgba(233,30,99,0.5),' +
+                    '0 0 80px 25px rgba(233,30,99,0.25)';
             });
             btn.addEventListener('mouseout', function() {
                 this.style.transform = 'scale(1)';
-                this.style.boxShadow = '0 4px 16px rgba(233,30,99,0.4)';
+                this.style.animationPlayState = 'running';
+                this.style.boxShadow = '';
             });
             btn.addEventListener('click', function() {
                 // Extract only the video ID — strip &list=, &index= etc.
@@ -157,7 +184,6 @@ class BrowserTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
         # Persistent browser profile — use a named profile so Qt/Chromium
         # manages its own storage location automatically.  Do NOT override
         # setPersistentStoragePath: Qt's Chromium backend may initialise the
@@ -307,8 +333,23 @@ class BrowserTab(QWidget):
 
         self._page.runJavaScript("document.title", _callback)
 
+    def shutdown(self):
+        """Shut down the web engine cleanly so Chromium can flush cookies.
+
+        Must be called before the widget is destroyed.  Navigating to
+        ``about:blank`` triggers Chromium's internal shutdown sequence
+        which flushes cookies and persistent storage to disk and
+        terminates the renderer subprocess.
+        """
+        self._view.setPage(None)
+        self._page.deleteLater()
+        self._page = None
+        self._view.deleteLater()
+        self._view = None
+
     def current_url(self) -> str:
-        return self._page.url().toString()
+        return self._page.url().toString() if self._page else ""
 
     def navigate(self, url: str):
-        self._view.setUrl(QUrl(url))
+        if self._view:
+            self._view.setUrl(QUrl(url))
