@@ -106,8 +106,13 @@ def _write_temp_ultrastar_txt(
 ) -> str:
     """Write a minimal UltraStar TXT file from midi_segments for scoring.
 
+    Uses the same BPM conversion logic as the main ultrastar_writer to ensure
+    beat alignment is identical to what the pipeline produces.
+
     Returns the path to the temporary file.
     """
+    import math
+
     from modules.Ultrastar.coverter.ultrastar_converter import (
         real_bpm_to_ultrastar_bpm,
         second_to_beat,
@@ -117,21 +122,38 @@ def _write_temp_ultrastar_txt(
     )
     from modules.Ultrastar.ultrastar_writer import get_multiplier
 
-    multiplier = get_multiplier(bpm)
-    ultrastar_bpm = real_bpm_to_ultrastar_bpm(bpm, multiplier)
+    # Match the BPM conversion from ultrastar_writer.create_ultrastar_txt_from_automation:
+    # 1. real_bpm → ultrastar_bpm (÷4)
+    # 2. get_multiplier on ultrastar_bpm
+    # 3. ultrastar_bpm *= multiplier (stored in #BPM header)
+    ultrastar_bpm = real_bpm_to_ultrastar_bpm(bpm)
+    multiplier = get_multiplier(ultrastar_bpm)
+    ultrastar_bpm_final = ultrastar_bpm * multiplier
+
+    gap_s = gap_ms / 1000.0 if gap_ms else midi_segments[0].start if midi_segments else 0.0
 
     lines = []
     lines.append("#TITLE:_refine_temp")
     lines.append("#ARTIST:_refine_temp")
-    lines.append(f"#BPM:{ultrastar_bpm}")
-    lines.append(f"#GAP:{gap_ms}")
+    lines.append(f"#BPM:{ultrastar_bpm_final}")
+    lines.append(f"#GAP:{gap_s * 1000:.0f}")
     lines.append("#VERSION:1.2.0")
     lines.append("#MP3:_refine_temp.mp3")
 
+    previous_end_beat = 0
     for seg in midi_segments:
-        start_beat = second_to_beat(seg.start, ultrastar_bpm, gap_ms)
-        end_beat = second_to_beat(seg.end, ultrastar_bpm, gap_ms)
-        duration = max(1, end_beat - start_beat)
+        # Same logic as ultrastar_writer: subtract gap, scale by multiplier
+        start_time = (seg.start - gap_s) * multiplier
+        end_time = (seg.end - seg.start) * multiplier
+
+        start_beat = math.floor(second_to_beat(start_time, bpm))
+        duration = max(1, math.ceil(second_to_beat(end_time, bpm)))
+
+        # Prevent overlap
+        if start_beat < previous_end_beat:
+            start_beat = previous_end_beat
+        previous_end_beat = start_beat + duration
+
         pitch = convert_midi_note_to_ultrastar_note(seg)
         word = seg.word if seg.word else "~"
         lines.append(f": {start_beat} {duration} {pitch} {word}")
