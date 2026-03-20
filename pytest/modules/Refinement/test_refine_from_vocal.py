@@ -157,11 +157,11 @@ class TestRefinePitchWithUscore:
             "ultrastar_score": mock_uscore,
             "ultrastar_score.parser": mock_parser,
         }), \
-             patch("modules.Refinement.refine_from_vocal._write_temp_ultrastar_txt", return_value="/tmp/fake.txt"), \
+             patch("modules.Refinement.refine_from_vocal._write_temp_ultrastar_txt", return_value="fake.txt"), \
              patch("os.unlink"):
             return refine_pitch_with_uscore(
                 segments,
-                vocal_audio_path="/tmp/fake_vocal.wav",
+                vocal_audio_path="fake_vocal.wav",
                 bpm=120.0,
                 **kwargs,
             )
