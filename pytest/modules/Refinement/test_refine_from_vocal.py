@@ -11,9 +11,7 @@ import pytest
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Refinement.refine_from_vocal import (
-    DIFFICULTY_TOLERANCE,
     _ptakf_tone_to_midi,
-    damp_vibrato,
     refine_pitch_with_uscore,
     refine_timing,
 )
@@ -87,48 +85,6 @@ class TestPtakfToneToMidi:
         for midi in range(36, 93):  # C2 to G#6
             tone = midi - 36
             assert _ptakf_tone_to_midi(tone) == midi
-
-
-# ---------------------------------------------------------------------------
-# damp_vibrato
-# ---------------------------------------------------------------------------
-
-class TestDampVibrato:
-    def test_no_vibrato_returns_unchanged(self):
-        """Frequencies within threshold should not be smoothed."""
-        import librosa
-        freq = float(librosa.note_to_hz("C4"))
-        freqs = [freq] * 10
-        confs = [0.9] * 10
-        result_freqs, result_confs = damp_vibrato(
-            freqs, confs, smoothing_window=5, vibrato_threshold_cents=50.0
-        )
-        assert result_freqs == freqs
-        assert result_confs == confs
-
-    def test_vibrato_is_smoothed(self):
-        """Wide vibrato should be damped by smoothing."""
-        import librosa
-        high = float(librosa.note_to_hz("A#4"))  # ~466 Hz
-        low = float(librosa.note_to_hz("G#4"))  # ~415 Hz
-
-        freqs = [high if i % 2 == 0 else low for i in range(20)]
-        confs = [0.9] * 20
-
-        result_freqs, _ = damp_vibrato(
-            freqs, confs, smoothing_window=5, vibrato_threshold_cents=50.0
-        )
-
-        mid = len(result_freqs) // 2
-        mean_freq = (high + low) / 2.0
-        assert abs(result_freqs[mid] - mean_freq) < abs(freqs[mid] - mean_freq)
-
-    def test_too_few_frames_returns_unchanged(self):
-        """Fewer frames than window should skip smoothing."""
-        freqs = [440.0, 445.0]
-        confs = [0.9, 0.9]
-        result, _ = damp_vibrato(freqs, confs, smoothing_window=5)
-        assert result == freqs
 
 
 # ---------------------------------------------------------------------------
@@ -376,16 +332,3 @@ class TestRefineTiming:
         assert corrections == 0
 
 
-# ---------------------------------------------------------------------------
-# DIFFICULTY_TOLERANCE
-# ---------------------------------------------------------------------------
-
-class TestDifficultyTolerance:
-    def test_easy(self):
-        assert DIFFICULTY_TOLERANCE["easy"] == 2.0
-
-    def test_medium(self):
-        assert DIFFICULTY_TOLERANCE["medium"] == 1.0
-
-    def test_hard(self):
-        assert DIFFICULTY_TOLERANCE["hard"] == 0.0

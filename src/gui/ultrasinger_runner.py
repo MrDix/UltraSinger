@@ -377,21 +377,12 @@ class UltraSingerRunner(QObject):
                 args.append("--disable_refine_pitch")
             if not config.get("refine_timing", True):
                 args.append("--disable_refine_timing")
-            difficulty = config.get("refine_difficulty", "easy")
-            if difficulty != "easy":
-                args.extend(["--refine_difficulty", difficulty])
             hit_ratio = config.get("refine_hit_ratio", 0.5)
             if hit_ratio != 0.5:
                 args.extend(["--refine_hit_ratio", str(hit_ratio)])
             timing_thr = config.get("refine_timing_threshold", 30.0)
             if timing_thr != 30.0:
                 args.extend(["--refine_timing_threshold", str(timing_thr)])
-            vib_win = config.get("refine_vibrato_window", 5)
-            if vib_win != 5:
-                args.extend(["--refine_vibrato_window", str(vib_win)])
-            vib_thr = config.get("refine_vibrato_threshold", 50.0)
-            if vib_thr != 50.0:
-                args.extend(["--refine_vibrato_threshold", str(vib_thr)])
 
         # Paths
         if config.get("musescore_path"):

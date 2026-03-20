@@ -63,10 +63,7 @@ def print_help() -> None:
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.5)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
-    --refine_vibrato_window     Vibrato damping smoothing window in frames >> ((default) is 5)
-    --refine_vibrato_threshold  Vibrato detection threshold in cents >> ((default) is 50)
-    --refine_difficulty         Game difficulty for scoring: easy|medium|hard. Determines pitch tolerance
-                                used by the scoring engine. >> ((default) is easy)
+
 
     [llm lyric correction]
     --llm_correct           Enable LLM-based lyric correction (requires API key)

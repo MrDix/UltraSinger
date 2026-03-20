@@ -32,65 +32,6 @@ from modules.Midi.midi_creator import find_nearest_index
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 
 
-# Difficulty presets: how many semitones off a note must be before correcting.
-# These mirror ultrastar-score's Difficulty enum but as a simple mapping.
-DIFFICULTY_TOLERANCE = {
-    "easy": 2.0,
-    "medium": 1.0,
-    "hard": 0.0,
-}
-
-
-def damp_vibrato(
-    frequencies: list[float],
-    confidence: list[float],
-    smoothing_window: int = 5,
-    vibrato_threshold_cents: float = 50.0,
-) -> tuple[list[float], list[float]]:
-    """Smooth pitch oscillations caused by singer vibrato.
-
-    If the standard deviation of detected pitches (in cents relative to
-    the median) exceeds *vibrato_threshold_cents*, a moving-average filter
-    is applied to stabilise the pitch contour before note detection.
-
-    Args:
-        frequencies: Detected frequencies in Hz.
-        confidence: Confidence weights for each frequency.
-        smoothing_window: Number of frames for the moving-average kernel.
-        vibrato_threshold_cents: Minimum pitch spread (in cents) to
-            trigger smoothing.  50 cents = half a semitone.
-
-    Returns:
-        Tuple of (smoothed_frequencies, unchanged confidence).
-    """
-    if len(frequencies) < smoothing_window or not frequencies:
-        return frequencies, confidence
-
-    freqs = np.asarray(frequencies, dtype=float)
-
-    # Compute median and deviation in cents
-    median_freq = np.median(freqs[freqs > 0]) if np.any(freqs > 0) else 0.0
-    if median_freq <= 0:
-        return frequencies, confidence
-
-    cents = 1200.0 * np.log2(np.where(freqs > 0, freqs, median_freq) / median_freq)
-    spread = float(np.std(cents))
-
-    if spread < vibrato_threshold_cents:
-        return frequencies, confidence
-
-    # Apply moving-average smoothing
-    kernel = np.ones(smoothing_window) / smoothing_window
-    smoothed = np.convolve(freqs, kernel, mode="same")
-
-    # Preserve edges (don't smooth the first/last half-window)
-    half = smoothing_window // 2
-    smoothed[:half] = freqs[:half]
-    smoothed[-half:] = freqs[-half:]
-
-    return smoothed.tolist(), confidence
-
-
 def _ptakf_tone_to_midi(tone: int) -> int:
     """Convert ptAKF tone index to MIDI note number.
 
@@ -172,7 +113,6 @@ def refine_pitch_with_uscore(
     midi_segments: list[MidiSegment],
     vocal_audio_path: str,
     bpm: float,
-    difficulty: str = "easy",
     hit_ratio_threshold: float = 0.5,
 ) -> tuple[list[MidiSegment], int]:
     """Refine note pitches using ultrastar-score's C++ ptAKF detector.
@@ -181,11 +121,14 @@ def refine_pitch_with_uscore(
     algorithm as Vocaluxe/USDX.  Notes that score poorly (low hit_ratio)
     are corrected by taking the median of the ptAKF-detected tones.
 
+    Always uses ``Difficulty.HARD`` (±1 semitone tolerance) for maximum
+    correction precision — benchmarks showed this consistently produces
+    the best results across all song types.
+
     Args:
         midi_segments: Notes to refine (modified in-place).
         vocal_audio_path: Path to vocal-only audio file.
         bpm: Song BPM for beat/time conversion.
-        difficulty: Tolerance preset (``"easy"``, ``"medium"``, ``"hard"``).
         hit_ratio_threshold: Notes below this hit ratio are corrected.
 
     Returns:
@@ -194,19 +137,11 @@ def refine_pitch_with_uscore(
     from ultrastar_score import score_song, Difficulty
     from ultrastar_score.parser import parse_ultrastar
 
-    # Map difficulty string to ultrastar-score enum
-    diff_map = {
-        "easy": Difficulty.EASY,
-        "medium": Difficulty.MEDIUM,
-        "hard": Difficulty.HARD,
-    }
-    uscore_difficulty = diff_map.get(difficulty, Difficulty.EASY)
-
     # Write temporary TXT for scoring
     tmp_txt = _write_temp_ultrastar_txt(midi_segments, bpm)
     try:
         song = parse_ultrastar(tmp_txt)
-        result = score_song(song, vocal_audio_path, difficulty=uscore_difficulty)
+        result = score_song(song, vocal_audio_path, difficulty=Difficulty.HARD)
     finally:
         try:
             os.unlink(tmp_txt)
@@ -360,16 +295,14 @@ def refine_notes(
     refine_pitch_enabled: bool = True,
     refine_timing_enabled: bool = True,
     timing_threshold_ms: float = 30.0,
-    difficulty: str = "easy",
     hit_ratio_threshold: float = 0.5,
-    vibrato_window: int = 5,
-    vibrato_threshold_cents: float = 50.0,
 ) -> list[MidiSegment]:
     """Orchestrate all refinement passes on the note list.
 
     Pitch refinement uses ultrastar-score's C++ ptAKF detector (the same
     algorithm as Vocaluxe/USDX) to identify poorly-scoring notes, then
-    corrects them based on what the game would actually detect.
+    corrects them based on what the game would actually detect.  Always
+    uses hard difficulty (±1 semitone) for maximum correction precision.
 
     Timing refinement uses librosa onset detection (since ptAKF only
     provides pitch, not onset timing).
@@ -382,12 +315,7 @@ def refine_notes(
         refine_pitch_enabled: Whether to run pitch refinement.
         refine_timing_enabled: Whether to run timing refinement.
         timing_threshold_ms: Millisecond threshold for timing correction.
-        difficulty: Tolerance preset (``"easy"``, ``"medium"``, ``"hard"``).
         hit_ratio_threshold: Notes below this hit ratio are pitch-corrected.
-        vibrato_window: Smoothing window for vibrato damping (reserved
-            for future timing confidence analysis).
-        vibrato_threshold_cents: Vibrato detection threshold (reserved
-            for future timing confidence analysis).
 
     Returns:
         The refined midi_segments list.
@@ -397,8 +325,7 @@ def refine_notes(
 
     print(
         f"{ULTRASINGER_HEAD} Refining notes using game scoring engine "
-        f"(difficulty={blue_highlighted(difficulty)}, "
-        f"pitch={blue_highlighted(str(refine_pitch_enabled))}, "
+        f"(pitch={blue_highlighted(str(refine_pitch_enabled))}, "
         f"timing={blue_highlighted(str(refine_timing_enabled))})"
     )
 
@@ -412,7 +339,6 @@ def refine_notes(
                 midi_segments,
                 vocal_audio_path,
                 bpm=bpm,
-                difficulty=difficulty,
                 hit_ratio_threshold=hit_ratio_threshold,
             )
         except (ImportError, OSError, ValueError, RuntimeError) as e:

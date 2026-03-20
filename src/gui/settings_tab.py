@@ -395,19 +395,6 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._refine_timing.setChecked(
                                _DEFAULTS.get("refine_timing", True)))
 
-        # Difficulty combo
-        self._refine_difficulty = _NoScrollComboBox()
-        self._refine_difficulty.addItems(["easy", "medium", "hard"])
-        current_diff = self._config.get("refine_difficulty", "easy")
-        idx = self._refine_difficulty.findText(current_diff)
-        if idx >= 0:
-            self._refine_difficulty.setCurrentIndex(idx)
-        card.add_row("Difficulty Tolerance", self._refine_difficulty,
-                     "Easy: lenient (only fix gross errors, +2 HT tolerance). "
-                     "Medium: moderate (+1 HT). Hard: strict (correct any deviation).",
-                     reset_callback=lambda: self._refine_difficulty.setCurrentText(
-                         _DEFAULTS.get("refine_difficulty", "easy")))
-
         # Hit ratio threshold
         self._refine_hit_ratio = _NoScrollDoubleSpinBox()
         self._refine_hit_ratio.setRange(0.0, 1.0)
@@ -432,38 +419,12 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._refine_timing_threshold.setValue(
                          _DEFAULTS.get("refine_timing_threshold", 30.0)))
 
-        # Vibrato damping window
-        self._refine_vibrato_window = _NoScrollSpinBox()
-        self._refine_vibrato_window.setRange(3, 15)
-        self._refine_vibrato_window.setValue(
-            self._config.get("refine_vibrato_window", 5))
-        card.add_row("Vibrato Smoothing Window", self._refine_vibrato_window,
-                     "Number of frames for the moving-average vibrato damping filter.",
-                     reset_callback=lambda: self._refine_vibrato_window.setValue(
-                         _DEFAULTS.get("refine_vibrato_window", 5)))
-
-        # Vibrato threshold
-        self._refine_vibrato_threshold = _NoScrollDoubleSpinBox()
-        self._refine_vibrato_threshold.setRange(10.0, 200.0)
-        self._refine_vibrato_threshold.setSingleStep(10.0)
-        self._refine_vibrato_threshold.setSuffix(" cents")
-        self._refine_vibrato_threshold.setValue(
-            self._config.get("refine_vibrato_threshold", 50.0))
-        card.add_row("Vibrato Threshold", self._refine_vibrato_threshold,
-                     "Minimum pitch spread in cents to trigger vibrato damping. "
-                     "50 cents = half a semitone.",
-                     reset_callback=lambda: self._refine_vibrato_threshold.setValue(
-                         _DEFAULTS.get("refine_vibrato_threshold", 50.0)))
-
         # Toggle sub-settings with main switch
         def _toggle_refine(on):
             self._refine_pitch.setEnabled(on)
             self._refine_timing.setEnabled(on)
-            self._refine_difficulty.setEnabled(on)
             self._refine_hit_ratio.setEnabled(on)
             self._refine_timing_threshold.setEnabled(on)
-            self._refine_vibrato_window.setEnabled(on)
-            self._refine_vibrato_threshold.setEnabled(on)
 
         self._refine_from_vocal.toggled.connect(_toggle_refine)
         _toggle_refine(self._refine_from_vocal.isChecked())
@@ -842,9 +803,6 @@ class ConversionSettingsForm(QWidget):
             "refine_from_vocal": self._refine_from_vocal.isChecked(),
             "refine_pitch": self._refine_pitch.isChecked(),
             "refine_timing": self._refine_timing.isChecked(),
-            "refine_difficulty": self._refine_difficulty.currentText(),
             "refine_hit_ratio": self._refine_hit_ratio.value(),
             "refine_timing_threshold": self._refine_timing_threshold.value(),
-            "refine_vibrato_window": self._refine_vibrato_window.value(),
-            "refine_vibrato_threshold": self._refine_vibrato_threshold.value(),
         }

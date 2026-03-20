@@ -297,10 +297,7 @@ def run() -> tuple[str, Score, Score]:
             refine_pitch_enabled=settings.refine_pitch,
             refine_timing_enabled=settings.refine_timing,
             timing_threshold_ms=settings.refine_timing_threshold,
-            difficulty=settings.refine_difficulty,
             hit_ratio_threshold=settings.refine_hit_ratio,
-            vibrato_window=settings.refine_vibrato_window,
-            vibrato_threshold_cents=settings.refine_vibrato_threshold,
         )
 
     # Create plot
@@ -1234,15 +1231,6 @@ def init_settings(argv: list[str]) -> Settings:
             settings.refine_hit_ratio = float(arg)
         elif opt in ("--refine_timing_threshold"):
             settings.refine_timing_threshold = float(arg)
-        elif opt in ("--refine_vibrato_window"):
-            settings.refine_vibrato_window = int(arg)
-        elif opt in ("--refine_vibrato_threshold"):
-            settings.refine_vibrato_threshold = float(arg)
-        elif opt in ("--refine_difficulty"):
-            if arg not in ("easy", "medium", "hard"):
-                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --refine_difficulty must be easy|medium|hard, got {arg}")
-                sys.exit(1)
-            settings.refine_difficulty = arg
     if settings.output_folder_path == "":
         if settings.input_file_path.startswith("https:"):
             dirname = os.getcwd()
@@ -1305,9 +1293,6 @@ def arg_options():
         "disable_refine_timing",
         "refine_hit_ratio=",
         "refine_timing_threshold=",
-        "refine_vibrato_window=",
-        "refine_vibrato_threshold=",
-        "refine_difficulty=",
     ]
     return long, short
 
