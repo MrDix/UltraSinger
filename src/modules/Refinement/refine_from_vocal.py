@@ -111,8 +111,6 @@ def _write_temp_ultrastar_txt(
 
     Returns the path to the temporary file.
     """
-    import math
-
     from modules.Ultrastar.coverter.ultrastar_converter import (
         real_bpm_to_ultrastar_bpm,
         second_to_beat,
@@ -130,7 +128,10 @@ def _write_temp_ultrastar_txt(
     multiplier = get_multiplier(ultrastar_bpm)
     ultrastar_bpm_final = ultrastar_bpm * multiplier
 
-    gap_s = gap_ms / 1000.0 if gap_ms else midi_segments[0].start if midi_segments else 0.0
+    if gap_ms is not None and gap_ms != 0.0:
+        gap_s = gap_ms / 1000.0
+    else:
+        gap_s = midi_segments[0].start if midi_segments else 0.0
 
     lines = []
     lines.append("#TITLE:_refine_temp")
@@ -240,7 +241,7 @@ def refine_pitch_with_uscore(
             continue
 
         # Median of detected tones (ptAKF tone index)
-        median_tone = int(round(float(np.median(voiced_tones))))
+        median_tone = round(float(np.median(voiced_tones)))
         detected_midi = _ptakf_tone_to_midi(median_tone)
 
         try:
