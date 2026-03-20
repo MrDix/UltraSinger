@@ -285,6 +285,23 @@ def run() -> tuple[str, Score, Score]:
             preserve_syllables=settings.syllable_split,
         )
 
+    # Reverse-scoring refinement pass
+    if not settings.ignore_audio and settings.refine_from_vocal:
+        from modules.Refinement.refine_from_vocal import refine_notes
+
+        process_data.midi_segments = refine_notes(
+            midi_segments=process_data.midi_segments,
+            pitched_data=process_data.pitched_data,
+            vocal_audio_path=process_data.process_data_paths.whisper_audio_path,
+            refine_pitch_enabled=settings.refine_pitch,
+            refine_timing_enabled=settings.refine_timing,
+            pitch_threshold_ht=settings.refine_pitch_threshold,
+            timing_threshold_ms=settings.refine_timing_threshold,
+            vibrato_window=settings.refine_vibrato_window,
+            vibrato_threshold_cents=settings.refine_vibrato_threshold,
+            difficulty=settings.refine_difficulty,
+        )
+
     # Create plot
     if settings.create_plot:
         create_plots(process_data, settings.output_folder_path)
@@ -1206,6 +1223,25 @@ def init_settings(argv: list[str]) -> Settings:
             settings.llm_retry_wait = int(arg)
         elif opt in ("--llm_retry_max"):
             settings.llm_retry_max = int(arg)
+        elif opt in ("--refine_from_vocal"):
+            settings.refine_from_vocal = True
+        elif opt in ("--disable_refine_pitch"):
+            settings.refine_pitch = False
+        elif opt in ("--disable_refine_timing"):
+            settings.refine_timing = False
+        elif opt in ("--refine_pitch_threshold"):
+            settings.refine_pitch_threshold = float(arg)
+        elif opt in ("--refine_timing_threshold"):
+            settings.refine_timing_threshold = float(arg)
+        elif opt in ("--refine_vibrato_window"):
+            settings.refine_vibrato_window = int(arg)
+        elif opt in ("--refine_vibrato_threshold"):
+            settings.refine_vibrato_threshold = float(arg)
+        elif opt in ("--refine_difficulty"):
+            if arg not in ("easy", "medium", "hard"):
+                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --refine_difficulty must be easy|medium|hard, got {arg}")
+                sys.exit(1)
+            settings.refine_difficulty = arg
     if settings.output_folder_path == "":
         if settings.input_file_path.startswith("https:"):
             dirname = os.getcwd()
@@ -1263,6 +1299,14 @@ def arg_options():
         "llm_no_retry",
         "llm_retry_wait=",
         "llm_retry_max=",
+        "refine_from_vocal",
+        "disable_refine_pitch",
+        "disable_refine_timing",
+        "refine_pitch_threshold=",
+        "refine_timing_threshold=",
+        "refine_vibrato_window=",
+        "refine_vibrato_threshold=",
+        "refine_difficulty=",
     ]
     return long, short
 

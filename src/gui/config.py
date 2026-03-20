@@ -78,6 +78,15 @@ _DEFAULTS = {
     "ffmpeg_path": "",
     # Cookie
     "cookie_file": str(_CONFIG_DIR / "cookies.txt"),
+    # Refinement
+    "refine_from_vocal": False,
+    "refine_pitch": True,
+    "refine_timing": True,
+    "refine_difficulty": "easy",
+    "refine_pitch_threshold": 1.0,
+    "refine_timing_threshold": 30.0,
+    "refine_vibrato_window": 5,
+    "refine_vibrato_threshold": 50.0,
 }
 
 

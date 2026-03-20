@@ -36,6 +36,16 @@ class Settings:
     keep_audio_in_video = False  # Keep full audio (vocals+instrumental) embedded in the output video
     write_settings_info = False  # Write ultrasinger_parameter.info with settings + score to output dir
 
+    # Refinement (reverse-scoring polish)
+    refine_from_vocal = False  # Enable reverse-scoring refinement pass
+    refine_pitch = True  # Correct note pitches from vocal audio (when refine is on)
+    refine_timing = True  # Correct note timing from vocal audio (when refine is on)
+    refine_pitch_threshold: float = 1.0  # Semitones deviation before correcting
+    refine_timing_threshold: float = 30.0  # Milliseconds deviation before correcting
+    refine_vibrato_window: int = 5  # Smoothing window frames for vibrato damping
+    refine_vibrato_threshold: float = 50.0  # Vibrato detection threshold in cents
+    refine_difficulty: str = "easy"  # Tolerance: easy|medium|hard
+
     # Process data Paths
     input_file_path = ""
     output_folder_path = ""

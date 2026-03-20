@@ -311,6 +311,7 @@ class ConversionSettingsForm(QWidget):
         self._main_layout.addWidget(card)
 
         self._build_experimental_section()
+        self._build_refinement_section()
         self._build_llm_section()
         self._build_scoring_section()
 
@@ -356,6 +357,116 @@ class ConversionSettingsForm(QWidget):
                            "feature counting or number sequences.",
                            reset_callback=lambda: self._keep_numbers.setChecked(
                                _DEFAULTS["keep_numbers"]))
+
+        self._main_layout.addWidget(card)
+
+    # ─── Refinement ────────────────────────────────────────────────────
+
+    def _build_refinement_section(self):
+        card = SettingsCard("Refinement (experimental)")
+
+        card.add_info(
+            "Re-analyses the vocal audio after initial note generation "
+            "to correct pitch values and note timings. This is a second "
+            "pass that fixes deviations the initial detection missed."
+        )
+
+        self._refine_from_vocal = ToggleSwitch(
+            checked=self._config.get("refine_from_vocal", False)
+        )
+        card.add_toggle_row("Enable Refinement", self._refine_from_vocal,
+                           "Run a reverse-scoring refinement pass after note generation.",
+                           reset_callback=lambda: self._refine_from_vocal.setChecked(
+                               _DEFAULTS.get("refine_from_vocal", False)))
+
+        self._refine_pitch = ToggleSwitch(
+            checked=self._config.get("refine_pitch", True)
+        )
+        card.add_toggle_row("Refine Pitch", self._refine_pitch,
+                           "Correct note pitches by comparing against the vocal audio.",
+                           reset_callback=lambda: self._refine_pitch.setChecked(
+                               _DEFAULTS.get("refine_pitch", True)))
+
+        self._refine_timing = ToggleSwitch(
+            checked=self._config.get("refine_timing", True)
+        )
+        card.add_toggle_row("Refine Timing", self._refine_timing,
+                           "Correct note start/end times using detected audio onsets.",
+                           reset_callback=lambda: self._refine_timing.setChecked(
+                               _DEFAULTS.get("refine_timing", True)))
+
+        # Difficulty combo
+        self._refine_difficulty = QComboBox()
+        self._refine_difficulty.addItems(["easy", "medium", "hard"])
+        current_diff = self._config.get("refine_difficulty", "easy")
+        idx = self._refine_difficulty.findText(current_diff)
+        if idx >= 0:
+            self._refine_difficulty.setCurrentIndex(idx)
+        card.add_row("Difficulty Tolerance", self._refine_difficulty,
+                     "Easy: lenient (only fix gross errors, +2 HT tolerance). "
+                     "Medium: moderate (+1 HT). Hard: strict (correct any deviation).",
+                     reset_callback=lambda: self._refine_difficulty.setCurrentText(
+                         _DEFAULTS.get("refine_difficulty", "easy")))
+
+        # Pitch threshold
+        self._refine_pitch_threshold = QDoubleSpinBox()
+        self._refine_pitch_threshold.setRange(0.0, 12.0)
+        self._refine_pitch_threshold.setSingleStep(0.5)
+        self._refine_pitch_threshold.setSuffix(" HT")
+        self._refine_pitch_threshold.setValue(
+            self._config.get("refine_pitch_threshold", 1.0))
+        card.add_row("Pitch Threshold", self._refine_pitch_threshold,
+                     "Base semitone deviation before correcting (added to difficulty tolerance).",
+                     reset_callback=lambda: self._refine_pitch_threshold.setValue(
+                         _DEFAULTS.get("refine_pitch_threshold", 1.0)))
+
+        # Timing threshold
+        self._refine_timing_threshold = QDoubleSpinBox()
+        self._refine_timing_threshold.setRange(5.0, 200.0)
+        self._refine_timing_threshold.setSingleStep(5.0)
+        self._refine_timing_threshold.setSuffix(" ms")
+        self._refine_timing_threshold.setValue(
+            self._config.get("refine_timing_threshold", 30.0))
+        card.add_row("Timing Threshold", self._refine_timing_threshold,
+                     "Milliseconds deviation before correcting note start/end times.",
+                     reset_callback=lambda: self._refine_timing_threshold.setValue(
+                         _DEFAULTS.get("refine_timing_threshold", 30.0)))
+
+        # Vibrato damping window
+        self._refine_vibrato_window = QSpinBox()
+        self._refine_vibrato_window.setRange(3, 15)
+        self._refine_vibrato_window.setValue(
+            self._config.get("refine_vibrato_window", 5))
+        card.add_row("Vibrato Smoothing Window", self._refine_vibrato_window,
+                     "Number of frames for the moving-average vibrato damping filter.",
+                     reset_callback=lambda: self._refine_vibrato_window.setValue(
+                         _DEFAULTS.get("refine_vibrato_window", 5)))
+
+        # Vibrato threshold
+        self._refine_vibrato_threshold = QDoubleSpinBox()
+        self._refine_vibrato_threshold.setRange(10.0, 200.0)
+        self._refine_vibrato_threshold.setSingleStep(10.0)
+        self._refine_vibrato_threshold.setSuffix(" cents")
+        self._refine_vibrato_threshold.setValue(
+            self._config.get("refine_vibrato_threshold", 50.0))
+        card.add_row("Vibrato Threshold", self._refine_vibrato_threshold,
+                     "Minimum pitch spread in cents to trigger vibrato damping. "
+                     "50 cents = half a semitone.",
+                     reset_callback=lambda: self._refine_vibrato_threshold.setValue(
+                         _DEFAULTS.get("refine_vibrato_threshold", 50.0)))
+
+        # Toggle sub-settings with main switch
+        def _toggle_refine(on):
+            self._refine_pitch.setEnabled(on)
+            self._refine_timing.setEnabled(on)
+            self._refine_difficulty.setEnabled(on)
+            self._refine_pitch_threshold.setEnabled(on)
+            self._refine_timing_threshold.setEnabled(on)
+            self._refine_vibrato_window.setEnabled(on)
+            self._refine_vibrato_threshold.setEnabled(on)
+
+        self._refine_from_vocal.toggled.connect(_toggle_refine)
+        _toggle_refine(self._refine_from_vocal.isChecked())
 
         self._main_layout.addWidget(card)
 
@@ -728,4 +839,12 @@ class ConversionSettingsForm(QWidget):
             "octave_shift": self._octave_shift.text(),
             "musescore_path": self._musescore_path.text(),
             "ffmpeg_path": self._ffmpeg_path.text(),
+            "refine_from_vocal": self._refine_from_vocal.isChecked(),
+            "refine_pitch": self._refine_pitch.isChecked(),
+            "refine_timing": self._refine_timing.isChecked(),
+            "refine_difficulty": self._refine_difficulty.currentText(),
+            "refine_pitch_threshold": self._refine_pitch_threshold.value(),
+            "refine_timing_threshold": self._refine_timing_threshold.value(),
+            "refine_vibrato_window": self._refine_vibrato_window.value(),
+            "refine_vibrato_threshold": self._refine_vibrato_threshold.value(),
         }

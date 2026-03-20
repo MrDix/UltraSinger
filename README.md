@@ -106,6 +106,12 @@ uv sync --extra gui
 uv run python src/gui_main.py
 ```
 
+Or use the platform-specific launcher scripts:
+
+- **Windows:** `run_gui_on_windows.bat`
+- **Linux:** `./run_gui_on_linux.sh`
+- **macOS:** `./run_gui_on_mac.command`
+
 #### Features
 
 - **Video Browser** — Browse video platforms, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads.
@@ -164,6 +170,18 @@ _Not all options working now!_
     --disable_quantization  Disable key quantization. Enabled by default, removes pitch slides and out-of-key notes.
     --syllable_split        Keep syllable-level note splits at pitch changes. Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes. Disabled by default.
+
+    [refinement (experimental)]
+    --refine_from_vocal         Enable reverse-scoring refinement pass. Re-analyses the vocal audio
+                                to correct pitch values and note timings. Disabled by default.
+    --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
+    --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
+    --refine_pitch_threshold    Semitone threshold before correcting pitch >> ((default) is 1.0)
+    --refine_timing_threshold   Millisecond threshold before correcting timing >> ((default) is 30)
+    --refine_vibrato_window     Vibrato damping smoothing window in frames >> ((default) is 5)
+    --refine_vibrato_threshold  Vibrato detection threshold in cents >> ((default) is 50)
+    --refine_difficulty         Tolerance: easy|medium|hard. Easy adds +2 HT tolerance, hard corrects
+                                any deviation. >> ((default) is easy)
 
     [llm lyric correction]
     --llm_correct           Enable LLM-based lyric post-correction (disabled by default)

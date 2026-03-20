@@ -370,6 +370,29 @@ class UltraSingerRunner(QObject):
                 if retry_max != 3:
                     args.extend(["--llm_retry_max", str(retry_max)])
 
+        # Refinement
+        if config.get("refine_from_vocal", False):
+            args.append("--refine_from_vocal")
+            if not config.get("refine_pitch", True):
+                args.append("--disable_refine_pitch")
+            if not config.get("refine_timing", True):
+                args.append("--disable_refine_timing")
+            difficulty = config.get("refine_difficulty", "easy")
+            if difficulty != "easy":
+                args.extend(["--refine_difficulty", difficulty])
+            pitch_thr = config.get("refine_pitch_threshold", 1.0)
+            if pitch_thr != 1.0:
+                args.extend(["--refine_pitch_threshold", str(pitch_thr)])
+            timing_thr = config.get("refine_timing_threshold", 30.0)
+            if timing_thr != 30.0:
+                args.extend(["--refine_timing_threshold", str(timing_thr)])
+            vib_win = config.get("refine_vibrato_window", 5)
+            if vib_win != 5:
+                args.extend(["--refine_vibrato_window", str(vib_win)])
+            vib_thr = config.get("refine_vibrato_threshold", 50.0)
+            if vib_thr != 50.0:
+                args.extend(["--refine_vibrato_threshold", str(vib_thr)])
+
         # Paths
         if config.get("musescore_path"):
             args.extend(["--musescore_path", config["musescore_path"]])
