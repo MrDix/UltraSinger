@@ -1,11 +1,14 @@
-"""Sidebar navigation widget with file drop zone and convert button."""
+"""Sidebar navigation widget with file drop zone and conversion queue."""
 
 import importlib.metadata
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -13,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .file_drop_zone import FileDropZone
+from .queue_list import QueueListWidget
 
 
 class SidebarButton(QPushButton):
@@ -25,74 +29,114 @@ class SidebarButton(QPushButton):
         self.label = label
         self.setText(f"  {icon_text}  {label}")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(44)
+        self.setMinimumHeight(40)
 
 
 class Sidebar(QWidget):
-    """Sidebar navigation panel with drop zone and convert button."""
+    """Sidebar navigation panel with drop zone and conversion queue.
+
+    Layout (top to bottom):
+      Logo → Drag Files zone → Convert Queue (fills space) →
+      Start/Clear buttons → Navigation buttons → Version
+    """
 
     section_changed = Signal(int)
-    convert_requested = Signal()  # user wants to start conversion
+    start_all_requested = Signal()
+    file_dropped = Signal(str)  # file path from drop zone
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("sidebar")
-        self.setFixedWidth(220)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFixedWidth(250)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 0, 6, 12)
-        layout.setSpacing(2)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # Logo / title
-        logo = QLabel("\U0001F3A4 UltraSinger")
+        # Logo image — full width, no margins
+        logo = QLabel()
         logo.setObjectName("sidebarLogo")
-        layout.addWidget(logo)
-        layout.addSpacing(8)
+        logo_path = Path(__file__).parent.parent / "resources" / "icons" / "logo.png"
+        if logo_path.exists():
+            pixmap = QPixmap(str(logo_path))
+            scaled = pixmap.scaledToWidth(
+                250, Qt.TransformationMode.SmoothTransformation
+            )
+            logo.setPixmap(scaled)
+        else:
+            logo.setText("UltraSinger")
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(logo)
 
-        # ── File Drop Zone ─────────────────────────────────────────────
+        # Content area with side margins
+        self._content_layout = QVBoxLayout()
+        self._content_layout.setContentsMargins(6, 4, 6, 8)
+        self._content_layout.setSpacing(4)
+        outer.addLayout(self._content_layout, 1)
+        layout = self._content_layout
+
+        # ── Drag Files Zone ───────────────────────────────────────────
+        drop_frame = _SidebarSection("Drop Files")
         self._drop_zone = FileDropZone()
-        self._drop_zone.setMinimumHeight(90)
-        self._drop_zone.setMaximumHeight(110)
-        layout.addWidget(self._drop_zone)
+        self._drop_zone.setMinimumHeight(70)
+        self._drop_zone.setMaximumHeight(90)
+        drop_frame.add_widget(self._drop_zone)
+        layout.addWidget(drop_frame)
 
-        # ── Input indicator (shows current source) ─────────────────────
-        self._input_label = QLabel("")
-        self._input_label.setObjectName("caption")
-        self._input_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._input_label.setWordWrap(True)
-        self._input_label.setStyleSheet(
-            "color: #e91e63; font-size: 11px; padding: 2px 4px;"
-        )
-        self._input_label.hide()
-        layout.addWidget(self._input_label)
+        # Wire drop zone → emit file_dropped signal
+        self._drop_zone.file_selected.connect(self._on_file_dropped)
 
-        # ── Convert Button ─────────────────────────────────────────────
-        self._convert_btn = QPushButton("\u25B6  Start Conversion")
-        self._convert_btn.setObjectName("primaryButton")
-        self._convert_btn.setMinimumHeight(40)
-        self._convert_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._convert_btn.hide()
-        self._convert_btn.clicked.connect(self.convert_requested.emit)
-        layout.addWidget(self._convert_btn)
+        # ── Convert Queue (fills available space) ─────────────────────
+        queue_frame = _SidebarSection("Convert Queue")
+        self._queue_list = QueueListWidget()
+        queue_frame.add_widget(self._queue_list, stretch=1)
+        layout.addWidget(queue_frame, 1)  # stretch=1 → takes all space
 
-        layout.addSpacing(8)
+        # ── Queue Action Buttons ──────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
 
-        # ── Navigation Buttons ─────────────────────────────────────────
+        self._start_btn = QPushButton("\u25B6  Start All")
+        self._start_btn.setObjectName("primaryButton")
+        self._start_btn.setMinimumHeight(34)
+        self._start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._start_btn.setEnabled(False)
+        self._start_btn.clicked.connect(lambda: self.start_all_requested.emit())
+        btn_row.addWidget(self._start_btn, 1)
+
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setObjectName("ghostButton")
+        self._clear_btn.setMinimumHeight(34)
+        self._clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_btn.setEnabled(False)
+        btn_row.addWidget(self._clear_btn)
+
+        layout.addLayout(btn_row)
+
+        # ── Navigation Buttons (at the bottom) ────────────────────────
+        self._nav_container = QVBoxLayout()
+        self._nav_container.setSpacing(2)
+        layout.addLayout(self._nav_container)
+
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
         self._buttons: list[SidebarButton] = []
-
-        # Track input source
-        self._current_input: str = ""
-        self._input_type: str = ""  # "file" or "url"
-
-        # Wire drop zone
-        self._drop_zone.file_selected.connect(self._on_file_dropped)
 
     @property
     def drop_zone(self) -> FileDropZone:
         """Access the sidebar's file drop zone."""
         return self._drop_zone
+
+    @property
+    def queue_list(self) -> QueueListWidget:
+        """Access the sidebar's queue list widget."""
+        return self._queue_list
+
+    @property
+    def clear_button(self) -> QPushButton:
+        """Access the Clear button for external wiring."""
+        return self._clear_btn
 
     def add_section(self, icon_text: str, label: str) -> int:
         """Add a navigation section. Returns the section index."""
@@ -100,17 +144,17 @@ class Sidebar(QWidget):
         index = len(self._buttons)
         self._button_group.addButton(btn, index)
         self._buttons.append(btn)
-        self.layout().addWidget(btn)
-        btn.clicked.connect(lambda _checked=False, idx=index: self.section_changed.emit(idx))
+        self._nav_container.addWidget(btn)
+        btn.clicked.connect(
+            lambda _checked=False, idx=index: self.section_changed.emit(idx)
+        )
         if index == 0:
             btn.setChecked(True)
         return index
 
     def finalize(self):
-        """Call after all sections are added to push remaining space down."""
-        self.layout().addStretch(1)
-
-        # Version label at bottom
+        """Call after all sections are added."""
+        # Version label at very bottom
         try:
             _version = importlib.metadata.version("ultrasinger")
         except importlib.metadata.PackageNotFoundError:
@@ -118,7 +162,7 @@ class Sidebar(QWidget):
         version_label = QLabel(f"v{_version}")
         version_label.setObjectName("caption")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.layout().addWidget(version_label)
+        self._content_layout.addWidget(version_label)
 
     def set_active(self, index: int):
         """Programmatically set the active section."""
@@ -126,49 +170,40 @@ class Sidebar(QWidget):
             self._buttons[index].setChecked(True)
             self.section_changed.emit(index)
 
-    # ── Input Source Management ─────────────────────────────────────────
-
-    def set_video_input(self, url: str):
-        """Set a video URL as the input source."""
-        self._current_input = url
-        self._input_type = "url"
-        # Show a compact display: "YT: /watch?v=abc123"
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            path_and_query = parsed.path
-            if parsed.query:
-                path_and_query += "?" + parsed.query
-            display = f"YT: {path_and_query}"
-        except Exception:
-            display = url
-            if len(display) > 35:
-                display = display[:32] + "..."
-        self._input_label.setText(f"\U0001F310 {display}")
-        self._input_label.show()
-        self._convert_btn.show()
-
-    def get_input_source(self) -> str:
-        """Return the current input source (URL or file path)."""
-        return self._current_input
-
-    def get_input_type(self) -> str:
-        """Return the input type: 'file', 'url', or ''."""
-        return self._input_type
+    def update_queue_buttons(self, has_pending: bool, is_running: bool):
+        """Update Start All / Clear button states."""
+        self._start_btn.setEnabled(has_pending and not is_running)
+        self._clear_btn.setEnabled(not is_running)
+        if is_running:
+            self._start_btn.setText("\u23F3  Running...")
+        else:
+            self._start_btn.setText("\u25B6  Start All")
 
     def _on_file_dropped(self, path: str):
-        """Handle file selected via drop zone."""
-        self._current_input = path
-        self._input_type = "file"
-        name = Path(path).name
-        self._input_label.setText(f"\U0001F3B5 {name}")
-        self._input_label.show()
-        self._convert_btn.show()
-
-    def clear_input(self):
-        """Reset input state after conversion or cancel."""
-        self._current_input = ""
-        self._input_type = ""
-        self._input_label.hide()
-        self._convert_btn.hide()
+        """Forward file selection to parent via signal."""
+        self.file_dropped.emit(path)
+        # Reset drop zone visual (file is now in the queue)
         self._drop_zone.set_file("")
+
+
+class _SidebarSection(QFrame):
+    """A labeled frame container for sidebar sections."""
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("sidebarSection")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(6, 4, 6, 6)
+        self._layout.setSpacing(2)
+
+        label = QLabel(title)
+        label.setObjectName("caption")
+        label.setStyleSheet(
+            "font-size: 11px; font-weight: 600; color: #a09888; "
+            "letter-spacing: 0.5px; text-transform: uppercase; "
+            "background: transparent;"
+        )
+        self._layout.addWidget(label)
+
+    def add_widget(self, widget, stretch=0):
+        self._layout.addWidget(widget, stretch)

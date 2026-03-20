@@ -4,6 +4,13 @@ import copy
 import getopt
 import os
 import sys
+import warnings
+
+# Suppress noisy third-party warnings that fire at import time.
+# Must run before any transitive imports of requests, torchaudio, pyannote, etc.
+warnings.filterwarnings("ignore", module="requests")
+warnings.filterwarnings("ignore", module="pyannote")
+warnings.filterwarnings("ignore", message="In 2\\.9.*torchaudio\\.save_with_torchcodec")
 
 # Reconfigure console streams to UTF-8 on Windows to prevent UnicodeEncodeError
 # when printing non-ASCII characters (e.g. ♪ from Whisper transcriptions)
@@ -166,6 +173,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Syllable-level note splitting enabled')}")
     if settings.vocal_gap_fill:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocal gap fill enabled')}")
+    if settings.write_settings_info:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
     process_data = InitProcessData()
 
@@ -197,8 +206,9 @@ def run() -> tuple[str, Score, Score]:
 
     # Audio transcription
     process_data.media_info.language = settings.language
+    llm_result = None
     if not settings.ignore_audio:
-        TranscribeAudio(process_data)
+        llm_result = TranscribeAudio(process_data)
 
     # Onset correction — snap note starts to audio onsets for better timing
     if not settings.ignore_audio and settings.onset_correction:
@@ -292,6 +302,14 @@ def run() -> tuple[str, Score, Score]:
                  process_data.process_data_paths.cache_folder_path, settings.musescore_path, process_data.basename,
                  process_data.media_info)
 
+    # Write settings info file
+    if settings.write_settings_info:
+        _write_settings_info_file(
+            settings.output_folder_path, simple_score, accurate_score,
+            detected_language=process_data.media_info.language,
+            llm_result=llm_result,
+        )
+
     # Cleanup
     if not settings.keep_cache:
         remove_cache_folder(process_data.process_data_paths.cache_folder_path)
@@ -299,6 +317,128 @@ def run() -> tuple[str, Score, Score]:
     # Print Support
     print_support()
     return ultrastar_file_output, simple_score, accurate_score
+
+
+def _write_settings_info_file(
+        output_folder: str,
+        simple_score: "Score | None",
+        accurate_score: "Score | None",
+        *,
+        detected_language: str | None = None,
+        llm_result: "LLMResult | None" = None,
+) -> None:
+    """Write ultrasinger_parameter.info with all conversion settings and score results."""
+    from datetime import datetime, timezone
+
+    info_path = os.path.join(output_folder, "ultrasinger_parameter.info")
+    try:
+        with open(info_path, "w", encoding="utf-8") as f:
+            f.write(f"UltraSinger v{settings.APP_VERSION} — Conversion Settings\n")
+            f.write(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+            f.write("=" * 60 + "\n\n")
+
+            # Input / Output
+            f.write("[Input / Output]\n")
+            f.write(f"  Input:                    {settings.input_file_path}\n")
+            f.write(f"  Output folder:            {settings.output_folder_path}\n")
+            f.write(f"  Format version:           {settings.format_version.value}\n")
+            f.write("\n")
+
+            # Transcription
+            f.write("[Transcription]\n")
+            f.write(f"  Whisper model:            {settings.whisper_model.value if hasattr(settings.whisper_model, 'value') else settings.whisper_model}\n")
+            f.write(f"  Whisper batch size:       {settings.whisper_batch_size}\n")
+            f.write(f"  Whisper compute type:     {settings.whisper_compute_type or 'auto'}\n")
+            f.write(f"  Whisper align model:      {settings.whisper_align_model or '(default)'}\n")
+            f.write(f"  Demucs model:             {settings.demucs_model.value if hasattr(settings.demucs_model, 'value') else settings.demucs_model}\n")
+            lang_display = settings.language or "auto-detect"
+            if not settings.language and detected_language:
+                lang_display = f"auto-detect → {detected_language}"
+            f.write(f"  Language:                 {lang_display}\n")
+            f.write(f"  Keep numbers:             {settings.keep_numbers}\n")
+            f.write("\n")
+
+            # Post-processing
+            f.write("[Post-Processing]\n")
+            f.write(f"  Hyphenation:              {settings.hyphenation}\n")
+            f.write(f"  Vocal separation:         {settings.use_separated_vocal}\n")
+            f.write(f"  Quantize to key:          {settings.quantize_to_key}\n")
+            f.write(f"  Vocal center correction:  {settings.vocal_center_correction}\n")
+            f.write(f"  Onset correction:         {settings.onset_correction}\n")
+            f.write(f"  Syllable split:           {settings.syllable_split}\n")
+            f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
+            f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
+            f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
+            f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
+            f.write("\n")
+
+            # Overrides
+            f.write("[Overrides]\n")
+            f.write(f"  BPM override:             {settings.bpm_override or '(none)'}\n")
+            f.write(f"  Octave shift:             {settings.octave_shift if settings.octave_shift is not None else '(none)'}\n")
+            f.write("\n")
+
+            # Output options
+            f.write("[Output Options]\n")
+            f.write(f"  Create MIDI:              {settings.create_midi}\n")
+            f.write(f"  Create plots:             {settings.create_plot}\n")
+            f.write(f"  Create audio chunks:      {settings.create_audio_chunks}\n")
+            f.write(f"  Create karaoke:           {settings.create_karaoke}\n")
+            f.write(f"  Keep audio in video:      {settings.keep_audio_in_video}\n")
+            f.write(f"  Keep cache:               {settings.keep_cache}\n")
+            f.write("\n")
+
+            # Device
+            f.write("[Device]\n")
+            f.write(f"  PyTorch device:           {settings.pytorch_device}\n")
+            f.write(f"  Force CPU:                {settings.force_cpu}\n")
+            f.write(f"  Force Whisper CPU:        {settings.force_whisper_cpu}\n")
+            f.write("\n")
+
+            # LLM
+            f.write("[LLM Lyric Correction]\n")
+            f.write(f"  Enabled:                  {settings.llm_correct_lyrics}\n")
+            if settings.llm_correct_lyrics:
+                f.write(f"  API base URL:             {settings.llm_api_base_url}\n")
+                f.write(f"  Model:                    {settings.llm_model}\n")
+                retry_str = f"yes ({settings.llm_retry_max}x, {settings.llm_retry_wait}s wait)" if settings.llm_retry_on_rate_limit else "no"
+                f.write(f"  Retry on rate limit:      {retry_str}\n")
+                if llm_result is not None:
+                    retry_info = f", {llm_result.retries} retries" if llm_result.retries > 0 else ""
+                    if llm_result.errors == 0:
+                        f.write(f"  Status:                   OK ({llm_result.chunks_ok}/{llm_result.chunks_total} chunks, {llm_result.corrections} corrections{retry_info})\n")
+                    elif llm_result.chunks_ok > 0:
+                        f.write(f"  Status:                   PARTIAL ({llm_result.chunks_ok}/{llm_result.chunks_total} chunks OK, {llm_result.errors} errors, {llm_result.corrections} corrections{retry_info})\n")
+                    else:
+                        f.write(f"  Status:                   FAILED (all {llm_result.chunks_total} chunks failed{retry_info})\n")
+                    if llm_result.last_error:
+                        f.write(f"  Last error:               {llm_result.last_error}\n")
+            f.write("\n")
+
+            # Score results
+            if simple_score is not None or accurate_score is not None:
+                f.write("=" * 60 + "\n")
+                f.write("[Score Results]\n")
+                if simple_score is not None:
+                    pct = round(simple_score.score / 100, 2)
+                    f.write(f"  Simple (octave-ignoring):\n")
+                    f.write(f"    Total:                  {simple_score.score} ({pct}%)\n")
+                    f.write(f"    Notes:                  {simple_score.notes}\n")
+                    f.write(f"    Golden notes:           {simple_score.golden}\n")
+                    f.write(f"    Line bonus:             {simple_score.line_bonus}\n")
+                    f.write(f"    Max possible:           {simple_score.max_score}\n")
+                if accurate_score is not None:
+                    pct = round(accurate_score.score / 100, 2)
+                    f.write(f"  Accurate (octave-matched):\n")
+                    f.write(f"    Total:                  {accurate_score.score} ({pct}%)\n")
+                    f.write(f"    Notes:                  {accurate_score.notes}\n")
+                    f.write(f"    Golden notes:           {accurate_score.golden}\n")
+                    f.write(f"    Line bonus:             {accurate_score.line_bonus}\n")
+                    f.write(f"    Max possible:           {accurate_score.max_score}\n")
+
+        print(f"{ULTRASINGER_HEAD} Settings info written to {blue_highlighted(info_path)}")
+    except OSError as e:
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Could not write settings info: {e}")
 
 
 def split_syllables_into_segments(
@@ -592,7 +732,10 @@ def InitProcessData():
             settings.output_folder_path,
             process_data.process_data_paths.audio_output_file_path,
             process_data.media_info
-        ) = download_from_youtube(settings.input_file_path, settings.output_folder_path, settings.cookiefile)
+        ) = download_from_youtube(
+            settings.input_file_path, settings.output_folder_path, settings.cookiefile,
+            keep_audio_in_video=settings.keep_audio_in_video,
+        )
     else:
         # Audio/Video File
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Full Automatic Mode')}")
@@ -618,6 +761,7 @@ def TranscribeAudio(process_data):
     process_data.transcribed_data = transcription_result.transcribed_data
 
     # LLM lyric correction (optional, before punctuation removal for context)
+    llm_result = None
     if settings.llm_correct_lyrics:
         try:
             from modules.Speech_Recognition.llm_corrector import correct_lyrics_with_llm, LLMConfig
@@ -628,8 +772,11 @@ def TranscribeAudio(process_data):
                 language=process_data.media_info.language,
                 artist=process_data.media_info.artist,
                 title=process_data.media_info.title,
+                retry_on_rate_limit=settings.llm_retry_on_rate_limit,
+                retry_wait=settings.llm_retry_wait,
+                retry_max=settings.llm_retry_max,
             )
-            process_data.transcribed_data = correct_lyrics_with_llm(
+            process_data.transcribed_data, llm_result = correct_lyrics_with_llm(
                 process_data.transcribed_data, llm_config
             )
         except Exception as e:
@@ -649,6 +796,8 @@ def TranscribeAudio(process_data):
     process_data.transcribed_data = remove_silence_from_transcription_data(
         process_data.process_data_paths.whisper_audio_path, process_data.transcribed_data
     )
+
+    return llm_result
 
 
 def CreateUltraStarTxt(process_data: ProcessData):
@@ -817,7 +966,8 @@ def infos_from_audio_video_input_file() -> tuple[str, str, str, MediaInfo]:
 
         # Separate audio and video
         ultrastar_audio_input_path, final_video_path, audio_ext, video_ext = separate_audio_video(
-            video_with_audio_path, basename_without_ext, song_folder_output_path
+            video_with_audio_path, basename_without_ext, song_folder_output_path,
+            keep_audio_in_video=settings.keep_audio_in_video,
         )
     else:
         # Audio file
@@ -1038,6 +1188,10 @@ def init_settings(argv: list[str]) -> Settings:
             settings.denoise_noise_floor = val
         elif opt in ("--disable_denoise_track_noise"):
             settings.denoise_track_noise = False
+        elif opt in ("--keep_audio_in_video"):
+            settings.keep_audio_in_video = True
+        elif opt in ("--write_settings_info"):
+            settings.write_settings_info = True
         elif opt in ("--llm_correct"):
             settings.llm_correct_lyrics = True
         elif opt in ("--llm_api_base_url"):
@@ -1046,6 +1200,12 @@ def init_settings(argv: list[str]) -> Settings:
             settings.llm_api_key = arg
         elif opt in ("--llm_model"):
             settings.llm_model = arg
+        elif opt in ("--llm_no_retry"):
+            settings.llm_retry_on_rate_limit = False
+        elif opt in ("--llm_retry_wait"):
+            settings.llm_retry_wait = int(arg)
+        elif opt in ("--llm_retry_max"):
+            settings.llm_retry_max = int(arg)
     if settings.output_folder_path == "":
         if settings.input_file_path.startswith("https:"):
             dirname = os.getcwd()
@@ -1094,10 +1254,15 @@ def arg_options():
         "denoise_nr=",
         "denoise_nf=",
         "disable_denoise_track_noise",
+        "keep_audio_in_video",
+        "write_settings_info",
         "llm_correct",
         "llm_api_base_url=",
         "llm_api_key=",
         "llm_model=",
+        "llm_no_retry",
+        "llm_retry_wait=",
+        "llm_retry_max=",
     ]
     return long, short
 

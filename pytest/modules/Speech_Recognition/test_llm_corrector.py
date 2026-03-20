@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 from src.modules.Speech_Recognition.TranscribedData import TranscribedData
 from src.modules.Speech_Recognition.llm_corrector import (
     LLMConfig,
+    LLMResult,
     _build_chunks,
     _build_user_prompt,
     _parse_response,
@@ -156,45 +157,56 @@ class TestApplyCorrections(unittest.TestCase):
 
 class TestCorrectLyricsWithLLM(unittest.TestCase):
     def test_empty_data_returns_unchanged(self):
-        result = correct_lyrics_with_llm([], _config())
-        self.assertEqual(result, [])
+        data, llm_result = correct_lyrics_with_llm([], _config())
+        self.assertEqual(data, [])
+        self.assertIsInstance(llm_result, LLMResult)
 
     def test_no_api_key_returns_unchanged(self):
         data = [_td("hello", 0.0, 0.5)]
-        result = correct_lyrics_with_llm(data, _config(api_key=""))
-        self.assertEqual(result[0].word, "hello")
+        data, llm_result = correct_lyrics_with_llm(data, _config(api_key=""))
+        self.assertEqual(data[0].word, "hello")
+        self.assertEqual(llm_result.errors, 1)
+        self.assertIn("no API key", llm_result.last_error)
 
     @patch("src.modules.Speech_Recognition.llm_corrector._call_llm_api")
     def test_successful_correction(self, mock_api):
         mock_api.return_value = "hello\nworld\n"
         data = [_td("helo ", 0.0, 0.5), _td("wrld ", 0.6, 1.0)]
-        result = correct_lyrics_with_llm(data, _config())
-        self.assertEqual(result[0].word, "hello ")
-        self.assertEqual(result[1].word, "world ")
+        data, llm_result = correct_lyrics_with_llm(data, _config())
+        self.assertEqual(data[0].word, "hello ")
+        self.assertEqual(data[1].word, "world ")
+        self.assertEqual(llm_result.corrections, 2)
+        self.assertEqual(llm_result.errors, 0)
+        self.assertEqual(llm_result.chunks_ok, 1)
 
     @patch("src.modules.Speech_Recognition.llm_corrector._call_llm_api")
     def test_api_error_returns_unchanged(self, mock_api):
         mock_api.side_effect = Exception("Connection refused")
         data = [_td("helo ", 0.0, 0.5)]
-        result = correct_lyrics_with_llm(data, _config())
-        self.assertEqual(result[0].word, "helo ")
+        data, llm_result = correct_lyrics_with_llm(data, _config())
+        self.assertEqual(data[0].word, "helo ")
+        self.assertEqual(llm_result.errors, 1)
+        self.assertIn("Connection refused", llm_result.last_error)
+        self.assertEqual(llm_result.chunks_ok, 0)
 
     @patch("src.modules.Speech_Recognition.llm_corrector._call_llm_api")
     def test_word_count_mismatch_skips_chunk(self, mock_api):
         mock_api.return_value = "hello\nworld\nextra\n"
         data = [_td("helo ", 0.0, 0.5), _td("wrld ", 0.6, 1.0)]
-        result = correct_lyrics_with_llm(data, _config())
+        data, llm_result = correct_lyrics_with_llm(data, _config())
         # Should be unchanged because word count mismatched
-        self.assertEqual(result[0].word, "helo ")
-        self.assertEqual(result[1].word, "wrld ")
+        self.assertEqual(data[0].word, "helo ")
+        self.assertEqual(data[1].word, "wrld ")
 
     @patch("src.modules.Speech_Recognition.llm_corrector._call_llm_api")
     def test_no_changes_needed(self, mock_api):
         mock_api.return_value = "hello\nworld\n"
         data = [_td("hello ", 0.0, 0.5), _td("world ", 0.6, 1.0)]
-        result = correct_lyrics_with_llm(data, _config())
-        self.assertEqual(result[0].word, "hello ")
-        self.assertEqual(result[1].word, "world ")
+        data, llm_result = correct_lyrics_with_llm(data, _config())
+        self.assertEqual(data[0].word, "hello ")
+        self.assertEqual(data[1].word, "world ")
+        self.assertEqual(llm_result.corrections, 0)
+        self.assertEqual(llm_result.chunks_ok, 1)
 
 
 if __name__ == "__main__":

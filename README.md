@@ -154,27 +154,39 @@ _Not all options working now!_
     --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words
 
-    [extra]
+    [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 120)
-    --octave                Shift all notes by N octaves after pitch detection (e.g., --octave 1 for one octave up)
+    --octave                Shift all notes by N octaves after pitch detection (e.g., --octave 1 for up, --octave -1 for down)
     --disable_hyphenation   Disable word hyphenation. Hyphenation is enabled by default.
     --disable_separation    Disable track separation. Track separation is enabled by default.
-    --disable_karaoke       Disable creation of karaoke style txt file. Karaoke is enabled by default.
-    --create_audio_chunks   Enable creation of audio chunks. Audio chunks are disabled by default.
-    --keep_cache            Keep cache folder after creation. Cache folder is removed by default.
-    --plot                  Enable creation of plots. Plots are disabled by default.
-    --disable_quantization  Disable key quantization. Key quantization is enabled by default and removes pitch slides and out-of-key notes.
-    --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
-    --musescore_path        path to MuseScore executable
-    --ffmpeg                Path to ffmpeg and ffprobe executable
+    --disable_onset_correction  Disable onset-based timing correction. Enabled by default.
+    --disable_vocal_center  Disable vocal-centre octave correction. Enabled by default.
+    --disable_quantization  Disable key quantization. Enabled by default, removes pitch slides and out-of-key notes.
+    --syllable_split        Keep syllable-level note splits at pitch changes. Disabled by default.
+    --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes. Disabled by default.
 
-    [experimental]
+    [llm lyric correction]
     --llm_correct           Enable LLM-based lyric post-correction (disabled by default)
     --llm_api_base_url      LLM API base URL >> ((default) is https://api.openai.com/v1)
     --llm_api_key           LLM API key (or set LLM_API_KEY env var)
     --llm_model             LLM model name >> ((default) is gpt-4o-mini)
-    --syllable_split        Split word-level notes into syllable-level notes (disabled by default)
-    --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (disabled by default)
+    --llm_no_retry          Disable automatic retry on rate limit (HTTP 429). Retry is enabled by default.
+    --llm_retry_wait        Seconds to wait between retries >> ((default) is 60)
+    --llm_retry_max         Maximum retries per text chunk >> ((default) is 3)
+
+    [output]
+    --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
+    --disable_karaoke       Disable creation of karaoke txt file. Karaoke is enabled by default.
+    --create_audio_chunks   Enable creation of audio chunks. Disabled by default.
+    --keep_audio_in_video   Keep full audio (vocals+instrumental) in the output video. Disabled by default.
+    --write_settings_info   Write ultrasinger_parameter.info with all settings and scores to output dir.
+    --plot                  Enable creation of plots. Disabled by default.
+    --keep_cache            Keep cache folder after creation. Removed by default.
+
+    [denoise]
+    --denoise_nr            Noise reduction in dB (0.01-97). Lower preserves more vocal detail. >> ((default) is 20)
+    --denoise_nf            Noise floor in dB (-80 to -20) >> ((default) is -80)
+    --disable_denoise_track_noise  Disable adaptive noise floor tracking >> ((default) tracking is enabled)
 
     [yt-dlp]
     --cookiefile            File name where cookies should be read from
@@ -182,6 +194,10 @@ _Not all options working now!_
     [device]
     --force_cpu             Force all steps to be processed on CPU.
     --force_whisper_cpu     Only whisper will be forced to cpu
+
+    [paths]
+    --musescore_path        Path to MuseScore executable
+    --ffmpeg                Path to ffmpeg and ffprobe executable
 ```
 
 For standard use, you only need to use [opt]. All other options are optional.
@@ -328,6 +344,14 @@ You can choose between different format versions. The default is `1.2.0`.
 -i XYZ --format_version 1.2.0
 ```
 
+### Settings Info File
+
+When enabled, UltraSinger writes a `ultrasinger_parameter.info` file to the output directory containing all conversion settings, detected language, LLM correction status, and score results. Useful for tracking what parameters produced a given output.
+
+```commandline
+-i XYZ --write_settings_info
+```
+
 ### 🧪 Experimental Features
 
 These features are experimental and disabled by default. They may change or be removed in future versions.
@@ -340,6 +364,13 @@ Related flags:
 * `--llm_api_base_url` -- Base URL of the API (default: `https://api.openai.com/v1`)
 * `--llm_api_key` -- API key (can also be set via `LLM_API_KEY` environment variable)
 * `--llm_model` -- Model name (default: `gpt-4o-mini`)
+* `--llm_no_retry` -- Disable automatic retry on rate limit errors (retry is enabled by default)
+* `--llm_retry_wait` -- Seconds to wait between retries (default: `60`)
+* `--llm_retry_max` -- Maximum retries per text chunk (default: `3`)
+
+When using free-tier APIs like Groq, you may encounter HTTP 429 (Too Many Requests) errors during peak usage.
+By default, UltraSinger automatically waits and retries. The retry status is logged to the console and recorded
+in the `ultrasinger_parameter.info` file (if `--write_settings_info` is enabled).
 
 **Model recommendations based on benchmark testing:**
 
