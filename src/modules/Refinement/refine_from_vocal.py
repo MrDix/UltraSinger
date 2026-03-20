@@ -161,8 +161,11 @@ def refine_pitch_with_uscore(
         )
         return midi_segments, 0
 
-    corrections = 0
-    for seg, ns in zip(midi_segments, all_note_scores, strict=True):
+    # Stage corrections so segments stay unchanged if we crash mid-loop
+    staged: list[tuple[int, str]] = []  # (index, new_note_name)
+    for i, (seg, ns) in enumerate(
+        zip(midi_segments, all_note_scores, strict=True)
+    ):
         if ns.beats_total == 0:
             continue
 
@@ -185,10 +188,13 @@ def refine_pitch_with_uscore(
             continue
 
         if detected_midi != current_midi:
-            seg.note = librosa.midi_to_note(detected_midi)
-            corrections += 1
+            staged.append((i, librosa.midi_to_note(detected_midi)))
 
-    return midi_segments, corrections
+    # Commit all corrections at once (transactional)
+    for idx, new_note in staged:
+        midi_segments[idx].note = new_note
+
+    return midi_segments, len(staged)
 
 
 def refine_timing(
@@ -261,8 +267,8 @@ def refine_timing(
             pitched_data.times, seg.end - threshold_s
         )
 
-        if search_start_idx < search_end_idx:
-            confs = pitched_data.confidence[search_start_idx:search_end_idx]
+        if search_start_idx <= search_end_idx:
+            confs = pitched_data.confidence[search_start_idx:search_end_idx + 1]
             # Find first frame where confidence drops below threshold
             for j, conf in enumerate(confs):
                 if conf < confidence_threshold:
