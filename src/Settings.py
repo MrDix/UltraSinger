@@ -40,7 +40,7 @@ class Settings:
     refine_from_vocal = False  # Enable reverse-scoring refinement pass
     refine_pitch = True  # Correct note pitches from vocal audio (when refine is on)
     refine_timing = True  # Correct note timing from vocal audio (when refine is on)
-    refine_hit_ratio: float = 0.5  # Notes below this hit ratio are pitch-corrected (0.0-1.0)
+    refine_hit_ratio: float = 0.4  # Notes below this hit ratio are pitch-corrected (0.0-1.0)
     refine_timing_threshold: float = 30.0  # Milliseconds deviation before correcting
 
     # Process data Paths

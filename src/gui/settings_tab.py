@@ -401,11 +401,11 @@ class ConversionSettingsForm(QWidget):
         self._refine_hit_ratio.setSingleStep(0.05)
         self._refine_hit_ratio.setDecimals(2)
         self._refine_hit_ratio.setValue(
-            self._config.get("refine_hit_ratio", 0.5))
+            self._config.get("refine_hit_ratio", 0.4))
         card.add_row("Hit Ratio Threshold", self._refine_hit_ratio,
                      "Notes scoring below this hit ratio (0.0-1.0) are pitch-corrected by the game engine.",
                      reset_callback=lambda: self._refine_hit_ratio.setValue(
-                         _DEFAULTS.get("refine_hit_ratio", 0.5)))
+                         _DEFAULTS.get("refine_hit_ratio", 0.4)))
 
         # Timing threshold
         self._refine_timing_threshold = _NoScrollDoubleSpinBox()

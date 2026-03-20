@@ -377,8 +377,8 @@ class UltraSingerRunner(QObject):
                 args.append("--disable_refine_pitch")
             if not config.get("refine_timing", True):
                 args.append("--disable_refine_timing")
-            hit_ratio = config.get("refine_hit_ratio", 0.5)
-            if hit_ratio != 0.5:
+            hit_ratio = config.get("refine_hit_ratio", 0.4)
+            if hit_ratio != 0.4:
                 args.extend(["--refine_hit_ratio", str(hit_ratio)])
             timing_thr = config.get("refine_timing_threshold", 30.0)
             if timing_thr != 30.0:

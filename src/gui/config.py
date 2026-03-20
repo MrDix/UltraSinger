@@ -82,7 +82,7 @@ _DEFAULTS = {
     "refine_from_vocal": False,
     "refine_pitch": True,
     "refine_timing": True,
-    "refine_hit_ratio": 0.5,
+    "refine_hit_ratio": 0.4,
     "refine_timing_threshold": 30.0,
 }
 

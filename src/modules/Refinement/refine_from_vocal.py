@@ -113,7 +113,7 @@ def refine_pitch_with_uscore(
     midi_segments: list[MidiSegment],
     vocal_audio_path: str,
     bpm: float,
-    hit_ratio_threshold: float = 0.5,
+    hit_ratio_threshold: float = 0.4,
 ) -> tuple[list[MidiSegment], int]:
     """Refine note pitches using ultrastar-score's C++ ptAKF detector.
 
@@ -295,7 +295,7 @@ def refine_notes(
     refine_pitch_enabled: bool = True,
     refine_timing_enabled: bool = True,
     timing_threshold_ms: float = 30.0,
-    hit_ratio_threshold: float = 0.5,
+    hit_ratio_threshold: float = 0.4,
 ) -> list[MidiSegment]:
     """Orchestrate all refinement passes on the note list.
 

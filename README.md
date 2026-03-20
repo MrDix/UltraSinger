@@ -176,7 +176,7 @@ _Not all options working now!_
                                 detector (same as Vocaluxe/USDX) to find and fix poorly-scoring notes.
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
-    --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.5)
+    --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
 
 
