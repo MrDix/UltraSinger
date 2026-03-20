@@ -158,7 +158,7 @@ class TestRefinePitch:
         # C4=60, D4=62 => 2 HT, threshold 1+1(medium)=2 => no correction (not >2)
         segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="test")]
 
-        result, corrections = refine_pitch(
+        _, corrections = refine_pitch(
             segments, pitched,
             pitch_threshold_ht=1.0,
             difficulty="medium",
@@ -243,7 +243,7 @@ class TestRefineTiming:
         onsets = np.array([0.5])  # 500ms away
         segments = [MidiSegment(note="C4", start=1.0, end=1.5, word="test")]
 
-        result, corrections = refine_timing(
+        result, _corrections = refine_timing(
             segments, onsets, pitched,
             timing_threshold_ms=30.0,
         )

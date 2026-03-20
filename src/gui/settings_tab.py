@@ -396,7 +396,7 @@ class ConversionSettingsForm(QWidget):
                                _DEFAULTS.get("refine_timing", True)))
 
         # Difficulty combo
-        self._refine_difficulty = QComboBox()
+        self._refine_difficulty = _NoScrollComboBox()
         self._refine_difficulty.addItems(["easy", "medium", "hard"])
         current_diff = self._config.get("refine_difficulty", "easy")
         idx = self._refine_difficulty.findText(current_diff)
@@ -409,7 +409,7 @@ class ConversionSettingsForm(QWidget):
                          _DEFAULTS.get("refine_difficulty", "easy")))
 
         # Pitch threshold
-        self._refine_pitch_threshold = QDoubleSpinBox()
+        self._refine_pitch_threshold = _NoScrollDoubleSpinBox()
         self._refine_pitch_threshold.setRange(0.0, 12.0)
         self._refine_pitch_threshold.setSingleStep(0.5)
         self._refine_pitch_threshold.setSuffix(" HT")
@@ -421,7 +421,7 @@ class ConversionSettingsForm(QWidget):
                          _DEFAULTS.get("refine_pitch_threshold", 1.0)))
 
         # Timing threshold
-        self._refine_timing_threshold = QDoubleSpinBox()
+        self._refine_timing_threshold = _NoScrollDoubleSpinBox()
         self._refine_timing_threshold.setRange(5.0, 200.0)
         self._refine_timing_threshold.setSingleStep(5.0)
         self._refine_timing_threshold.setSuffix(" ms")
@@ -433,7 +433,7 @@ class ConversionSettingsForm(QWidget):
                          _DEFAULTS.get("refine_timing_threshold", 30.0)))
 
         # Vibrato damping window
-        self._refine_vibrato_window = QSpinBox()
+        self._refine_vibrato_window = _NoScrollSpinBox()
         self._refine_vibrato_window.setRange(3, 15)
         self._refine_vibrato_window.setValue(
             self._config.get("refine_vibrato_window", 5))
@@ -443,7 +443,7 @@ class ConversionSettingsForm(QWidget):
                          _DEFAULTS.get("refine_vibrato_window", 5)))
 
         # Vibrato threshold
-        self._refine_vibrato_threshold = QDoubleSpinBox()
+        self._refine_vibrato_threshold = _NoScrollDoubleSpinBox()
         self._refine_vibrato_threshold.setRange(10.0, 200.0)
         self._refine_vibrato_threshold.setSingleStep(10.0)
         self._refine_vibrato_threshold.setSuffix(" cents")

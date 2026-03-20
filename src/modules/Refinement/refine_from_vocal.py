@@ -197,7 +197,7 @@ def refine_timing(
     Returns:
         Tuple of (midi_segments, number of corrections made).
     """
-    if len(onset_times) == 0 or not midi_segments:
+    if not midi_segments:
         return midi_segments, 0
 
     threshold_s = timing_threshold_ms / 1000.0
@@ -205,31 +205,34 @@ def refine_timing(
     min_duration_s = 0.01  # 10ms minimum note duration
 
     prev_end = float("-inf")
-    for seg in midi_segments:
+    for i, seg in enumerate(midi_segments):
         # --- Start refinement: snap to nearest onset ---
-        idx = np.searchsorted(onset_times, seg.start)
+        if len(onset_times) > 0:
+            idx = np.searchsorted(onset_times, seg.start)
 
-        candidates: list[float] = []
-        if idx > 0:
-            candidates.append(float(onset_times[idx - 1]))
-        if idx < len(onset_times):
-            candidates.append(float(onset_times[idx]))
+            candidates: list[float] = []
+            if idx > 0:
+                candidates.append(float(onset_times[idx - 1]))
+            if idx < len(onset_times):
+                candidates.append(float(onset_times[idx]))
 
-        if candidates:
-            nearest = min(candidates, key=lambda t: abs(t - seg.start))
-            distance = abs(nearest - seg.start)
+            if candidates:
+                nearest = min(candidates, key=lambda t: abs(t - seg.start))
+                distance = abs(nearest - seg.start)
 
-            if distance <= threshold_s:
-                # Don't overlap with previous note
-                candidate = max(nearest, prev_end)
-                # Don't create zero/negative duration
-                if candidate < seg.end - min_duration_s:
-                    if candidate != seg.start:
-                        seg.start = candidate
-                        corrections += 1
+                if distance <= threshold_s:
+                    # Don't overlap with previous note
+                    candidate = max(nearest, prev_end)
+                    # Re-check snap distance after prev_end enforcement
+                    if (
+                        abs(candidate - seg.start) <= threshold_s
+                        and candidate < seg.end - min_duration_s
+                    ):
+                        if candidate != seg.start:
+                            seg.start = candidate
+                            corrections += 1
 
         # --- End refinement: detect confidence drop-off ---
-        end_idx = find_nearest_index(pitched_data.times, seg.end)
         # Look ahead up to threshold_s for confidence drop
         search_end_idx = find_nearest_index(
             pitched_data.times, seg.end + threshold_s
@@ -241,11 +244,17 @@ def refine_timing(
         if search_start_idx < search_end_idx:
             confs = pitched_data.confidence[search_start_idx:search_end_idx]
             # Find first frame where confidence drops below threshold
-            for i, conf in enumerate(confs):
+            for j, conf in enumerate(confs):
                 if conf < confidence_threshold:
-                    drop_time = pitched_data.times[search_start_idx + i]
+                    drop_time = pitched_data.times[search_start_idx + j]
                     if abs(drop_time - seg.end) <= threshold_s:
-                        new_end = drop_time
+                        # Clamp to next segment's start to prevent overlap
+                        next_start = (
+                            midi_segments[i + 1].start
+                            if i + 1 < len(midi_segments)
+                            else math.inf
+                        )
+                        new_end = min(drop_time, next_start)
                         if new_end > seg.start + min_duration_s:
                             if new_end != seg.end:
                                 seg.end = new_end
