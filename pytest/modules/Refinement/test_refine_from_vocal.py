@@ -334,10 +334,11 @@ class TestRefineTiming:
             MidiSegment(note="D4", start=1.02, end=1.5, word="two"),
         ]
 
-        result, _ = refine_timing(
+        result, corrections = refine_timing(
             segments, onsets, pitched,
             timing_threshold_ms=50.0,
         )
+        assert corrections >= 1
         assert result[1].start >= result[0].end
 
     def test_empty_onsets(self):
