@@ -175,11 +175,15 @@ def convert_to_ultrastar_format(audio_file_path: str, basename_without_ext: str,
     return target_path, target_ext
 
 
-def separate_audio_video(video_with_audio_path: str, basename_without_ext: str, output_folder: str) -> tuple[str, str, str, str]:
+def separate_audio_video(video_with_audio_path: str, basename_without_ext: str, output_folder: str, *, keep_audio_in_video: bool = False) -> tuple[str, str, str, str]:
     """
     Separate audio and video from a video file.
     Automatically detects the audio codec and uses the appropriate file extension.
     Converts to ogg if the audio format is not supported by UltraStar Play.
+
+    If *keep_audio_in_video* is True the output video retains its original
+    audio track (the full mix).  This makes it possible to re-import the
+    video file into UltraSinger later without downloading it again.
     """
     from modules.console_colors import ULTRASINGER_HEAD
 
@@ -199,16 +203,23 @@ def separate_audio_video(video_with_audio_path: str, basename_without_ext: str, 
         audio_file_path, basename_without_ext, output_folder, audio_ext
     )
 
-    print(f"{ULTRASINGER_HEAD} Creating video without audio")
-    video_only_path = os.path.join(output_folder, f"{basename_without_ext}_video.{video_ext}")
-    remove_audio_from_video(video_with_audio_path, video_only_path)
-
-    # Remove original video with audio
-    os.remove(video_with_audio_path)
-
-    # Rename video without audio to final name
     final_video_path = os.path.join(output_folder, f"{basename_without_ext}.{video_ext}")
-    os.rename(video_only_path, final_video_path)
+
+    if keep_audio_in_video:
+        print(f"{ULTRASINGER_HEAD} Keeping audio in video file")
+        # Just rename the original to the final name (it already has audio)
+        if video_with_audio_path != final_video_path:
+            os.rename(video_with_audio_path, final_video_path)
+    else:
+        print(f"{ULTRASINGER_HEAD} Creating video without audio")
+        video_only_path = os.path.join(output_folder, f"{basename_without_ext}_video.{video_ext}")
+        remove_audio_from_video(video_with_audio_path, video_only_path)
+
+        # Remove original video with audio
+        os.remove(video_with_audio_path)
+
+        # Rename video without audio to final name
+        os.rename(video_only_path, final_video_path)
 
     return audio_file_path, final_video_path, audio_ext, video_ext
 

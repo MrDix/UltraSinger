@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -46,62 +47,138 @@ class LLMConfig:
     language: str | None = None
     artist: str | None = None
     title: str | None = None
+    retry_on_rate_limit: bool = True
+    retry_wait: int = 60  # seconds
+    retry_max: int = 3  # max retries per chunk
+
+
+@dataclass
+class LLMResult:
+    """Result summary from LLM lyric correction."""
+    corrections: int = 0
+    errors: int = 0
+    retries: int = 0  # total retry attempts across all chunks
+    chunks_total: int = 0
+    chunks_ok: int = 0
+    last_error: str = ""
 
 
 def correct_lyrics_with_llm(
     transcribed_data: list[TranscribedData],
     config: LLMConfig,
-) -> list[TranscribedData]:
+) -> tuple[list[TranscribedData], LLMResult]:
     """Post-correct WhisperX transcription using an LLM.
 
     Groups words into sentence-like chunks, sends each to the LLM with a
     strict "return same number of words" constraint, and replaces ``.word``
     fields while preserving all timing data.
 
-    Returns the (possibly modified) *transcribed_data* list.
+    Returns (possibly modified *transcribed_data*, LLMResult summary).
     """
+    result = LLMResult()
+
     if not transcribed_data:
-        return transcribed_data
+        return transcribed_data, result
 
     if not config.api_key:
         print(f"{ULTRASINGER_HEAD} {red_highlighted('LLM correction skipped: no API key configured')}")
-        return transcribed_data
+        result.last_error = "no API key configured"
+        result.errors = 1
+        return transcribed_data, result
 
     chunks = _build_chunks(transcribed_data)
-    total_corrected = 0
+    result.chunks_total = len(chunks)
 
-    for start_idx, end_idx in chunks:
+    for chunk_idx, (start_idx, end_idx) in enumerate(chunks):
         words = [td.word.strip() for td in transcribed_data[start_idx:end_idx]]
         if not words:
             continue
 
         prompt = _build_user_prompt(words, config.language, config.artist, config.title)
 
-        try:
-            response_text = _call_llm_api(prompt, config)
-        except (urllib.error.URLError, TimeoutError) as e:
-            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM network error: {e}')}")
-            continue
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM response parse error: {e}')}")
-            continue
-        except Exception as e:
-            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM API error: {e}')}")
+        response_text = _call_with_retry(prompt, config, result, chunk_idx + 1, len(chunks))
+        if response_text is None:
             continue
 
         corrected = _parse_response(response_text, len(words))
         if corrected is None:
             continue
 
+        result.chunks_ok += 1
         n_changed = _apply_corrections(transcribed_data, start_idx, end_idx, corrected)
-        total_corrected += n_changed
+        result.corrections += n_changed
 
-    if total_corrected > 0:
-        print(f"{ULTRASINGER_HEAD} LLM corrected {blue_highlighted(str(total_corrected))} word(s)")
+    if result.corrections > 0:
+        print(f"{ULTRASINGER_HEAD} LLM corrected {blue_highlighted(str(result.corrections))} word(s)")
     else:
         print(f"{ULTRASINGER_HEAD} LLM found no corrections needed")
 
-    return transcribed_data
+    return transcribed_data, result
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Check if an exception is an HTTP 429 rate limit error."""
+    if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+        return True
+    return "429" in str(exc)
+
+
+def _call_with_retry(
+        prompt: str,
+        config: LLMConfig,
+        result: LLMResult,
+        chunk_num: int,
+        chunks_total: int,
+) -> str | None:
+    """Call the LLM API with optional retry on rate limit (429) errors.
+
+    Returns the response text on success, or None if all attempts failed.
+    """
+    max_attempts = 1 + (config.retry_max if config.retry_on_rate_limit else 0)
+
+    for attempt in range(max_attempts):
+        try:
+            response = _call_llm_api(prompt, config)
+            if attempt > 0:
+                print(
+                    f"{ULTRASINGER_HEAD} Retry succeeded for chunk {chunk_num}/{chunks_total} "
+                    f"after {attempt} retries"
+                )
+            return response
+        except (urllib.error.URLError, TimeoutError) as e:
+            if _is_rate_limit_error(e) and config.retry_on_rate_limit and attempt < max_attempts - 1:
+                result.retries += 1
+                print(
+                    f"{ULTRASINGER_HEAD} Rate limited (chunk {chunk_num}/{chunks_total}), "
+                    f"waiting {config.retry_wait}s before retry "
+                    f"{attempt + 1}/{config.retry_max}..."
+                )
+                time.sleep(config.retry_wait)
+                continue
+            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM network error: {e}')}")
+            result.errors += 1
+            result.last_error = str(e)
+            return None
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM response parse error: {e}')}")
+            result.errors += 1
+            result.last_error = str(e)
+            return None
+        except Exception as e:
+            if _is_rate_limit_error(e) and config.retry_on_rate_limit and attempt < max_attempts - 1:
+                result.retries += 1
+                print(
+                    f"{ULTRASINGER_HEAD} Rate limited (chunk {chunk_num}/{chunks_total}), "
+                    f"waiting {config.retry_wait}s before retry "
+                    f"{attempt + 1}/{config.retry_max}..."
+                )
+                time.sleep(config.retry_wait)
+                continue
+            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'LLM API error: {e}')}")
+            result.errors += 1
+            result.last_error = str(e)
+            return None
+    return None
 
 
 def _build_chunks(

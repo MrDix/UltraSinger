@@ -8,11 +8,12 @@ from PySide6.QtWidgets import QLabel, QFileDialog, QVBoxLayout, QWidget
 # Supported file extensions
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".wma"}
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".webm", ".mov"}
-ALL_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
+TXT_EXTENSIONS = {".txt"}
+ALL_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS | TXT_EXTENSIONS
 
 
 class FileDropZone(QWidget):
-    """A drag-and-drop zone for selecting audio/video files."""
+    """A drag-and-drop zone for selecting audio/video/txt files."""
 
     file_selected = Signal(str)
 
@@ -20,7 +21,7 @@ class FileDropZone(QWidget):
         super().__init__(parent)
         self.setObjectName("fileDropZone")
         self.setAcceptDrops(True)
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(70)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName("Local file picker")
@@ -28,24 +29,24 @@ class FileDropZone(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setSpacing(2)
 
-        self._icon_label = QLabel("\U0001F4C1")
-        self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._icon_label.setStyleSheet("font-size: 32px; background: transparent;")
-        layout.addWidget(self._icon_label)
+        # File type hint label
+        self._type_label = QLabel("Audio  \u2022  Video  \u2022  TXT")
+        self._type_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._type_label.setStyleSheet(
+            "font-size: 12px; font-weight: 600; color: #a09888; "
+            "background: transparent; letter-spacing: 0.5px;"
+        )
+        layout.addWidget(self._type_label)
 
-        self._text_label = QLabel("Drag file here or click to select")
+        self._text_label = QLabel("click or drag here")
         self._text_label.setObjectName("caption")
         self._text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._text_label.setStyleSheet("background: transparent;")
+        self._text_label.setStyleSheet(
+            "font-size: 11px; color: #605848; background: transparent;"
+        )
         layout.addWidget(self._text_label)
-
-        self._file_label = QLabel("")
-        self._file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._file_label.setWordWrap(True)
-        self._file_label.setStyleSheet("color: #e91e63; font-size: 13px; background: transparent;")
-        self._file_label.hide()
-        layout.addWidget(self._file_label)
 
         self._current_file: str = ""
 
@@ -58,14 +59,19 @@ class FileDropZone(QWidget):
         self._current_file = path
         if path:
             name = Path(path).name
-            self._file_label.setText(name)
-            self._file_label.show()
-            self._text_label.setText("Click to change file")
-            self._icon_label.setText("\U0001F3B5")
+            self._type_label.setText(name)
+            self._type_label.setStyleSheet(
+                "font-size: 12px; font-weight: 600; color: #e91e63; "
+                "background: transparent;"
+            )
+            self._text_label.setText("click to change")
         else:
-            self._file_label.hide()
-            self._text_label.setText("Drag file here or click to select")
-            self._icon_label.setText("\U0001F4C1")
+            self._type_label.setText("Audio  \u2022  Video  \u2022  TXT")
+            self._type_label.setStyleSheet(
+                "font-size: 12px; font-weight: 600; color: #a09888; "
+                "background: transparent; letter-spacing: 0.5px;"
+            )
+            self._text_label.setText("click or drag here")
 
     def _validate_and_set(self, path: str):
         """Validate extension, set file, and emit signal."""
@@ -92,9 +98,9 @@ class FileDropZone(QWidget):
         ext_list = " ".join(f"*{e}" for e in sorted(ALL_EXTENSIONS))
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select Audio or Video File",
+            "Select Audio, Video, or UltraStar TXT File",
             "",
-            f"Media Files ({ext_list});;All Files (*)",
+            f"Media & TXT Files ({ext_list});;All Files (*)",
         )
         if path:
             self._validate_and_set(path)

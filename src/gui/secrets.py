@@ -16,9 +16,13 @@ logger = logging.getLogger(__name__)
 
 _SERVICE_NAME = "ultrasinger"
 
-# Mapping of secret keys to environment variable names
+# Mapping of secret keys to environment variable names.
+# Per-provider keys (llm_api_key_{id}) fall back to the same env var.
 _ENV_VAR_MAP = {
     "llm_api_key": "ULTRASINGER_LLM_API_KEY",
+}
+_ENV_VAR_PREFIX_FALLBACK = {
+    "llm_api_key_": "ULTRASINGER_LLM_API_KEY",
 }
 
 _keyring_available = False
@@ -88,8 +92,13 @@ def get_secret(key: str, config: dict | None = None) -> str:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Keyring read failed for '%s': %s", key, exc)
 
-    # 2. Try environment variable
+    # 2. Try environment variable (exact match or prefix fallback)
     env_var = _ENV_VAR_MAP.get(key)
+    if not env_var:
+        for prefix, fallback_var in _ENV_VAR_PREFIX_FALLBACK.items():
+            if key.startswith(prefix):
+                env_var = fallback_var
+                break
     if env_var:
         value = os.environ.get(env_var, "")
         if value:

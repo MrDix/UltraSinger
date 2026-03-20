@@ -1,9 +1,11 @@
-"""Main application window with sidebar navigation."""
+"""Main application window with sidebar navigation and conversion queue."""
 
 import importlib.metadata
 import logging
+from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QMainWindow,
     QStackedWidget,
@@ -12,9 +14,11 @@ from PySide6.QtWidgets import (
 
 from .browser_tab import BrowserTab
 from .config import load_config, save_config
+from .models import LLMProvider
 from .preferences_tab import PreferencesTab
+from .queue_manager import QueueManager
 from .queue_tab import QueueTab
-from .settings_tab import SettingsTab
+from .settings_dialog import PerSongSettingsDialog
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
@@ -23,11 +27,16 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     """Main UltraSinger GUI window with sidebar navigation.
 
-    Input flow:
-      - Drop a file on the sidebar drop zone -> Convert button appears -> click to start
-      - Browse video platform -> click Convert overlay -> Convert button appears -> click to start
-      - Both flows: settings are read from the Settings tab, conversion runs in Queue tab
+    Three-tab layout:
+      - Video: embedded browser for video platform navigation
+      - Console: log output and batch progress
+      - Settings: unified conversion defaults, LLM providers, cookies
     """
+
+    # Tab indices
+    _TAB_VIDEO = 0
+    _TAB_CONSOLE = 1
+    _TAB_SETTINGS = 2
 
     def __init__(self):
         super().__init__()
@@ -49,104 +58,275 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Sidebar (with drop zone and convert button)
+        # Sidebar (with drop zone and queue list)
         self._sidebar = Sidebar()
         self._sidebar.add_section("\U0001F310", "Video")
-        self._sidebar.add_section("\u2699\uFE0F", "Settings")
         self._sidebar.add_section("\U0001F4BB", "Console")
-        self._sidebar.add_section("\U0001F527", "Preferences")
+        self._sidebar.add_section("\u2699\uFE0F", "Settings")
         self._sidebar.finalize()
         main_layout.addWidget(self._sidebar)
 
         # Content stack
         self._stack = QStackedWidget()
         self._stack.setObjectName("contentArea")
+        self._stack.setFrameShape(QFrame.Shape.NoFrame)
         main_layout.addWidget(self._stack, 1)
 
-        # Create tabs
+        # Create tabs (3 tabs: Video, Console, Settings)
         self._browser_tab = BrowserTab()
-        self._settings_tab = SettingsTab(self._config)
         self._queue_tab = QueueTab()
-        self._preferences_tab = PreferencesTab(
+        self._settings_tab = PreferencesTab(
             self._config, self._browser_tab.cookie_manager
         )
 
         self._stack.addWidget(self._browser_tab)
-        self._stack.addWidget(self._settings_tab)
         self._stack.addWidget(self._queue_tab)
-        self._stack.addWidget(self._preferences_tab)
+        self._stack.addWidget(self._settings_tab)
+
+        # Queue manager (owns the runner, drives batch execution)
+        self._queue_mgr = QueueManager(self)
 
         # Wire sidebar navigation
         self._sidebar.section_changed.connect(self._stack.setCurrentIndex)
 
-        # Wire Convert flows
-        self._browser_tab.convert_requested.connect(self._on_convert_from_browser)
-        self._sidebar.convert_requested.connect(self._on_start_conversion)
+        # Wire queue add flows
+        self._browser_tab.convert_requested.connect(self._on_add_from_browser)
+        self._sidebar.file_dropped.connect(self._on_add_from_file)
 
-    def _on_convert_from_browser(self, url: str):
-        """Handle Convert button click from video browser.
+        # Wire queue list ↔ queue manager
+        self._queue_mgr.item_added.connect(self._sidebar.queue_list.add_item)
+        self._queue_mgr.item_removed.connect(self._sidebar.queue_list.remove_item)
+        self._queue_mgr.item_status_changed.connect(
+            self._sidebar.queue_list.update_status
+        )
+        self._sidebar.queue_list.remove_requested.connect(
+            self._on_remove_from_queue
+        )
+        # Wire per-song settings gear icon
+        self._sidebar.queue_list.settings_requested.connect(
+            self._on_per_song_settings
+        )
 
-        Sets the URL as input in the sidebar. The user can then click
-        the sidebar Convert button to start, or adjust settings first.
+        # Wire Start All / Clear buttons
+        self._sidebar.start_all_requested.connect(self._on_start_all)
+        self._sidebar.clear_button.clicked.connect(self._on_clear_queue)
+
+        # Wire queue manager → console tab
+        self._queue_mgr.line_output.connect(self._queue_tab.append_log)
+        self._queue_mgr.stage_changed.connect(self._queue_tab.on_stage_changed)
+        self._queue_mgr.queue_started.connect(self._on_queue_started)
+        self._queue_mgr.queue_finished.connect(self._on_queue_finished)
+        self._queue_mgr.item_status_changed.connect(self._on_item_status_changed)
+
+        # Wire console cancel → queue manager
+        self._queue_tab.cancel_requested.connect(self._queue_mgr.cancel_all)
+
+        # Initial button state
+        self._update_queue_buttons()
+
+    # ── Queue operations ───────────────────────────────────────────────
+
+    def _on_add_from_browser(self, url: str, title: str):
+        """Add a video URL to the queue (from browser Convert button)."""
+        logger.info("Add to queue from browser: %s", url)
+        self._auto_export_cookies()
+        self._queue_mgr.add_item(url, "url", title)
+        self._update_queue_buttons()
+
+    def _on_add_from_file(self, path: str):
+        """Add a local file to the queue (from drop zone).
+
+        For UltraStar .txt files, validates that the referenced media
+        file exists before queueing.
         """
-        logger.info("Convert requested for URL: %s", url)
-        self._sidebar.set_video_input(url)
+        p = Path(path)
+        if p.suffix.lower() == ".txt":
+            title, error = _validate_ultrastar_txt(p)
+            if error:
+                self._queue_tab.append_log(f"[Error] {error}")
+                self._sidebar.set_active(self._TAB_CONSOLE)
+                return
+        else:
+            title = p.stem
+
+        logger.info("Add to queue from file: %s", title)
+        self._queue_mgr.add_item(path, "file", title)
+        self._update_queue_buttons()
+
+    def _on_remove_from_queue(self, item_id: str):
+        """Remove a pending item from the queue."""
+        self._queue_mgr.remove_item(item_id)
+        self._update_queue_buttons()
+
+    def _on_clear_queue(self):
+        """Clear completed and pending items from the queue."""
+        self._queue_mgr.clear_completed()
+        self._queue_mgr.clear_pending()
+        self._update_queue_buttons()
+
+    def _on_per_song_settings(self, item_id: str):
+        """Open the per-song settings override dialog."""
+        item = next(
+            (it for it in self._queue_mgr.items if it.id == item_id), None
+        )
+        if item is None or item.status != "pending":
+            return
+
+        # Collect current global config from the settings tab
+        global_config = {**self._config, **self._settings_tab.collect_all()}
+        providers = self._settings_tab.get_llm_providers()
+
+        dialog = PerSongSettingsDialog(
+            global_config=global_config,
+            overrides=item.settings_overrides,
+            llm_providers=providers,
+            title=item.title,
+            parent=self,
+        )
+
+        if dialog.exec():
+            item.settings_overrides = dialog.get_overrides()
+            # Visual indicator: mark items with overrides
+            has_overrides = bool(item.settings_overrides)
+            self._sidebar.queue_list.set_has_overrides(item_id, has_overrides)
+            logger.info(
+                "Per-song overrides for '%s': %d keys",
+                item.title, len(item.settings_overrides),
+            )
+
+    def _on_start_all(self):
+        """Start processing all pending queue items."""
+        if self._queue_mgr.pending_count() == 0:
+            self._queue_tab.append_log(
+                "[Error] No items in queue. "
+                "Drop a file or select a video first."
+            )
+            self._sidebar.set_active(self._TAB_CONSOLE)
+            return
+
+        # Collect and save current config from unified settings tab
+        all_settings = self._settings_tab.collect_all()
+        self._config.update(all_settings)
+        save_config(self._config)
 
         # Auto-export cookies
+        self._auto_export_cookies()
+
+        # Set global config on queue manager and start
+        self._queue_mgr.set_global_config(self._config)
+
+        # Set output folder for the Open Folder button
+        self._queue_tab.set_output_folder(self._config.get("output_folder", ""))
+
+        # Switch to console tab
+        self._sidebar.set_active(self._TAB_CONSOLE)
+        self._queue_tab.on_queue_started()
+        self._queue_mgr.start_all()
+
+    def _on_queue_started(self):
+        """Handle queue batch start."""
+        self._update_queue_buttons()
+
+    def _on_queue_finished(self, failed_count: int, cancelled: bool):
+        """Handle queue batch completion."""
+        self._queue_tab.on_queue_finished(failed_count, cancelled)
+        self._update_queue_buttons()
+
+    def _on_item_status_changed(self, item_id: str, status: str):
+        """Update queue buttons when item status changes."""
+        self._update_queue_buttons()
+
+    def _update_queue_buttons(self):
+        """Sync Start All / Clear button states with queue state."""
+        has_pending = self._queue_mgr.pending_count() > 0
+        is_running = self._queue_mgr.is_running
+        self._sidebar.update_queue_buttons(has_pending, is_running)
+
+    def _auto_export_cookies(self):
+        """Export browser cookies to file if available."""
         cookie_path = self._config.get("cookie_file", "")
         if cookie_path and self._browser_tab.cookie_manager.has_video_cookies:
             try:
                 self._browser_tab.cookie_manager.export_netscape(cookie_path)
                 logger.info("Cookies exported to %s", cookie_path)
             except OSError:
-                logger.warning("Failed to export cookies to %s", cookie_path, exc_info=True)
-
-    def _on_start_conversion(self):
-        """Start the conversion with current input and settings."""
-        input_source = self._sidebar.get_input_source()
-        if not input_source:
-            self._queue_tab.append_log(
-                "[Error] No input source selected. "
-                "Drop a file or select a video first."
-            )
-            self._sidebar.set_active(2)
-            return
-
-        # Collect settings (conversion options) and preferences (global config).
-        # Preferences are applied last so output_folder, API keys etc. are
-        # never overwritten by empty Settings values.
-        settings = self._settings_tab.collect_config()
-        prefs = self._preferences_tab.collect_preferences()
-        merged = {**self._config, **settings, **prefs}
-
-        # Save config for next time
-        self._config.update(merged)
-        save_config(self._config)
-
-        # Auto-export cookies if available
-        cookie_file = merged.get("cookie_file", "")
-        if cookie_file and self._browser_tab.cookie_manager.has_video_cookies:
-            try:
-                self._browser_tab.cookie_manager.export_netscape(cookie_file)
-            except OSError:
-                logger.warning("Failed to export cookies to %s", cookie_file, exc_info=True)
-
-        # Build CLI args
-        runner = self._queue_tab.runner
-        args = runner.build_args(merged, input_source)
-
-        # Switch to queue tab and start
-        self._sidebar.set_active(2)
-        self._queue_tab.start_conversion(args, merged.get("output_folder", ""))
+                logger.warning(
+                    "Failed to export cookies to %s", cookie_path,
+                    exc_info=True,
+                )
 
     def closeEvent(self, event):
-        """Save configuration on close."""
+        """Save configuration and shut down the browser cleanly on close.
+
+        The browser must be shut down explicitly so Chromium's renderer
+        subprocess can flush cookies and persistent storage to disk
+        before the process exits.  Without this, the subprocess stays
+        alive and locks the database files, preventing persistence.
+        """
         try:
-            settings = self._settings_tab.collect_config()
-            prefs = self._preferences_tab.collect_preferences()
-            self._config.update(settings)
-            self._config.update(prefs)
+            all_settings = self._settings_tab.collect_all()
+            self._config.update(all_settings)
             save_config(self._config)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
+
+        # Shut down the browser engine so Chromium can flush cookies
+        self._browser_tab.shutdown()
+
         super().closeEvent(event)
+
+
+def _validate_ultrastar_txt(txt_path: Path) -> tuple[str, str]:
+    """Validate an UltraStar TXT file and extract its title.
+
+    Returns (title, error_message).  If error_message is non-empty,
+    the file should not be queued.
+    """
+    try:
+        # Try UTF-8 first, fall back to latin-1
+        try:
+            lines = txt_path.read_text(encoding="utf-8").splitlines()
+        except UnicodeDecodeError:
+            lines = txt_path.read_text(encoding="latin-1").splitlines()
+    except OSError as e:
+        return "", f"Cannot read {txt_path.name}: {e}"
+
+    # Check it looks like an UltraStar file (has # tags)
+    tags = {}
+    for line in lines:
+        if not line.startswith("#"):
+            break
+        if ":" in line:
+            key, _, value = line[1:].partition(":")
+            tags[key.strip().upper()] = value.strip()
+
+    if not tags:
+        return "", f"{txt_path.name} does not appear to be an UltraStar TXT file."
+
+    # Extract title
+    title = tags.get("TITLE", txt_path.stem)
+    artist = tags.get("ARTIST", "")
+    display_title = f"{artist} - {title}" if artist else title
+
+    # Check for referenced media files relative to the TXT
+    txt_dir = txt_path.parent
+    media_keys = ["MP3", "AUDIO", "VIDEO"]
+    found_media = False
+    for key in media_keys:
+        if key in tags:
+            media_path = txt_dir / tags[key]
+            if media_path.exists():
+                found_media = True
+            else:
+                return "", (
+                    f"{txt_path.name}: referenced {key} file "
+                    f"'{tags[key]}' not found in {txt_dir}"
+                )
+
+    if not found_media:
+        return "", (
+            f"{txt_path.name}: no #MP3, #AUDIO, or #VIDEO tag found. "
+            "UltraSinger needs a media file reference."
+        )
+
+    return display_title, ""

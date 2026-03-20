@@ -222,12 +222,15 @@ class UltraSingerRunner(QObject):
             self._worker.cancel()
 
     def _on_finished(self, exit_code: int):
-        self.finished.emit(exit_code)
+        # Clean up the thread BEFORE emitting finished, so that
+        # is_running returns False when the QueueManager calls start()
+        # for the next item in the slot connected to finished.
         if self._thread:
             self._thread.quit()
             self._thread.wait(3000)
             self._thread = None
-            self._worker = None
+        self._worker = None
+        self.finished.emit(exit_code)
 
     def build_args(self, config: dict, input_source: str) -> list[str]:
         """Build CLI argument list from configuration dictionary."""
@@ -305,6 +308,10 @@ class UltraSingerRunner(QObject):
             args.append("--create_audio_chunks")
         if config.get("keep_numbers"):
             args.append("--keep_numbers")
+        if config.get("keep_audio_in_video"):
+            args.append("--keep_audio_in_video")
+        if config.get("write_settings_info"):
+            args.append("--write_settings_info")
         if config.get("force_cpu"):
             args.append("--force_cpu")
         if config.get("force_whisper_cpu"):
@@ -319,12 +326,49 @@ class UltraSingerRunner(QObject):
         # LLM correction
         if config.get("llm_correct"):
             args.append("--llm_correct")
-            if config.get("llm_api_base_url"):
-                args.extend(["--llm_api_base_url", config["llm_api_base_url"]])
-            if config.get("llm_api_key"):
-                args.extend(["--llm_api_key", config["llm_api_key"]])
-            if config.get("llm_model"):
-                args.extend(["--llm_model", config["llm_model"]])
+
+            # Resolve LLM provider: look up by provider ID, fall back to
+            # flat config keys for backward compatibility.
+            provider_id = config.get("llm_provider_id", "")
+            providers = config.get("llm_providers", [])
+            provider = None
+            if provider_id and providers:
+                provider = next(
+                    (p for p in providers
+                     if (p.get("id") if isinstance(p, dict) else getattr(p, "id", "")) == provider_id),
+                    None,
+                )
+
+            if provider:
+                p = provider if isinstance(provider, dict) else provider.__dict__
+                url = p.get("api_base_url", "")
+                model = p.get("default_model", "")
+                api_key = config.get(f"llm_api_key_{provider_id}", "")
+                if url:
+                    args.extend(["--llm_api_base_url", url])
+                if api_key:
+                    args.extend(["--llm_api_key", api_key])
+                if model:
+                    args.extend(["--llm_model", model])
+            else:
+                # Flat keys (legacy / no provider selected)
+                if config.get("llm_api_base_url"):
+                    args.extend(["--llm_api_base_url", config["llm_api_base_url"]])
+                if config.get("llm_api_key"):
+                    args.extend(["--llm_api_key", config["llm_api_key"]])
+                if config.get("llm_model"):
+                    args.extend(["--llm_model", config["llm_model"]])
+
+            # Retry settings
+            if not config.get("llm_retry_on_rate_limit", True):
+                args.append("--llm_no_retry")
+            else:
+                retry_wait = config.get("llm_retry_wait", 60)
+                if retry_wait != 60:
+                    args.extend(["--llm_retry_wait", str(retry_wait)])
+                retry_max = config.get("llm_retry_max", 3)
+                if retry_max != 3:
+                    args.extend(["--llm_retry_max", str(retry_max)])
 
         # Paths
         if config.get("musescore_path"):

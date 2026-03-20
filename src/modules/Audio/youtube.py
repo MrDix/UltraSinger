@@ -151,7 +151,7 @@ def __start_download(ydl_opts, url: str) -> None:
             raise Exception("Download failed with error: " + str(errors))
 
 
-def download_from_youtube(input_url: str, output_folder_path: str, cookiefile: str = None) -> tuple[str, str, str, MediaInfo]:
+def download_from_youtube(input_url: str, output_folder_path: str, cookiefile: str = None, *, keep_audio_in_video: bool = False) -> tuple[str, str, str, MediaInfo]:
     """Download from YouTube"""
     (artist, title, video_title) = get_youtube_title(input_url, cookiefile)
 
@@ -176,7 +176,8 @@ def download_from_youtube(input_url: str, output_folder_path: str, cookiefile: s
 
     # Separate audio and video
     audio_file_path, final_video_path, audio_ext, video_ext = separate_audio_video(
-        video_with_audio_path, basename_without_ext, song_output
+        video_with_audio_path, basename_without_ext, song_output,
+        keep_audio_in_video=keep_audio_in_video,
     )
 
     if song_info.cover_url is not None and song_info.cover_image_data is not None:

@@ -18,10 +18,10 @@ class ToggleSwitch(QAbstractButton):
     toggled_signal = Signal(bool)
 
     # Colors
-    _BG_OFF = QColor(60, 60, 80)
-    _BG_ON = QColor(233, 30, 99)
-    _KNOB = QColor(255, 255, 255)
-    _KNOB_DISABLED = QColor(120, 120, 140)
+    _BG_OFF = QColor(34, 34, 58)     # #22223a (input background)
+    _BG_ON = QColor(233, 30, 99)      # #e91e63 (accent pink)
+    _KNOB = QColor(240, 223, 192)     # #f0dfc0 (warm cream text)
+    _KNOB_DISABLED = QColor(96, 88, 72)  # #605848 (disabled text)
 
     def __init__(self, parent=None, checked: bool = False):
         super().__init__(parent)
@@ -54,7 +54,7 @@ class ToggleSwitch(QAbstractButton):
         if self.isEnabled():
             bg = self._BG_ON if self.isChecked() else self._BG_OFF
         else:
-            bg = QColor(40, 40, 55)
+            bg = QColor(26, 26, 46)  # #1a1a2e (disabled bg)
         p.fillPath(track_path, bg)
 
         # Knob

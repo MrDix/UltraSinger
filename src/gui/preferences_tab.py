@@ -1,4 +1,7 @@
-"""Application preferences and configuration tab."""
+"""Unified Settings tab: output, conversion defaults, LLM providers, cookies.
+
+This replaces the old separate Settings + Preferences tabs.
+"""
 
 import logging
 from pathlib import Path
@@ -15,13 +18,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .widgets import AnimatedButton, SettingsCard, ToggleSwitch
+from .models import LLMProvider
+from .settings_tab import ConversionSettingsForm
+from .widgets import AnimatedButton, LLMProviderListWidget, SettingsCard
 
 logger = logging.getLogger(__name__)
 
 
 class PreferencesTab(QWidget):
-    """App preferences: output folder, LLM config, cookie management."""
+    """Unified settings: output folder, conversion defaults, LLM providers, cookies."""
 
     def __init__(self, config: dict, cookie_manager=None, parent=None):
         super().__init__(parent)
@@ -37,34 +42,49 @@ class PreferencesTab(QWidget):
         main_layout.setContentsMargins(24, 24, 24, 24)
         main_layout.setSpacing(16)
 
-        header = QLabel("Preferences")
+        header = QLabel("Settings")
         header.setObjectName("sectionHeader")
         main_layout.addWidget(header)
 
         # ── Output Folder ────────────────────────────────────────────────
-        card = SettingsCard("Output Folder")
+        output_header = QLabel("Output Folder")
+        output_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(output_header)
+        card = SettingsCard()
         row = QHBoxLayout()
         self._output_folder = QLineEdit()
         self._output_folder.setText(config.get("output_folder", ""))
         self._output_folder.setPlaceholderText("Select default output folder...")
+        self._output_folder.setToolTip(
+            "Where converted UltraStar files are saved. "
+            "Each song gets its own subfolder with TXT, audio, and optional MIDI/plots."
+        )
         row.addWidget(self._output_folder, 1)
         browse = QPushButton("Browse")
+        browse.setToolTip("Open a folder picker to select the output directory.")
         browse.clicked.connect(self._browse_output)
         row.addWidget(browse)
         card.add_layout(row)
         main_layout.addWidget(card)
 
-        # ── LLM Configuration ────────────────────────────────────────────
-        llm_card = SettingsCard("LLM Lyric Correction (Groq)")
+        # ── Conversion Defaults (embedded form) ──────────────────────────
+        defaults_header = QLabel("Default Conversion Settings")
+        defaults_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(defaults_header)
+
+        self._conversion_form = ConversionSettingsForm(config)
+        main_layout.addWidget(self._conversion_form)
+
+        # ── LLM Providers ────────────────────────────────────────────────
+        llm_header = QLabel("LLM Providers")
+        llm_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(llm_header)
+        llm_card = SettingsCard()
 
         llm_card.add_info(
-            "UltraSinger can use an LLM API to post-correct Whisper transcription errors. "
-            "This is optional and disabled by default.\n\n"
-            "Recommended setup (free):\n"
-            "1. Create a free account at https://console.groq.com\n"
-            "2. Go to API Keys and create a new key\n"
-            "3. Paste the key below\n"
-            "4. Model: qwen/qwen3-32b (best quality, 0 degradations in testing)"
+            "Configure one or more LLM API providers for lyric correction. "
+            "Each provider has its own URL, API key, and default model.\n\n"
+            "Recommended: Groq with qwen/qwen3-32b (free plan, best quality)."
         )
 
         # Show keyring storage status
@@ -73,7 +93,7 @@ class PreferencesTab(QWidget):
 
             if is_keyring_available():
                 llm_card.add_info(
-                    f"\U0001F512 API key stored securely in: {get_keyring_backend_name()}"
+                    f"\U0001F512 API keys stored securely in: {get_keyring_backend_name()}"
                 )
             else:
                 llm_card.add_info(
@@ -83,49 +103,25 @@ class PreferencesTab(QWidget):
         except ImportError:
             pass
 
-        self._llm_url = QLineEdit()
-        self._llm_url.setText(config.get("llm_api_base_url", "https://api.groq.com/openai/v1"))
-        self._llm_url.setPlaceholderText("https://api.groq.com/openai/v1")
-        llm_card.add_row("API Base URL", self._llm_url)
+        self._llm_provider_list = LLMProviderListWidget()
+        llm_card.add_widget(self._llm_provider_list)
 
-        # API key with visibility toggle
-        key_row = QHBoxLayout()
-        self._llm_key = QLineEdit()
-        self._llm_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._llm_key.setText(config.get("llm_api_key", ""))
-        self._llm_key.setPlaceholderText("gsk_...")
-        key_row.addWidget(self._llm_key, 1)
+        # Load existing providers
+        self._load_llm_providers()
 
-        self._key_visible_btn = QPushButton("\U0001F441")
-        self._key_visible_btn.setObjectName("ghostButton")
-        self._key_visible_btn.setFixedWidth(36)
-        self._key_visible_btn.setToolTip("Show/hide API key")
-        self._key_visible_btn.clicked.connect(self._toggle_key_visibility)
-        key_row.addWidget(self._key_visible_btn)
-
-        # Add labeled key row with visibility toggle
-        labeled_key_row = QHBoxLayout()
-        labeled_key_row.setSpacing(12)
-        key_label = QLabel("API Key")
-        key_label.setMinimumWidth(180)
-        labeled_key_row.addWidget(key_label)
-        labeled_key_row.addLayout(key_row, 1)
-        llm_card.add_layout(labeled_key_row)
-
-        self._llm_model_pref = QLineEdit()
-        self._llm_model_pref.setText(config.get("llm_model", "qwen/qwen3-32b"))
-        llm_card.add_row("Default Model", self._llm_model_pref)
-
-        llm_card.add_info(
-            "Groq Free Plan limits (as of March 2026): "
-            "1,000 requests/day, 500K tokens/day for qwen3-32b. "
-            "This is typically enough for ~200 songs/day."
+        # Keep the conversion form's provider selector in sync
+        self._llm_provider_list.providers_changed.connect(
+            self._sync_provider_selector
         )
+        self._sync_provider_selector()
 
         main_layout.addWidget(llm_card)
 
-        # ── Cookie Management ─────────────────────────────────────────────
-        cookie_card = SettingsCard("Cookie Management")
+        # ── Cookie Management ────────────────────────────────────────────
+        cookie_header = QLabel("Cookie Management")
+        cookie_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(cookie_header)
+        cookie_card = SettingsCard()
 
         if cookie_manager:
             self._cookie_status = QLabel("Checking...")
@@ -144,6 +140,10 @@ class PreferencesTab(QWidget):
         self._cookie_path.setText(config.get("cookie_file", ""))
         self._cookie_path.setPlaceholderText("Cookie file path...")
         self._cookie_path.setReadOnly(True)
+        self._cookie_path.setToolTip(
+            "Path to the exported Netscape cookie file. "
+            "This file is passed to yt-dlp for authenticated downloads."
+        )
         cookie_path_row.addWidget(self._cookie_path, 1)
         cookie_card.add_layout(cookie_path_row)
 
@@ -151,12 +151,20 @@ class PreferencesTab(QWidget):
         btn_row.setSpacing(8)
 
         export_btn = QPushButton("Export Cookies")
+        export_btn.setToolTip(
+            "Save all browser cookies to a Netscape-format file. "
+            "The file is used by yt-dlp for premium content downloads."
+        )
         export_btn.clicked.connect(self._export_cookies)
         export_btn.setEnabled(bool(cookie_manager))
         btn_row.addWidget(export_btn)
 
         clear_btn = QPushButton("Clear Cookies")
         clear_btn.setObjectName("dangerButton")
+        clear_btn.setToolTip(
+            "Delete all stored browser cookies. "
+            "You will need to log in again via the Video browser tab."
+        )
         clear_btn.clicked.connect(self._clear_cookies)
         clear_btn.setEnabled(bool(cookie_manager))
         btn_row.addWidget(clear_btn)
@@ -166,9 +174,13 @@ class PreferencesTab(QWidget):
 
         main_layout.addWidget(cookie_card)
 
-        # ── Save Button ───────────────────────────────────────────────────
+        # ── Save Button ──────────────────────────────────────────────────
         main_layout.addSpacing(8)
-        save_btn = AnimatedButton("Save Preferences")
+        save_btn = AnimatedButton("Save Settings")
+        save_btn.setToolTip(
+            "Save all settings to disk. "
+            "Settings are also auto-saved when you start a conversion or close the app."
+        )
         save_btn.clicked.connect(self._save)
         main_layout.addWidget(save_btn)
 
@@ -178,6 +190,38 @@ class PreferencesTab(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
+
+    # ── LLM Provider Management ──────────────────────────────────────────
+
+    def _load_llm_providers(self):
+        """Load providers from config and populate the list widget."""
+        raw_providers = self._config.get("llm_providers", [])
+        providers = []
+        api_keys: dict[str, str] = {}
+        for raw in raw_providers:
+            if isinstance(raw, dict):
+                p = LLMProvider.from_dict(raw)
+                providers.append(p)
+                # Load API key from config (was loaded from keyring by load_config)
+                key = self._config.get(f"llm_api_key_{p.id}", "")
+                if key:
+                    api_keys[p.id] = key
+        self._llm_provider_list.set_providers(providers, api_keys)
+
+    def _sync_provider_selector(self):
+        """Update the conversion form's LLM provider combobox."""
+        providers = self._llm_provider_list.get_providers()
+        self._conversion_form.set_llm_providers(providers)
+
+    def get_llm_providers(self) -> list[LLMProvider]:
+        """Return current LLM providers from the widget."""
+        return self._llm_provider_list.get_providers()
+
+    def get_llm_api_keys(self) -> dict[str, str]:
+        """Return provider_id -> api_key mapping."""
+        return self._llm_provider_list.get_api_keys()
+
+    # ── Output / Cookie ──────────────────────────────────────────────────
 
     def _browse_output(self):
         start = self._output_folder.text() or str(Path.home())
@@ -189,14 +233,6 @@ class PreferencesTab(QWidget):
         )
         if path:
             self._output_folder.setText(path)
-
-    def _toggle_key_visibility(self):
-        if self._llm_key.echoMode() == QLineEdit.EchoMode.Password:
-            self._llm_key.setEchoMode(QLineEdit.EchoMode.Normal)
-            self._key_visible_btn.setText("\U0001F441\u200D\U0001F5E8")
-        else:
-            self._llm_key.setEchoMode(QLineEdit.EchoMode.Password)
-            self._key_visible_btn.setText("\U0001F441")
 
     def _update_cookie_status(self):
         if not hasattr(self, "_cookie_status"):
@@ -213,7 +249,6 @@ class PreferencesTab(QWidget):
 
     def _export_cookies(self):
         if self._cookie_manager:
-            # Prefer UI path, fall back to config
             cookie_path = self._cookie_path.text() or self._config.get("cookie_file", "")
             if cookie_path:
                 try:
@@ -229,19 +264,33 @@ class PreferencesTab(QWidget):
         if self._cookie_manager:
             self._cookie_manager.clear_all()
 
+    # ── Save / Collect ───────────────────────────────────────────────────
+
     def _save(self):
-        """Save current preferences to config."""
+        """Save current settings to config."""
         from .config import save_config
 
-        self._config.update(self.collect_preferences())
+        self._config.update(self.collect_all())
         save_config(self._config)
 
+    def collect_all(self) -> dict:
+        """Return all settings: conversion + providers + output + cookies."""
+        result = self._conversion_form.collect_config()
+        result["output_folder"] = self._output_folder.text()
+        result["cookie_file"] = self._cookie_path.text()
+
+        # Serialize providers
+        providers = self._llm_provider_list.get_providers()
+        result["llm_providers"] = [p.to_dict() for p in providers]
+
+        # Collect API keys (stored in keyring on save)
+        api_keys = self._llm_provider_list.get_api_keys()
+        for pid, key in api_keys.items():
+            result[f"llm_api_key_{pid}"] = key
+
+        return result
+
+    # Backward-compatible alias used by main_window.py
     def collect_preferences(self) -> dict:
-        """Return current preference values."""
-        return {
-            "output_folder": self._output_folder.text(),
-            "llm_api_base_url": self._llm_url.text(),
-            "llm_api_key": self._llm_key.text(),
-            "llm_model": self._llm_model_pref.text(),
-            "cookie_file": self._cookie_path.text(),
-        }
+        """Alias for collect_all()."""
+        return self.collect_all()

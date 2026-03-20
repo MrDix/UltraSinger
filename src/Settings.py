@@ -33,6 +33,8 @@ class Settings:
     onset_correction = True  # Snap note start times to detected audio onsets
     syllable_split = False  # Preserve syllable-level note splits at pitch changes
     vocal_gap_fill = False  # Fill un-transcribed vocal gaps with placeholder notes
+    keep_audio_in_video = False  # Keep full audio (vocals+instrumental) embedded in the output video
+    write_settings_info = False  # Write ultrasinger_parameter.info with settings + score to output dir
 
     # Process data Paths
     input_file_path = ""
@@ -69,6 +71,9 @@ class Settings:
     llm_api_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str | None = None  # API key (or set LLM_API_KEY env var)
     llm_model: str = "gpt-4o-mini"  # Default to cheap, fast model
+    llm_retry_on_rate_limit = True  # Retry on HTTP 429 rate limit errors
+    llm_retry_wait: int = 60  # Seconds to wait between retries
+    llm_retry_max: int = 3  # Maximum retries per chunk
 
     # Denoise
     denoise_noise_reduction = 20  # Noise reduction in dB (0.01-97, default: 20). Previous default was 70 which destroyed vocal nuances needed by Whisper.

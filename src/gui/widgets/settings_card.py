@@ -2,11 +2,9 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -20,12 +18,21 @@ class SettingsCard(QWidget):
         self.setObjectName("settingsCard")
 
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(20, 16, 20, 16)
-        self._layout.setSpacing(12)
+        self._layout.setContentsMargins(20, 8, 20, 12)
+        self._layout.setSpacing(0)
+
+        self._row_count = 0  # tracks data rows for zebra striping
 
         if title:
+            # Horizontal rule above the section title
+            rule = QWidget()
+            rule.setFixedHeight(1)
+            rule.setStyleSheet("background-color: rgba(240, 223, 192, 0.12);")
+            self._layout.addWidget(rule)
+
             title_label = QLabel(title)
-            title_label.setObjectName("subsectionHeader")
+            title_label.setObjectName("cardHeader")
+            title_label.setContentsMargins(0, 0, 0, 4)
             self._layout.addWidget(title_label)
 
     def add_widget(self, widget):
@@ -35,6 +42,26 @@ class SettingsCard(QWidget):
     def add_layout(self, layout):
         """Add a sub-layout to the card."""
         self._layout.addLayout(layout)
+
+    def _wrap_row(self, row_layout: QHBoxLayout) -> QWidget:
+        """Wrap a row layout in a container with zebra-stripe background."""
+        container = QWidget()
+        container.setObjectName("zebraRow")
+        container.setMinimumHeight(38)
+        container.setLayout(row_layout)
+        row_layout.setContentsMargins(8, 6, 8, 6)
+
+        if self._row_count % 2 == 0:
+            bg = "rgba(240, 223, 192, 0.03)"
+        else:
+            bg = "rgba(240, 223, 192, 0.07)"
+        # Use #zebraRow selector so the background only applies to the
+        # container itself, not to child widgets (QLabel, QComboBox, etc.)
+        container.setStyleSheet(
+            f"QWidget#zebraRow {{ background-color: {bg}; border-radius: 4px; }}"
+        )
+        self._row_count += 1
+        return container
 
     def add_row(self, label_text: str, widget, tooltip: str = "",
                 *, reset_callback=None):
@@ -61,7 +88,7 @@ class SettingsCard(QWidget):
         if reset_callback is not None:
             row.addWidget(_make_reset_button(reset_callback))
 
-        self._layout.addLayout(row)
+        self._layout.addWidget(self._wrap_row(row))
 
     def add_toggle_row(self, label_text: str, toggle, tooltip: str = "",
                        *, reset_callback=None):
@@ -79,7 +106,7 @@ class SettingsCard(QWidget):
         if reset_callback is not None:
             row.addWidget(_make_reset_button(reset_callback))
 
-        self._layout.addLayout(row)
+        self._layout.addWidget(self._wrap_row(row))
 
     def add_info(self, text: str):
         """Add an info label to the card (text is selectable for copy)."""
@@ -111,18 +138,20 @@ class SettingsCard(QWidget):
         """Add a subtle horizontal separator."""
         sep = QWidget()
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.06);")
+        sep.setContentsMargins(0, 4, 0, 4)
+        sep.setStyleSheet("background-color: rgba(240, 223, 192, 0.08);")
         self._layout.addWidget(sep)
 
 
 def _make_reset_button(callback) -> QPushButton:
-    """Create a small ghost-style reset button with a platform-native icon."""
-    style = QApplication.style()
-    btn = QPushButton()
-    btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
+    """Create a small ghost-style reset button."""
+    btn = QPushButton("\u21BA")  # ↺ counterclockwise arrow
     btn.setObjectName("ghostButton")
     btn.setToolTip("Reset to default")
-    btn.setFixedSize(28, 28)
+    btn.setFixedSize(36, 36)
+    btn.setStyleSheet(
+        "font-size: 18px; padding: 0px; background: transparent; border: none;"
+    )
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.clicked.connect(lambda: callback())
     return btn

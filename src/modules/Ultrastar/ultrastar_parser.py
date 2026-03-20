@@ -1,9 +1,10 @@
 """Ultrastar txt parser"""
 import os
+import shutil
 
 from modules import os_helper
 
-from modules.console_colors import ULTRASINGER_HEAD, red_highlighted
+from modules.console_colors import ULTRASINGER_HEAD, red_highlighted, blue_highlighted
 from modules.Ultrastar.coverter.ultrastar_converter import (
     get_end_time,
     get_start_time,
@@ -49,10 +50,16 @@ def parse(input_file: str) -> UltrastarTxtValue:
                 ultrastar_class.bpm = line.split(":")[1].replace("\n", "")
             elif line.startswith(f"#{UltrastarTxtTag.VIDEOGAP.value}"):
                 ultrastar_class.videoGap = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.COVER.value}"):
+            elif line.startswith(f"#{UltrastarTxtTag.COVERURL.value}:"):
+                ultrastar_class.coverUrl = line.split(":", 1)[1].replace("\n", "")
+            elif line.startswith(f"#{UltrastarTxtTag.COVER.value}:"):
                 ultrastar_class.cover = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.BACKGROUND.value}"):
+            elif line.startswith(f"#{UltrastarTxtTag.BACKGROUNDURL.value}:"):
+                ultrastar_class.backgroundUrl = line.split(":", 1)[1].replace("\n", "")
+            elif line.startswith(f"#{UltrastarTxtTag.BACKGROUND.value}:"):
                 ultrastar_class.background = line.split(":")[1].replace("\n", "")
+            elif line.startswith(f"#{UltrastarTxtTag.VIDEOURL.value}:"):
+                ultrastar_class.videoUrl = line.split(":", 1)[1].replace("\n", "")
         elif line.startswith(
             (
                 f"{UltrastarTxtNoteTypeTag.FREESTYLE.value} ",
@@ -113,10 +120,105 @@ def parse_ultrastar_txt(input_file_path: str, output_folder_path: str) -> tuple[
     dirname = os.path.dirname(input_file_path)
     audio_file_path = os.path.join(dirname, ultrastar_mp3_name)
     basename_without_ext = f"{ultrastar_class.artist.strip()} - {ultrastar_class.title.strip()}"
+
+    # Copy audio file to output folder
+    audio_output_path = _copy_audio_file(audio_file_path, ultrastar_mp3_name, song_output)
+
+    # Copy referenced asset files (cover, background, video) to output folder
+    _copy_txt_assets(ultrastar_class, dirname, song_output)
+
     return (
         basename_without_ext,
         song_output,
-        str(audio_file_path),
+        audio_output_path,
         ultrastar_class,
         audio_ext
     )
+
+
+def _copy_audio_file(
+        audio_file_path: str,
+        audio_filename: str,
+        output_dir: str,
+) -> str:
+    """Copy the audio file referenced in the TXT to the output directory.
+
+    Returns the path to the copied audio file in the output directory,
+    or the original path if the source file was not found.
+    """
+    dst = os.path.join(output_dir, audio_filename)
+    if os.path.isfile(audio_file_path):
+        shutil.copy2(audio_file_path, dst)
+        print(f"{ULTRASINGER_HEAD} Audio copied: {blue_highlighted(audio_filename)}")
+        return dst
+    else:
+        print(f"{ULTRASINGER_HEAD} Audio not found: {red_highlighted(audio_file_path)}")
+        return audio_file_path
+
+
+def _copy_txt_assets(
+        ultrastar_class: UltrastarTxtValue,
+        source_dir: str,
+        output_dir: str,
+) -> None:
+    """Copy cover, background, and video files from source to output directory.
+
+    If a cover file is not found locally, attempts to fetch one from
+    MusicBrainz using the artist/title metadata.
+    """
+    assets = [
+        ("Cover", ultrastar_class.cover),
+        ("Background", ultrastar_class.background),
+        ("Video", ultrastar_class.video),
+    ]
+
+    for label, filename in assets:
+        if not filename:
+            continue
+        src = os.path.join(source_dir, filename)
+        dst = os.path.join(output_dir, filename)
+        if os.path.isfile(src):
+            # Ensure subdirectories exist (in case filename contains path separators)
+            os.makedirs(os.path.dirname(dst) or output_dir, exist_ok=True)
+            shutil.copy2(src, dst)
+            print(f"{ULTRASINGER_HEAD} {label} copied: {blue_highlighted(filename)}")
+        else:
+            print(f"{ULTRASINGER_HEAD} {label} not found: {red_highlighted(src)}")
+
+    # If no cover was copied, try fetching from MusicBrainz
+    cover_exists = ultrastar_class.cover and os.path.isfile(
+        os.path.join(output_dir, ultrastar_class.cover)
+    )
+    if not cover_exists and ultrastar_class.artist and ultrastar_class.title:
+        _fetch_musicbrainz_cover(ultrastar_class, output_dir)
+
+
+def _fetch_musicbrainz_cover(
+        ultrastar_class: UltrastarTxtValue,
+        output_dir: str,
+) -> None:
+    """Try to download a cover image from MusicBrainz."""
+    try:
+        from modules.musicbrainz_client import search_musicbrainz
+        from modules.Image.image_helper import save_image
+
+        print(f"{ULTRASINGER_HEAD} No cover found — searching MusicBrainz...")
+        song_info = search_musicbrainz(
+            ultrastar_class.title.strip(),
+            ultrastar_class.artist.strip(),
+        )
+        if song_info.cover_image_data:
+            basename = f"{ultrastar_class.artist.strip()} - {ultrastar_class.title.strip()}"
+            save_image(song_info.cover_image_data, basename, output_dir)
+            cover_filename = basename + " [CO].jpg"
+            ultrastar_class.cover = cover_filename
+            if song_info.cover_url:
+                ultrastar_class.coverUrl = song_info.cover_url
+            print(
+                f"{ULTRASINGER_HEAD} Cover downloaded from MusicBrainz: "
+                f"{blue_highlighted(cover_filename)}"
+            )
+        else:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted('No cover found on MusicBrainz')}")
+    except Exception as e:
+        print(f"{ULTRASINGER_HEAD} {red_highlighted(f'MusicBrainz cover fetch failed: {e}')}")
