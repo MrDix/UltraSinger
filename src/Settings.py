@@ -72,6 +72,7 @@ class Settings:
 
     # yt-dlp
     cookiefile = None
+    youtube_url: str | None = None  # For metadata when audio is pre-downloaded
 
     # LLM lyric correction
     llm_correct_lyrics = False  # Enable LLM-based lyric post-correction

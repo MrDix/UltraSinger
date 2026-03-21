@@ -422,6 +422,16 @@ def _write_settings_info_file(
                 f.write(f"  Non-deterministic ops:    none detected\n")
             f.write("\n")
 
+            # Refinement
+            f.write("[Refinement]\n")
+            f.write(f"  Enabled:                  {settings.refine_from_vocal}\n")
+            if settings.refine_from_vocal:
+                f.write(f"  Pitch refinement:         {settings.refine_pitch}\n")
+                f.write(f"  Timing refinement:        {settings.refine_timing}\n")
+                f.write(f"  Hit ratio threshold:      {settings.refine_hit_ratio}\n")
+                f.write(f"  Timing threshold:         {settings.refine_timing_threshold} ms\n")
+            f.write("\n")
+
             # LLM
             f.write("[LLM Lyric Correction]\n")
             f.write(f"  Enabled:                  {settings.llm_correct_lyrics}\n")
@@ -767,12 +777,42 @@ def InitProcessData():
         # Audio/Video File
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Full Automatic Mode')}")
         process_data = ProcessData()
+
+        # If a YouTube URL was provided (e.g. from browser interceptor),
+        # fetch metadata BEFORE deriving the local song identity so that
+        # the output folder and basename use the correct artist/title
+        # instead of the temporary intercepted filename.
+        yt_artist, yt_title = None, None
+        if settings.youtube_url:
+            try:
+                from modules.Audio.youtube import get_youtube_title
+                yt_artist, yt_title, _video_title = get_youtube_title(
+                    settings.youtube_url, settings.cookiefile
+                )
+                print(
+                    f"{ULTRASINGER_HEAD} YouTube metadata: "
+                    f"{yt_artist} - {yt_title}"
+                )
+            except Exception as e:
+                print(
+                    f"{ULTRASINGER_HEAD} Warning: YouTube metadata lookup "
+                    f"failed: {e}"
+                )
+
         (
             process_data.basename,
             settings.output_folder_path,
             process_data.process_data_paths.audio_output_file_path,
             process_data.media_info,
         ) = infos_from_audio_video_input_file()
+
+        # Override with YouTube metadata if available
+        if yt_artist:
+            process_data.media_info.artist = yt_artist
+            process_data.basename = f"{yt_artist} - {yt_title}" if yt_title else yt_artist
+        if yt_title:
+            process_data.media_info.title = yt_title
+
     return process_data
 
 
@@ -1233,6 +1273,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.llm_retry_wait = int(arg)
         elif opt in ("--llm_retry_max"):
             settings.llm_retry_max = int(arg)
+        elif opt in ("--youtube_url"):
+            settings.youtube_url = arg
         elif opt in ("--refine_from_vocal"):
             settings.refine_from_vocal = True
         elif opt in ("--disable_refine_pitch"):
@@ -1300,6 +1342,7 @@ def arg_options():
         "llm_no_retry",
         "llm_retry_wait=",
         "llm_retry_max=",
+        "youtube_url=",
         "refine_from_vocal",
         "disable_refine_pitch",
         "disable_refine_timing",

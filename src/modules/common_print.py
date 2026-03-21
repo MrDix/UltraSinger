@@ -28,6 +28,14 @@ def print_help() -> None:
     default  Creates all
 
 
+    [metadata]
+    --youtube_url           YouTube URL for metadata lookup (artist, title) when the input (-i)
+                            is a local audio/video file instead of a URL. This is used by the
+                            GUI's browser-based download: the audio is pre-downloaded via the
+                            embedded browser (bypassing bot detection), so the input is a local
+                            file, but the YouTube URL is still needed for artist/title/thumbnail.
+                            Not needed when -i is already a YouTube URL.
+
     [separation]
     # Default is htdemucs
     --demucs              Model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
