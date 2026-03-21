@@ -29,14 +29,20 @@ class PerSongSettingsDialog(QDialog):
         overrides: dict,
         llm_providers: list[LLMProvider],
         title: str = "",
+        read_only: bool = False,
         parent=None,
     ):
         super().__init__(parent)
-        self.setWindowTitle(f"Settings: {title}" if title else "Per-Song Settings")
+        suffix = " (read-only)" if read_only else ""
+        self.setWindowTitle(
+            f"Settings: {title}{suffix}" if title
+            else f"Per-Song Settings{suffix}"
+        )
         self.setMinimumSize(700, 600)
         self.resize(800, 700)
 
         self._global_config = global_config
+        self._read_only = read_only
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -56,31 +62,43 @@ class PerSongSettingsDialog(QDialog):
             selected_id=merged.get("llm_provider_id", ""),
         )
 
+        if read_only:
+            self._form.setEnabled(False)
+
         scroll.setWidget(self._form)
         layout.addWidget(scroll, 1)
 
-        # Dialog buttons — styled consistently with app theme
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-            | QDialogButtonBox.StandardButton.RestoreDefaults
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        if read_only:
+            # Read-only: only a Close button
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            buttons.rejected.connect(self.reject)
+        else:
+            # Editable: Save / Cancel / Restore Defaults
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok
+                | QDialogButtonBox.StandardButton.Cancel
+                | QDialogButtonBox.StandardButton.RestoreDefaults
+            )
+            buttons.accepted.connect(self.accept)
+            buttons.rejected.connect(self.reject)
 
-        ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn:
-            ok_btn.setObjectName("primaryButton")
-            ok_btn.setText("Save")
+            ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+            if ok_btn:
+                ok_btn.setObjectName("primaryButton")
+                ok_btn.setText("Save")
 
-        cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        if cancel_btn:
-            cancel_btn.setObjectName("ghostButton")
+            cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+            if cancel_btn:
+                cancel_btn.setObjectName("ghostButton")
 
-        restore_btn = buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults)
-        if restore_btn:
-            restore_btn.setToolTip("Clear all per-song overrides (use global defaults)")
-            restore_btn.clicked.connect(self._restore_defaults)
+            restore_btn = buttons.button(
+                QDialogButtonBox.StandardButton.RestoreDefaults
+            )
+            if restore_btn:
+                restore_btn.setToolTip(
+                    "Clear all per-song overrides (use global defaults)"
+                )
+                restore_btn.clicked.connect(self._restore_defaults)
 
         layout.addWidget(buttons)
 

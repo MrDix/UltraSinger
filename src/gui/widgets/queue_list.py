@@ -35,6 +35,8 @@ class QueueItemWidget(QWidget):
     def __init__(self, item: QueueItem, parent=None):
         super().__init__(parent)
         self._item_id = item.id
+        self._has_overrides = False
+        self._status = item.status
         self.setFixedHeight(30)
         self.setToolTip(item.input_source)
 
@@ -96,14 +98,21 @@ class QueueItemWidget(QWidget):
 
     def update_status(self, status: str):
         """Update the visual status of this item."""
+        self._status = status
         color = _STATUS_COLORS.get(status, "#a09888")
         self._status_dot.setStyleSheet(
             f"font-size: 8px; color: {color}; background: transparent;"
         )
 
-        # Only show gear/remove buttons for pending items
-        self._gear_btn.setVisible(status == "pending")
+        # Remove button only for pending items
         self._remove_btn.setVisible(status == "pending")
+
+        # Gear button: always visible when overrides exist (read-only),
+        # otherwise only for pending items
+        if status != "pending":
+            if not self._has_overrides:
+                self._gear_btn.setVisible(False)
+            # Pending items keep full gear visibility from set_has_overrides
 
         # Dim completed/cancelled items
         if status in ("done", "failed", "cancelled"):
@@ -122,15 +131,24 @@ class QueueItemWidget(QWidget):
 
     def set_has_overrides(self, has_overrides: bool):
         """Show visual indicator when per-song overrides are active."""
+        self._has_overrides = has_overrides
         color = "#00d4d4" if has_overrides else "#a09888"
         self._gear_btn.setStyleSheet(
             f"font-size: 13px; color: {color}; background: transparent; "
             "border: none; padding: 0px; margin: 0px;"
         )
-        self._gear_btn.setToolTip(
-            "Per-song settings (custom)" if has_overrides
-            else "Per-song settings (click to override defaults)"
-        )
+
+        is_pending = self._status == "pending"
+        if is_pending:
+            self._gear_btn.setVisible(True)
+            self._gear_btn.setToolTip(
+                "Per-song settings (custom)" if has_overrides
+                else "Per-song settings (click to override defaults)"
+            )
+        else:
+            # Non-pending: show gear only if there are overrides (read-only)
+            self._gear_btn.setVisible(has_overrides)
+            self._gear_btn.setToolTip("View per-song settings (read-only)")
 
 
 class _ElidingLabel(QLabel):

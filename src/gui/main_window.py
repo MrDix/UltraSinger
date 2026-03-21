@@ -165,12 +165,20 @@ class MainWindow(QMainWindow):
         self._update_queue_buttons()
 
     def _on_per_song_settings(self, item_id: str):
-        """Open the per-song settings override dialog."""
+        """Open the per-song settings override dialog.
+
+        For pending items the dialog is editable.  For items that are
+        already running / done / failed / cancelled the dialog opens in
+        read-only mode so the user can still inspect the settings that
+        were used for the conversion.
+        """
         item = next(
             (it for it in self._queue_mgr.items if it.id == item_id), None
         )
-        if item is None or item.status != "pending":
+        if item is None:
             return
+
+        read_only = item.status != "pending"
 
         # Collect current global config from the settings tab
         global_config = {**self._config, **self._settings_tab.collect_all()}
@@ -181,10 +189,13 @@ class MainWindow(QMainWindow):
             overrides=item.settings_overrides,
             llm_providers=providers,
             title=item.title,
+            read_only=read_only,
             parent=self,
         )
 
-        if dialog.exec():
+        if read_only:
+            dialog.exec()
+        elif dialog.exec():
             item.settings_overrides = dialog.get_overrides()
             # Visual indicator: mark items with overrides
             has_overrides = bool(item.settings_overrides)
