@@ -347,7 +347,8 @@ def refine_notes(
                 bpm=bpm,
                 hit_ratio_threshold=hit_ratio_threshold,
             )
-        except (ImportError, OSError, ValueError, RuntimeError) as e:
+        except (ImportError, OSError, ValueError, RuntimeError,
+                AttributeError, KeyError, TypeError) as e:
             print(
                 f"{ULTRASINGER_HEAD} Warning: uscore pitch refinement failed: {e}. "
                 f"Skipping pitch refinement."
