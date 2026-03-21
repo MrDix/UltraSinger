@@ -298,6 +298,17 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._onset_correction.setChecked(
                                not _DEFAULTS["disable_onset_correction"]))
 
+        # Lyrics lookup
+        self._lyrics_lookup = ToggleSwitch(
+            checked=not self._config.get("disable_lyrics_lookup", False)
+        )
+        card.add_toggle_row("Lyrics Lookup", self._lyrics_lookup,
+                           "Fetch verified reference lyrics from LRCLIB and use them to correct "
+                           "Whisper transcription errors. No API key needed. "
+                           "This runs before LLM correction and improves word accuracy for known songs.",
+                           reset_callback=lambda: self._lyrics_lookup.setChecked(
+                               not _DEFAULTS["disable_lyrics_lookup"]))
+
         # Vocal separation
         self._separation = ToggleSwitch(
             checked=not self._config.get("disable_separation", False)
@@ -831,6 +842,7 @@ class ConversionSettingsForm(QWidget):
             "vocal_gap_fill": self._vocal_gap_fill.isChecked(),
             "pitch_change_split": self._pitch_change_split.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),
+            "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "llm_correct": self._llm_correct.isChecked(),
             "llm_provider_id": self.get_selected_provider_id(),
             "llm_retry_on_rate_limit": self._llm_retry.isChecked(),

@@ -168,6 +168,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'BPM override: {settings.bpm_override}')}")
     if settings.octave_shift is not None:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Octave shift: {settings.octave_shift:+d}')}")
+    if not settings.lyrics_lookup:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Lyrics lookup disabled')}")
     if settings.llm_correct_lyrics:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'LLM lyric correction enabled (model: {settings.llm_model})')}")
     if settings.syllable_split:
@@ -209,9 +211,10 @@ def run() -> tuple[str, Score, Score]:
 
     # Audio transcription
     process_data.media_info.language = settings.language
+    lyrics_lookup_result = None
     llm_result = None
     if not settings.ignore_audio:
-        llm_result = TranscribeAudio(process_data)
+        lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
 
     # Onset correction — snap note starts to audio onsets for better timing
     if not settings.ignore_audio and settings.onset_correction:
@@ -331,6 +334,7 @@ def run() -> tuple[str, Score, Score]:
         _write_settings_info_file(
             settings.output_folder_path, simple_score, accurate_score,
             detected_language=process_data.media_info.language,
+            lyrics_lookup_result=lyrics_lookup_result,
             llm_result=llm_result,
         )
 
@@ -349,6 +353,7 @@ def _write_settings_info_file(
         accurate_score: "Score | None",
         *,
         detected_language: str | None = None,
+        lyrics_lookup_result=None,
         llm_result: "LLMResult | None" = None,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
@@ -443,6 +448,16 @@ def _write_settings_info_file(
                 f.write(f"  Timing refinement:        {settings.refine_timing}\n")
                 f.write(f"  Hit ratio threshold:      {settings.refine_hit_ratio}\n")
                 f.write(f"  Timing threshold:         {settings.refine_timing_threshold} ms\n")
+            f.write("\n")
+
+            # Lyrics Lookup
+            f.write("[Lyrics Lookup]\n")
+            f.write(f"  Enabled:                  {settings.lyrics_lookup}\n")
+            if lyrics_lookup_result is not None:
+                f.write(f"  Words corrected:          {lyrics_lookup_result.words_corrected}\n")
+                f.write(f"  Words kept:               {lyrics_lookup_result.words_kept}\n")
+                f.write(f"  Words total:              {lyrics_lookup_result.words_total}\n")
+                f.write(f"  Reference words:          {lyrics_lookup_result.reference_words}\n")
             f.write("\n")
 
             # LLM
@@ -840,6 +855,20 @@ def TranscribeAudio(process_data):
 
     process_data.transcribed_data = transcription_result.transcribed_data
 
+    # Lyrics lookup correction (before LLM — uses verified reference lyrics)
+    lyrics_lookup_result = None
+    if settings.lyrics_lookup and process_data.media_info.artist and process_data.media_info.title:
+        try:
+            from modules.lrclib_client import search_lyrics
+            from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
+            lyrics_info = search_lyrics(process_data.media_info.artist, process_data.media_info.title)
+            if lyrics_info is not None and lyrics_info.plain_lyrics:
+                process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
+                    process_data.transcribed_data, lyrics_info.plain_lyrics
+                )
+        except Exception as e:
+            print(f"{ULTRASINGER_HEAD} Lyrics lookup correction skipped: {e}")
+
     # LLM lyric correction (optional, before punctuation removal for context)
     llm_result = None
     if settings.llm_correct_lyrics:
@@ -877,7 +906,7 @@ def TranscribeAudio(process_data):
         process_data.process_data_paths.whisper_audio_path, process_data.transcribed_data
     )
 
-    return llm_result
+    return lyrics_lookup_result, llm_result
 
 
 def CreateUltraStarTxt(process_data: ProcessData):
@@ -1275,6 +1304,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.vocal_gap_fill = True
         elif opt in ("--pitch_change_split"):
             settings.pitch_change_split = True
+        elif opt in ("--disable_lyrics_lookup"):
+            settings.lyrics_lookup = False
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
@@ -1369,6 +1400,7 @@ def arg_options():
         "syllable_split",
         "vocal_gap_fill",
         "pitch_change_split",
+        "disable_lyrics_lookup",
         "interactive",
         "cookiefile=",
         "ffmpeg=",

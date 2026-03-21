@@ -299,6 +299,8 @@ class UltraSingerRunner(QObject):
             args.append("--disable_quantization")
         if config.get("disable_vocal_center"):
             args.append("--disable_vocal_center")
+        if config.get("disable_lyrics_lookup"):
+            args.append("--disable_lyrics_lookup")
         if config.get("disable_onset_correction"):
             args.append("--disable_onset_correction")
         if config.get("disable_denoise_track_noise"):
