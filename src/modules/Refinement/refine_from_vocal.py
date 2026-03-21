@@ -292,18 +292,49 @@ def refine_timing(
     return midi_segments, corrections
 
 
+def _score_with_gap_offset(
+    midi_segments: list[MidiSegment],
+    vocal_audio_path: str,
+    bpm: float,
+    base_gap_ms: float,
+    offset_ms: float,
+    score_song,
+    parse_ultrastar,
+    difficulty,
+) -> float:
+    """Score a single GAP offset.  Returns total score or -1 on failure."""
+    gap_ms = base_gap_ms + offset_ms
+    tmp_txt = _write_temp_ultrastar_txt(midi_segments, bpm, gap_ms=gap_ms)
+    try:
+        song = parse_ultrastar(tmp_txt)
+        result = score_song(song, vocal_audio_path, difficulty=difficulty)
+        return result.total
+    except Exception:  # noqa: BLE001 — fail-open
+        return -1.0
+    finally:
+        try:
+            os.unlink(tmp_txt)
+        except OSError:
+            pass
+
+
 def refine_gap_with_uscore(
     midi_segments: list[MidiSegment],
     vocal_audio_path: str,
     bpm: float,
-    search_range_ms: float = 60.0,
-    step_ms: float = 5.0,
+    coarse_range_ms: float = 60.0,
+    coarse_step_ms: float = 10.0,
+    fine_range_ms: float = 10.0,
+    fine_step_ms: float = 1.0,
 ) -> tuple[list[MidiSegment], float]:
     """Find the optimal GAP offset that maximises the game score.
 
-    Writes temporary UltraStar TXT files with different GAP offsets and
-    scores each against the vocal audio.  The offset that produces the
-    highest total score is applied to all segment start/end times.
+    Uses a two-stage search for 1 ms precision without excessive runs:
+
+    1. **Coarse scan**: 10 ms steps over ±60 ms (13 runs)
+    2. **Fine scan**: 1 ms steps over ±10 ms around the coarse winner (21 runs)
+
+    Total: ~34 scoring runs for 1 ms accuracy.
 
     Benchmarks show UltraSinger notes start systematically ~25-35 ms too
     late.  This pass typically recovers +80-120 game points.
@@ -312,8 +343,10 @@ def refine_gap_with_uscore(
         midi_segments: Notes to shift (modified in-place).
         vocal_audio_path: Path to vocal-only audio file.
         bpm: Song BPM for beat/time conversion.
-        search_range_ms: Search ±this many ms around current GAP.
-        step_ms: Step size for the search grid.
+        coarse_range_ms: Coarse search ±this many ms.
+        coarse_step_ms: Coarse step size.
+        fine_range_ms: Fine search ±this many ms around coarse best.
+        fine_step_ms: Fine step size.
 
     Returns:
         Tuple of (midi_segments, best offset in ms).  Offset is negative
@@ -328,28 +361,28 @@ def refine_gap_with_uscore(
     # Current GAP derived from first segment (same as _write_temp_ultrastar_txt)
     base_gap_ms = midi_segments[0].start * 1000.0
 
-    best_score = -1.0
-    best_offset = 0.0
+    def _sweep(center_ms: float, range_ms: float, step_ms: float) -> float:
+        """Sweep offsets and return the best one."""
+        best_score = -1.0
+        best_off = center_ms
+        offsets = np.arange(
+            center_ms - range_ms, center_ms + range_ms + step_ms, step_ms
+        )
+        for off in offsets:
+            total = _score_with_gap_offset(
+                midi_segments, vocal_audio_path, bpm, base_gap_ms,
+                float(off), score_song, parse_ultrastar, Difficulty.HARD,
+            )
+            if total > best_score:
+                best_score = total
+                best_off = float(off)
+        return best_off
 
-    offsets = np.arange(-search_range_ms, search_range_ms + step_ms, step_ms)
-    for offset_ms in offsets:
-        gap_ms = base_gap_ms + offset_ms
-        tmp_txt = _write_temp_ultrastar_txt(midi_segments, bpm, gap_ms=gap_ms)
-        try:
-            song = parse_ultrastar(tmp_txt)
-            result = score_song(song, vocal_audio_path, difficulty=Difficulty.HARD)
-            total = result.total
-        except Exception:  # noqa: BLE001 — fail-open
-            total = -1.0
-        finally:
-            try:
-                os.unlink(tmp_txt)
-            except OSError:
-                pass
+    # Stage 1: coarse scan
+    coarse_best = _sweep(0.0, coarse_range_ms, coarse_step_ms)
 
-        if total > best_score:
-            best_score = total
-            best_offset = float(offset_ms)
+    # Stage 2: fine scan around coarse winner
+    best_offset = _sweep(coarse_best, fine_range_ms, fine_step_ms)
 
     # Apply the offset: shift all segment start/end times.
     # Negative offset = GAP should be smaller = notes start earlier.
