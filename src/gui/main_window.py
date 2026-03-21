@@ -86,6 +86,9 @@ class MainWindow(QMainWindow):
 
         # Queue manager (owns the runner, drives batch execution)
         self._queue_mgr = QueueManager(self)
+        self._queue_mgr.set_media_interceptor(
+            self._browser_tab.media_interceptor
+        )
 
         # Wire sidebar navigation
         self._sidebar.section_changed.connect(self._stack.setCurrentIndex)
@@ -132,7 +135,22 @@ class MainWindow(QMainWindow):
         """Add a video URL to the queue (from browser Convert button)."""
         logger.info("Add to queue from browser: %s", url)
         self._auto_export_cookies()
-        self._queue_mgr.add_item(url, "url", title)
+        item = self._queue_mgr.add_item(url, "url", title)
+
+        # Extract video ID for interceptor lookup
+        from urllib.parse import parse_qs, urlparse
+        params = parse_qs(urlparse(url).query)
+        video_id = params.get("v", [""])[0]
+        if video_id:
+            item.video_id = video_id
+            # Check if we already have an intercepted stream
+            stream = self._browser_tab.media_interceptor.get_stream(video_id)
+            if stream:
+                logger.info(
+                    "Intercepted audio available for %s (expires in %.0fs)",
+                    video_id, stream.seconds_until_expiry,
+                )
+
         self._update_queue_buttons()
 
     def _on_add_from_file(self, path: str):
