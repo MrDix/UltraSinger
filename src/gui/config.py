@@ -43,6 +43,7 @@ _DEFAULTS = {
     "denoise_nf": -80,
     "syllable_split": False,
     "vocal_gap_fill": False,
+    "pitch_change_split": False,
     "keep_numbers": False,
     # LLM
     "llm_correct": False,
@@ -79,7 +80,7 @@ _DEFAULTS = {
     # Cookie
     "cookie_file": str(_CONFIG_DIR / "cookies.txt"),
     # Refinement
-    "refine_from_vocal": False,
+    "refine_from_vocal": True,
     "refine_pitch": True,
     "refine_timing": True,
     "refine_hit_ratio": 0.4,
