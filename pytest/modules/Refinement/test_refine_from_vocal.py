@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from unittest.mock import patch, MagicMock
 
@@ -12,6 +13,7 @@ from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Refinement.refine_from_vocal import (
     _ptakf_tone_to_midi,
+    refine_gap_with_uscore,
     refine_pitch_with_uscore,
     refine_timing,
 )
@@ -351,4 +353,113 @@ class TestRefineTiming:
         assert corrections >= 1
         assert result[0].end < 1.03
 
+
+# ---------------------------------------------------------------------------
+# refine_gap_with_uscore
+# ---------------------------------------------------------------------------
+
+class TestRefineGapWithUscore:
+    """Test GAP optimisation by mocking ultrastar-score."""
+
+    def _mock_score_by_gap(self, optimal_gap_ms: float):
+        """Return a mock score_song that scores highest near optimal_gap_ms.
+
+        Simulates: the closer the GAP to optimal, the higher the score.
+        """
+        class FakeResult:
+            def __init__(self, total):
+                self.total = total
+
+        def _score_song(song, audio_path, difficulty=None):
+            # Extract GAP from the parsed song mock — we encode it in the
+            # temp file name via _write_temp_ultrastar_txt.  Instead, use
+            # a side-channel: count calls and map to offset grid.
+            # Simpler: the mock parse_ultrastar stores the path, and we
+            # read the GAP from the file.
+            gap_ms = 0.0
+            if hasattr(song, '_tmp_path') and os.path.exists(song._tmp_path):
+                import re
+                with open(song._tmp_path, 'r') as f:
+                    text = f.read()
+                m = re.search(r'#GAP:(\S+)', text)
+                if m:
+                    gap_ms = float(m.group(1))
+
+            # Score peaks at optimal_gap_ms, falls off linearly
+            distance = abs(gap_ms - optimal_gap_ms)
+            score = max(0, 10000 - distance * 50)
+            return FakeResult(total=score)
+
+        return _score_song
+
+    def _run_gap_refinement(self, segments, optimal_gap_ms, **kwargs):
+        """Helper: run refine_gap_with_uscore with mocked scoring."""
+        mock_score_fn = self._mock_score_by_gap(optimal_gap_ms)
+
+        mock_uscore = MagicMock()
+        mock_uscore.score_song = mock_score_fn
+        mock_uscore.Difficulty.HARD = "hard"
+
+        # parse_ultrastar needs to return an object that preserves the file path
+        def mock_parse(path):
+            obj = MagicMock()
+            obj._tmp_path = path
+            return obj
+
+        mock_parser = MagicMock()
+        mock_parser.parse_ultrastar = mock_parse
+
+        import sys
+        with patch.dict(sys.modules, {
+            "ultrastar_score": mock_uscore,
+            "ultrastar_score.parser": mock_parser,
+        }):
+            return refine_gap_with_uscore(
+                segments,
+                vocal_audio_path="fake_vocal.wav",
+                bpm=120.0,
+                **kwargs,
+            )
+
+    def test_finds_negative_offset(self):
+        """Should find a negative offset when notes start too late."""
+        segments = [
+            MidiSegment(note="C4", start=1.0, end=1.5, word="one"),
+            MidiSegment(note="D4", start=1.5, end=2.0, word="two"),
+        ]
+        # Optimal GAP is 30ms less than current (1000ms - 30ms = 970ms)
+        original_starts = [s.start for s in segments]
+        result, offset = self._run_gap_refinement(segments, optimal_gap_ms=970.0)
+
+        assert offset < 0  # negative = notes shifted earlier
+        assert result[0].start < original_starts[0]
+        assert result[1].start < original_starts[1]
+
+    def test_no_shift_when_already_optimal(self):
+        """No shift when current GAP is already best."""
+        segments = [
+            MidiSegment(note="C4", start=1.0, end=1.5, word="one"),
+        ]
+        # Optimal GAP equals current (1000ms)
+        result, offset = self._run_gap_refinement(segments, optimal_gap_ms=1000.0)
+
+        assert offset == 0.0
+        assert result[0].start == 1.0
+
+    def test_empty_segments(self):
+        """Empty segment list returns immediately."""
+        result, offset = self._run_gap_refinement([], optimal_gap_ms=1000.0)
+        assert result == []
+        assert offset == 0.0
+
+    def test_preserves_duration(self):
+        """GAP shift should preserve note duration."""
+        segments = [
+            MidiSegment(note="C4", start=1.0, end=1.5, word="one"),
+        ]
+        original_duration = segments[0].end - segments[0].start
+        result, offset = self._run_gap_refinement(segments, optimal_gap_ms=970.0)
+
+        new_duration = result[0].end - result[0].start
+        assert new_duration == pytest.approx(original_duration, abs=0.001)
 
