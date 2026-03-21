@@ -43,6 +43,12 @@ windows = []
 linux = []
 macos = []
 scoring = ["ultrastar-score>=0.2.0,<0.3.0"]
+audio-separator = [
+    "audio-separator[cpu]>=0.42",
+]
+audio-separator-gpu = [
+    "audio-separator[gpu]>=0.42",
+]
 gui = [
     "PySide6>=6.8",
     "keyring>=25.0",

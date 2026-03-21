@@ -37,8 +37,13 @@ def print_help() -> None:
                             Not needed when -i is already a YouTube URL.
 
     [separation]
-    # Default is htdemucs
-    --demucs              Model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
+    --separator             Vocal separation backend: demucs|audio_separator >> ((default) is demucs)
+                            'audio_separator' requires: pip install "audio-separator[cpu]" (or [gpu] for CUDA)
+    --separator_model       Model for audio-separator backend. Presets: bs_roformer (best quality, SDR 12.97),
+                            mel_band_roformer, kim_vocal_2 (fast), kuielab_a_vocals, hp_vocal_uvr.
+                            Also accepts any model filename for auto-download (e.g. "model_bs_roformer_ep_317_sdr_12.9755.ckpt").
+                            Setting this automatically selects the audio_separator backend.
+    --demucs                Demucs model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
 
     [transcription]
     # Default is whisper

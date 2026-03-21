@@ -190,18 +190,58 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._no_speech_threshold.setValue(
                          _DEFAULTS["no_speech_threshold"]))
 
+        # Separator backend selector
+        self._separator_backend = _NoScrollComboBox()
+        self._separator_backend.addItems(["demucs", "audio_separator"])
+        self._separator_backend.setCurrentText(
+            self._config.get("separator_backend", "demucs"))
+        card.add_row("Separator Backend", self._separator_backend,
+                     "Which library to use for vocal separation. "
+                     "'demucs' is the built-in default. "
+                     "'audio_separator' uses Roformer/MDX/VR models from the UVR ecosystem "
+                     "with significantly better quality (SDR 12.97 vs 9.2). "
+                     "Requires: pip install \"audio-separator[cpu]\" (or [gpu] for CUDA).",
+                     reset_callback=lambda: self._separator_backend.setCurrentText(
+                         _DEFAULTS["separator_backend"]))
+        self._separator_backend.currentTextChanged.connect(
+            self._on_separator_backend_changed)
+
+        # Demucs model selector
         self._demucs_model = _NoScrollComboBox()
         demucs_models = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "hdemucs_mmi",
                         "mdx", "mdx_extra", "mdx_q", "mdx_extra_q", "SIG"]
         self._demucs_model.addItems(demucs_models)
         self._demucs_model.setCurrentText(self._config.get("demucs_model", "htdemucs"))
-        card.add_row("Vocal Separation Model", self._demucs_model,
-                     "The AI model that isolates vocals from background music. "
+        card.add_row("Demucs Model", self._demucs_model,
+                     "The Demucs model for vocal separation (when backend is 'demucs'). "
                      "'htdemucs' is the default and works well for most songs. "
-                     "'htdemucs_ft' is fine-tuned and may be slightly better. "
-                     "'mdx_extra' can handle complex mixes but is slower.",
+                     "'htdemucs_ft' is fine-tuned and may be slightly better.",
                      reset_callback=lambda: self._demucs_model.setCurrentText(
                          _DEFAULTS["demucs_model"]))
+
+        # Audio-separator model selector
+        self._audio_separator_model = _NoScrollComboBox()
+        as_models = [
+            "bs_roformer",
+            "mel_band_roformer",
+            "kim_vocal_2",
+            "kuielab_a_vocals",
+            "hp_vocal_uvr",
+        ]
+        self._audio_separator_model.addItems(as_models)
+        self._audio_separator_model.setCurrentText(
+            self._config.get("audio_separator_model", "bs_roformer"))
+        card.add_row("Audio-Separator Model", self._audio_separator_model,
+                     "The model for vocal separation (when backend is 'audio_separator'). "
+                     "'bs_roformer' is the best quality (SDR 12.97). "
+                     "'kim_vocal_2' is fast but lower quality. "
+                     "Models are auto-downloaded on first use.",
+                     reset_callback=lambda: self._audio_separator_model.setCurrentText(
+                         _DEFAULTS["audio_separator_model"]))
+
+        # Show/hide model selectors based on backend
+        self._on_separator_backend_changed(
+            self._separator_backend.currentText())
 
         self._main_layout.addWidget(card)
 
@@ -782,6 +822,14 @@ class ConversionSettingsForm(QWidget):
 
         self._main_layout.addWidget(card)
 
+    def _on_separator_backend_changed(self, backend: str):
+        """Show/hide model selectors based on the chosen separator backend."""
+        is_demucs = backend == "demucs"
+        self._demucs_model.setVisible(is_demucs)
+        self._audio_separator_model.setVisible(not is_demucs)
+        # Also toggle the parent row labels by finding the parent layout
+        # (ComboBox visibility is enough — the label stays but the widget hides)
+
     def _browse_file(self, line_edit: QLineEdit, filter_text: str):
         path, _ = QFileDialog.getOpenFileName(self, "Select File", "", filter_text)
         if path:
@@ -827,7 +875,9 @@ class ConversionSettingsForm(QWidget):
             "vad_onset": self._vad_onset.value(),
             "vad_offset": self._vad_offset.value(),
             "no_speech_threshold": self._no_speech_threshold.value(),
+            "separator_backend": self._separator_backend.currentText(),
             "demucs_model": self._demucs_model.currentText(),
+            "audio_separator_model": self._audio_separator_model.currentText(),
             "language_mode": "manual" if self._lang_manual.isChecked() else "auto",
             "language": self._language_combo.currentText(),
             "hyphenation": self._hyphenation.isChecked(),
