@@ -422,6 +422,16 @@ def _write_settings_info_file(
                 f.write(f"  Non-deterministic ops:    none detected\n")
             f.write("\n")
 
+            # Refinement
+            f.write("[Refinement]\n")
+            f.write(f"  Enabled:                  {settings.refine_from_vocal}\n")
+            if settings.refine_from_vocal:
+                f.write(f"  Pitch refinement:         {settings.refine_pitch}\n")
+                f.write(f"  Timing refinement:        {settings.refine_timing}\n")
+                f.write(f"  Hit ratio threshold:      {settings.refine_hit_ratio}\n")
+                f.write(f"  Timing threshold:         {settings.refine_timing_threshold} ms\n")
+            f.write("\n")
+
             # LLM
             f.write("[LLM Lyric Correction]\n")
             f.write(f"  Enabled:                  {settings.llm_correct_lyrics}\n")
