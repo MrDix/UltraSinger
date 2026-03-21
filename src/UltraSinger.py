@@ -29,14 +29,18 @@ from packaging import version
 from modules import os_helper
 from modules.init_interactive_mode import init_settings_interactive
 from modules.Audio.denoise import denoise_vocal_audio
-from modules.Audio.separation import separate_vocal_from_audio
+from modules.Audio.separation import (
+    AudioSeparatorModel,
+    DemucsModel,
+    SeparatorBackend,
+    separate_vocal_from_audio,
+)
 from modules.Audio.vocal_chunks import (
     create_audio_chunks_from_transcribed_data,
     create_audio_chunks_from_ultrastar_data,
 )
 from modules.Audio.key_detector import detect_key_from_audio, get_allowed_notes_for_key
 from modules.Audio.silence_processing import remove_silence_from_transcription_data, mute_no_singing_parts
-from modules.Audio.separation import DemucsModel
 from modules.Audio.convert_audio import convert_audio_to_mono_wav, convert_audio_format
 from modules.Audio.youtube import (
     download_from_youtube,
@@ -160,6 +164,9 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Karaoke txt will not be created')}")
     if not settings.use_separated_vocal:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocals will not be separated')}")
+    elif settings.separator_backend == SeparatorBackend.AUDIO_SEPARATOR:
+        model_name = settings.audio_separator_model.value if hasattr(settings.audio_separator_model, 'value') else settings.audio_separator_model
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Using audio-separator with model {model_name}')}")
     if not settings.hyphenation:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Hyphenation will not be applied')}")
     if settings.quantize_to_key:
@@ -379,7 +386,11 @@ def _write_settings_info_file(
             f.write(f"  Whisper batch size:       {settings.whisper_batch_size}\n")
             f.write(f"  Whisper compute type:     {settings.whisper_compute_type or 'auto'}\n")
             f.write(f"  Whisper align model:      {settings.whisper_align_model or '(default)'}\n")
-            f.write(f"  Demucs model:             {settings.demucs_model.value if hasattr(settings.demucs_model, 'value') else settings.demucs_model}\n")
+            f.write(f"  Separator backend:        {settings.separator_backend.value}\n")
+            if settings.separator_backend == SeparatorBackend.AUDIO_SEPARATOR:
+                f.write(f"  Separator model:          {settings.audio_separator_model.value if hasattr(settings.audio_separator_model, 'value') else settings.audio_separator_model}\n")
+            else:
+                f.write(f"  Demucs model:             {settings.demucs_model.value if hasattr(settings.demucs_model, 'value') else settings.demucs_model}\n")
             lang_display = settings.language or "auto-detect"
             if not settings.language and detected_language:
                 lang_display = f"auto-detect → {detected_language}"
@@ -966,14 +977,21 @@ def CreateProcessAudio(process_data) -> tuple[str, str]:
     os_helper.create_folder(process_data.process_data_paths.cache_folder_path)
 
     # Separate vocal from audio
+    # Select the model for the configured backend
+    if settings.separator_backend == SeparatorBackend.AUDIO_SEPARATOR:
+        sep_model = settings.audio_separator_model
+    else:
+        sep_model = settings.demucs_model
+
     audio_separation_folder_path = separate_vocal_from_audio(
         process_data.process_data_paths.cache_folder_path,
         process_data.process_data_paths.audio_output_file_path,
         settings.use_separated_vocal,
         settings.create_karaoke,
         settings.pytorch_device,
-        settings.demucs_model,
-        settings.skip_cache_vocal_separation
+        sep_model,
+        settings.skip_cache_vocal_separation,
+        backend=settings.separator_backend,
     )
     process_data.process_data_paths.vocals_audio_file_path = os.path.join(audio_separation_folder_path, "vocals.wav")
     process_data.process_data_paths.instrumental_audio_file_path = os.path.join(audio_separation_folder_path,
@@ -1285,8 +1303,29 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--demucs"):
             try:
                 settings.demucs_model = DemucsModel(arg)
-            except ValueError as ve:
+            except ValueError:
                 print(f"{ULTRASINGER_HEAD} The model {arg} is not a valid demucs model selection. Please use one of the following models: {blue_highlighted(', '.join([m.value for m in DemucsModel]))}")
+                sys.exit(1)
+        elif opt in ("--separator"):
+            try:
+                settings.separator_backend = SeparatorBackend(arg)
+            except ValueError:
+                valid = ", ".join(b.value for b in SeparatorBackend)
+                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} '{arg}' is not a valid separator backend. Use one of: {blue_highlighted(valid)}")
+                sys.exit(1)
+        elif opt in ("--separator_model"):
+            # Try audio-separator models first, then demucs
+            matched = False
+            for m in AudioSeparatorModel:
+                if arg == m.value or arg == m.name.lower():
+                    settings.audio_separator_model = m
+                    settings.separator_backend = SeparatorBackend.AUDIO_SEPARATOR
+                    matched = True
+                    break
+            if not matched:
+                # Accept any filename — audio-separator will auto-download
+                settings.audio_separator_model = arg
+                settings.separator_backend = SeparatorBackend.AUDIO_SEPARATOR
                 sys.exit()
         elif opt in ("--cookiefile"):
             settings.cookiefile = arg
@@ -1373,6 +1412,8 @@ def arg_options():
         "bpm=",
         "octave=",
         "demucs=",
+        "separator=",
+        "separator_model=",
         "whisper=",
         "whisper_align_model=",
         "whisper_batch_size=",

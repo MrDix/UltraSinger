@@ -147,8 +147,15 @@ _Not all options working now!_
     default  Creates all
 
     [separation]
-    # Default is htdemucs
-    --demucs              Model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
+    --separator             Vocal separation backend: demucs|audio_separator >> ((default) is demucs)
+                            'audio_separator' uses Roformer/MDX/VR models with better vocal quality (SDR 12.97 vs 9.2).
+                            Requires: pip install "audio-separator[cpu]" (or [gpu] for CUDA).
+    --separator_model       Model for audio-separator backend. Presets: bs_roformer (best quality),
+                            mel_band_roformer, kim_vocal_2 (fast), kuielab_a_vocals, hp_vocal_uvr.
+                            Also accepts any model filename for auto-download. Setting this automatically
+                            selects the audio_separator backend.
+    --demucs                Demucs model name >> ((default) is htdemucs)
+                            htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q
 
     [transcription]
     # Default is whisper
