@@ -65,9 +65,10 @@ def print_help() -> None:
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
     --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Disabled by default.
 
-    [refinement (experimental)]
-    --refine_from_vocal         Enable reverse-scoring refinement pass. Uses the game's C++ ptAKF pitch
-                                detector (same as Vocaluxe/USDX) to find and fix poorly-scoring notes.
+    [refinement]
+    --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
+                                and uses the game's C++ ptAKF pitch detector to find and fix poorly-scoring notes.
+    --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)

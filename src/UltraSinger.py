@@ -1289,6 +1289,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.youtube_url = arg
         elif opt in ("--refine_from_vocal"):
             settings.refine_from_vocal = True
+        elif opt in ("--disable_refine"):
+            settings.refine_from_vocal = False
         elif opt in ("--disable_refine_pitch"):
             settings.refine_pitch = False
         elif opt in ("--disable_refine_timing"):
@@ -1357,6 +1359,7 @@ def arg_options():
         "llm_retry_max=",
         "youtube_url=",
         "refine_from_vocal",
+        "disable_refine",
         "disable_refine_pitch",
         "disable_refine_timing",
         "refine_hit_ratio=",
