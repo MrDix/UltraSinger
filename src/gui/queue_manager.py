@@ -146,6 +146,7 @@ class QueueManager(QObject):
 
         # Merge global config with per-song overrides
         merged = {**self._global_config, **next_item.settings_overrides}
+        next_item.resolved_config = dict(merged)
 
         # Ensure per-provider API keys are available for build_args
         provider_id = merged.get("llm_provider_id", "")

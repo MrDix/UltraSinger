@@ -459,15 +459,22 @@ def refine_notes(
 
     # Phase 2: Timing refinement (requires onset detection)
     if refine_timing_enabled:
-        from modules.Audio.onset_correction import detect_vocal_onsets
+        try:
+            from modules.Audio.onset_correction import detect_vocal_onsets
 
-        onset_times = detect_vocal_onsets(vocal_audio_path)
-        midi_segments, timing_corrections = refine_timing(
-            midi_segments,
-            onset_times,
-            pitched_data,
-            timing_threshold_ms=timing_threshold_ms,
-        )
+            onset_times = detect_vocal_onsets(vocal_audio_path)
+            midi_segments, timing_corrections = refine_timing(
+                midi_segments,
+                onset_times,
+                pitched_data,
+                timing_threshold_ms=timing_threshold_ms,
+            )
+        except (ImportError, OSError, ValueError, RuntimeError,
+                AttributeError, KeyError, TypeError) as e:
+            print(
+                f"{ULTRASINGER_HEAD} Warning: onset/timing refinement failed: {e}. "
+                f"Skipping timing refinement."
+            )
 
     # Phase 3: GAP optimisation via uscore sweep
     gap_offset_ms = 0.0

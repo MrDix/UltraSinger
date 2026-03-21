@@ -408,6 +408,18 @@ def _write_settings_info_file(
             f.write(f"  PyTorch device:           {settings.pytorch_device}\n")
             f.write(f"  Force CPU:                {settings.force_cpu}\n")
             f.write(f"  Force Whisper CPU:        {settings.force_whisper_cpu}\n")
+            import torch
+            f.write(f"  cuDNN deterministic:      {torch.backends.cudnn.deterministic}\n")
+            f.write(f"  cuDNN benchmark:          {torch.backends.cudnn.benchmark}\n")
+            f.write(f"  Deterministic algorithms: {torch.are_deterministic_algorithms_enabled()}\n")
+            f.write(f"  CUBLAS_WORKSPACE_CONFIG:  {os.environ.get('CUBLAS_WORKSPACE_CONFIG', '(not set)')}\n")
+            from modules.DeviceDetection.device_detection import nondeterministic_warnings
+            if nondeterministic_warnings:
+                f.write(f"  Non-deterministic ops:    {len(nondeterministic_warnings)} detected (would crash in strict mode)\n")
+                for w in nondeterministic_warnings:
+                    f.write(f"    - {w}\n")
+            else:
+                f.write(f"  Non-deterministic ops:    none detected\n")
             f.write("\n")
 
             # LLM
