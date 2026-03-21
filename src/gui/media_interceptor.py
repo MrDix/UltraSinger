@@ -147,12 +147,18 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         # Strip range params to get a full-file download URL
         clean_url = _strip_range_params(url_str)
 
-        # Extract metadata from URL params
+        # Extract metadata from URL params (defensive: non-numeric → 0)
         params = parse_qs(urlparse(url_str).query)
         stream_id = params.get("id", [""])[0]
-        itag = int(params.get("itag", ["0"])[0] or 0)
         mime = params.get("mime", [""])[0]
-        expire = int(params.get("expire", ["0"])[0] or 0)
+        try:
+            itag = int(params.get("itag", ["0"])[0] or 0)
+        except (ValueError, TypeError):
+            itag = 0
+        try:
+            expire = int(params.get("expire", ["0"])[0] or 0)
+        except (ValueError, TypeError):
+            expire = 0
 
         stream = CapturedAudioStream(
             url=clean_url,

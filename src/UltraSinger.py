@@ -783,6 +783,29 @@ def InitProcessData():
             process_data.process_data_paths.audio_output_file_path,
             process_data.media_info,
         ) = infos_from_audio_video_input_file()
+
+        # If a YouTube URL was provided (e.g. from browser interceptor),
+        # fetch metadata (artist, title, thumbnail) via yt-dlp extract_info
+        if settings.youtube_url:
+            try:
+                from modules.Audio.youtube import get_youtube_title
+                artist, title, _video_title = get_youtube_title(
+                    settings.youtube_url, settings.cookiefile
+                )
+                if artist:
+                    process_data.media_info.artist = artist
+                if title:
+                    process_data.media_info.title = title
+                print(
+                    f"{ULTRASINGER_HEAD} YouTube metadata: "
+                    f"{artist} - {title}"
+                )
+            except Exception as e:
+                print(
+                    f"{ULTRASINGER_HEAD} Warning: YouTube metadata lookup "
+                    f"failed: {e}"
+                )
+
     return process_data
 
 
@@ -1243,6 +1266,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.llm_retry_wait = int(arg)
         elif opt in ("--llm_retry_max"):
             settings.llm_retry_max = int(arg)
+        elif opt in ("--youtube_url"):
+            settings.youtube_url = arg
         elif opt in ("--refine_from_vocal"):
             settings.refine_from_vocal = True
         elif opt in ("--disable_refine_pitch"):
@@ -1310,6 +1335,7 @@ def arg_options():
         "llm_no_retry",
         "llm_retry_wait=",
         "llm_retry_max=",
+        "youtube_url=",
         "refine_from_vocal",
         "disable_refine_pitch",
         "disable_refine_timing",

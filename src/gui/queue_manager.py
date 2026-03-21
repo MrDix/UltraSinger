@@ -40,6 +40,7 @@ class QueueManager(QObject):
         self._global_config: dict = {}
         self._media_interceptor: MediaInterceptor | None = None
         self._download_thread: QThread | None = None
+        self._download_worker = None  # MediaDownloadWorker | None
 
         self._runner.line_output.connect(self.line_output.emit)
         self._runner.stage_changed.connect(self.stage_changed.emit)
@@ -125,7 +126,9 @@ class QueueManager(QObject):
         self._run_next()
 
     def cancel_current(self):
-        """Cancel the currently running item."""
+        """Cancel the currently running item (runner or pre-download)."""
+        if self._download_worker is not None:
+            self._download_worker.cancel()
         if self._current_item and self._runner.is_running:
             self._runner.cancel()
 
@@ -189,7 +192,7 @@ class QueueManager(QObject):
                     f"[Queue] Browser audio stream available "
                     f"(expires in {stream.seconds_until_expiry:.0f}s)"
                 )
-                self._start_intercepted_download(next_item, merged, stream.url)
+                self._start_intercepted_download(next_item, merged, stream)
                 return
 
         # Fallback: standard yt-dlp path
@@ -205,7 +208,7 @@ class QueueManager(QObject):
         self._runner.start(args)
 
     def _start_intercepted_download(
-        self, item: QueueItem, merged: dict, audio_url: str
+        self, item: QueueItem, merged: dict, stream,
     ):
         """Pre-download audio via ffmpeg, then run UltraSinger with local file.
 
@@ -214,16 +217,21 @@ class QueueManager(QObject):
         """
         from .media_downloader import start_media_download
 
+        # Choose file extension from stream mime type
+        _MIME_EXT = {"audio/webm": ".webm", "audio/mp4": ".m4a"}
+        ext = _MIME_EXT.get(stream.mime_type, ".webm")
+
         # Create temp file for the downloaded audio
         output_dir = merged.get("output_folder", "")
         if not output_dir:
             output_dir = tempfile.gettempdir()
         audio_path = str(
-            Path(output_dir) / f"_intercepted_{item.video_id}.webm"
+            Path(output_dir) / f"_intercepted_{item.video_id}{ext}"
         )
 
-        thread, worker = start_media_download(audio_url, audio_path, self)
+        thread, worker = start_media_download(stream.url, audio_path, self)
         self._download_thread = thread
+        self._download_worker = worker
 
         worker.progress.connect(self.line_output.emit)
         worker.finished.connect(
@@ -244,16 +252,24 @@ class QueueManager(QObject):
     ):
         """Handle completion of the intercepted audio pre-download."""
         self._download_thread = None
+        self._download_worker = None
+
+        # Bail out if item was cancelled while downloading
+        if item.status == "cancelled":
+            try:
+                Path(audio_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
 
         if success and Path(audio_path).exists():
             self.line_output.emit(
                 "[Queue] Using browser-intercepted audio (yt-dlp bypassed)"
             )
-            # Run UltraSinger with the local audio file instead of the URL.
-            # Still pass the original URL so UltraSinger can fetch metadata
-            # (title, artist) via yt-dlp extract_info(download=False) and
-            # do MusicBrainz lookup.
-            # We override the input to point to the downloaded audio file.
+            # Run UltraSinger with the local audio file as input, but pass
+            # the original YouTube URL so metadata (title, artist, thumbnail)
+            # can still be fetched via yt-dlp extract_info(download=False).
+            merged["youtube_url"] = item.input_source
             args = self._runner.build_args(merged, audio_path)
             self._runner.start(args)
         else:

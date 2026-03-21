@@ -384,6 +384,10 @@ class UltraSingerRunner(QObject):
             if timing_thr != 30.0:
                 args.extend(["--refine_timing_threshold", str(timing_thr)])
 
+        # YouTube metadata URL (when input is pre-downloaded audio)
+        if config.get("youtube_url"):
+            args.extend(["--youtube_url", config["youtube_url"]])
+
         # Paths
         if config.get("musescore_path"):
             args.extend(["--musescore_path", config["musescore_path"]])
