@@ -63,6 +63,12 @@ class Settings:
     whisper_compute_type = None   # change to "int8" if low on GPU mem (may reduce accuracy)
     keep_numbers = False
 
+    # VAD (Voice Activity Detection) — tuned for singing
+    vad_onset: float = 0.35   # Speech activation threshold (WhisperX default: 0.5, lowered for singing)
+    vad_offset: float = 0.20  # Speech deactivation threshold (WhisperX default: 0.363, lowered for singing)
+    # ASR (Automatic Speech Recognition) — tuned for singing
+    no_speech_threshold: float = 0.4  # No-speech probability threshold (WhisperX default: 0.6, lowered for singing)
+
     # Device
     pytorch_device = 'cpu'  # cpu|cuda
     force_cpu = False

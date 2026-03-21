@@ -97,6 +97,9 @@ def transcribe_with_whisper(
     compute_type: str = None,
     language: str = None,
     keep_numbers: bool = False,
+    vad_onset: float = 0.35,
+    vad_offset: float = 0.20,
+    no_speech_threshold: float = 0.4,
 ) -> TranscriptionResult:
     """Transcribe with whisper"""
     # Info: Regardless of the audio sampling rate used in the original audio file, whisper resample the audio signal to 16kHz (via ffmpeg). So the standard input from (44.1 or 48 kHz) should work.
@@ -113,8 +116,30 @@ def transcribe_with_whisper(
 
     try:
         torch.cuda.empty_cache()
+
+        # VAD options tuned for singing (lower thresholds capture more vocal segments)
+        vad_options = {
+            "vad_onset": vad_onset,
+            "vad_offset": vad_offset,
+        }
+        # ASR options tuned for singing (lower no_speech_threshold prevents
+        # Whisper from classifying singing as silence)
+        asr_options = {
+            "no_speech_threshold": no_speech_threshold,
+        }
+
+        print(
+            f"{ULTRASINGER_HEAD} VAD thresholds: onset={vad_onset}, offset={vad_offset}; "
+            f"no_speech_threshold={no_speech_threshold}"
+        )
+
         loaded_whisper_model = whisperx.load_model(
-            model.value, language=language, device=device, compute_type=compute_type
+            model.value,
+            language=language,
+            device=device,
+            compute_type=compute_type,
+            vad_options=vad_options,
+            asr_options=asr_options,
         )
 
         audio = whisperx.load_audio(audio_path)

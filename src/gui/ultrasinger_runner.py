@@ -253,6 +253,17 @@ class UltraSingerRunner(QObject):
         if config.get("whisper_align_model"):
             args.extend(["--whisper_align_model", config["whisper_align_model"]])
 
+        # VAD / ASR thresholds
+        vad_onset = config.get("vad_onset", 0.35)
+        if vad_onset != 0.35:
+            args.extend(["--vad_onset", str(vad_onset)])
+        vad_offset = config.get("vad_offset", 0.20)
+        if vad_offset != 0.20:
+            args.extend(["--vad_offset", str(vad_offset)])
+        no_speech = config.get("no_speech_threshold", 0.4)
+        if no_speech != 0.4:
+            args.extend(["--no_speech_threshold", str(no_speech)])
+
         # Language
         if config.get("language_mode") == "manual" and config.get("language"):
             args.extend(["--language", config["language"]])

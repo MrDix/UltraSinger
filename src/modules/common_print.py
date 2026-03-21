@@ -51,7 +51,13 @@ def print_help() -> None:
     --whisper_batch_size    Reduce if low on GPU mem >> ((default) is 16)
     --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words >> True|False >> ((default) is False)
-    
+    --vad_onset             VAD speech activation threshold (0.0-1.0). Lower values capture more vocal
+                            segments including soft/breathy singing. >> ((default) is 0.35, WhisperX default: 0.5)
+    --vad_offset            VAD speech deactivation threshold (0.0-1.0). Lower values keep segments active
+                            longer during vocal dips. >> ((default) is 0.20, WhisperX default: 0.363)
+    --no_speech_threshold   No-speech probability threshold (0.0-1.0). Lower values prevent Whisper from
+                            classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
+
     [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 340)
     --octave                Shift all notes by N octaves after pitch detection (e.g., --octave 1 for up, --octave -1 for down)

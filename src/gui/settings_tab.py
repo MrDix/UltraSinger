@@ -153,6 +153,43 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._align_model.setText(
                          _DEFAULTS["whisper_align_model"]))
 
+        # VAD / ASR thresholds (tuned for singing)
+        self._vad_onset = _NoScrollDoubleSpinBox()
+        self._vad_onset.setRange(0.01, 1.0)
+        self._vad_onset.setSingleStep(0.05)
+        self._vad_onset.setDecimals(2)
+        self._vad_onset.setValue(self._config.get("vad_onset", 0.35))
+        card.add_row("VAD Onset", self._vad_onset,
+                     "Voice activity detection activation threshold. "
+                     "Lower values capture more vocal segments including "
+                     "soft or breathy singing. Default is 0.35 (WhisperX default: 0.50).",
+                     reset_callback=lambda: self._vad_onset.setValue(
+                         _DEFAULTS["vad_onset"]))
+
+        self._vad_offset = _NoScrollDoubleSpinBox()
+        self._vad_offset.setRange(0.01, 1.0)
+        self._vad_offset.setSingleStep(0.05)
+        self._vad_offset.setDecimals(2)
+        self._vad_offset.setValue(self._config.get("vad_offset", 0.20))
+        card.add_row("VAD Offset", self._vad_offset,
+                     "Voice activity detection deactivation threshold. "
+                     "Lower values keep segments active longer during "
+                     "vocal dips. Default is 0.20 (WhisperX default: 0.363).",
+                     reset_callback=lambda: self._vad_offset.setValue(
+                         _DEFAULTS["vad_offset"]))
+
+        self._no_speech_threshold = _NoScrollDoubleSpinBox()
+        self._no_speech_threshold.setRange(0.01, 1.0)
+        self._no_speech_threshold.setSingleStep(0.05)
+        self._no_speech_threshold.setDecimals(2)
+        self._no_speech_threshold.setValue(self._config.get("no_speech_threshold", 0.4))
+        card.add_row("No-Speech Threshold", self._no_speech_threshold,
+                     "Segments with no-speech probability above this value may be "
+                     "skipped. Lower values prevent Whisper from classifying singing "
+                     "as silence. Default is 0.40 (WhisperX default: 0.60).",
+                     reset_callback=lambda: self._no_speech_threshold.setValue(
+                         _DEFAULTS["no_speech_threshold"]))
+
         self._demucs_model = _NoScrollComboBox()
         demucs_models = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "hdemucs_mmi",
                         "mdx", "mdx_extra", "mdx_q", "mdx_extra_q", "SIG"]
@@ -776,6 +813,9 @@ class ConversionSettingsForm(QWidget):
             "whisper_compute_type": None if self._whisper_compute.currentText() == "auto"
                                      else self._whisper_compute.currentText(),
             "whisper_align_model": self._align_model.text(),
+            "vad_onset": self._vad_onset.value(),
+            "vad_offset": self._vad_offset.value(),
+            "no_speech_threshold": self._no_speech_threshold.value(),
             "demucs_model": self._demucs_model.currentText(),
             "language_mode": "manual" if self._lang_manual.isChecked() else "auto",
             "language": self._language_combo.currentText(),
