@@ -140,18 +140,23 @@ def _normalize_lyrics(plain_lyrics: str) -> list[str]:
     """Normalize reference lyrics into a flat list of lowercase words.
 
     Removes line breaks, extra whitespace, and common punctuation.
+    Keeps hyphens within words to match _normalize_word behavior.
     """
     # Replace line breaks with spaces
     text = plain_lyrics.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    # Remove common punctuation but keep apostrophes in contractions
-    text = re.sub(r"[^\w\s']", " ", text)
-    # Split and normalize
-    words = [w.lower().strip("'") for w in text.split() if w.strip()]
+    # Remove punctuation except apostrophes and hyphens within words
+    text = re.sub(r"[^\w\s'\-]", " ", text)
+    # Split and normalize each word the same way as _normalize_word
+    words = [_normalize_word(w) for w in text.split() if w.strip()]
     return [w for w in words if w]
 
 
 def _normalize_word(word: str) -> str:
-    """Normalize a single word for comparison."""
+    """Normalize a single word for comparison.
+
+    Keeps letters, digits, and apostrophes. Removes hyphens and other
+    punctuation so that e.g. "re-enter" becomes "reenter".
+    """
     word = word.strip().lower()
     word = re.sub(r"[^\w']", "", word)
     word = word.strip("'")

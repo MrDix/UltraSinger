@@ -68,7 +68,7 @@ class TestCorrectTranscription(unittest.TestCase):
 
     def test_none_lyrics(self):
         td = [_td("hello ", 0.0, 0.5)]
-        data, result = correct_transcription_from_lyrics(td, None)
+        data, _ = correct_transcription_from_lyrics(td, None)
         self.assertEqual(data[0].word, "hello ")
 
     def test_exact_match(self):
@@ -97,7 +97,7 @@ class TestCorrectTranscription(unittest.TestCase):
             _td("helo ", 1.5, 2.0),
             _td("wurld ", 2.0, 2.5),
         ]
-        data, result = correct_transcription_from_lyrics(td, "Hello World")
+        data, _ = correct_transcription_from_lyrics(td, "Hello World")
         self.assertEqual(data[0].start, 1.5)
         self.assertEqual(data[0].end, 2.0)
         self.assertEqual(data[1].start, 2.0)
@@ -108,7 +108,7 @@ class TestCorrectTranscription(unittest.TestCase):
             _td("helo ", 0.0, 0.5),
             _td("wurld", 0.5, 1.0),  # no trailing space
         ]
-        data, result = correct_transcription_from_lyrics(td, "Hello World")
+        data, _ = correct_transcription_from_lyrics(td, "Hello World")
         self.assertEqual(data[0].word, "hello ")
         self.assertEqual(data[1].word, "world")  # no trailing space
 

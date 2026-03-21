@@ -80,7 +80,7 @@ def _search_by_fields(artist: str, title: str) -> Optional[LyricsInfo]:
         "artist_name": artist,
         "track_name": title,
     })
-    return _do_search(f"{_BASE_URL}/search?{params}")
+    return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=title)
 
 
 def _search_by_query(query: str) -> Optional[LyricsInfo]:
@@ -89,7 +89,7 @@ def _search_by_query(query: str) -> Optional[LyricsInfo]:
     return _do_search(f"{_BASE_URL}/search?{params}")
 
 
-def _do_search(url: str) -> Optional[LyricsInfo]:
+def _do_search(url: str, artist: str = "", title: str = "") -> Optional[LyricsInfo]:
     """Execute a search request and return the best result with plain lyrics."""
     headers = {
         "User-Agent": f"UltraSinger/{Settings.APP_VERSION}",
@@ -120,7 +120,7 @@ def _do_search(url: str) -> Optional[LyricsInfo]:
     if not isinstance(data, list) or len(data) == 0:
         return None
 
-    # Prefer results that have plain lyrics (non-instrumental)
+    # Prefer results that have plain lyrics (non-instrumental) and match artist/title
     best = None
     for entry in data:
         if not isinstance(entry, dict):
@@ -128,11 +128,29 @@ def _do_search(url: str) -> Optional[LyricsInfo]:
         if entry.get("instrumental", False):
             continue
         plain = entry.get("plainLyrics")
-        if plain and isinstance(plain, str) and plain.strip():
-            best = entry
-            break
+        if not (plain and isinstance(plain, str) and plain.strip()):
+            continue
+        # Validate relevance: at least one of artist/title should loosely match
+        entry_artist = (entry.get("artistName") or "").lower()
+        entry_title = (entry.get("trackName") or "").lower()
+        if artist and artist.lower() not in entry_artist and entry_artist not in artist.lower():
+            if title and title.lower() not in entry_title and entry_title not in title.lower():
+                continue  # Neither artist nor title match — skip
+        best = entry
+        break
 
-    # Fall back to first result if no plain lyrics found
+    # Fall back: accept first non-instrumental entry only if we have no better match
+    if best is None:
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("instrumental", False):
+                continue
+            plain = entry.get("plainLyrics")
+            if plain and isinstance(plain, str) and plain.strip():
+                best = entry
+                break
+
     if best is None:
         best = data[0] if isinstance(data[0], dict) else None
 
