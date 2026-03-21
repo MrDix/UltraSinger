@@ -1196,11 +1196,23 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--keep_numbers"):
             settings.keep_numbers = True
         elif opt in ("--vad_onset"):
-            settings.vad_onset = float(arg)
+            val = float(arg)
+            if not 0.0 <= val <= 1.0:
+                print(f"{ULTRASINGER_HEAD} Error: --vad_onset must be between 0.0 and 1.0, got {val}")
+                sys.exit(1)
+            settings.vad_onset = val
         elif opt in ("--vad_offset"):
-            settings.vad_offset = float(arg)
+            val = float(arg)
+            if not 0.0 <= val <= 1.0:
+                print(f"{ULTRASINGER_HEAD} Error: --vad_offset must be between 0.0 and 1.0, got {val}")
+                sys.exit(1)
+            settings.vad_offset = val
         elif opt in ("--no_speech_threshold"):
-            settings.no_speech_threshold = float(arg)
+            val = float(arg)
+            if not 0.0 <= val <= 1.0:
+                print(f"{ULTRASINGER_HEAD} Error: --no_speech_threshold must be between 0.0 and 1.0, got {val}")
+                sys.exit(1)
+            settings.no_speech_threshold = val
         elif opt in ("--language"):
             settings.language = arg
         elif opt in ("--plot"):
