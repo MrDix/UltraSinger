@@ -143,8 +143,7 @@ class TestMediaInterceptorStreamManagement:
             url="http://x", video_id="stream-id",
             expire_time=int(time.time()) + 3600,
         )
-        interceptor._latest_stream = stream
-        interceptor.assign_video_id("dQw4w9WgXcQ")
+        interceptor.assign_to_video("dQw4w9WgXcQ", stream)
         result = interceptor.get_stream("dQw4w9WgXcQ")
         assert result is not None
         assert result.url == "http://x"
@@ -163,10 +162,8 @@ class TestMediaInterceptorStreamManagement:
         interceptor = MediaInterceptor()
         interceptor._streams["a"] = CapturedAudioStream(url="x", video_id="a")
         interceptor._streams["b"] = CapturedAudioStream(url="y", video_id="b")
-        interceptor._latest_stream = CapturedAudioStream(url="z", video_id="c")
         interceptor.clear()
         assert len(interceptor._streams) == 0
-        assert interceptor._latest_stream is None
 
     def test_get_all_prunes_expired(self):
         interceptor = MediaInterceptor()
@@ -182,15 +179,13 @@ class TestMediaInterceptorStreamManagement:
         assert "fresh" in result
         assert "stale" not in result
 
-    def test_assign_without_latest_is_noop(self):
+    def test_assign_none_stream_is_noop(self):
         interceptor = MediaInterceptor()
-        interceptor.assign_video_id("dQw4w9WgXcQ")
+        interceptor.assign_to_video("dQw4w9WgXcQ", None)
         assert interceptor.get_stream("dQw4w9WgXcQ") is None
 
     def test_assign_empty_video_id_is_noop(self):
         interceptor = MediaInterceptor()
-        interceptor._latest_stream = CapturedAudioStream(
-            url="http://x", video_id="s"
-        )
-        interceptor.assign_video_id("")
+        stream = CapturedAudioStream(url="http://x", video_id="s")
+        interceptor.assign_to_video("", stream)
         assert len(interceptor._streams) == 0

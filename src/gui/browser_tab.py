@@ -286,10 +286,12 @@ class BrowserTab(QWidget):
         params = parse_qs(urlparse(url.toString()).query)
         self._current_video_id = params.get("v", [""])[0]
 
-    def _on_audio_captured(self, _url: str):
+    def _on_audio_captured(self, stream):
         """When a new audio stream is captured, assign it to the current video."""
         if hasattr(self, "_current_video_id") and self._current_video_id:
-            self.media_interceptor.assign_video_id(self._current_video_id)
+            self.media_interceptor.assign_to_video(
+                self._current_video_id, stream
+            )
 
     def _on_url_bar_submit(self):
         """Navigate to a user-pasted URL after validating it."""

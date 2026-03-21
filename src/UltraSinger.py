@@ -777,6 +777,28 @@ def InitProcessData():
         # Audio/Video File
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Full Automatic Mode')}")
         process_data = ProcessData()
+
+        # If a YouTube URL was provided (e.g. from browser interceptor),
+        # fetch metadata BEFORE deriving the local song identity so that
+        # the output folder and basename use the correct artist/title
+        # instead of the temporary intercepted filename.
+        yt_artist, yt_title = None, None
+        if settings.youtube_url:
+            try:
+                from modules.Audio.youtube import get_youtube_title
+                yt_artist, yt_title, _video_title = get_youtube_title(
+                    settings.youtube_url, settings.cookiefile
+                )
+                print(
+                    f"{ULTRASINGER_HEAD} YouTube metadata: "
+                    f"{yt_artist} - {yt_title}"
+                )
+            except Exception as e:
+                print(
+                    f"{ULTRASINGER_HEAD} Warning: YouTube metadata lookup "
+                    f"failed: {e}"
+                )
+
         (
             process_data.basename,
             settings.output_folder_path,
@@ -784,27 +806,12 @@ def InitProcessData():
             process_data.media_info,
         ) = infos_from_audio_video_input_file()
 
-        # If a YouTube URL was provided (e.g. from browser interceptor),
-        # fetch metadata (artist, title, thumbnail) via yt-dlp extract_info
-        if settings.youtube_url:
-            try:
-                from modules.Audio.youtube import get_youtube_title
-                artist, title, _video_title = get_youtube_title(
-                    settings.youtube_url, settings.cookiefile
-                )
-                if artist:
-                    process_data.media_info.artist = artist
-                if title:
-                    process_data.media_info.title = title
-                print(
-                    f"{ULTRASINGER_HEAD} YouTube metadata: "
-                    f"{artist} - {title}"
-                )
-            except Exception as e:
-                print(
-                    f"{ULTRASINGER_HEAD} Warning: YouTube metadata lookup "
-                    f"failed: {e}"
-                )
+        # Override with YouTube metadata if available
+        if yt_artist:
+            process_data.media_info.artist = yt_artist
+            process_data.basename = f"{yt_artist} - {yt_title}" if yt_title else yt_artist
+        if yt_title:
+            process_data.media_info.title = yt_title
 
     return process_data
 

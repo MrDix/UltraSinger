@@ -117,14 +117,12 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
 
     # Signal must be on a QObject, not directly on the interceptor
     # (QWebEngineUrlRequestInterceptor IS a QObject in PySide6)
-    audio_captured = Signal(str)  # clean_url
+    audio_captured = Signal(object)  # CapturedAudioStream
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         # Streams keyed by YouTube video ID (set externally by BrowserTab)
         self._streams: dict[str, CapturedAudioStream] = {}
-        # The latest captured audio URL (before video_id mapping)
-        self._latest_stream: CapturedAudioStream | None = None
 
     def interceptRequest(self, info):
         """Called for every HTTP request made by QWebEngine.
@@ -169,23 +167,26 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
             captured_at=time.time(),
         )
 
-        self._latest_stream = stream
         logger.debug(
             "Captured audio stream (itag=%d, mime=%s, expires in %.0fs)",
             itag, mime, stream.seconds_until_expiry,
         )
-        self.audio_captured.emit(clean_url)
+        # Emit the exact stream object — the receiver assigns it to a
+        # video ID on the GUI thread, avoiding a shared mutable slot.
+        self.audio_captured.emit(stream)
 
-    def assign_video_id(self, video_id: str):
-        """Associate the latest captured stream with a YouTube video ID.
+    def assign_to_video(self, video_id: str, stream: CapturedAudioStream):
+        """Associate a specific captured stream with a YouTube video ID.
 
-        Called by BrowserTab when it knows which video is playing.
+        Called by BrowserTab on the GUI thread when it knows which
+        video is playing.  Receives the exact stream object from the
+        signal, so there is no race with subsequent interceptor calls.
         """
-        if self._latest_stream and video_id:
-            self._streams[video_id] = self._latest_stream
+        if video_id and stream:
+            self._streams[video_id] = stream
             logger.debug(
                 "Assigned stream to video %s (itag=%d)",
-                video_id, self._latest_stream.itag,
+                video_id, stream.itag,
             )
 
     def get_stream(self, video_id: str) -> CapturedAudioStream | None:
@@ -212,4 +213,3 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
     def clear(self):
         """Clear all captured streams."""
         self._streams.clear()
-        self._latest_stream = None

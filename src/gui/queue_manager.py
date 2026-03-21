@@ -221,10 +221,9 @@ class QueueManager(QObject):
         _MIME_EXT = {"audio/webm": ".webm", "audio/mp4": ".m4a"}
         ext = _MIME_EXT.get(stream.mime_type, ".webm")
 
-        # Create temp file for the downloaded audio
-        output_dir = merged.get("output_folder", "")
-        if not output_dir:
-            output_dir = tempfile.gettempdir()
+        # Always download into the configured output folder so UltraSinger
+        # derives the correct output directory from the local file path.
+        output_dir = merged.get("output_folder", "") or tempfile.gettempdir()
         audio_path = str(
             Path(output_dir) / f"_intercepted_{item.video_id}{ext}"
         )
