@@ -33,11 +33,12 @@ class Settings:
     onset_correction = True  # Snap note start times to detected audio onsets
     syllable_split = False  # Preserve syllable-level note splits at pitch changes
     vocal_gap_fill = False  # Fill un-transcribed vocal gaps with placeholder notes
+    pitch_change_split = False  # Split notes at pitch change boundaries (melismas, runs)
     keep_audio_in_video = False  # Keep full audio (vocals+instrumental) embedded in the output video
     write_settings_info = False  # Write ultrasinger_parameter.info with settings + score to output dir
 
     # Refinement (reverse-scoring polish via ultrastar-score C++ ptAKF)
-    refine_from_vocal = False  # Enable reverse-scoring refinement pass
+    refine_from_vocal = True  # Reverse-scoring refinement pass (enabled by default)
     refine_pitch = True  # Correct note pitches from vocal audio (when refine is on)
     refine_timing = True  # Correct note timing from vocal audio (when refine is on)
     refine_hit_ratio: float = 0.4  # Notes below this hit ratio are pitch-corrected (0.0-1.0)
