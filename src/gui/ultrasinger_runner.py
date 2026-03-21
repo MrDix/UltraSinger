@@ -370,6 +370,20 @@ class UltraSingerRunner(QObject):
                 if retry_max != 3:
                     args.extend(["--llm_retry_max", str(retry_max)])
 
+        # Refinement
+        if config.get("refine_from_vocal", False):
+            args.append("--refine_from_vocal")
+            if not config.get("refine_pitch", True):
+                args.append("--disable_refine_pitch")
+            if not config.get("refine_timing", True):
+                args.append("--disable_refine_timing")
+            hit_ratio = config.get("refine_hit_ratio", 0.4)
+            if hit_ratio != 0.4:
+                args.extend(["--refine_hit_ratio", str(hit_ratio)])
+            timing_thr = config.get("refine_timing_threshold", 30.0)
+            if timing_thr != 30.0:
+                args.extend(["--refine_timing_threshold", str(timing_thr)])
+
         # Paths
         if config.get("musescore_path"):
             args.extend(["--musescore_path", config["musescore_path"]])

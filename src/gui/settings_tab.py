@@ -311,6 +311,7 @@ class ConversionSettingsForm(QWidget):
         self._main_layout.addWidget(card)
 
         self._build_experimental_section()
+        self._build_refinement_section()
         self._build_llm_section()
         self._build_scoring_section()
 
@@ -356,6 +357,77 @@ class ConversionSettingsForm(QWidget):
                            "feature counting or number sequences.",
                            reset_callback=lambda: self._keep_numbers.setChecked(
                                _DEFAULTS["keep_numbers"]))
+
+        self._main_layout.addWidget(card)
+
+    # ─── Refinement ────────────────────────────────────────────────────
+
+    def _build_refinement_section(self):
+        card = SettingsCard("Refinement (experimental)")
+
+        card.add_info(
+            "Re-analyses the vocal audio after initial note generation "
+            "to correct pitch values and note timings. This is a second "
+            "pass that fixes deviations the initial detection missed."
+        )
+
+        self._refine_from_vocal = ToggleSwitch(
+            checked=self._config.get("refine_from_vocal", False)
+        )
+        card.add_toggle_row("Enable Refinement", self._refine_from_vocal,
+                           "Run a reverse-scoring refinement pass after note generation.",
+                           reset_callback=lambda: self._refine_from_vocal.setChecked(
+                               _DEFAULTS.get("refine_from_vocal", False)))
+
+        self._refine_pitch = ToggleSwitch(
+            checked=self._config.get("refine_pitch", True)
+        )
+        card.add_toggle_row("Refine Pitch", self._refine_pitch,
+                           "Correct note pitches by comparing against the vocal audio.",
+                           reset_callback=lambda: self._refine_pitch.setChecked(
+                               _DEFAULTS.get("refine_pitch", True)))
+
+        self._refine_timing = ToggleSwitch(
+            checked=self._config.get("refine_timing", True)
+        )
+        card.add_toggle_row("Refine Timing", self._refine_timing,
+                           "Correct note start/end times using detected audio onsets.",
+                           reset_callback=lambda: self._refine_timing.setChecked(
+                               _DEFAULTS.get("refine_timing", True)))
+
+        # Hit ratio threshold
+        self._refine_hit_ratio = _NoScrollDoubleSpinBox()
+        self._refine_hit_ratio.setRange(0.0, 1.0)
+        self._refine_hit_ratio.setSingleStep(0.05)
+        self._refine_hit_ratio.setDecimals(2)
+        self._refine_hit_ratio.setValue(
+            self._config.get("refine_hit_ratio", 0.4))
+        card.add_row("Hit Ratio Threshold", self._refine_hit_ratio,
+                     "Notes scoring below this hit ratio (0.0-1.0) are pitch-corrected by the game engine.",
+                     reset_callback=lambda: self._refine_hit_ratio.setValue(
+                         _DEFAULTS.get("refine_hit_ratio", 0.4)))
+
+        # Timing threshold
+        self._refine_timing_threshold = _NoScrollDoubleSpinBox()
+        self._refine_timing_threshold.setRange(5.0, 200.0)
+        self._refine_timing_threshold.setSingleStep(5.0)
+        self._refine_timing_threshold.setSuffix(" ms")
+        self._refine_timing_threshold.setValue(
+            self._config.get("refine_timing_threshold", 30.0))
+        card.add_row("Timing Threshold", self._refine_timing_threshold,
+                     "Milliseconds deviation before correcting note start/end times.",
+                     reset_callback=lambda: self._refine_timing_threshold.setValue(
+                         _DEFAULTS.get("refine_timing_threshold", 30.0)))
+
+        # Toggle sub-settings with main switch
+        def _toggle_refine(on):
+            self._refine_pitch.setEnabled(on)
+            self._refine_timing.setEnabled(on)
+            self._refine_hit_ratio.setEnabled(on)
+            self._refine_timing_threshold.setEnabled(on)
+
+        self._refine_from_vocal.toggled.connect(_toggle_refine)
+        _toggle_refine(self._refine_from_vocal.isChecked())
 
         self._main_layout.addWidget(card)
 
@@ -728,4 +800,9 @@ class ConversionSettingsForm(QWidget):
             "octave_shift": self._octave_shift.text(),
             "musescore_path": self._musescore_path.text(),
             "ffmpeg_path": self._ffmpeg_path.text(),
+            "refine_from_vocal": self._refine_from_vocal.isChecked(),
+            "refine_pitch": self._refine_pitch.isChecked(),
+            "refine_timing": self._refine_timing.isChecked(),
+            "refine_hit_ratio": self._refine_hit_ratio.value(),
+            "refine_timing_threshold": self._refine_timing_threshold.value(),
         }

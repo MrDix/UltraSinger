@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QStackedWidget,
     QWidget,
 )
@@ -18,7 +19,7 @@ from .models import LLMProvider
 from .preferences_tab import PreferencesTab
 from .queue_manager import QueueManager
 from .queue_tab import QueueTab
-from .settings_dialog import PerSongSettingsDialog
+from .settings_dialog import PerSongSettingsDialog, ReadOnlySettingsDialog
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,7 @@ class MainWindow(QMainWindow):
 
         # Wire queue manager → console tab
         self._queue_mgr.line_output.connect(self._queue_tab.append_log)
+        self._queue_mgr.line_output.connect(self._check_for_bot_detection)
         self._queue_mgr.stage_changed.connect(self._queue_tab.on_stage_changed)
         self._queue_mgr.queue_started.connect(self._on_queue_started)
         self._queue_mgr.queue_finished.connect(self._on_queue_finished)
@@ -165,16 +167,31 @@ class MainWindow(QMainWindow):
         self._update_queue_buttons()
 
     def _on_per_song_settings(self, item_id: str):
-        """Open the per-song settings override dialog."""
+        """Open per-song settings (editable for pending, read-only otherwise)."""
         item = next(
             (it for it in self._queue_mgr.items if it.id == item_id), None
         )
-        if item is None or item.status != "pending":
+        if item is None:
             return
 
-        # Collect current global config from the settings tab
-        global_config = {**self._config, **self._settings_tab.collect_all()}
         providers = self._settings_tab.get_llm_providers()
+
+        # Non-pending items: read-only view of the resolved config
+        if item.status != "pending":
+            resolved = item.resolved_config
+            if not resolved:
+                # Fallback: show global config + overrides
+                resolved = {**self._config, **item.settings_overrides}
+            ReadOnlySettingsDialog(
+                resolved_config=resolved,
+                llm_providers=providers,
+                title=item.title,
+                parent=self,
+            ).exec()
+            return
+
+        # Pending items: editable override dialog
+        global_config = {**self._config, **self._settings_tab.collect_all()}
 
         dialog = PerSongSettingsDialog(
             global_config=global_config,
@@ -225,6 +242,7 @@ class MainWindow(QMainWindow):
 
     def _on_queue_started(self):
         """Handle queue batch start."""
+        self._bot_detection_handled = False
         self._update_queue_buttons()
 
     def _on_queue_finished(self, failed_count: int, cancelled: bool):
@@ -241,6 +259,54 @@ class MainWindow(QMainWindow):
         has_pending = self._queue_mgr.pending_count() > 0
         is_running = self._queue_mgr.is_running
         self._sidebar.update_queue_buttons(has_pending, is_running)
+
+    # ── Bot detection workaround ──────────────────────────────────────
+
+    _bot_detection_handled = False
+
+    def _check_for_bot_detection(self, line: str):
+        """Detect yt-dlp bot-detection errors and trigger cookie reset.
+
+        When YouTube returns a bot challenge, the exported cookies are
+        stale.  We clear them, delete the cookie file, and ask the user
+        to re-login in the embedded browser.
+
+        We match on "not a bot" which is the stable, apostrophe-free
+        tail of the YouTube error message.
+        """
+        if "not a bot" not in line:
+            return
+        if self._bot_detection_handled:
+            return
+        self._bot_detection_handled = True
+
+        logger.warning("Bot detection triggered — clearing cookies")
+
+        # 1. Clear in-memory cookies (also wipes the QWebEngine cookie DB)
+        self._browser_tab.cookie_manager.clear_all()
+
+        # 2. Delete the exported Netscape cookie file
+        cookie_path = self._config.get("cookie_file", "")
+        if cookie_path:
+            try:
+                Path(cookie_path).unlink(missing_ok=True)
+                logger.info("Deleted cookie file: %s", cookie_path)
+            except OSError:
+                logger.warning("Could not delete %s", cookie_path, exc_info=True)
+
+        # 3. Reload the browser so the user sees a logged-out state
+        self._browser_tab._view.reload()
+
+        # 4. Switch to browser tab and inform the user
+        self._sidebar.set_active(self._TAB_VIDEO)
+        QMessageBox.information(
+            self,
+            "UltraSinger",
+            "YouTube hat eine Bot-Erkennung ausgelöst.\n\n"
+            "Deine Cookies wurden gelöscht.\n"
+            "Bitte melde dich im Browser erneut bei YouTube an\n"
+            "und starte die Konvertierung danach neu.",
+        )
 
     def _auto_export_cookies(self):
         """Export browser cookies to file if available."""

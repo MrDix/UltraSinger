@@ -106,6 +106,12 @@ uv sync --extra gui
 uv run python src/gui_main.py
 ```
 
+Or use the platform-specific launcher scripts:
+
+- **Windows:** `run_gui_on_windows.bat`
+- **Linux:** `./run_gui_on_linux.sh`
+- **macOS:** `./run_gui_on_mac.command`
+
 #### Features
 
 - **Video Browser** — Browse video platforms, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads.
@@ -164,6 +170,15 @@ _Not all options working now!_
     --disable_quantization  Disable key quantization. Enabled by default, removes pitch slides and out-of-key notes.
     --syllable_split        Keep syllable-level note splits at pitch changes. Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes. Disabled by default.
+
+    [refinement (experimental)]
+    --refine_from_vocal         Enable reverse-scoring refinement pass. Uses the game's C++ ptAKF pitch
+                                detector (same as Vocaluxe/USDX) to find and fix poorly-scoring notes.
+    --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
+    --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
+    --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
+    --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
+
 
     [llm lyric correction]
     --llm_correct           Enable LLM-based lyric post-correction (disabled by default)
