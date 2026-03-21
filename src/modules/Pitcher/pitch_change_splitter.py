@@ -5,7 +5,6 @@ this module splits the note into sub-notes at the pitch change
 boundaries instead of averaging to a single flat note.
 """
 
-import math
 from typing import Optional
 
 import librosa
@@ -89,7 +88,7 @@ def _detect_pitch_change_points(
 
     # Convert frequencies to MIDI values, filtering by confidence
     midi_values: list[Optional[float]] = []
-    for freq, conf in zip(frequencies, confidences):
+    for freq, conf in zip(frequencies, confidences, strict=True):
         if conf > 0.3 and freq > 0:
             midi_values.append(_freq_to_midi_safe(freq))
         else:
@@ -174,7 +173,7 @@ def _split_single_segment(
 
     # Build sub-segments from the change points
     # Boundaries: [0, cp1, cp2, ..., len(times)]
-    boundaries = [0] + change_points + [len(times)]
+    boundaries = [0, *change_points, len(times)]
 
     sub_segments: list[MidiSegment] = []
     for b_idx in range(len(boundaries) - 1):
