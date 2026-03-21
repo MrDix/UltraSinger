@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from .cookie_manager import CookieManager
+from .media_interceptor import MediaInterceptor
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,10 @@ class BrowserTab(QWidget):
         # Cookie manager
         self.cookie_manager = CookieManager(self._profile, self)
 
+        # Media interceptor — passively captures audio stream URLs
+        self.media_interceptor = MediaInterceptor(self)
+        self._profile.setUrlRequestInterceptor(self.media_interceptor)
+
         # Web page + view
         self._page = UltraSingerWebPage(self._profile, self)
         self._page.convert_requested.connect(self._on_convert_with_title)
@@ -258,8 +263,11 @@ class BrowserTab(QWidget):
         layout.addWidget(toolbar)
         layout.addWidget(self._view, 1)
 
-        # Track URL changes
+        # Track URL changes — also assigns intercepted streams to video IDs
         self._page.urlChanged.connect(self._on_url_changed)
+        self.media_interceptor.audio_captured.connect(
+            self._on_audio_captured
+        )
 
         # Track cookie status
         self.cookie_manager.cookies_changed.connect(self._update_cookie_status)
@@ -273,6 +281,15 @@ class BrowserTab(QWidget):
     def _on_url_changed(self, url: QUrl):
         """Sync URL bar with the browser's current location."""
         self._url_bar.setText(url.toString())
+
+        # Track current video ID for interceptor assignment
+        params = parse_qs(urlparse(url.toString()).query)
+        self._current_video_id = params.get("v", [""])[0]
+
+    def _on_audio_captured(self, _url: str):
+        """When a new audio stream is captured, assign it to the current video."""
+        if hasattr(self, "_current_video_id") and self._current_video_id:
+            self.media_interceptor.assign_video_id(self._current_video_id)
 
     def _on_url_bar_submit(self):
         """Navigate to a user-pasted URL after validating it."""
