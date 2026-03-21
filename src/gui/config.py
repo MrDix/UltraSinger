@@ -29,6 +29,10 @@ _DEFAULTS = {
     "whisper_batch_size": 16,
     "whisper_compute_type": "",
     "whisper_align_model": "",
+    # VAD / ASR (tuned for singing)
+    "vad_onset": 0.35,
+    "vad_offset": 0.20,
+    "no_speech_threshold": 0.4,
     # Language
     "language_mode": "auto",  # "auto" or "manual"
     "language": "en",
