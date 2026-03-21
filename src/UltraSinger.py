@@ -285,6 +285,21 @@ def run() -> tuple[str, Score, Score]:
             preserve_syllables=settings.syllable_split,
         )
 
+    # Reverse-scoring refinement pass
+    if not settings.ignore_audio and settings.refine_from_vocal:
+        from modules.Refinement.refine_from_vocal import refine_notes
+
+        process_data.midi_segments = refine_notes(
+            midi_segments=process_data.midi_segments,
+            pitched_data=process_data.pitched_data,
+            vocal_audio_path=process_data.process_data_paths.whisper_audio_path,
+            bpm=process_data.media_info.bpm,
+            refine_pitch_enabled=settings.refine_pitch,
+            refine_timing_enabled=settings.refine_timing,
+            timing_threshold_ms=settings.refine_timing_threshold,
+            hit_ratio_threshold=settings.refine_hit_ratio,
+        )
+
     # Create plot
     if settings.create_plot:
         create_plots(process_data, settings.output_folder_path)
@@ -393,6 +408,18 @@ def _write_settings_info_file(
             f.write(f"  PyTorch device:           {settings.pytorch_device}\n")
             f.write(f"  Force CPU:                {settings.force_cpu}\n")
             f.write(f"  Force Whisper CPU:        {settings.force_whisper_cpu}\n")
+            import torch
+            f.write(f"  cuDNN deterministic:      {torch.backends.cudnn.deterministic}\n")
+            f.write(f"  cuDNN benchmark:          {torch.backends.cudnn.benchmark}\n")
+            f.write(f"  Deterministic algorithms: {torch.are_deterministic_algorithms_enabled()}\n")
+            f.write(f"  CUBLAS_WORKSPACE_CONFIG:  {os.environ.get('CUBLAS_WORKSPACE_CONFIG', '(not set)')}\n")
+            from modules.DeviceDetection.device_detection import nondeterministic_warnings
+            if nondeterministic_warnings:
+                f.write(f"  Non-deterministic ops:    {len(nondeterministic_warnings)} detected (would crash in strict mode)\n")
+                for w in nondeterministic_warnings:
+                    f.write(f"    - {w}\n")
+            else:
+                f.write(f"  Non-deterministic ops:    none detected\n")
             f.write("\n")
 
             # LLM
@@ -1206,6 +1233,16 @@ def init_settings(argv: list[str]) -> Settings:
             settings.llm_retry_wait = int(arg)
         elif opt in ("--llm_retry_max"):
             settings.llm_retry_max = int(arg)
+        elif opt in ("--refine_from_vocal"):
+            settings.refine_from_vocal = True
+        elif opt in ("--disable_refine_pitch"):
+            settings.refine_pitch = False
+        elif opt in ("--disable_refine_timing"):
+            settings.refine_timing = False
+        elif opt in ("--refine_hit_ratio"):
+            settings.refine_hit_ratio = float(arg)
+        elif opt in ("--refine_timing_threshold"):
+            settings.refine_timing_threshold = float(arg)
     if settings.output_folder_path == "":
         if settings.input_file_path.startswith("https:"):
             dirname = os.getcwd()
@@ -1263,6 +1300,11 @@ def arg_options():
         "llm_no_retry",
         "llm_retry_wait=",
         "llm_retry_max=",
+        "refine_from_vocal",
+        "disable_refine_pitch",
+        "disable_refine_timing",
+        "refine_hit_ratio=",
+        "refine_timing_threshold=",
     ]
     return long, short
 

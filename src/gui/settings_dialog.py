@@ -106,3 +106,49 @@ class PerSongSettingsDialog(QDialog):
         """Mark all overrides as cleared and accept."""
         self._cleared = True
         self.accept()
+
+
+class ReadOnlySettingsDialog(QDialog):
+    """Read-only dialog showing the resolved settings used for a conversion.
+
+    Reuses the same ConversionSettingsForm but disables all inputs.
+    """
+
+    def __init__(
+        self,
+        resolved_config: dict,
+        llm_providers: list[LLMProvider],
+        title: str = "",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(
+            f"Settings (read-only): {title}" if title else "Settings (read-only)"
+        )
+        self.setMinimumSize(700, 600)
+        self.resize(800, 700)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        form = ConversionSettingsForm(resolved_config)
+        form.set_llm_providers(
+            llm_providers,
+            selected_id=resolved_config.get("llm_provider_id", ""),
+        )
+        form.setEnabled(False)
+
+        scroll.setWidget(form)
+        layout.addWidget(scroll, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        close_btn = buttons.button(QDialogButtonBox.StandardButton.Close)
+        if close_btn:
+            close_btn.setObjectName("ghostButton")
+        layout.addWidget(buttons)

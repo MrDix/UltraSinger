@@ -51,5 +51,6 @@ class QueueItem:
     title: str  # display title (from browser or filename)
     status: str = "pending"  # pending | running | done | failed | cancelled
     settings_overrides: dict = field(default_factory=dict)
+    resolved_config: dict = field(default_factory=dict)  # filled at run time
     exit_code: int | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])

@@ -1,4 +1,4 @@
-"""Sidebar navigation widget with file drop zone and conversion queue."""
+"""Sidebar navigation widget with conversion queue and file drop support."""
 
 import importlib.metadata
 from pathlib import Path
@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .file_drop_zone import FileDropZone
 from .queue_list import QueueListWidget
 
 
@@ -76,20 +75,10 @@ class Sidebar(QWidget):
         outer.addLayout(self._content_layout, 1)
         layout = self._content_layout
 
-        # ── Drag Files Zone ───────────────────────────────────────────
-        drop_frame = _SidebarSection("Drop Files")
-        self._drop_zone = FileDropZone()
-        self._drop_zone.setMinimumHeight(70)
-        self._drop_zone.setMaximumHeight(90)
-        drop_frame.add_widget(self._drop_zone)
-        layout.addWidget(drop_frame)
-
-        # Wire drop zone → emit file_dropped signal
-        self._drop_zone.file_selected.connect(self._on_file_dropped)
-
-        # ── Convert Queue (fills available space) ─────────────────────
+        # ── Convert Queue (fills available space, accepts file drops) ──
         queue_frame = _SidebarSection("Convert Queue")
         self._queue_list = QueueListWidget()
+        self._queue_list.file_dropped.connect(self._on_file_dropped)
         queue_frame.add_widget(self._queue_list, stretch=1)
         layout.addWidget(queue_frame, 1)  # stretch=1 → takes all space
 
@@ -122,11 +111,6 @@ class Sidebar(QWidget):
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
         self._buttons: list[SidebarButton] = []
-
-    @property
-    def drop_zone(self) -> FileDropZone:
-        """Access the sidebar's file drop zone."""
-        return self._drop_zone
 
     @property
     def queue_list(self) -> QueueListWidget:
@@ -180,10 +164,8 @@ class Sidebar(QWidget):
             self._start_btn.setText("\u25B6  Start All")
 
     def _on_file_dropped(self, path: str):
-        """Forward file selection to parent via signal."""
+        """Forward file selection from queue list to parent."""
         self.file_dropped.emit(path)
-        # Reset drop zone visual (file is now in the queue)
-        self._drop_zone.set_file("")
 
 
 class _SidebarSection(QFrame):

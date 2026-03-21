@@ -1,9 +1,12 @@
-"""Compact queue list widget for the sidebar."""
+"""Compact queue list widget for the sidebar with drag-and-drop support."""
+
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -15,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..models import QueueItem
+from .file_drop_zone import ALL_EXTENSIONS
 
 # Simple colored dot for status (no confusing emoji)
 _STATUS_COLORS = {
@@ -101,9 +105,16 @@ class QueueItemWidget(QWidget):
             f"font-size: 8px; color: {color}; background: transparent;"
         )
 
-        # Only show gear/remove buttons for pending items
-        self._gear_btn.setVisible(status == "pending")
+        # Remove button only for pending items; gear always visible
         self._remove_btn.setVisible(status == "pending")
+
+        # Gear: editable icon for pending, read-only info icon for others
+        if status == "pending":
+            self._gear_btn.setText("\u2699")
+            self._gear_btn.setToolTip("Per-song settings (click to override defaults)")
+        else:
+            self._gear_btn.setText("\u2139")  # ℹ info icon
+            self._gear_btn.setToolTip("View settings used for this conversion")
 
         # Dim completed/cancelled items
         if status in ("done", "failed", "cancelled"):
@@ -170,13 +181,15 @@ class _ElidingLabel(QLabel):
 
 
 class QueueListWidget(QWidget):
-    """Scrollable list of queue items for the sidebar."""
+    """Scrollable list of queue items with drag-and-drop file support."""
 
     remove_requested = Signal(str)  # item_id
     settings_requested = Signal(str)  # item_id
+    file_dropped = Signal(str)  # file path
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAcceptDrops(True)
         self._item_widgets: dict[str, QueueItemWidget] = {}
 
         layout = QVBoxLayout(self)
@@ -184,15 +197,17 @@ class QueueListWidget(QWidget):
         layout.setSpacing(0)
 
         # Scroll area for items — no max height, fills available space
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        scroll.setVerticalScrollBarPolicy(
+        self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self._scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+        )
 
         self._container = QWidget()
         self._items_layout = QVBoxLayout(self._container)
@@ -200,17 +215,21 @@ class QueueListWidget(QWidget):
         self._items_layout.setSpacing(1)
         self._items_layout.addStretch(1)
 
-        scroll.setWidget(self._container)
-        layout.addWidget(scroll, 1)  # stretch=1 → fills parent
+        self._scroll.setWidget(self._container)
+        layout.addWidget(self._scroll, 1)  # stretch=1 → fills parent
 
-        # Empty state label
-        self._empty_label = QLabel("Queue is empty")
-        self._empty_label.setObjectName("caption")
-        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet(
-            "color: #605848; font-size: 11px; padding: 8px;"
+        # Drop hint (always visible at the bottom)
+        self._drop_hint = QLabel(
+            "Drop audio, video or .txt files here"
         )
-        layout.addWidget(self._empty_label)
+        self._drop_hint.setObjectName("caption")
+        self._drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._drop_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._drop_hint.setStyleSheet(
+            "color: #605848; font-size: 10px; padding: 4px 0px;"
+        )
+        self._drop_hint.mousePressEvent = self._on_hint_clicked
+        layout.addWidget(self._drop_hint)
 
         self._update_empty_state()
 
@@ -246,7 +265,62 @@ class QueueListWidget(QWidget):
         if widget:
             widget.set_has_overrides(has_overrides)
 
+    # ── Drag-and-drop support ──────────────────────────────────────
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    ext = Path(url.toLocalFile()).suffix.lower()
+                    if ext in ALL_EXTENSIONS:
+                        event.acceptProposedAction()
+                        self._drop_hint.setStyleSheet(
+                            "color: #ffa726; font-size: 10px; "
+                            "padding: 4px 0px; font-weight: bold;"
+                        )
+                        return
+        event.ignore()
+
+    def dragLeaveEvent(self, _event):
+        self._drop_hint.setStyleSheet(
+            "color: #605848; font-size: 10px; padding: 4px 0px;"
+        )
+
+    def dropEvent(self, event):
+        self._drop_hint.setStyleSheet(
+            "color: #605848; font-size: 10px; padding: 4px 0px;"
+        )
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    path = url.toLocalFile()
+                    ext = Path(path).suffix.lower()
+                    if ext in ALL_EXTENSIONS:
+                        self.file_dropped.emit(path)
+            event.acceptProposedAction()
+
+    def _on_hint_clicked(self, _event):
+        """Open a file dialog when the drop hint is clicked."""
+        ext_list = " ".join(f"*{e}" for e in sorted(ALL_EXTENSIONS))
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Audio, Video, or UltraStar TXT File",
+            "",
+            f"Media & TXT Files ({ext_list});;All Files (*)",
+        )
+        if path:
+            self.file_dropped.emit(path)
+
+    # ── Internal ─────────────────────────────────────────────────
+
     def _update_empty_state(self):
-        """Show/hide empty state label."""
+        """Update the drop hint text based on queue state."""
         has_items = len(self._item_widgets) > 0
-        self._empty_label.setVisible(not has_items)
+        if has_items:
+            self._drop_hint.setText(
+                "Drop files to add more"
+            )
+        else:
+            self._drop_hint.setText(
+                "Drop audio, video or .txt files here"
+            )
