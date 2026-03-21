@@ -63,6 +63,7 @@ def print_help() -> None:
     --disable_vocal_center  Disable vocal-centre octave correction. Enabled by default.
     --syllable_split        Preserve syllable-level note splits at pitch changes (experimental). Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
+    --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Disabled by default.
 
     [refinement (experimental)]
     --refine_from_vocal         Enable reverse-scoring refinement pass. Uses the game's C++ ptAKF pitch

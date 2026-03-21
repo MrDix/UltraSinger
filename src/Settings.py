@@ -33,6 +33,7 @@ class Settings:
     onset_correction = True  # Snap note start times to detected audio onsets
     syllable_split = False  # Preserve syllable-level note splits at pitch changes
     vocal_gap_fill = False  # Fill un-transcribed vocal gaps with placeholder notes
+    pitch_change_split = False  # Split notes at pitch change boundaries (melismas, runs)
     keep_audio_in_video = False  # Keep full audio (vocals+instrumental) embedded in the output video
     write_settings_info = False  # Write ultrasinger_parameter.info with settings + score to output dir
 

@@ -43,6 +43,7 @@ _DEFAULTS = {
     "denoise_nf": -80,
     "syllable_split": False,
     "vocal_gap_fill": False,
+    "pitch_change_split": False,
     "keep_numbers": False,
     # LLM
     "llm_correct": False,

@@ -338,6 +338,16 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._syllable_split.setChecked(
                                _DEFAULTS["syllable_split"]))
 
+        self._pitch_change_split = ToggleSwitch(
+            checked=self._config.get("pitch_change_split", False)
+        )
+        card.add_toggle_row("Pitch-Change Split", self._pitch_change_split,
+                           "Split notes at pitch change boundaries within a syllable "
+                           "(melismas, runs, ornaments). Each pitch gets its own note "
+                           "instead of averaging to a single flat note.",
+                           reset_callback=lambda: self._pitch_change_split.setChecked(
+                               _DEFAULTS["pitch_change_split"]))
+
         self._vocal_gap_fill = ToggleSwitch(
             checked=self._config.get("vocal_gap_fill", False)
         )
@@ -779,6 +789,7 @@ class ConversionSettingsForm(QWidget):
             "denoise_nf": self._denoise_nf.value(),
             "syllable_split": self._syllable_split.isChecked(),
             "vocal_gap_fill": self._vocal_gap_fill.isChecked(),
+            "pitch_change_split": self._pitch_change_split.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "llm_correct": self._llm_correct.isChecked(),
             "llm_provider_id": self.get_selected_provider_id(),

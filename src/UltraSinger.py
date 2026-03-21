@@ -67,6 +67,7 @@ from modules.Pitcher.pitcher import (
     get_pitch_with_file,
 )
 from modules.Pitcher.pitched_data import PitchedData
+from modules.Pitcher.pitch_change_splitter import split_notes_at_pitch_changes
 from modules.Speech_Recognition.TranscriptionResult import TranscriptionResult
 from modules.Speech_Recognition.hyphenation import (
     hyphenate_each_word,
@@ -173,6 +174,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Syllable-level note splitting enabled')}")
     if settings.vocal_gap_fill:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocal gap fill enabled')}")
+    if settings.pitch_change_split:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-change split enabled')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -260,6 +263,12 @@ def run() -> tuple[str, Score, Score]:
     else:
         process_data.midi_segments = create_repitched_midi_segments_from_ultrastar_txt(process_data.pitched_data,
                                                                                        process_data.parsed_file)
+
+    # Split notes at pitch change boundaries (melismas, runs)
+    if not settings.ignore_audio and settings.pitch_change_split:
+        process_data.midi_segments = split_notes_at_pitch_changes(
+            process_data.midi_segments, process_data.pitched_data
+        )
 
     # Correct global octave shift (e.g. sub-harmonic detection)
     process_data.midi_segments = correct_global_octave(process_data.midi_segments)
@@ -382,6 +391,7 @@ def _write_settings_info_file(
             f.write(f"  Onset correction:         {settings.onset_correction}\n")
             f.write(f"  Syllable split:           {settings.syllable_split}\n")
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
+            f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -1239,6 +1249,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.syllable_split = True
         elif opt in ("--vocal_gap_fill"):
             settings.vocal_gap_fill = True
+        elif opt in ("--pitch_change_split"):
+            settings.pitch_change_split = True
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
@@ -1327,6 +1339,7 @@ def arg_options():
         "disable_onset_correction",
         "syllable_split",
         "vocal_gap_fill",
+        "pitch_change_split",
         "interactive",
         "cookiefile=",
         "ffmpeg=",
