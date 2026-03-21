@@ -181,6 +181,8 @@ _Not all options working now!_
     --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Detects
                             sustained pitch changes (melismas, runs) and creates separate notes for each pitch
                             region. Disabled by default.
+    --disable_lyrics_lookup Disable LRCLIB lyrics lookup. Enabled by default, fetches verified reference
+                            lyrics to correct Whisper transcription errors. No API key needed.
 
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default

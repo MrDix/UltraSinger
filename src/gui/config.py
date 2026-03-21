@@ -49,6 +49,8 @@ _DEFAULTS = {
     "vocal_gap_fill": False,
     "pitch_change_split": False,
     "keep_numbers": False,
+    # Lyrics Lookup
+    "disable_lyrics_lookup": False,
     # LLM
     "llm_correct": False,
     "llm_providers": [],  # list of LLMProvider dicts
