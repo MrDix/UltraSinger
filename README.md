@@ -155,10 +155,18 @@ _Not all options working now!_
     --whisper               Multilingual model > tiny|base|small|medium|large-v1|large-v2|large-v3  >> ((default) is large-v2)
                             English-only model > tiny.en|base.en|small.en|medium.en
     --whisper_align_model   Use other languages model for Whisper provided from huggingface.co
-    --language              Override the language detected by whisper, does not affect transcription but steps after transcription
+    --language              Override the language detected by whisper for alignment and hyphenation.
+                            Default: auto-detect. WARNING: setting this for non-matching songs
+                            will degrade alignment quality (e.g. --language en for German songs).
     --whisper_batch_size    Reduce if low on GPU mem >> ((default) is 16)
     --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words
+    --vad_onset             VAD speech activation threshold (0.0-1.0). Lower values capture more vocal
+                            segments including soft/breathy singing. >> ((default) is 0.35, WhisperX default: 0.5)
+    --vad_offset            VAD speech deactivation threshold (0.0-1.0). Lower values keep segments active
+                            longer during vocal dips. >> ((default) is 0.20, WhisperX default: 0.363)
+    --no_speech_threshold   No-speech probability threshold (0.0-1.0). Lower values prevent Whisper from
+                            classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
 
     [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 120)
@@ -168,12 +176,16 @@ _Not all options working now!_
     --disable_onset_correction  Disable onset-based timing correction. Enabled by default.
     --disable_vocal_center  Disable vocal-centre octave correction. Enabled by default.
     --disable_quantization  Disable key quantization. Enabled by default, removes pitch slides and out-of-key notes.
-    --syllable_split        Keep syllable-level note splits at pitch changes. Disabled by default.
-    --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes. Disabled by default.
+    --syllable_split        Keep syllable-level note splits at pitch changes (experimental). Disabled by default.
+    --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
+    --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Detects
+                            sustained pitch changes (melismas, runs) and creates separate notes for each pitch
+                            region. Disabled by default.
 
-    [refinement (experimental)]
-    --refine_from_vocal         Enable reverse-scoring refinement pass. Uses the game's C++ ptAKF pitch
-                                detector (same as Vocaluxe/USDX) to find and fix poorly-scoring notes.
+    [refinement]
+    --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
+                                and uses the game's C++ ptAKF pitch detector to find and fix poorly-scoring notes.
+    --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
@@ -204,11 +216,19 @@ _Not all options working now!_
     --disable_denoise_track_noise  Disable adaptive noise floor tracking >> ((default) tracking is enabled)
 
     [yt-dlp / metadata]
-    --cookiefile            File name where cookies should be read from
+    --cookiefile            File name where cookies should be read from and dumped to.
     --youtube_url           YouTube URL for metadata lookup when -i is a local file.
-                            Use case: audio was pre-downloaded (e.g. via the GUI's embedded
-                            browser), so -i points to a local file, but the YouTube URL is
-                            still needed for artist/title/thumbnail metadata.
+                            When -i is a YouTube URL, UltraSinger extracts artist/title
+                            directly from YouTube. When -i is a local file, UltraSinger
+                            parses the filename ("Artist - Title.ext") and searches
+                            MusicBrainz for metadata and cover art. This works well when
+                            the filename is descriptive but fails for generic names like
+                            "video.avi".
+                            --youtube_url provides a fallback: the audio is loaded from the
+                            local file (-i), but artist/title/thumbnail are fetched from
+                            the YouTube URL instead of relying on the filename.
+                            The GUI uses this automatically when downloading via the
+                            embedded browser (pre-downloaded audio + YouTube metadata).
                             Not needed when -i is already a YouTube URL.
 
     [device]
