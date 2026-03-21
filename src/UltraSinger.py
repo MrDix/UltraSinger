@@ -380,6 +380,9 @@ def _write_settings_info_file(
                 lang_display = f"auto-detect → {detected_language}"
             f.write(f"  Language:                 {lang_display}\n")
             f.write(f"  Keep numbers:             {settings.keep_numbers}\n")
+            f.write(f"  VAD onset:                {settings.vad_onset}\n")
+            f.write(f"  VAD offset:               {settings.vad_offset}\n")
+            f.write(f"  No-speech threshold:      {settings.no_speech_threshold}\n")
             f.write("\n")
 
             # Post-processing
@@ -989,7 +992,7 @@ def transcribe_audio(cache_folder_path: str, audio_path: str) -> TranscriptionRe
         if settings.whisper_align_model is not None:
             whisper_align_model_string = settings.whisper_align_model.replace("/", "_")
         whisper_device = "cpu" if settings.force_whisper_cpu else settings.pytorch_device
-        transcription_config = f"{settings.transcriber}_{settings.whisper_model.value}_{whisper_device}_{whisper_align_model_string}_{settings.whisper_batch_size}_{settings.whisper_compute_type}_{settings.language}_unmuted"
+        transcription_config = f"{settings.transcriber}_{settings.whisper_model.value}_{whisper_device}_{whisper_align_model_string}_{settings.whisper_batch_size}_{settings.whisper_compute_type}_{settings.language}_vad{settings.vad_onset}_{settings.vad_offset}_nst{settings.no_speech_threshold}_unmuted"
         transcription_path = os.path.join(cache_folder_path, f"{transcription_config}.json")
         cached_transcription_available = check_file_exists(transcription_path)
         if settings.skip_cache_transcription or not cached_transcription_available:
@@ -1002,6 +1005,9 @@ def transcribe_audio(cache_folder_path: str, audio_path: str) -> TranscriptionRe
                 settings.whisper_compute_type,
                 settings.language,
                 settings.keep_numbers,
+                vad_onset=settings.vad_onset,
+                vad_offset=settings.vad_offset,
+                no_speech_threshold=settings.no_speech_threshold,
             )
             with open(transcription_path, "w", encoding=FILE_ENCODING) as file:
                 file.write(transcription_result.to_json())
@@ -1189,6 +1195,12 @@ def init_settings(argv: list[str]) -> Settings:
             settings.whisper_compute_type = arg
         elif opt in ("--keep_numbers"):
             settings.keep_numbers = True
+        elif opt in ("--vad_onset"):
+            settings.vad_onset = float(arg)
+        elif opt in ("--vad_offset"):
+            settings.vad_offset = float(arg)
+        elif opt in ("--no_speech_threshold"):
+            settings.no_speech_threshold = float(arg)
         elif opt in ("--language"):
             settings.language = arg
         elif opt in ("--plot"):
@@ -1322,6 +1334,9 @@ def arg_options():
         "whisper_align_model=",
         "whisper_batch_size=",
         "whisper_compute_type=",
+        "vad_onset=",
+        "vad_offset=",
+        "no_speech_threshold=",
         "language=",
         "plot",
         "midi",
