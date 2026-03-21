@@ -203,8 +203,13 @@ _Not all options working now!_
     --denoise_nf            Noise floor in dB (-80 to -20) >> ((default) is -80)
     --disable_denoise_track_noise  Disable adaptive noise floor tracking >> ((default) tracking is enabled)
 
-    [yt-dlp]
+    [yt-dlp / metadata]
     --cookiefile            File name where cookies should be read from
+    --youtube_url           YouTube URL for metadata lookup when -i is a local file.
+                            Use case: audio was pre-downloaded (e.g. via the GUI's embedded
+                            browser), so -i points to a local file, but the YouTube URL is
+                            still needed for artist/title/thumbnail metadata.
+                            Not needed when -i is already a YouTube URL.
 
     [device]
     --force_cpu             Force all steps to be processed on CPU.
