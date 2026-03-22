@@ -132,6 +132,7 @@ def align_lyrics_to_audio(
     audio_path: str,
     language: str,
     device: str = "cpu",
+    align_model_name: Optional[str] = None,
 ) -> list[dict]:
     """Align LRC line segments to audio using wav2vec2 forced alignment.
 
@@ -143,6 +144,9 @@ def align_lyrics_to_audio(
         audio_path: Path to the vocals audio file.
         language: ISO language code (e.g. ``"en"``, ``"de"``).
         device: ``"cpu"`` or ``"cuda"``.
+        align_model_name: Optional custom alignment model (e.g. from
+            ``--whisper_align_model``).  Passed to
+            ``whisperx.load_align_model(model_name=...)``.
 
     Returns:
         List of ``{"word": str, "start": float, "end": float}`` dicts,
@@ -153,7 +157,7 @@ def align_lyrics_to_audio(
 
     print(f"{ULTRASINGER_HEAD} Loading alignment model for reference lyrics")
     align_model, align_metadata = whisperx.load_align_model(
-        language_code=language, device=device,
+        language_code=language, device=device, model_name=align_model_name,
     )
 
     audio = whisperx.load_audio(audio_path)
@@ -366,6 +370,7 @@ def create_midi_segments_from_reference_lyrics(
     melisma_split: bool = True,
     threshold_st: float = 2.0,
     min_note_ms: float = 80.0,
+    align_model_name: Optional[str] = None,
 ) -> list[MidiSegment]:
     """Create MidiSegments from LRCLIB synced lyrics + forced alignment + pitch.
 
@@ -381,6 +386,7 @@ def create_midi_segments_from_reference_lyrics(
         melisma_split: Whether to split notes at pitch changes within words.
         threshold_st: Semitone threshold for melisma detection.
         min_note_ms: Minimum note duration for melisma splits.
+        align_model_name: Optional custom alignment model name.
 
     Returns:
         List of MidiSegments with lyrics and pitch.
@@ -393,7 +399,9 @@ def create_midi_segments_from_reference_lyrics(
         return []
 
     # Step 2: Forced alignment → word-level timing
-    words = align_lyrics_to_audio(segments, audio_path, language, device)
+    words = align_lyrics_to_audio(
+        segments, audio_path, language, device, align_model_name,
+    )
     if not words:
         print(f"{ULTRASINGER_HEAD} Forced alignment returned no words — "
               f"falling back to standard pipeline")

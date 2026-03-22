@@ -300,6 +300,7 @@ def run() -> tuple[str, Score, Score]:
                     device=settings.pytorch_device,
                     allowed_notes=allowed_notes_for_key,
                     melisma_split=settings.pitch_change_split,
+                    align_model_name=settings.whisper_align_model,
                 )
                 if ref_segments:
                     process_data.midi_segments = ref_segments
