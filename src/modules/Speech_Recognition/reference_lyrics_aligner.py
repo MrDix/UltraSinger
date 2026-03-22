@@ -377,10 +377,18 @@ def create_midi_segments_from_reference_lyrics(
     words_with_pitch = 0
     melisma_splits = 0
 
-    for w in words:
+    for i, w in enumerate(words):
+        # Append trailing space to mark word boundaries — the UltraStar
+        # writer uses this to detect where linebreaks may be inserted.
+        # Melisma continuation notes (~ prefix) must NOT get a space.
+        word_text = w["word"]
+        is_last = (i == len(words) - 1)
+        if not word_text.startswith("~") and not is_last:
+            word_text = word_text + " "
+
         if melisma_split:
             segs = _split_word_at_pitch_changes(
-                w["word"], w["start"], w["end"],
+                word_text, w["start"], w["end"],
                 pitched_data, allowed_notes,
                 threshold_st, min_note_ms,
             )
@@ -391,7 +399,7 @@ def create_midi_segments_from_reference_lyrics(
             note = _compute_note_for_word(
                 w["start"], w["end"], pitched_data, allowed_notes,
             )
-            midi_segments.append(MidiSegment(note, w["start"], w["end"], w["word"]))
+            midi_segments.append(MidiSegment(note, w["start"], w["end"], word_text))
 
         words_with_pitch += 1
 
