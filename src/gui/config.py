@@ -51,6 +51,7 @@ _DEFAULTS = {
     "keep_numbers": False,
     # Lyrics Lookup
     "disable_lyrics_lookup": False,
+    "disable_reference_lyrics": False,
     # LLM
     "llm_correct": False,
     "llm_providers": [],  # list of LLMProvider dicts

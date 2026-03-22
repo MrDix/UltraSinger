@@ -40,6 +40,34 @@ re_split_preserve_space = re.compile(r'(\d+|\W+|\w+)')
 
 MEMORY_ERROR_MESSAGE = f"{ULTRASINGER_HEAD} {blue_highlighted('whisper')} ran out of GPU memory; reduce --whisper_batch_size or force usage of cpu with --force_cpu"
 
+
+def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
+    """Detect language from audio using Whisper tiny model.
+
+    Much faster than full transcription (~2-3s vs ~2min) because it only
+    loads the tiny model and processes the first 30s of audio.
+
+    Args:
+        audio_path: Path to the audio file.
+        device: ``"cpu"`` or ``"cuda"``.
+
+    Returns:
+        ISO language code (e.g. ``"en"``, ``"de"``).
+    """
+    from faster_whisper import WhisperModel as FasterWhisperModel
+
+    compute_type = "float16" if device == "cuda" else "int8"
+    model = FasterWhisperModel("tiny", device=device, compute_type=compute_type)
+    audio = whisperx.load_audio(audio_path)
+
+    language, probability, _ = model.detect_language(audio)
+    print(
+        f"{ULTRASINGER_HEAD} Language detected: "
+        f"{blue_highlighted(language)} ({probability:.0%} confidence)"
+    )
+    return language
+
+
 class WhisperModel(Enum):
     """Whisper model"""
     TINY = "tiny"
