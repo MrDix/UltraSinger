@@ -309,6 +309,18 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._lyrics_lookup.setChecked(
                                not _DEFAULTS["disable_lyrics_lookup"]))
 
+        # Reference-lyrics-first pipeline
+        self._reference_lyrics = ToggleSwitch(
+            checked=not self._config.get("disable_reference_lyrics", False)
+        )
+        card.add_toggle_row("Reference Lyrics Alignment", self._reference_lyrics,
+                           "When synced (timestamped) lyrics are available from LRCLIB, use them with "
+                           "wav2vec2 forced alignment for precise word-level timing. Dramatically improves "
+                           "lyrics coverage and timing accuracy. Falls back to standard Whisper pipeline "
+                           "when disabled or when no synced lyrics are available.",
+                           reset_callback=lambda: self._reference_lyrics.setChecked(
+                               not _DEFAULTS["disable_reference_lyrics"]))
+
         # Vocal separation
         self._separation = ToggleSwitch(
             checked=not self._config.get("disable_separation", False)
@@ -843,6 +855,7 @@ class ConversionSettingsForm(QWidget):
             "pitch_change_split": self._pitch_change_split.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
+            "disable_reference_lyrics": not self._reference_lyrics.isChecked(),
             "llm_correct": self._llm_correct.isChecked(),
             "llm_provider_id": self.get_selected_provider_id(),
             "llm_retry_on_rate_limit": self._llm_retry.isChecked(),

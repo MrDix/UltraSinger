@@ -72,6 +72,10 @@ def print_help() -> None:
     --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Disabled by default.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
+    --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
+                            (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain precise
+                            word-level timing — dramatically improving lyrics coverage and timing accuracy.
+                            Falls back to standard Whisper pipeline when disabled or when no synced lyrics available.
 
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
