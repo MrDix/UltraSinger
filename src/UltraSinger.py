@@ -440,6 +440,9 @@ def run() -> tuple[str, Score, Score]:
             detected_language=process_data.media_info.language,
             lyrics_lookup_result=lyrics_lookup_result,
             llm_result=llm_result,
+            reference_first_used=reference_first_used,
+            whisper_skipped=whisper_skipped,
+            has_synced_lyrics=process_data.synced_lyrics is not None,
         )
 
     # Cleanup
@@ -459,6 +462,9 @@ def _write_settings_info_file(
         detected_language: str | None = None,
         lyrics_lookup_result=None,
         llm_result: "LLMResult | None" = None,
+        reference_first_used: bool = False,
+        whisper_skipped: bool = False,
+        has_synced_lyrics: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
     from datetime import datetime, timezone
@@ -492,6 +498,34 @@ def _write_settings_info_file(
             f.write(f"  VAD onset:                {settings.vad_onset}\n")
             f.write(f"  VAD offset:               {settings.vad_offset}\n")
             f.write(f"  No-speech threshold:      {settings.no_speech_threshold}\n")
+            f.write("\n")
+
+            # Pipeline
+            f.write("[Pipeline]\n")
+            if reference_first_used:
+                f.write(f"  Pipeline:                 Reference-Lyrics-First\n")
+                f.write(f"  LRCLIB synced lyrics:     found\n")
+                f.write(f"  Whisper transcription:    skipped\n")
+                f.write(f"  Alignment:                wav2vec2 CTC forced alignment\n")
+            elif has_synced_lyrics:
+                f.write(f"  Pipeline:                 Whisper (reference-first failed, fell back)\n")
+                f.write(f"  LRCLIB synced lyrics:     found (but alignment failed)\n")
+                f.write(f"  Whisper transcription:    full\n")
+            elif whisper_skipped:
+                f.write(f"  Pipeline:                 Whisper skipped (no audio)\n")
+                f.write(f"  LRCLIB synced lyrics:     not found\n")
+            else:
+                f.write(f"  Pipeline:                 Standard Whisper\n")
+                f.write(f"  LRCLIB synced lyrics:     not found\n")
+                f.write(f"  Whisper transcription:    full\n")
+                f.write(f"  Alignment:                WhisperX wav2vec2\n")
+            if whisper_skipped and not reference_first_used:
+                lang_method = "Whisper tiny (fast detection)"
+            elif settings.language:
+                lang_method = f"manual (--language {settings.language})"
+            else:
+                lang_method = "Whisper (full transcription)"
+            f.write(f"  Language detection:        {lang_method}\n")
             f.write("\n")
 
             # Post-processing
