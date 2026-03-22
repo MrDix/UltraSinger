@@ -94,10 +94,27 @@ class _FormatProbeWorker(QObject):
             duration = info.get("duration", 0)
             dur_str = f"{duration // 60}:{duration % 60:02d}" if duration else ""
 
-            # LRCLIB lyrics check
+            # LRCLIB lyrics check — yt-dlp only has artist/track for
+            # YouTube Music; regular videos need title parsing.
             artist = info.get("artist") or info.get("creator") or ""
-            title = info.get("track") or info.get("title") or ""
-            lyrics_status = self._check_lrclib(artist, title)
+            track = info.get("track") or ""
+            if not artist or not track:
+                # Parse "Artist - Title (extra)" from video title
+                video_title = info.get("title") or ""
+                if " - " in video_title:
+                    parts_split = video_title.split(" - ", 1)
+                    artist = artist or parts_split[0].strip()
+                    track = track or parts_split[1].strip()
+                    # Remove common suffixes like "(Official Video)", "(Live)"
+                    import re as _re
+                    track = _re.sub(
+                        r"\s*[\(\[](official|lyric|music|live|audio|hd|hq|video|visuali|4k|summerbreeze|wacken).*$",
+                        "", track, flags=_re.IGNORECASE,
+                    ).strip()
+                elif not artist:
+                    artist = info.get("uploader") or info.get("channel") or ""
+                    track = track or video_title
+            lyrics_status = self._check_lrclib(artist, track)
 
             codec_names = {
                 "avc1": "H.264", "vp9": "VP9", "vp09": "VP9",
@@ -431,19 +448,18 @@ class BrowserTab(QWidget):
 
     def _probe_formats(self, video_id: str):
         """Query available download formats in the background."""
-        # Cancel any running probe
-        if hasattr(self, "_probe_thread") and self._probe_thread and self._probe_thread.isRunning():
-            self._probe_thread.quit()
-            self._probe_thread.wait(2000)
+        # Let any previous probe finish on its own; stale results are
+        # discarded by the video_id check in _on_format_probed.
+        self._probe_video_id = video_id
 
         # Hide badge while loading
         if self._page:
-            self._page.runJavaScript("""
-                (function() {
-                    var b = document.getElementById('ultrasinger-quality-badge');
-                    if (b) { b.style.display = 'none'; b.textContent = ''; }
-                })();
-            """)
+            self._page.runJavaScript(
+                "(function() {"
+                "  var b = document.getElementById('ultrasinger-quality-badge');"
+                "  if (b) { b.style.display = 'none'; b.textContent = ''; }"
+                "})();"
+            )
 
         thread = QThread(self)
         worker = _FormatProbeWorker(video_id)
@@ -451,32 +467,31 @@ class BrowserTab(QWidget):
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_format_probed)
         worker.finished.connect(thread.quit)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(worker.deleteLater)
-
-        self._probe_thread = thread
-        self._probe_worker = worker
+        # prevent Qt from garbage-collecting thread/worker prematurely
+        thread.finished.connect(lambda: self._cleanup_probe(thread, worker))
         thread.start()
+
+    def _cleanup_probe(self, thread, worker):
+        """Clean up finished probe thread and worker."""
+        thread.deleteLater()
+        worker.deleteLater()
 
     def _on_format_probed(self, video_id: str, info_text: str):
         """Show the format info badge in the browser overlay."""
         if not info_text or not self._page:
             return
         # Only update if still on the same video
-        if not hasattr(self, "_current_video_id") or self._current_video_id != video_id:
+        if self._probe_video_id != video_id:
             return
 
         # Escape for JS string
         safe_text = info_text.replace("\\", "\\\\").replace("'", "\\'")
-        self._page.runJavaScript(f"""
-            (function() {{
-                var b = document.getElementById('ultrasinger-quality-badge');
-                if (b) {{
-                    b.textContent = '{safe_text}';
-                    b.style.display = 'block';
-                }}
-            }})();
-        """)
+        self._page.runJavaScript(
+            "(function() {"
+            "  var b = document.getElementById('ultrasinger-quality-badge');"
+            f"  if (b) {{ b.textContent = '{safe_text}'; b.style.display = 'block'; }}"
+            "})();"
+        )
 
     def _on_url_bar_submit(self):
         """Navigate to a user-pasted URL after validating it."""
