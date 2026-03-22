@@ -91,25 +91,22 @@ class TestParseLrcSyncedLyrics:
 class TestNormalizeSegmentTimestamps:
     """Tests for _normalize_segment_timestamps."""
 
-    def test_no_adjustment_when_within_bounds(self):
-        segs = [{"start": 5.0, "end": 15.0}, {"start": 15.0, "end": 25.0}]
-        result = _normalize_segment_timestamps(segs, audio_duration=30.0)
-        assert result[0]["start"] == pytest.approx(5.0)
-        assert result[1]["end"] == pytest.approx(25.0)
+    def test_evenly_spreads_two_segments(self):
+        segs = [{"start": 30.0, "end": 60.0}, {"start": 60.0, "end": 90.0}]
+        result = _normalize_segment_timestamps(segs, audio_duration=120.0)
+        assert result[0]["start"] == pytest.approx(0.0)
+        assert result[0]["end"] == pytest.approx(60.0)
+        assert result[1]["start"] == pytest.approx(60.0)
+        assert result[1]["end"] == pytest.approx(120.0)
 
-    def test_rescale_when_lrc_exceeds_audio(self):
-        # LRC says 10-310s but audio is only 120s
+    def test_covers_full_audio_duration(self):
         segs = [
             {"start": 10.0, "end": 160.0, "text": "First"},
             {"start": 160.0, "end": 310.0, "text": "Second"},
         ]
-        result = _normalize_segment_timestamps(segs, audio_duration=120.0)
-        # After rescaling, all timestamps should be within [0, 120]
-        assert result[0]["start"] >= 0
-        assert result[-1]["end"] <= 120.0
-        # Relative proportions should be preserved
-        mid = (result[0]["end"] + result[1]["start"]) / 2
-        assert 30 < mid < 90  # roughly in the middle
+        result = _normalize_segment_timestamps(segs, audio_duration=200.0)
+        assert result[0]["start"] == pytest.approx(0.0)
+        assert result[-1]["end"] == pytest.approx(200.0)
 
     def test_empty_segments(self):
         assert _normalize_segment_timestamps([], 60.0) == []
@@ -117,16 +114,22 @@ class TestNormalizeSegmentTimestamps:
     def test_zero_duration(self):
         segs = [{"start": 5.0, "end": 10.0}]
         result = _normalize_segment_timestamps(segs, audio_duration=0.0)
-        assert result[0]["start"] == pytest.approx(5.0)  # unchanged
+        # Should remain unchanged when audio_duration <= 0
+        assert result[0]["start"] == pytest.approx(5.0)
 
-    def test_lrc_starts_negative(self):
+    def test_equal_spacing(self):
         segs = [
-            {"start": -5.0, "end": 100.0, "text": "A"},
-            {"start": 100.0, "end": 200.0, "text": "B"},
+            {"start": 0.0, "end": 10.0, "text": "A"},
+            {"start": 10.0, "end": 20.0, "text": "B"},
+            {"start": 20.0, "end": 30.0, "text": "C"},
         ]
-        result = _normalize_segment_timestamps(segs, audio_duration=60.0)
-        assert result[0]["start"] >= 0
-        assert result[-1]["end"] <= 60.0
+        result = _normalize_segment_timestamps(segs, audio_duration=90.0)
+        assert result[0]["start"] == pytest.approx(0.0)
+        assert result[0]["end"] == pytest.approx(30.0)
+        assert result[1]["start"] == pytest.approx(30.0)
+        assert result[1]["end"] == pytest.approx(60.0)
+        assert result[2]["start"] == pytest.approx(60.0)
+        assert result[2]["end"] == pytest.approx(90.0)
 
 
 # ---------------------------------------------------------------------------
