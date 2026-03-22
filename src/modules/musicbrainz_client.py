@@ -40,6 +40,9 @@ def __musicbrainz_request(func):
             return func()
         except musicbrainzngs.musicbrainz.NetworkError:
             time.sleep(1)
+        except musicbrainzngs.musicbrainz.AuthenticationError:
+            # Cover Art Archive returns 401 for some releases
+            return None
     return None
 
 
