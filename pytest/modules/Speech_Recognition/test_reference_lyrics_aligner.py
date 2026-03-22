@@ -217,9 +217,9 @@ class TestCreateMidiSegmentsFromReferenceLyrics:
         )
 
         assert len(result) == 2
-        assert result[0].word == "Hello"
+        assert result[0].word == "Hello "  # trailing space for word boundary
         assert result[0].start == pytest.approx(1.0)
-        assert result[1].word == "world"
+        assert result[1].word == "world"  # last word has no trailing space
 
     @patch("modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio")
     def test_empty_alignment_returns_empty(self, mock_align):
