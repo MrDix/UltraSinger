@@ -11,6 +11,8 @@ ornaments) where a single word can span many different pitches.
 
 from __future__ import annotations
 
+import difflib
+import re
 from typing import Optional
 
 import librosa
@@ -481,3 +483,200 @@ def create_midi_segments_from_pitch(
     )
 
     return all_segments
+
+
+# ---------------------------------------------------------------------------
+# Reference lyrics fill (LRCLIB integration)
+# ---------------------------------------------------------------------------
+
+def _normalize_word(word: str) -> str:
+    """Normalize a word for comparison (lowercase, strip punctuation)."""
+    word = word.strip().lower()
+    word = re.sub(r"[^\w']", "", word)
+    return word.strip("'")
+
+
+def _normalize_lyrics_to_words(plain_lyrics: str) -> list[str]:
+    """Normalize plain lyrics text into a flat list of lowercase words."""
+    text = plain_lyrics.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    text = re.sub(r"[^\w\s'\-]", " ", text)
+    words = [_normalize_word(w) for w in text.split() if w.strip()]
+    return [w for w in words if w]
+
+
+def fill_lyrics_from_reference(
+    midi_segments: list[MidiSegment],
+    transcribed_data: list[TranscribedData],
+    plain_lyrics: str,
+) -> list[MidiSegment]:
+    """Fill ``~`` placeholder notes with words from reference lyrics.
+
+    After ``create_midi_segments_from_pitch`` overlays Whisper words onto
+    pitch-derived notes, many notes may still have ``~`` placeholders —
+    especially for melismatic passages that Whisper couldn't transcribe.
+
+    This function uses the full reference lyrics (from LRCLIB) to fill
+    those gaps.  It aligns the already-assigned Whisper words against the
+    reference text to find which reference words are missing, then
+    distributes them chronologically onto the ``~`` placeholder notes.
+
+    Args:
+        midi_segments: Segments from ``create_midi_segments_from_pitch``.
+        transcribed_data: Whisper transcription (for anchor identification).
+        plain_lyrics: Full plain-text lyrics from LRCLIB.
+
+    Returns:
+        The same segment list with ``~`` placeholders replaced where possible.
+    """
+    if not midi_segments or not plain_lyrics or not plain_lyrics.strip():
+        return midi_segments
+
+    ref_words = _normalize_lyrics_to_words(plain_lyrics)
+    if not ref_words:
+        return midi_segments
+
+    # Build list of (segment_index, normalized_word) for assigned notes
+    assigned: list[tuple[int, str]] = []
+    for i, seg in enumerate(midi_segments):
+        if seg.word not in ("~", "~ "):
+            norm = _normalize_word(seg.word)
+            if norm:
+                assigned.append((i, norm))
+
+    if not assigned:
+        # No anchor words at all — distribute reference words sequentially
+        # to all placeholder notes
+        placeholder_indices = list(range(len(midi_segments)))
+        _assign_words_to_segments(
+            midi_segments, placeholder_indices, ref_words
+        )
+        return midi_segments
+
+    # Align assigned words against reference to find gaps
+    assigned_words = [w for _, w in assigned]
+    assigned_indices = [idx for idx, _ in assigned]
+
+    matcher = difflib.SequenceMatcher(None, assigned_words, ref_words, autojunk=False)
+
+    # Build a map: ref_word_index → assigned_segment_index (for matched words)
+    ref_to_seg: dict[int, int] = {}
+    for op, a_start, a_end, r_start, r_end in matcher.get_opcodes():
+        if op == "equal" or op == "replace":
+            # Map each matched/replaced pair
+            for offset in range(min(a_end - a_start, r_end - r_start)):
+                ref_to_seg[r_start + offset] = assigned_indices[a_start + offset]
+
+    # Find reference words that have NO match (the gaps to fill)
+    unmatched_ref: list[tuple[int, str]] = []
+    for ri, rw in enumerate(ref_words):
+        if ri not in ref_to_seg:
+            unmatched_ref.append((ri, rw))
+
+    if not unmatched_ref:
+        print(f"{ULTRASINGER_HEAD} Reference lyrics: all words already assigned")
+        return midi_segments
+
+    # Group unmatched reference words into runs (consecutive ref indices)
+    # and find the best ~ placeholder notes to assign them to
+    runs: list[list[tuple[int, str]]] = []
+    current_run: list[tuple[int, str]] = [unmatched_ref[0]]
+
+    for ri, rw in unmatched_ref[1:]:
+        if ri == current_run[-1][0] + 1:
+            current_run.append((ri, rw))
+        else:
+            runs.append(current_run)
+            current_run = [(ri, rw)]
+    runs.append(current_run)
+
+    filled_count = 0
+
+    for run in runs:
+        run_ref_start = run[0][0]
+        run_ref_end = run[-1][0]
+        run_words = [rw for _, rw in run]
+
+        # Find the bounding segment indices from matched neighbors
+        # Left bound: the segment of the last matched ref word before this run
+        # Right bound: the segment of the first matched ref word after this run
+        left_seg_idx = -1
+        right_seg_idx = len(midi_segments)
+
+        for ri in range(run_ref_start - 1, -1, -1):
+            if ri in ref_to_seg:
+                left_seg_idx = ref_to_seg[ri]
+                break
+
+        for ri in range(run_ref_end + 1, len(ref_words)):
+            if ri in ref_to_seg:
+                right_seg_idx = ref_to_seg[ri]
+                break
+
+        # Collect ~ placeholder notes between the bounds
+        placeholders = []
+        for si in range(left_seg_idx + 1, right_seg_idx):
+            if si < 0 or si >= len(midi_segments):
+                continue
+            if midi_segments[si].word in ("~", "~ "):
+                placeholders.append(si)
+
+        filled_count += _assign_words_to_segments(
+            midi_segments, placeholders, run_words
+        )
+
+    placeholder_remaining = sum(
+        1 for s in midi_segments if s.word in ("~", "~ ")
+    )
+    print(
+        f"{ULTRASINGER_HEAD} Reference lyrics fill: "
+        f"{blue_highlighted(str(filled_count))} words assigned to placeholder notes "
+        f"({placeholder_remaining} placeholders remaining)"
+    )
+
+    return midi_segments
+
+
+def _assign_words_to_segments(
+    midi_segments: list[MidiSegment],
+    placeholder_indices: list[int],
+    words: list[str],
+) -> int:
+    """Assign words to placeholder segments, distributing evenly.
+
+    If there are more placeholders than words, words are spread out evenly.
+    If there are more words than placeholders, multiple words are concatenated
+    into single notes.
+
+    Returns:
+        Number of words actually assigned.
+    """
+    if not placeholder_indices or not words:
+        return 0
+
+    n_placeholders = len(placeholder_indices)
+    n_words = len(words)
+    assigned = 0
+
+    if n_words <= n_placeholders:
+        # Distribute words evenly across placeholders
+        # Use proportional spacing: word i goes to placeholder at position
+        # i * n_placeholders / n_words
+        for wi, word in enumerate(words):
+            pi = int(wi * n_placeholders / n_words)
+            pi = min(pi, n_placeholders - 1)
+            seg_idx = placeholder_indices[pi]
+            midi_segments[seg_idx].word = word + " "
+            assigned += 1
+    else:
+        # More words than placeholders — group words into placeholder slots
+        words_per_slot = n_words / n_placeholders
+        for pi_offset, seg_idx in enumerate(placeholder_indices):
+            start_w = int(pi_offset * words_per_slot)
+            end_w = int((pi_offset + 1) * words_per_slot)
+            end_w = min(end_w, n_words)
+            if start_w < end_w:
+                combined = "".join(words[start_w:end_w])
+                midi_segments[seg_idx].word = combined + " "
+                assigned += end_w - start_w
+
+    return assigned

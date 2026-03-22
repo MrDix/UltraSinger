@@ -408,12 +408,22 @@ def run() -> tuple[str, Score, Score]:
                         print(f"{ULTRASINGER_HEAD} Vocal gap fill skipped: {e}")
 
             if settings.pitch_notes:
-                from modules.Pitcher.pitch_based_note_generator import create_midi_segments_from_pitch
+                from modules.Pitcher.pitch_based_note_generator import (
+                    create_midi_segments_from_pitch,
+                    fill_lyrics_from_reference,
+                )
                 process_data.midi_segments = create_midi_segments_from_pitch(
                     process_data.pitched_data,
                     process_data.transcribed_data,
                     allowed_notes_for_key,
                 )
+                # Fill remaining ~ placeholders with LRCLIB reference lyrics
+                if process_data.plain_lyrics:
+                    process_data.midi_segments = fill_lyrics_from_reference(
+                        process_data.midi_segments,
+                        process_data.transcribed_data,
+                        process_data.plain_lyrics,
+                    )
             else:
                 process_data.midi_segments = create_midi_segments_from_transcribed_data(
                     process_data.transcribed_data,

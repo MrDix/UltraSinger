@@ -12,7 +12,9 @@ from src.modules.Pitcher.pitch_based_note_generator import (
     _merge_short_notes,
     _merge_same_pitch_neighbors,
     _overlay_lyrics,
+    _assign_words_to_segments,
     create_midi_segments_from_pitch,
+    fill_lyrics_from_reference,
 )
 
 
@@ -318,3 +320,135 @@ class TestCreateMidiSegmentsFromPitch:
 
     def test_none_pitched_data_returns_empty(self):
         assert create_midi_segments_from_pitch(None, []) == []
+
+
+# ---------------------------------------------------------------------------
+# _assign_words_to_segments
+# ---------------------------------------------------------------------------
+
+class TestAssignWordsToSegments:
+
+    def test_equal_words_and_placeholders(self):
+        segs = [
+            MidiSegment("C4", 0.0, 0.5, "~ "),
+            MidiSegment("E4", 0.5, 1.0, "~ "),
+            MidiSegment("G4", 1.0, 1.5, "~ "),
+        ]
+        count = _assign_words_to_segments(segs, [0, 1, 2], ["hello", "beautiful", "world"])
+        assert count == 3
+        assert segs[0].word == "hello "
+        assert segs[1].word == "beautiful "
+        assert segs[2].word == "world "
+
+    def test_fewer_words_than_placeholders(self):
+        """Words should be spread evenly across available placeholders."""
+        segs = [MidiSegment("C4", i * 0.5, (i + 1) * 0.5, "~ ") for i in range(6)]
+        count = _assign_words_to_segments(segs, list(range(6)), ["one", "two"])
+        assert count == 2
+        # Two words spread across 6 slots → first at 0, second at 3
+        words = [s.word for s in segs]
+        non_tilde = [(i, w) for i, w in enumerate(words) if w not in ("~", "~ ")]
+        assert len(non_tilde) == 2
+
+    def test_more_words_than_placeholders(self):
+        """Multiple words should be concatenated into fewer slots."""
+        segs = [
+            MidiSegment("C4", 0.0, 0.5, "~ "),
+            MidiSegment("E4", 0.5, 1.0, "~ "),
+        ]
+        count = _assign_words_to_segments(segs, [0, 1], ["a", "b", "c", "d"])
+        assert count == 4
+        # All 4 words distributed across 2 placeholders
+        assert segs[0].word not in ("~", "~ ")
+        assert segs[1].word not in ("~", "~ ")
+
+    def test_empty_placeholders(self):
+        segs = [MidiSegment("C4", 0.0, 0.5, "~ ")]
+        assert _assign_words_to_segments(segs, [], ["hello"]) == 0
+        assert segs[0].word == "~ "
+
+    def test_empty_words(self):
+        segs = [MidiSegment("C4", 0.0, 0.5, "~ ")]
+        assert _assign_words_to_segments(segs, [0], []) == 0
+        assert segs[0].word == "~ "
+
+
+# ---------------------------------------------------------------------------
+# fill_lyrics_from_reference
+# ---------------------------------------------------------------------------
+
+class TestFillLyricsFromReference:
+
+    def test_fills_placeholders_between_anchors(self):
+        """Reference words missing from Whisper should fill ~ notes."""
+        segs = [
+            MidiSegment("C4", 0.0, 0.5, "hello "),
+            MidiSegment("D4", 0.5, 1.0, "~ "),
+            MidiSegment("E4", 1.0, 1.5, "~ "),
+            MidiSegment("F4", 1.5, 2.0, "world "),
+        ]
+        words = [
+            TranscribedData(word="hello ", start=0.0, end=0.5),
+            TranscribedData(word="world ", start=1.5, end=2.0),
+        ]
+        result = fill_lyrics_from_reference(
+            segs, words, "hello beautiful cruel world"
+        )
+        # "beautiful" and "cruel" should fill the two ~ notes
+        assert result[0].word == "hello "
+        assert result[1].word not in ("~", "~ ")
+        assert result[2].word not in ("~", "~ ")
+        assert result[3].word == "world "
+
+    def test_no_reference_lyrics(self):
+        segs = [MidiSegment("C4", 0.0, 0.5, "~ ")]
+        result = fill_lyrics_from_reference(segs, [], "")
+        assert result[0].word == "~ "
+
+    def test_empty_segments(self):
+        result = fill_lyrics_from_reference([], [], "hello world")
+        assert result == []
+
+    def test_all_already_assigned(self):
+        """If all reference words are already matched, nothing changes."""
+        segs = [
+            MidiSegment("C4", 0.0, 0.5, "hello "),
+            MidiSegment("E4", 0.5, 1.0, "world "),
+        ]
+        words = [
+            TranscribedData(word="hello ", start=0.0, end=0.5),
+            TranscribedData(word="world ", start=0.5, end=1.0),
+        ]
+        result = fill_lyrics_from_reference(segs, words, "hello world")
+        assert result[0].word == "hello "
+        assert result[1].word == "world "
+
+    def test_no_anchors_distributes_sequentially(self):
+        """With no Whisper words at all, distribute reference words to all notes."""
+        segs = [
+            MidiSegment("C4", 0.0, 0.5, "~ "),
+            MidiSegment("D4", 0.5, 1.0, "~ "),
+            MidiSegment("E4", 1.0, 1.5, "~ "),
+        ]
+        result = fill_lyrics_from_reference(segs, [], "one two three")
+        non_tilde = [s for s in result if s.word not in ("~", "~ ")]
+        assert len(non_tilde) == 3
+
+    def test_preserves_existing_words(self):
+        """Existing assigned words should never be overwritten."""
+        segs = [
+            MidiSegment("C4", 0.0, 0.5, "keep "),
+            MidiSegment("D4", 0.5, 1.0, "~ "),
+            MidiSegment("E4", 1.0, 1.5, "this "),
+        ]
+        words = [
+            TranscribedData(word="keep ", start=0.0, end=0.5),
+            TranscribedData(word="this ", start=1.0, end=1.5),
+        ]
+        result = fill_lyrics_from_reference(
+            segs, words, "keep me and this"
+        )
+        assert result[0].word == "keep "
+        assert result[2].word == "this "
+        # The middle note should get filled
+        assert result[1].word not in ("~", "~ ")
