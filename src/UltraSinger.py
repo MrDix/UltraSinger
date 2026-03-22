@@ -335,8 +335,8 @@ def run() -> tuple[str, Score, Score]:
                         process_data.transcribed_data = snap_to_onsets(
                             process_data.transcribed_data, onset_times
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"{ULTRASINGER_HEAD} Onset correction skipped: {e}")
                 process_data.transcribed_data = split_syllables_into_segments(
                     process_data.transcribed_data, process_data.media_info.bpm
                 )
