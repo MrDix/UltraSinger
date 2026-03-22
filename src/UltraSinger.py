@@ -215,11 +215,35 @@ def run() -> tuple[str, Score, Score]:
     process_data.media_info.language = settings.language
     lyrics_lookup_result = None
     llm_result = None
-    if not settings.ignore_audio:
+    whisper_skipped = False
+
+    # Early LRCLIB lookup: if synced lyrics are available, we can skip the
+    # expensive Whisper transcription entirely (~2 min saved per song)
+    if (not settings.ignore_audio
+            and settings.lyrics_lookup
+            and not settings.disable_reference_lyrics
+            and process_data.media_info.artist
+            and process_data.media_info.title):
+        try:
+            from modules.lrclib_client import search_lyrics
+            early_lyrics_info = search_lyrics(
+                process_data.media_info.artist, process_data.media_info.title,
+            )
+            if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
+                process_data.synced_lyrics = early_lyrics_info.synced_lyrics
+                whisper_skipped = True
+                print(
+                    f"{ULTRASINGER_HEAD} "
+                    f"{cyan_highlighted('Synced lyrics found — skipping Whisper transcription')}"
+                )
+        except Exception as e:
+            print(f"{ULTRASINGER_HEAD} Early lyrics lookup failed: {e}")
+
+    if not settings.ignore_audio and not whisper_skipped:
         lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
 
     # Onset correction — snap note starts to audio onsets for better timing
-    if not settings.ignore_audio and settings.onset_correction:
+    if not settings.ignore_audio and not whisper_skipped and settings.onset_correction:
         try:
             from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
             onset_times = detect_vocal_onsets(
@@ -231,20 +255,20 @@ def run() -> tuple[str, Score, Score]:
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Onset correction skipped: {e}")
 
-    # Split syllables into segments
-    if not settings.ignore_audio:
+    # Split syllables into segments (skip when Whisper was skipped — no transcribed_data yet)
+    if not settings.ignore_audio and not whisper_skipped:
         process_data.transcribed_data = split_syllables_into_segments(process_data.transcribed_data,
                                                                   process_data.media_info.bpm)
 
-    # Create audio chunks
-    if settings.create_audio_chunks:
+    # Create audio chunks (requires transcribed_data)
+    if settings.create_audio_chunks and not whisper_skipped:
         create_audio_chunks(process_data)
 
     # Pitch audio
     process_data.pitched_data = pitch_audio(process_data.process_data_paths)
 
-    # Fill vocal gaps (insert placeholder notes for un-transcribed vocalizations)
-    if not settings.ignore_audio and settings.vocal_gap_fill:
+    # Fill vocal gaps (skip when Whisper was skipped — no transcribed_data yet)
+    if not settings.ignore_audio and not whisper_skipped and settings.vocal_gap_fill:
         try:
             from modules.Audio.vocal_gap_fill import fill_vocal_gaps
             process_data.transcribed_data = fill_vocal_gaps(
@@ -296,6 +320,27 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
 
         if not reference_first_used:
+            # If Whisper was skipped but reference-first failed, run Whisper now
+            if whisper_skipped:
+                print(f"{ULTRASINGER_HEAD} Running Whisper as fallback")
+                lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
+                whisper_skipped = False
+                # Run the intermediate steps we skipped
+                if settings.onset_correction:
+                    try:
+                        from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
+                        onset_times = detect_vocal_onsets(
+                            process_data.process_data_paths.whisper_audio_path
+                        )
+                        process_data.transcribed_data = snap_to_onsets(
+                            process_data.transcribed_data, onset_times
+                        )
+                    except Exception:
+                        pass
+                process_data.transcribed_data = split_syllables_into_segments(
+                    process_data.transcribed_data, process_data.media_info.bpm
+                )
+
             process_data.midi_segments = create_midi_segments_from_transcribed_data(
                 process_data.transcribed_data,
                 process_data.pitched_data,
