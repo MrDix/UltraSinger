@@ -219,12 +219,10 @@ def run() -> tuple[str, Score, Score]:
 
     # Early LRCLIB lookup: if synced lyrics are available, we can skip the
     # expensive Whisper transcription entirely (~2 min saved per song).
-    # Only skip Whisper when the language is explicitly set — auto-detection
-    # requires Whisper to run.
+    # Language detection uses Whisper tiny (~2-3s) when not explicitly set.
     if (not settings.ignore_audio
             and settings.lyrics_lookup
             and not settings.disable_reference_lyrics
-            and settings.language is not None
             and process_data.media_info.artist
             and process_data.media_info.title):
         try:
@@ -234,6 +232,13 @@ def run() -> tuple[str, Score, Score]:
             )
             if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
                 process_data.synced_lyrics = early_lyrics_info.synced_lyrics
+                # Detect language if not explicitly set
+                if process_data.media_info.language is None:
+                    from modules.Speech_Recognition.Whisper import detect_language_from_audio
+                    process_data.media_info.language = detect_language_from_audio(
+                        process_data.process_data_paths.whisper_audio_path,
+                        device=settings.pytorch_device,
+                    )
                 whisper_skipped = True
                 print(
                     f"{ULTRASINGER_HEAD} "
