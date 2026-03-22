@@ -7,6 +7,12 @@ import tempfile
 import warnings
 from pathlib import Path
 
+# Set Windows AppUserModelID so the taskbar shows our icon instead of Python's.
+# Must be called before QApplication is created.
+if sys.platform == "win32":
+    import ctypes
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("UltraSinger.GUI")
+
 # Suppress noisy third-party warnings that fire at import time.
 # Must run before any transitive imports of requests, torchaudio, pyannote, etc.
 warnings.filterwarnings("ignore", module="requests")
