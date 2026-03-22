@@ -163,15 +163,21 @@ def align_lyrics_to_audio(
     audio = whisperx.load_audio(audio_path)
     audio_duration = librosa.get_duration(filename=audio_path)
 
-    # Normalize LRC timestamps to fit the actual audio duration
-    segments = _normalize_segment_timestamps(segments, audio_duration)
+    # Merge all lyrics into a single segment spanning the full audio.
+    # This gives CTC alignment maximum flexibility to find words wherever
+    # they actually are, regardless of how the LRC timestamps relate to
+    # the audio version.  Per-line segments with narrow windows failed
+    # catastrophically when song structure differed between releases.
+    all_text = " ".join(s["text"] for s in segments)
+    merged_segments = [{"text": all_text, "start": 0.0, "end": audio_duration}]
 
+    total_lrc_words = len(all_text.split())
     print(
-        f"{ULTRASINGER_HEAD} Aligning {blue_highlighted(str(len(segments)))} "
-        f"reference lyric lines to audio"
+        f"{ULTRASINGER_HEAD} Aligning {blue_highlighted(str(total_lrc_words))} "
+        f"reference lyric words to audio"
     )
     aligned = whisperx.align(
-        segments, align_model, align_metadata, audio, device,
+        merged_segments, align_model, align_metadata, audio, device,
         return_char_alignments=False,
     )
 
@@ -189,7 +195,6 @@ def align_lyrics_to_audio(
     # Sort by start time
     words.sort(key=lambda x: x["start"])
 
-    total_lrc_words = sum(len(s["text"].split()) for s in segments)
     print(
         f"{ULTRASINGER_HEAD} Reference alignment: "
         f"{blue_highlighted(str(len(words)))} of "
