@@ -261,12 +261,22 @@ def run() -> tuple[str, Score, Score]:
     # Create Midi_Segments
     if not settings.ignore_audio:
         if settings.pitch_notes:
-            from modules.Pitcher.pitch_based_note_generator import create_midi_segments_from_pitch
+            from modules.Pitcher.pitch_based_note_generator import (
+                create_midi_segments_from_pitch,
+                fill_lyrics_from_reference,
+            )
             process_data.midi_segments = create_midi_segments_from_pitch(
                 process_data.pitched_data,
                 process_data.transcribed_data,
                 allowed_notes_for_key,
             )
+            # Fill remaining ~ placeholders with LRCLIB reference lyrics
+            if process_data.plain_lyrics:
+                process_data.midi_segments = fill_lyrics_from_reference(
+                    process_data.midi_segments,
+                    process_data.transcribed_data,
+                    process_data.plain_lyrics,
+                )
         else:
             process_data.midi_segments = create_midi_segments_from_transcribed_data(
                 process_data.transcribed_data,
@@ -875,6 +885,8 @@ def TranscribeAudio(process_data):
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
             lyrics_info = search_lyrics(process_data.media_info.artist, process_data.media_info.title)
             if lyrics_info is not None and lyrics_info.plain_lyrics:
+                # Save plain lyrics for later use (pitch_notes overlay)
+                process_data.plain_lyrics = lyrics_info.plain_lyrics
                 process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
                     process_data.transcribed_data, lyrics_info.plain_lyrics
                 )

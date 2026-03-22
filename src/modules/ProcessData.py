@@ -40,5 +40,6 @@ class ProcessData:
     pitched_data: Optional[PitchedData] = None
     midi_segments: Optional[List[MidiSegment]] = field(default_factory=list)
     parsed_file: Optional[UltrastarTxtValue] = None
+    plain_lyrics: Optional[str] = None  # Full reference lyrics from LRCLIB (for pitch_notes overlay)
 
 
