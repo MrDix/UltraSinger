@@ -84,6 +84,66 @@ def parse_lrc_synced_lyrics(synced_lyrics: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Timestamp normalization
+# ---------------------------------------------------------------------------
+
+def _normalize_segment_timestamps(
+    segments: list[dict],
+    audio_duration: float,
+) -> list[dict]:
+    """Adjust LRC timestamps to fit the actual audio duration.
+
+    LRCLIB synced lyrics are timed to the original commercial release, but
+    the audio being processed may have a different start offset (e.g. SingStar
+    rips cut the intro, live recordings differ, etc.).  If the LRC timestamps
+    extend significantly beyond the audio, we rescale them to fit.
+
+    Args:
+        segments: Parsed LRC segments with ``start`` and ``end`` keys.
+        audio_duration: Duration of the audio file in seconds.
+
+    Returns:
+        Adjusted segments (modified in-place and returned).
+    """
+    if not segments or audio_duration <= 0:
+        return segments
+
+    lrc_start = segments[0]["start"]
+    lrc_end = segments[-1]["end"]
+    lrc_span = lrc_end - lrc_start
+
+    if lrc_span <= 0:
+        return segments
+
+    # If LRC timestamps fit within audio bounds (with tolerance), no adjustment
+    if lrc_start >= -2.0 and lrc_end <= audio_duration + 5.0:
+        return segments
+
+    # Rescale LRC timestamps to fit within the audio duration.
+    # Leave a small margin at start/end for alignment flexibility.
+    margin = min(2.0, audio_duration * 0.02)
+    target_start = margin
+    target_end = audio_duration - margin
+    target_span = target_end - target_start
+
+    if target_span <= 0:
+        return segments
+
+    scale = target_span / lrc_span
+
+    print(
+        f"{ULTRASINGER_HEAD} LRC timestamps ({lrc_start:.1f}s-{lrc_end:.1f}s) "
+        f"don't match audio ({audio_duration:.1f}s) — rescaling by {scale:.2f}x"
+    )
+
+    for seg in segments:
+        seg["start"] = target_start + (seg["start"] - lrc_start) * scale
+        seg["end"] = target_start + (seg["end"] - lrc_start) * scale
+
+    return segments
+
+
+# ---------------------------------------------------------------------------
 # Forced alignment
 # ---------------------------------------------------------------------------
 
@@ -109,6 +169,7 @@ def align_lyrics_to_audio(
         one per word, sorted by start time.
     """
     import whisperx
+    import librosa
 
     print(f"{ULTRASINGER_HEAD} Loading alignment model for reference lyrics")
     align_model, align_metadata = whisperx.load_align_model(
@@ -116,6 +177,10 @@ def align_lyrics_to_audio(
     )
 
     audio = whisperx.load_audio(audio_path)
+    audio_duration = librosa.get_duration(filename=audio_path)
+
+    # Normalize LRC timestamps to fit the actual audio duration
+    segments = _normalize_segment_timestamps(segments, audio_duration)
 
     print(
         f"{ULTRASINGER_HEAD} Aligning {blue_highlighted(str(len(segments)))} "
