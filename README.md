@@ -183,6 +183,11 @@ _Not all options working now!_
                             region. Disabled by default.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup. Enabled by default, fetches verified reference
                             lyrics to correct Whisper transcription errors. No API key needed.
+    --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
+                            (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain
+                            precise word-level timing — dramatically improving lyrics coverage and timing
+                            accuracy. Falls back to standard Whisper pipeline when disabled or when no
+                            synced lyrics are available. Enabled by default.
 
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default

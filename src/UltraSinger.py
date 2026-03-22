@@ -178,6 +178,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocal gap fill enabled')}")
     if settings.pitch_change_split:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-change split enabled')}")
+    if settings.disable_reference_lyrics:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Reference-lyrics-first pipeline disabled')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -257,18 +259,55 @@ def run() -> tuple[str, Score, Score]:
         allowed_notes_for_key = get_allowed_notes_for_key(detected_key, detected_mode)
 
     # Create Midi_Segments
+    reference_first_used = False
     if not settings.ignore_audio:
-        process_data.midi_segments = create_midi_segments_from_transcribed_data(
-            process_data.transcribed_data,
-            process_data.pitched_data,
-            allowed_notes_for_key
-        )
+        # Reference-Lyrics-First pipeline: use LRCLIB synced lyrics + forced alignment
+        # when available (produces dramatically better lyrics coverage and timing)
+        if process_data.synced_lyrics and not settings.disable_reference_lyrics:
+            try:
+                from modules.Speech_Recognition.reference_lyrics_aligner import (
+                    create_midi_segments_from_reference_lyrics,
+                )
+                ref_segments = create_midi_segments_from_reference_lyrics(
+                    synced_lyrics=process_data.synced_lyrics,
+                    audio_path=process_data.process_data_paths.whisper_audio_path,
+                    language=process_data.media_info.language or "en",
+                    pitched_data=process_data.pitched_data,
+                    device=settings.pytorch_device,
+                    allowed_notes=allowed_notes_for_key,
+                    melisma_split=True,
+                )
+                if ref_segments:
+                    process_data.midi_segments = ref_segments
+                    reference_first_used = True
+                    # Rebuild transcribed_data to match reference-derived segments
+                    process_data.transcribed_data = [
+                        TranscribedData(
+                            word=seg.word,
+                            start=seg.start,
+                            end=seg.end,
+                            confidence=1.0,
+                            is_word_end=not seg.word.strip().startswith("~"),
+                        )
+                        for seg in process_data.midi_segments
+                    ]
+            except Exception as e:
+                print(f"{ULTRASINGER_HEAD} Reference-first pipeline failed: {e}")
+                print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
+
+        if not reference_first_used:
+            process_data.midi_segments = create_midi_segments_from_transcribed_data(
+                process_data.transcribed_data,
+                process_data.pitched_data,
+                allowed_notes_for_key
+            )
     else:
         process_data.midi_segments = create_repitched_midi_segments_from_ultrastar_txt(process_data.pitched_data,
                                                                                        process_data.parsed_file)
 
     # Split notes at pitch change boundaries (melismas, runs)
-    if not settings.ignore_audio and settings.pitch_change_split:
+    # (Skip when reference_first is active — it already handles pitch segmentation)
+    if not settings.ignore_audio and settings.pitch_change_split and not reference_first_used:
         process_data.midi_segments = split_notes_at_pitch_changes(
             process_data.midi_segments, process_data.pitched_data
         )
@@ -289,7 +328,9 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = apply_octave_shift(process_data.midi_segments, settings.octave_shift)
 
     # Merge syllable segments
-    if not settings.ignore_audio:
+    # (Skip when reference_first is active — notes are already correctly segmented;
+    # merging would undo that)
+    if not settings.ignore_audio and not reference_first_used:
         process_data.midi_segments, process_data.transcribed_data = merge_syllable_segments(
             process_data.midi_segments,
             process_data.transcribed_data,
@@ -400,6 +441,7 @@ def _write_settings_info_file(
             f.write(f"  Syllable split:           {settings.syllable_split}\n")
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
+            f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -863,6 +905,9 @@ def TranscribeAudio(process_data):
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
             lyrics_info = search_lyrics(process_data.media_info.artist, process_data.media_info.title)
             if lyrics_info is not None and lyrics_info.plain_lyrics:
+                # Save synced lyrics for reference-first pipeline
+                if lyrics_info.synced_lyrics:
+                    process_data.synced_lyrics = lyrics_info.synced_lyrics
                 process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
                     process_data.transcribed_data, lyrics_info.plain_lyrics
                 )
@@ -1306,6 +1351,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.pitch_change_split = True
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
+        elif opt in ("--disable_reference_lyrics"):
+            settings.disable_reference_lyrics = True
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
@@ -1401,6 +1448,7 @@ def arg_options():
         "vocal_gap_fill",
         "pitch_change_split",
         "disable_lyrics_lookup",
+        "disable_reference_lyrics",
         "interactive",
         "cookiefile=",
         "ffmpeg=",
