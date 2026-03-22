@@ -424,6 +424,18 @@ def run() -> tuple[str, Score, Score]:
                         process_data.transcribed_data,
                         process_data.plain_lyrics,
                     )
+                # Rebuild transcribed_data to match pitch-derived midi_segments 1:1
+                # (downstream merge_syllable_segments requires same length)
+                process_data.transcribed_data = [
+                    TranscribedData(
+                        word=seg.word,
+                        start=seg.start,
+                        end=seg.end,
+                        confidence=1.0,
+                        is_word_end=not seg.word.strip().startswith("~"),
+                    )
+                    for seg in process_data.midi_segments
+                ]
             else:
                 process_data.midi_segments = create_midi_segments_from_transcribed_data(
                     process_data.transcribed_data,
@@ -461,9 +473,9 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = apply_octave_shift(process_data.midi_segments, settings.octave_shift)
 
     # Merge syllable segments
-    # (Skip when reference_first is active — notes are already correctly segmented;
-    # merging would undo that)
-    if not settings.ignore_audio and not reference_first_used:
+    # (Skip when reference_first or pitch_notes is active — notes are already correctly
+    # segmented; merging would undo that)
+    if not settings.ignore_audio and not reference_first_used and not settings.pitch_notes:
         process_data.midi_segments, process_data.transcribed_data = merge_syllable_segments(
             process_data.midi_segments,
             process_data.transcribed_data,
