@@ -109,7 +109,7 @@ class TestComputeNoteForWord:
     def test_c4_pitch(self):
         pd = _make_pitched_data(base_freq=261.63)  # C4
         note = _compute_note_for_word(1.0, 2.0, pd)
-        assert "C4" in note  # Could be C4 or B3 depending on rounding
+        assert note in {"C4", "B3"}  # Exact match, rounding may yield B3
 
     def test_silent_region_fallback(self):
         pd = _make_pitched_data(base_freq=0.0, confidence=0.0)
@@ -121,8 +121,9 @@ class TestComputeNoteForWord:
         # Allow only C major notes (no A)
         allowed = {"C", "D", "E", "F", "G", "B"}
         note = _compute_note_for_word(1.0, 2.0, pd, allowed_notes=allowed)
-        # Should be quantized to nearest allowed note
-        assert note[0] in allowed
+        # Should be quantized to nearest allowed note (no accidentals)
+        pitch_class = note.rstrip("0123456789")
+        assert pitch_class in allowed
 
 
 # ---------------------------------------------------------------------------

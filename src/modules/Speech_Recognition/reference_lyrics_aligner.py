@@ -168,6 +168,13 @@ def _compute_note_for_word(
     start_idx = find_nearest_index(pitched_data.times, start)
     end_idx = find_nearest_index(pitched_data.times, end)
 
+    # Clamp indices to valid range (find_nearest_index may return len() for edge cases)
+    n = len(pitched_data.frequencies)
+    if n == 0:
+        return "C4"
+    start_idx = max(0, min(start_idx, n - 1))
+    end_idx = max(0, min(end_idx, n))  # end_idx used for slicing, so n is valid
+
     if start_idx == end_idx:
         freqs = [pitched_data.frequencies[start_idx]]
         confs = [pitched_data.confidence[start_idx]]
@@ -254,7 +261,13 @@ def _split_word_at_pitch_changes(
         midi_smooth = midi_values
 
     # Find pitch change points
-    min_frames = max(1, int(min_note_ms / 16.0))  # 16ms per frame at 16kHz/256hop
+    # SwiftF0 uses 16kHz sample rate with STFT hop=256 → ~16ms per frame (62.5 fps).
+    # Derive frame duration from actual data when possible, otherwise use 16ms default.
+    if len(voiced_times) >= 2:
+        frame_ms = (voiced_times[1] - voiced_times[0]) * 1000.0
+    else:
+        frame_ms = 16.0
+    min_frames = max(1, int(min_note_ms / frame_ms))
     change_points = [0]
     last_change = 0
 
