@@ -94,6 +94,11 @@ class _FormatProbeWorker(QObject):
             duration = info.get("duration", 0)
             dur_str = f"{duration // 60}:{duration % 60:02d}" if duration else ""
 
+            # LRCLIB lyrics check
+            artist = info.get("artist") or info.get("creator") or ""
+            title = info.get("track") or info.get("title") or ""
+            lyrics_status = self._check_lrclib(artist, title)
+
             codec_names = {
                 "avc1": "H.264", "vp9": "VP9", "vp09": "VP9",
                 "av01": "AV1", "opus": "Opus", "mp4a": "AAC",
@@ -102,17 +107,38 @@ class _FormatProbeWorker(QObject):
             parts = []
             if best_height:
                 vname = codec_names.get(best_vcodec, best_vcodec)
-                parts.append(f"📹 {best_height}p {vname}")
+                parts.append(f"\U0001f4f9 {best_height}p {vname}")
             if best_abr:
                 aname = codec_names.get(best_acodec, best_acodec)
-                parts.append(f"🔊 {best_abr:.0f}k {aname}")
+                parts.append(f"\U0001f50a {best_abr:.0f}k {aname}")
             if dur_str:
-                parts.append(f"⏱ {dur_str}")
+                parts.append(f"\u23f1 {dur_str}")
+            parts.append(lyrics_status)
 
-            self.finished.emit(self._video_id, " · ".join(parts))
+            self.finished.emit(self._video_id, " \u00b7 ".join(parts))
 
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
             self.finished.emit(self._video_id, "")
+
+    @staticmethod
+    def _check_lrclib(artist: str, title: str) -> str:
+        """Query LRCLIB for lyrics availability (silent, no console output)."""
+        if not artist or not title:
+            return "\U0001f4dd No metadata"
+        try:
+            from modules.lrclib_client import _search_by_fields, _search_by_query
+            result = _search_by_fields(artist, title)
+            if result is None:
+                result = _search_by_query(f"{artist} {title}")
+            if result is None:
+                return "\U0001f4dd No lyrics"
+            if result.synced_lyrics:
+                return "\u2705 Synced lyrics"
+            if result.plain_lyrics:
+                return "\u26a0\ufe0f Plain lyrics only"
+            return "\U0001f4dd No lyrics"
+        except Exception:
+            return "\U0001f4dd Lyrics N/A"
 
 
 # Regex for accepted video URL patterns (used to validate user-pasted URLs).
