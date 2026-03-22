@@ -452,3 +452,60 @@ class TestFillLyricsFromReference:
         assert result[2].word == "this "
         # The middle note should get filled
         assert result[1].word not in ("~", "~ ")
+
+    def test_overflow_words_use_global_placeholders(self):
+        """Words that can't be placed locally should overflow to global ~ notes."""
+        # Two anchors with NO ~ between them, but ~ notes elsewhere
+        segs = [
+            MidiSegment("C4", 0.0, 0.3, "~ "),      # placeholder before anchors
+            MidiSegment("D4", 0.3, 0.5, "hello "),   # anchor
+            MidiSegment("E4", 0.5, 0.8, "world "),   # anchor (no gap between!)
+            MidiSegment("F4", 0.8, 1.0, "~ "),       # placeholder after anchors
+        ]
+        words = [
+            TranscribedData(word="hello ", start=0.3, end=0.5),
+            TranscribedData(word="world ", start=0.5, end=0.8),
+        ]
+        # Reference has "beautiful" between "hello" and "world" but no ~ slot there
+        result = fill_lyrics_from_reference(
+            segs, words, "hello beautiful world"
+        )
+        # "beautiful" should overflow to one of the global ~ notes
+        non_tilde = [s for s in result if s.word not in ("~", "~ ")]
+        assert any("beautiful" in s.word for s in result)
+
+    def test_more_ref_words_than_placeholders_concatenates(self):
+        """When more reference words than placeholders, words are concatenated."""
+        segs = [
+            MidiSegment("C4", 0.0, 0.5, "~ "),
+        ]
+        result = fill_lyrics_from_reference(
+            segs, [], "one two three four five"
+        )
+        # All 5 words must end up in the single note (concatenated)
+        assert result[0].word not in ("~", "~ ")
+        combined = result[0].word.lower().strip()
+        for w in ["one", "two", "three", "four", "five"]:
+            assert w in combined
+
+    def test_ref_word_count_matches_output(self):
+        """Every reference word should appear in the output somewhere."""
+        segs = [
+            MidiSegment("C4", 0.0, 0.3, "~ "),
+            MidiSegment("D4", 0.3, 0.5, "I "),
+            MidiSegment("E4", 0.5, 0.8, "~ "),
+            MidiSegment("F4", 0.8, 1.1, "~ "),
+            MidiSegment("G4", 1.1, 1.4, "you "),
+            MidiSegment("A4", 1.4, 1.7, "~ "),
+        ]
+        words = [
+            TranscribedData(word="I ", start=0.3, end=0.5),
+            TranscribedData(word="you ", start=1.1, end=1.4),
+        ]
+        ref_text = "I really truly love you forever"
+        result = fill_lyrics_from_reference(segs, words, ref_text)
+        # Collect all text from result
+        all_text = " ".join(s.word.strip() for s in result if s.word not in ("~", "~ "))
+        all_text_lower = all_text.lower()
+        for ref_word in ["i", "really", "truly", "love", "you", "forever"]:
+            assert ref_word in all_text_lower, f"'{ref_word}' missing from output: {all_text}"
