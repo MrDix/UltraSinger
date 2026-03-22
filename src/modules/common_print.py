@@ -45,9 +45,11 @@ def print_help() -> None:
     --whisper               Multilingual model > tiny|base|small|medium|large-v1|large-v2|large-v3  >> ((default) is large-v2)
                             English-only model > tiny.en|base.en|small.en|medium.en
     --whisper_align_model   Use other languages model for Whisper provided from huggingface.co
-    --language              Override the language detected by whisper for alignment and hyphenation.
-                            Default: auto-detect. WARNING: setting this for non-matching songs
-                            will degrade alignment quality (e.g. --language en for German songs).
+    --language              Override the language detected by Whisper for alignment and hyphenation.
+                            Default: auto-detect. When LRCLIB synced lyrics are found, language is
+                            detected quickly via Whisper tiny (~2-3s) instead of full transcription.
+                            WARNING: setting this for non-matching songs will degrade alignment
+                            quality (e.g. --language en for German songs).
     --whisper_batch_size    Reduce if low on GPU mem >> ((default) is 16)
     --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words >> True|False >> ((default) is False)
