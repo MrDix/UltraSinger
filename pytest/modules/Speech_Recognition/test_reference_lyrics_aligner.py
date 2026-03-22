@@ -6,7 +6,6 @@ from unittest.mock import patch, MagicMock
 
 from modules.Speech_Recognition.reference_lyrics_aligner import (
     parse_lrc_synced_lyrics,
-    _normalize_segment_timestamps,
     _compute_note_for_word,
     _split_word_at_pitch_changes,
     create_midi_segments_from_reference_lyrics,
@@ -81,56 +80,6 @@ class TestParseLrcSyncedLyrics:
         assert len(segs) == 2
         assert segs[0]["text"] == "Oh-oh-oh-oh-oh"
         assert segs[1]["text"] == "Ooh, ooh, ooh-ooh-ooh"
-
-
-# ---------------------------------------------------------------------------
-# Timestamp normalization
-# ---------------------------------------------------------------------------
-
-
-class TestNormalizeSegmentTimestamps:
-    """Tests for _normalize_segment_timestamps."""
-
-    def test_evenly_spreads_two_segments(self):
-        segs = [{"start": 30.0, "end": 60.0}, {"start": 60.0, "end": 90.0}]
-        result = _normalize_segment_timestamps(segs, audio_duration=120.0)
-        assert result[0]["start"] == pytest.approx(0.0)
-        assert result[0]["end"] == pytest.approx(60.0)
-        assert result[1]["start"] == pytest.approx(60.0)
-        assert result[1]["end"] == pytest.approx(120.0)
-
-    def test_covers_full_audio_duration(self):
-        segs = [
-            {"start": 10.0, "end": 160.0, "text": "First"},
-            {"start": 160.0, "end": 310.0, "text": "Second"},
-        ]
-        result = _normalize_segment_timestamps(segs, audio_duration=200.0)
-        assert result[0]["start"] == pytest.approx(0.0)
-        assert result[-1]["end"] == pytest.approx(200.0)
-
-    def test_empty_segments(self):
-        assert _normalize_segment_timestamps([], 60.0) == []
-
-    def test_zero_duration(self):
-        segs = [{"start": 5.0, "end": 10.0}]
-        result = _normalize_segment_timestamps(segs, audio_duration=0.0)
-        # Should remain unchanged when audio_duration <= 0
-        assert result[0]["start"] == pytest.approx(5.0)
-
-    def test_equal_spacing(self):
-        segs = [
-            {"start": 0.0, "end": 10.0, "text": "A"},
-            {"start": 10.0, "end": 20.0, "text": "B"},
-            {"start": 20.0, "end": 30.0, "text": "C"},
-        ]
-        result = _normalize_segment_timestamps(segs, audio_duration=90.0)
-        assert result[0]["start"] == pytest.approx(0.0)
-        assert result[0]["end"] == pytest.approx(30.0)
-        assert result[1]["start"] == pytest.approx(30.0)
-        assert result[1]["end"] == pytest.approx(60.0)
-        assert result[2]["start"] == pytest.approx(60.0)
-        assert result[2]["end"] == pytest.approx(90.0)
-
 
 
 # ---------------------------------------------------------------------------
