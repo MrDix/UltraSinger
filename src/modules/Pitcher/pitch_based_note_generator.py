@@ -318,11 +318,10 @@ def _overlay_lyrics(
 ) -> list[MidiSegment]:
     """Assign lyrics from Whisper transcription to pitch-derived notes.
 
-    Each Whisper word is assigned to the pitch-note with the most time
-    overlap.  The first overlapping note gets the word text; subsequent
-    notes within the same word get "~" continuation markers.
-
-    Notes with no overlapping word get "~".
+    For each pitch-note, all overlapping Whisper words are collected.
+    If multiple words fall on a single note, the note is **split at word
+    boundaries** so each word gets its own note (same pitch).  Notes with
+    no overlapping word keep the "~" continuation marker.
     """
     if not transcribed_data or not midi_segments:
         return midi_segments
@@ -331,19 +330,17 @@ def _overlay_lyrics(
     for seg in midi_segments:
         seg.word = "~ "
 
-    # For each Whisper word, find the best-overlapping note
-    for td in transcribed_data:
-        word_start = td.start
-        word_end = td.end
-        word_text = td.word
+    # For each note, collect all overlapping words with their time ranges
+    # word_assignments[seg_idx] = [(word_text, word_start, word_end), ...]
+    word_assignments: dict[int, list[tuple[str, float, float]]] = {}
 
+    for td in transcribed_data:
         best_overlap = 0.0
         best_idx = -1
 
         for i, seg in enumerate(midi_segments):
-            # Compute time overlap
-            overlap_start = max(word_start, seg.start)
-            overlap_end = min(word_end, seg.end)
+            overlap_start = max(td.start, seg.start)
+            overlap_end = min(td.end, seg.end)
             overlap = max(0.0, overlap_end - overlap_start)
 
             if overlap > best_overlap:
@@ -351,22 +348,64 @@ def _overlay_lyrics(
                 best_idx = i
 
         if best_idx >= 0 and best_overlap > 0:
-            # Assign word to the note with most overlap
-            if midi_segments[best_idx].word in ("~", "~ "):
-                midi_segments[best_idx].word = word_text
-            else:
-                # Multiple words on same note — concatenate
-                existing = midi_segments[best_idx].word.rstrip()
-                new_word = word_text.strip()
-                midi_segments[best_idx].word = existing + new_word + " "
+            if best_idx not in word_assignments:
+                word_assignments[best_idx] = []
+            word_assignments[best_idx].append((td.word, td.start, td.end))
 
-    # Ensure proper trailing space convention:
-    # All notes get trailing space except possibly the last of a word group
-    for seg in midi_segments:
+    # Build the result list, splitting notes that have multiple words
+    result: list[MidiSegment] = []
+
+    for i, seg in enumerate(midi_segments):
+        words = word_assignments.get(i)
+
+        if not words:
+            # No words — keep as "~" placeholder
+            result.append(seg)
+        elif len(words) == 1:
+            # Exactly one word — simple assignment
+            seg.word = words[0][0]
+            if not seg.word.endswith(" "):
+                seg.word += " "
+            result.append(seg)
+        else:
+            # Multiple words on one note — split at word boundaries
+            words.sort(key=lambda w: w[1])  # sort by word start time
+            note_start = seg.start
+            note_end = seg.end
+
+            for wi, (word_text, w_start, w_end) in enumerate(words):
+                # Determine split boundaries:
+                # - First sub-note starts at the original note start
+                # - Last sub-note ends at the original note end
+                # - Middle boundaries are midpoints between consecutive words
+                if wi == 0:
+                    sub_start = note_start
+                else:
+                    prev_end = words[wi - 1][2]
+                    sub_start = (prev_end + w_start) / 2.0
+
+                if wi == len(words) - 1:
+                    sub_end = note_end
+                else:
+                    next_start = words[wi + 1][1]
+                    sub_end = (w_end + next_start) / 2.0
+
+                # Clamp to note boundaries
+                sub_start = max(sub_start, note_start)
+                sub_end = min(sub_end, note_end)
+
+                if sub_end <= sub_start:
+                    continue
+
+                word_with_space = word_text if word_text.endswith(" ") else word_text + " "
+                result.append(MidiSegment(seg.note, sub_start, sub_end, word_with_space))
+
+    # Ensure proper trailing space convention
+    for seg in result:
         if seg.word and not seg.word.endswith(" "):
             seg.word += " "
 
-    return midi_segments
+    return result
 
 
 # ---------------------------------------------------------------------------
