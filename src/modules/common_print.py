@@ -72,7 +72,9 @@ def print_help() -> None:
     --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Disabled by default.
     --pitch_notes           Generate notes from pitch contour instead of word timing (experimental). Disabled by
                             default. Best for melismatic songs with runs, slides and ornaments where word-level
-                            timing produces flat, unusable notes. Whisper lyrics are overlaid by time alignment.
+                            timing produces flat, unusable notes. Notes are segmented by pitch stability, then
+                            split at word boundaries. When lyrics lookup is active, reference lyrics fill remaining
+                            placeholder notes. Whisper lyrics are overlaid by time alignment.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
 
