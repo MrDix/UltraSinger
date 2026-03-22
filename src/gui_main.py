@@ -52,6 +52,14 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
+    # Windows: Set explicit AppUserModelID so the taskbar shows our icon
+    # instead of the generic Python icon.  Must be called BEFORE QApplication.
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "ultrasinger.gui"
+        )
+
     # Suppress noisy Chromium stderr messages (cache errors, GPU warnings,
     # quota DB resets).  These are harmless but alarm users.
     # FATAL=3 means only show crashes; ERROR/WARNING/INFO are suppressed.
