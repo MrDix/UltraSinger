@@ -91,18 +91,17 @@ def _normalize_segment_timestamps(
     segments: list[dict],
     audio_duration: float,
 ) -> list[dict]:
-    """Scale LRC timestamps proportionally to fit the audio duration.
+    """Replace LRC timestamps with evenly-spaced positions across the audio.
 
     LRCLIB synced lyrics are timed to the original commercial release, but
-    the audio being processed may have a different duration (SingStar rips
-    cut the intro, live recordings differ, etc.).  We scale the LRC
-    timestamps proportionally so the *relative* structure is preserved
-    (e.g. a long intro in LRC maps to a proportionally long intro in the
-    audio).  WhisperX's CTC forced alignment then finds the exact word
-    positions within each scaled segment window.
+    the audio being processed may have a completely different start offset
+    (e.g. SingStar rips cut the intro, live recordings differ, etc.).
+    Rather than trying to detect and correct the offset, we simply spread
+    segments evenly across the audio duration and let WhisperX's CTC forced
+    alignment find the correct word positions from the audio signal alone.
 
-    This approach preserves song structure (verses, choruses at the right
-    proportional positions) while adapting to any audio duration.
+    This approach is robust: we only use LRCLIB for the *text* (which is
+    verified and accurate), not the *timing* (which varies by release).
 
     Args:
         segments: Parsed LRC segments with ``start`` and ``end`` keys.
@@ -114,25 +113,12 @@ def _normalize_segment_timestamps(
     if not segments or audio_duration <= 0:
         return segments
 
-    # Use proportional scaling based on LRC structure
-    lrc_start = segments[0]["start"]
-    lrc_end = segments[-1]["end"]
-    lrc_span = lrc_end - lrc_start
+    n = len(segments)
+    seg_duration = audio_duration / n
 
-    if lrc_span <= 0:
-        # Degenerate case: all same timestamp — fall back to even spread
-        n = len(segments)
-        seg_duration = audio_duration / n
-        for i, seg in enumerate(segments):
-            seg["start"] = i * seg_duration
-            seg["end"] = (i + 1) * seg_duration
-        return segments
-
-    scale = audio_duration / lrc_span
-
-    for seg in segments:
-        seg["start"] = (seg["start"] - lrc_start) * scale
-        seg["end"] = (seg["end"] - lrc_start) * scale
+    for i, seg in enumerate(segments):
+        seg["start"] = i * seg_duration
+        seg["end"] = (i + 1) * seg_duration
 
     return segments
 
