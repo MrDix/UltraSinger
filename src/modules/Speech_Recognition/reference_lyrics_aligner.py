@@ -121,7 +121,7 @@ def align_lyrics_to_audio(
     )
 
     audio = whisperx.load_audio(audio_path)
-    audio_duration = librosa.get_duration(filename=audio_path)
+    audio_duration = librosa.get_duration(path=audio_path)
 
     # Merge all lyrics into a single segment spanning the full audio.
     # This gives CTC alignment maximum flexibility to find words wherever
