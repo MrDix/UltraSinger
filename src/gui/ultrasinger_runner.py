@@ -344,6 +344,8 @@ class UltraSingerRunner(QObject):
             args.append("--vocal_gap_fill")
         if config.get("pitch_change_split"):
             args.append("--pitch_change_split")
+        if config.get("pitch_notes"):
+            args.append("--pitch_notes")
 
         # LLM correction
         if config.get("llm_correct"):
