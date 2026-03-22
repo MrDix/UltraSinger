@@ -590,6 +590,7 @@ def fill_lyrics_from_reference(
     runs.append(current_run)
 
     filled_count = 0
+    overflow_words: list[str] = []  # Words that couldn't be placed in their region
 
     for run in runs:
         run_ref_start = run[0][0]
@@ -620,17 +621,42 @@ def fill_lyrics_from_reference(
             if midi_segments[si].word in ("~", "~ "):
                 placeholders.append(si)
 
-        filled_count += _assign_words_to_segments(
-            midi_segments, placeholders, run_words
-        )
+        if placeholders:
+            filled_count += _assign_words_to_segments(
+                midi_segments, placeholders, run_words
+            )
+        else:
+            # No placeholders in this region — save for overflow pass
+            overflow_words.extend(run_words)
 
-    placeholder_remaining = sum(
-        1 for s in midi_segments if s.word in ("~", "~ ")
+    # Overflow pass: distribute remaining words onto any ~ notes globally
+    if overflow_words:
+        global_placeholders = [
+            i for i, seg in enumerate(midi_segments)
+            if seg.word in ("~", "~ ")
+        ]
+        if global_placeholders:
+            filled_count += _assign_words_to_segments(
+                midi_segments, global_placeholders, overflow_words
+            )
+        else:
+            print(
+                f"{ULTRASINGER_HEAD} Warning: {len(overflow_words)} reference "
+                f"word(s) could not be placed (no placeholder notes available)"
+            )
+
+    total_ref = len(ref_words)
+    total_assigned_after = sum(
+        1 for s in midi_segments if s.word not in ("~", "~ ")
     )
+    placeholder_remaining = len(midi_segments) - total_assigned_after
+
     print(
         f"{ULTRASINGER_HEAD} Reference lyrics fill: "
         f"{blue_highlighted(str(filled_count))} words assigned to placeholder notes "
-        f"({placeholder_remaining} placeholders remaining)"
+        f"({total_ref} reference words, "
+        f"{total_assigned_after} notes with text, "
+        f"{placeholder_remaining} placeholders remaining)"
     )
 
     return midi_segments
