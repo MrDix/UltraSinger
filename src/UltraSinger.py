@@ -178,6 +178,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocal gap fill enabled')}")
     if settings.pitch_change_split:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-change split enabled')}")
+    if settings.pitch_notes:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-based note generation enabled (notes from pitch contour)')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -258,17 +260,26 @@ def run() -> tuple[str, Score, Score]:
 
     # Create Midi_Segments
     if not settings.ignore_audio:
-        process_data.midi_segments = create_midi_segments_from_transcribed_data(
-            process_data.transcribed_data,
-            process_data.pitched_data,
-            allowed_notes_for_key
-        )
+        if settings.pitch_notes:
+            from modules.Pitcher.pitch_based_note_generator import create_midi_segments_from_pitch
+            process_data.midi_segments = create_midi_segments_from_pitch(
+                process_data.pitched_data,
+                process_data.transcribed_data,
+                allowed_notes_for_key,
+            )
+        else:
+            process_data.midi_segments = create_midi_segments_from_transcribed_data(
+                process_data.transcribed_data,
+                process_data.pitched_data,
+                allowed_notes_for_key
+            )
     else:
         process_data.midi_segments = create_repitched_midi_segments_from_ultrastar_txt(process_data.pitched_data,
                                                                                        process_data.parsed_file)
 
     # Split notes at pitch change boundaries (melismas, runs)
-    if not settings.ignore_audio and settings.pitch_change_split:
+    # (Skip when pitch_notes is active — it already segments by pitch)
+    if not settings.ignore_audio and settings.pitch_change_split and not settings.pitch_notes:
         process_data.midi_segments = split_notes_at_pitch_changes(
             process_data.midi_segments, process_data.pitched_data
         )
@@ -400,6 +411,7 @@ def _write_settings_info_file(
             f.write(f"  Syllable split:           {settings.syllable_split}\n")
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
+            f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -1304,6 +1316,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.vocal_gap_fill = True
         elif opt in ("--pitch_change_split"):
             settings.pitch_change_split = True
+        elif opt in ("--pitch_notes"):
+            settings.pitch_notes = True
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
         elif opt in ("--ffmpeg"):
@@ -1400,6 +1414,7 @@ def arg_options():
         "syllable_split",
         "vocal_gap_fill",
         "pitch_change_split",
+        "pitch_notes",
         "disable_lyrics_lookup",
         "interactive",
         "cookiefile=",
