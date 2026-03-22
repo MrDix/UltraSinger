@@ -27,6 +27,10 @@ def create_midi_instrument(midi_segments: list[MidiSegment]) -> object:
     velocity = 100
 
     for i, midi_segment in enumerate(midi_segments):
+        # Skip zero-duration or negative-duration notes (can happen after
+        # refinement or quantization) — pretty_midi raises ValueError.
+        if midi_segment.end <= midi_segment.start:
+            continue
         note = pretty_midi.Note(velocity, librosa.note_to_midi(midi_segment.note), midi_segment.start, midi_segment.end)
         instrument.notes.append(note)
 
