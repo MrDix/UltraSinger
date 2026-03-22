@@ -131,6 +131,23 @@ class TestNormalizeSegmentTimestamps:
         assert result[2]["start"] == pytest.approx(60.0)
         assert result[2]["end"] == pytest.approx(90.0)
 
+    def test_proportional_scaling_preserves_structure(self):
+        """LRC with offset should preserve proportional gaps between lines."""
+        # Simulates a song with 30s intro (lyrics start at 30s in LRC)
+        segs = [
+            {"start": 30.0, "end": 50.0, "text": "First"},
+            {"start": 50.0, "end": 60.0, "text": "Second"},
+            {"start": 60.0, "end": 90.0, "text": "Third"},
+        ]
+        # Audio is 120s, LRC spans 30-90 = 60s → scale = 120/60 = 2.0
+        result = _normalize_segment_timestamps(segs, audio_duration=120.0)
+        assert result[0]["start"] == pytest.approx(0.0)   # (30-30)*2
+        assert result[0]["end"] == pytest.approx(40.0)     # (50-30)*2
+        assert result[1]["start"] == pytest.approx(40.0)   # (50-30)*2
+        assert result[1]["end"] == pytest.approx(60.0)     # (60-30)*2
+        assert result[2]["start"] == pytest.approx(60.0)   # (60-30)*2
+        assert result[2]["end"] == pytest.approx(120.0)    # (90-30)*2
+
 
 # ---------------------------------------------------------------------------
 # Pitch assignment
