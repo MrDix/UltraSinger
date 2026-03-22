@@ -275,7 +275,7 @@ def run() -> tuple[str, Score, Score]:
                     pitched_data=process_data.pitched_data,
                     device=settings.pytorch_device,
                     allowed_notes=allowed_notes_for_key,
-                    melisma_split=True,
+                    melisma_split=settings.pitch_change_split,
                 )
                 if ref_segments:
                     process_data.midi_segments = ref_segments
@@ -904,13 +904,14 @@ def TranscribeAudio(process_data):
             from modules.lrclib_client import search_lyrics
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
             lyrics_info = search_lyrics(process_data.media_info.artist, process_data.media_info.title)
-            if lyrics_info is not None and lyrics_info.plain_lyrics:
-                # Save synced lyrics for reference-first pipeline
+            if lyrics_info is not None:
+                # Save synced lyrics for reference-first pipeline (independent of plain lyrics)
                 if lyrics_info.synced_lyrics:
                     process_data.synced_lyrics = lyrics_info.synced_lyrics
-                process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
-                    process_data.transcribed_data, lyrics_info.plain_lyrics
-                )
+                if lyrics_info.plain_lyrics:
+                    process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
+                        process_data.transcribed_data, lyrics_info.plain_lyrics
+                    )
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Lyrics lookup correction skipped: {e}")
 
