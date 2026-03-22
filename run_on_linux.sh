@@ -13,6 +13,9 @@ if [ ! -d ".venv" ]; then
     exit 1
 fi
 
+# Suppress compile-time SyntaxWarnings from third-party packages (e.g. pydub)
+export PYTHONWARNINGS="ignore::SyntaxWarning"
+
 # Activate virtual environment
 source .venv/bin/activate
 

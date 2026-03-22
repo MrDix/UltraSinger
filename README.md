@@ -181,6 +181,10 @@ _Not all options working now!_
     --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Detects
                             sustained pitch changes (melismas, runs) and creates separate notes for each pitch
                             region. Disabled by default.
+    --pitch_notes           Generate notes from pitch contour instead of word timing (experimental). Best for
+                            melismatic songs with runs and slides. Notes are segmented by pitch stability, then
+                            split at word boundaries so each word gets its own note. When lyrics lookup is active,
+                            reference lyrics fill remaining placeholder notes. Disabled by default.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup. Enabled by default, fetches verified reference
                             lyrics to correct Whisper transcription errors. No API key needed.
 
