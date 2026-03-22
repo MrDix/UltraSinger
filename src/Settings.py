@@ -38,6 +38,7 @@ class Settings:
     syllable_split = False  # Preserve syllable-level note splits at pitch changes
     vocal_gap_fill = False  # Fill un-transcribed vocal gaps with placeholder notes
     pitch_change_split = False  # Split notes at pitch change boundaries (melismas, runs)
+    pitch_notes = False  # Generate notes from pitch contour instead of word timing
     lyrics_lookup = True  # Look up reference lyrics from LRCLIB and correct Whisper transcription
     disable_reference_lyrics = False  # Disable reference-lyrics-first pipeline (forced alignment with LRCLIB synced lyrics)
     keep_audio_in_video = False  # Keep full audio (vocals+instrumental) embedded in the output video

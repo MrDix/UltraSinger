@@ -447,6 +447,17 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._pitch_change_split.setChecked(
                                _DEFAULTS["pitch_change_split"]))
 
+        self._pitch_notes = ToggleSwitch(
+            checked=self._config.get("pitch_notes", False)
+        )
+        card.add_toggle_row("Pitch-Based Notes", self._pitch_notes,
+                           "Generate notes from the pitch contour instead of word timing. "
+                           "Best for melismatic songs with runs, slides, and ornaments "
+                           "where word-level timing produces flat, unusable notes. "
+                           "Whisper lyrics are overlaid by time alignment.",
+                           reset_callback=lambda: self._pitch_notes.setChecked(
+                               _DEFAULTS["pitch_notes"]))
+
         self._vocal_gap_fill = ToggleSwitch(
             checked=self._config.get("vocal_gap_fill", False)
         )
@@ -894,6 +905,7 @@ class ConversionSettingsForm(QWidget):
             "syllable_split": self._syllable_split.isChecked(),
             "vocal_gap_fill": self._vocal_gap_fill.isChecked(),
             "pitch_change_split": self._pitch_change_split.isChecked(),
+            "pitch_notes": self._pitch_notes.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),
