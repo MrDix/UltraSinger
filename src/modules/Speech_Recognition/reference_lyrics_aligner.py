@@ -84,46 +84,6 @@ def parse_lrc_synced_lyrics(synced_lyrics: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Timestamp normalization
-# ---------------------------------------------------------------------------
-
-def _normalize_segment_timestamps(
-    segments: list[dict],
-    audio_duration: float,
-) -> list[dict]:
-    """Replace LRC timestamps with evenly-spaced positions across the audio.
-
-    LRCLIB synced lyrics are timed to the original commercial release, but
-    the audio being processed may have a completely different start offset
-    (e.g. SingStar rips cut the intro, live recordings differ, etc.).
-    Rather than trying to detect and correct the offset, we simply spread
-    segments evenly across the audio duration and let WhisperX's CTC forced
-    alignment find the correct word positions from the audio signal alone.
-
-    This approach is robust: we only use LRCLIB for the *text* (which is
-    verified and accurate), not the *timing* (which varies by release).
-
-    Args:
-        segments: Parsed LRC segments with ``start`` and ``end`` keys.
-        audio_duration: Duration of the audio file in seconds.
-
-    Returns:
-        Adjusted segments (modified in-place and returned).
-    """
-    if not segments or audio_duration <= 0:
-        return segments
-
-    n = len(segments)
-    seg_duration = audio_duration / n
-
-    for i, seg in enumerate(segments):
-        seg["start"] = i * seg_duration
-        seg["end"] = (i + 1) * seg_duration
-
-    return segments
-
-
-# ---------------------------------------------------------------------------
 # Forced alignment
 # ---------------------------------------------------------------------------
 
