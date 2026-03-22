@@ -10,6 +10,7 @@ import warnings
 # Must run before any transitive imports of requests, torchaudio, pyannote, etc.
 warnings.filterwarnings("ignore", module="requests")
 warnings.filterwarnings("ignore", module="pyannote")
+warnings.filterwarnings("ignore", module="pydub")
 warnings.filterwarnings("ignore", message="In 2\\.9.*torchaudio\\.save_with_torchcodec")
 
 # Reconfigure console streams to UTF-8 on Windows to prevent UnicodeEncodeError
