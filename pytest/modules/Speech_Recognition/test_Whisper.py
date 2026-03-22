@@ -1,8 +1,9 @@
 """Tests for whisper.py"""
 
 import unittest
+from unittest.mock import patch, MagicMock
 from src.modules.Speech_Recognition.TranscribedData import TranscribedData
-from src.modules.Speech_Recognition.Whisper import convert_to_transcribed_data, number_to_words
+from src.modules.Speech_Recognition.Whisper import convert_to_transcribed_data, number_to_words, detect_language_from_audio
 
 class ConvertToTranscribedDataTest(unittest.TestCase):
     def test_convert_to_transcribed_data(self):
@@ -80,5 +81,42 @@ class ConvertToTranscribedDataTest(unittest.TestCase):
 
         # Assert
         self.assertEqual(result, expected_output)
+
+
+class DetectLanguageFromAudioTest(unittest.TestCase):
+    """Tests for detect_language_from_audio (mocked faster-whisper)."""
+
+    @patch("faster_whisper.WhisperModel")
+    @patch("whisperx.load_audio")
+    def test_returns_detected_language(self, mock_load_audio, mock_fw_model_cls):
+        """Should return the language code from faster-whisper detect_language."""
+        import numpy as np
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+
+        mock_model = MagicMock()
+        mock_model.detect_language.return_value = ("de", 0.95, [("de", 0.95), ("en", 0.03)])
+        mock_fw_model_cls.return_value = mock_model
+
+        result = detect_language_from_audio("/fake/audio.wav", device="cpu")
+
+        self.assertEqual(result, "de")
+        mock_model.detect_language.assert_called_once()
+
+    @patch("faster_whisper.WhisperModel")
+    @patch("whisperx.load_audio")
+    def test_returns_english_for_english_audio(self, mock_load_audio, mock_fw_model_cls):
+        """Should return 'en' for English audio."""
+        import numpy as np
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+
+        mock_model = MagicMock()
+        mock_model.detect_language.return_value = ("en", 0.99, [("en", 0.99)])
+        mock_fw_model_cls.return_value = mock_model
+
+        result = detect_language_from_audio("/fake/audio.wav")
+
+        self.assertEqual(result, "en")
+
+
 if __name__ == "__main__":
     unittest.main()
