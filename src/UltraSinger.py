@@ -355,12 +355,13 @@ def run() -> tuple[str, Score, Score]:
                 allowed_notes_for_key
             )
 
-        # Create audio chunks after transcribed_data is finalized
-        if settings.create_audio_chunks:
-            create_audio_chunks(process_data)
     else:
         process_data.midi_segments = create_repitched_midi_segments_from_ultrastar_txt(process_data.pitched_data,
                                                                                        process_data.parsed_file)
+
+    # Create audio chunks after transcribed_data is finalized
+    if settings.create_audio_chunks:
+        create_audio_chunks(process_data)
 
     # Split notes at pitch change boundaries (melismas, runs)
     # (Skip when reference_first is active — it already handles pitch segmentation)
