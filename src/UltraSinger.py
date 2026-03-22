@@ -218,10 +218,13 @@ def run() -> tuple[str, Score, Score]:
     whisper_skipped = False
 
     # Early LRCLIB lookup: if synced lyrics are available, we can skip the
-    # expensive Whisper transcription entirely (~2 min saved per song)
+    # expensive Whisper transcription entirely (~2 min saved per song).
+    # Only skip Whisper when the language is explicitly set — auto-detection
+    # requires Whisper to run.
     if (not settings.ignore_audio
             and settings.lyrics_lookup
             and not settings.disable_reference_lyrics
+            and settings.language is not None
             and process_data.media_info.artist
             and process_data.media_info.title):
         try:
@@ -259,10 +262,6 @@ def run() -> tuple[str, Score, Score]:
     if not settings.ignore_audio and not whisper_skipped:
         process_data.transcribed_data = split_syllables_into_segments(process_data.transcribed_data,
                                                                   process_data.media_info.bpm)
-
-    # Create audio chunks (requires transcribed_data)
-    if settings.create_audio_chunks and not whisper_skipped:
-        create_audio_chunks(process_data)
 
     # Pitch audio
     process_data.pitched_data = pitch_audio(process_data.process_data_paths)
@@ -341,12 +340,24 @@ def run() -> tuple[str, Score, Score]:
                 process_data.transcribed_data = split_syllables_into_segments(
                     process_data.transcribed_data, process_data.media_info.bpm
                 )
+                if settings.vocal_gap_fill:
+                    try:
+                        from modules.Audio.vocal_gap_fill import fill_vocal_gaps
+                        process_data.transcribed_data = fill_vocal_gaps(
+                            process_data.transcribed_data, process_data.pitched_data
+                        )
+                    except Exception as e:
+                        print(f"{ULTRASINGER_HEAD} Vocal gap fill skipped: {e}")
 
             process_data.midi_segments = create_midi_segments_from_transcribed_data(
                 process_data.transcribed_data,
                 process_data.pitched_data,
                 allowed_notes_for_key
             )
+
+        # Create audio chunks after transcribed_data is finalized
+        if settings.create_audio_chunks:
+            create_audio_chunks(process_data)
     else:
         process_data.midi_segments = create_repitched_midi_segments_from_ultrastar_txt(process_data.pitched_data,
                                                                                        process_data.parsed_file)
