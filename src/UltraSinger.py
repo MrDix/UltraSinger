@@ -335,6 +335,46 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Reference-first pipeline failed: {e}")
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
 
+        # Fallback: Plain lyrics alignment when no synced lyrics available
+        if not reference_first_used and process_data.plain_lyrics and not settings.disable_reference_lyrics:
+            try:
+                from modules.Speech_Recognition.reference_lyrics_aligner import (
+                    create_midi_segments_from_plain_lyrics,
+                )
+                ref_language = process_data.media_info.language
+                if not ref_language:
+                    ref_language = "en"
+                    print(
+                        f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
+                        f"Language unknown — falling back to English alignment model"
+                    )
+                plain_segments = create_midi_segments_from_plain_lyrics(
+                    plain_lyrics=process_data.plain_lyrics,
+                    audio_path=process_data.process_data_paths.whisper_audio_path,
+                    language=ref_language,
+                    pitched_data=process_data.pitched_data,
+                    device=settings.pytorch_device,
+                    allowed_notes=allowed_notes_for_key,
+                    melisma_split=settings.pitch_change_split,
+                    align_model_name=settings.whisper_align_model,
+                )
+                if plain_segments:
+                    process_data.midi_segments = plain_segments
+                    reference_first_used = True
+                    process_data.transcribed_data = [
+                        TranscribedData(
+                            word=seg.word,
+                            start=seg.start,
+                            end=seg.end,
+                            confidence=1.0,
+                            is_word_end=not seg.word.strip().startswith("~"),
+                        )
+                        for seg in process_data.midi_segments
+                    ]
+            except Exception as e:
+                print(f"{ULTRASINGER_HEAD} Plain lyrics alignment failed: {e}")
+                print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
+
         if not reference_first_used:
             # If Whisper was skipped but reference-first failed, run Whisper now
             if whisper_skipped:
@@ -518,9 +558,12 @@ def _write_settings_info_file(
 
             # Pipeline
             f.write("[Pipeline]\n")
-            if reference_first_used:
-                f.write(f"  Pipeline:                 Reference-Lyrics-First\n")
+            if reference_first_used and process_data.synced_lyrics:
+                f.write(f"  Pipeline:                 Reference-Lyrics-First (synced)\n")
                 f.write(f"  LRCLIB synced lyrics:     found\n")
+            elif reference_first_used and process_data.plain_lyrics:
+                f.write(f"  Pipeline:                 Reference-Lyrics-First (plain)\n")
+                f.write(f"  LRCLIB plain lyrics:      found (no synced available)\n")
                 f.write(f"  Whisper transcription:    skipped\n")
                 f.write(f"  Alignment:                wav2vec2 CTC forced alignment\n")
             elif has_synced_lyrics:
@@ -1045,6 +1088,7 @@ def TranscribeAudio(process_data):
                 if lyrics_info.synced_lyrics:
                     process_data.synced_lyrics = lyrics_info.synced_lyrics
                 if lyrics_info.plain_lyrics:
+                    process_data.plain_lyrics = lyrics_info.plain_lyrics
                     process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
                         process_data.transcribed_data, lyrics_info.plain_lyrics
                     )
