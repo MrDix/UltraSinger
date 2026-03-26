@@ -95,6 +95,11 @@ def create_ultrastar_txt(
                 file.write(f"#{UltrastarTxtTag.TAGS.value}:{ultrastar_class.tags}\n")
         file.write(f"#{UltrastarTxtTag.CREATOR.value}:{ultrastar_class.creator}\n")
 
+        # Check if any LRCLIB linebreaks are available
+        has_lrclib_linebreaks = any(
+            getattr(ms, "line_break_after", False) for ms in midi_segments
+        )
+
         # Write the singing part
         previous_end_beat = 0
         separated_word_silence = []  # This is a workaround for separated words that get his ends to far away
@@ -121,13 +126,16 @@ def create_ultrastar_txt(
             else:
                 silence = 0
 
+            # Use note_type from LRCLIB metadata (: normal, F freestyle)
+            note_type = getattr(midi_segment, "note_type", UltrastarTxtNoteTypeTag.NORMAL.value)
+
             # : 10 10 10 w
-            # ':'   start midi part
+            # ':'   start midi part (or 'F' for freestyle)
             # 'n1'  start at real beat
             # 'n2'  duration at real beat
             # 'n3'  pitch where 0 == C4
             # 'w'   lyric
-            line = f"{UltrastarTxtNoteTypeTag.NORMAL.value} " \
+            line = f"{note_type} " \
                    f"{str(start_beat)} " \
                    f"{str(duration)} " \
                    f"{str(convert_midi_note_to_ultrastar_note(midi_segment))} " \
@@ -135,25 +143,35 @@ def create_ultrastar_txt(
 
             file.write(line)
 
-            # detect silence between words
-            if not midi_segment.word.endswith(" "):
-                separated_word_silence.append(silence)
-                continue
-
-            if silence_split_duration is not None and (
-                    i != len(midi_segments) - 1 and silence > silence_split_duration
-                    or any(s > silence_split_duration for s in separated_word_silence)):
-                # - 10
-                # '-' end of current sing part
-                # 'n1' show next at time in real beat
-                show_next = (
+            # Linebreak logic: prefer LRCLIB linebreaks when available,
+            # fall back to silence-based detection otherwise
+            if has_lrclib_linebreaks:
+                # LRCLIB mode: use line_break_after flag from reference lyrics
+                if getattr(midi_segment, "line_break_after", False) and i != len(midi_segments) - 1:
+                    show_next = (
                         second_to_beat(midi_segment.end - gap, real_bpm)
                         * multiplication
-                )
-                linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
-                            f"{str(math.floor(show_next))}\n"
-                file.write(linebreak)
-            separated_word_silence = []
+                    )
+                    linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
+                                f"{str(math.floor(show_next))}\n"
+                    file.write(linebreak)
+            else:
+                # Fallback: silence-based linebreak detection
+                if not midi_segment.word.endswith(" "):
+                    separated_word_silence.append(silence)
+                    continue
+
+                if silence_split_duration is not None and (
+                        i != len(midi_segments) - 1 and silence > silence_split_duration
+                        or any(s > silence_split_duration for s in separated_word_silence)):
+                    show_next = (
+                            second_to_beat(midi_segment.end - gap, real_bpm)
+                            * multiplication
+                    )
+                    linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
+                                f"{str(math.floor(show_next))}\n"
+                    file.write(linebreak)
+                separated_word_silence = []
         file.write(f"{UltrastarTxtTag.FILE_END.value}")
 
 

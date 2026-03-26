@@ -658,6 +658,14 @@ def merge_syllable_segments(midi_segments: list[MidiSegment],
             if is_potential_slide and not is_same_note:
                 new_midi_notes[-1].note = midi_segments[i - 1].note
 
+            # Propagate LRCLIB metadata from merged segment
+            if data.line_break_after:
+                new_data[-1].line_break_after = True
+                new_midi_notes[-1].line_break_after = True
+            if data.is_freestyle:
+                new_data[-1].is_freestyle = True
+                new_midi_notes[-1].note_type = "F"
+
             # Take over space and word_end flag from current segment
             # "~ " means end of word - add space to previous segment
             if str(data.word).endswith(" "):
@@ -671,6 +679,14 @@ def merge_syllable_segments(midi_segments: list[MidiSegment],
             # Merge regular syllable with previous syllable (same pitch)
             new_data[-1].end = data.end
             new_midi_notes[-1].end = data.end
+
+            # Propagate LRCLIB metadata from merged segment
+            if data.line_break_after:
+                new_data[-1].line_break_after = True
+                new_midi_notes[-1].line_break_after = True
+            if data.is_freestyle:
+                new_data[-1].is_freestyle = True
+                new_midi_notes[-1].note_type = "F"
 
             # Check if current word has space at end before stripping
             has_space = str(data.word).endswith(" ")
@@ -745,6 +761,13 @@ def _absorb_tilde_segments(
         if result_data:
             result_data[-1].end = data.end
             result_midi[-1].end = data.end
+            # Propagate LRCLIB metadata from absorbed segment
+            if data.line_break_after:
+                result_data[-1].line_break_after = True
+                result_midi[-1].line_break_after = True
+            if data.is_freestyle:
+                result_data[-1].is_freestyle = True
+                result_midi[-1].note_type = "F"
             # Carry over word_end and trailing space
             if str(data.word).endswith(" "):
                 if not result_data[-1].word.endswith(" "):

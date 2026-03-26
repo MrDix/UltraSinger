@@ -14,6 +14,8 @@ class TranscribedData:
     end: float = 0
     is_hyphen: bool = False
     is_word_end: bool = True
+    is_freestyle: bool = False  # Backing vocal / parenthesized text → UltraStar "F" note
+    line_break_after: bool = False  # LRCLIB line break follows this word
 
 
 def from_whisper(whisper_dict) -> TranscribedData:
