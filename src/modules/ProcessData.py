@@ -40,5 +40,4 @@ class ProcessData:
     pitched_data: Optional[PitchedData] = None
     midi_segments: Optional[List[MidiSegment]] = field(default_factory=list)
     parsed_file: Optional[UltrastarTxtValue] = None
-
-
+    synced_lyrics: Optional[str] = None  # Synced LRC lyrics from LRCLIB (for reference-first pipeline)

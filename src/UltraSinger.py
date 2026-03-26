@@ -178,6 +178,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocal gap fill enabled')}")
     if settings.pitch_change_split:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-change split enabled')}")
+    if settings.disable_reference_lyrics:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Reference-lyrics-first pipeline disabled')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -213,11 +215,43 @@ def run() -> tuple[str, Score, Score]:
     process_data.media_info.language = settings.language
     lyrics_lookup_result = None
     llm_result = None
-    if not settings.ignore_audio:
+    whisper_skipped = False
+
+    # Early LRCLIB lookup: if synced lyrics are available, we can skip the
+    # expensive Whisper transcription entirely (~2 min saved per song).
+    # Language detection uses Whisper tiny (~2-3s) when not explicitly set.
+    if (not settings.ignore_audio
+            and settings.lyrics_lookup
+            and not settings.disable_reference_lyrics
+            and process_data.media_info.artist
+            and process_data.media_info.title):
+        try:
+            from modules.lrclib_client import search_lyrics
+            early_lyrics_info = search_lyrics(
+                process_data.media_info.artist, process_data.media_info.title,
+            )
+            if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
+                process_data.synced_lyrics = early_lyrics_info.synced_lyrics
+                # Detect language if not explicitly set
+                if process_data.media_info.language is None:
+                    from modules.Speech_Recognition.Whisper import detect_language_from_audio
+                    process_data.media_info.language = detect_language_from_audio(
+                        process_data.process_data_paths.whisper_audio_path,
+                        device=settings.pytorch_device,
+                    )
+                whisper_skipped = True
+                print(
+                    f"{ULTRASINGER_HEAD} "
+                    f"{cyan_highlighted('Synced lyrics found — skipping Whisper transcription')}"
+                )
+        except Exception as e:
+            print(f"{ULTRASINGER_HEAD} Early lyrics lookup failed: {e}")
+
+    if not settings.ignore_audio and not whisper_skipped:
         lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
 
     # Onset correction — snap note starts to audio onsets for better timing
-    if not settings.ignore_audio and settings.onset_correction:
+    if not settings.ignore_audio and not whisper_skipped and settings.onset_correction:
         try:
             from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
             onset_times = detect_vocal_onsets(
@@ -229,20 +263,16 @@ def run() -> tuple[str, Score, Score]:
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Onset correction skipped: {e}")
 
-    # Split syllables into segments
-    if not settings.ignore_audio:
+    # Split syllables into segments (skip when Whisper was skipped — no transcribed_data yet)
+    if not settings.ignore_audio and not whisper_skipped:
         process_data.transcribed_data = split_syllables_into_segments(process_data.transcribed_data,
                                                                   process_data.media_info.bpm)
-
-    # Create audio chunks
-    if settings.create_audio_chunks:
-        create_audio_chunks(process_data)
 
     # Pitch audio
     process_data.pitched_data = pitch_audio(process_data.process_data_paths)
 
-    # Fill vocal gaps (insert placeholder notes for un-transcribed vocalizations)
-    if not settings.ignore_audio and settings.vocal_gap_fill:
+    # Fill vocal gaps (skip when Whisper was skipped — no transcribed_data yet)
+    if not settings.ignore_audio and not whisper_skipped and settings.vocal_gap_fill:
         try:
             from modules.Audio.vocal_gap_fill import fill_vocal_gaps
             process_data.transcribed_data = fill_vocal_gaps(
@@ -257,18 +287,97 @@ def run() -> tuple[str, Score, Score]:
         allowed_notes_for_key = get_allowed_notes_for_key(detected_key, detected_mode)
 
     # Create Midi_Segments
+    reference_first_used = False
     if not settings.ignore_audio:
-        process_data.midi_segments = create_midi_segments_from_transcribed_data(
-            process_data.transcribed_data,
-            process_data.pitched_data,
-            allowed_notes_for_key
-        )
+        # Reference-Lyrics-First pipeline: use LRCLIB synced lyrics + forced alignment
+        # when available (produces dramatically better lyrics coverage and timing)
+        if process_data.synced_lyrics and not settings.disable_reference_lyrics:
+            try:
+                from modules.Speech_Recognition.reference_lyrics_aligner import (
+                    create_midi_segments_from_reference_lyrics,
+                )
+                ref_language = process_data.media_info.language
+                if not ref_language:
+                    ref_language = "en"
+                    print(
+                        f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
+                        f"Language unknown — falling back to English alignment model"
+                    )
+                ref_segments = create_midi_segments_from_reference_lyrics(
+                    synced_lyrics=process_data.synced_lyrics,
+                    audio_path=process_data.process_data_paths.whisper_audio_path,
+                    language=ref_language,
+                    pitched_data=process_data.pitched_data,
+                    device=settings.pytorch_device,
+                    allowed_notes=allowed_notes_for_key,
+                    melisma_split=settings.pitch_change_split,
+                    align_model_name=settings.whisper_align_model,
+                )
+                if ref_segments:
+                    process_data.midi_segments = ref_segments
+                    reference_first_used = True
+                    # Rebuild transcribed_data to match reference-derived segments
+                    process_data.transcribed_data = [
+                        TranscribedData(
+                            word=seg.word,
+                            start=seg.start,
+                            end=seg.end,
+                            confidence=1.0,
+                            is_word_end=not seg.word.strip().startswith("~"),
+                        )
+                        for seg in process_data.midi_segments
+                    ]
+            except Exception as e:
+                print(f"{ULTRASINGER_HEAD} Reference-first pipeline failed: {e}")
+                print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
+
+        if not reference_first_used:
+            # If Whisper was skipped but reference-first failed, run Whisper now
+            if whisper_skipped:
+                print(f"{ULTRASINGER_HEAD} Running Whisper as fallback")
+                lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
+                whisper_skipped = False
+                # Run the intermediate steps we skipped
+                if settings.onset_correction:
+                    try:
+                        from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
+                        onset_times = detect_vocal_onsets(
+                            process_data.process_data_paths.whisper_audio_path
+                        )
+                        process_data.transcribed_data = snap_to_onsets(
+                            process_data.transcribed_data, onset_times
+                        )
+                    except Exception as e:
+                        print(f"{ULTRASINGER_HEAD} Onset correction skipped: {e}")
+                process_data.transcribed_data = split_syllables_into_segments(
+                    process_data.transcribed_data, process_data.media_info.bpm
+                )
+                if settings.vocal_gap_fill:
+                    try:
+                        from modules.Audio.vocal_gap_fill import fill_vocal_gaps
+                        process_data.transcribed_data = fill_vocal_gaps(
+                            process_data.transcribed_data, process_data.pitched_data
+                        )
+                    except Exception as e:
+                        print(f"{ULTRASINGER_HEAD} Vocal gap fill skipped: {e}")
+
+            process_data.midi_segments = create_midi_segments_from_transcribed_data(
+                process_data.transcribed_data,
+                process_data.pitched_data,
+                allowed_notes_for_key
+            )
+
     else:
         process_data.midi_segments = create_repitched_midi_segments_from_ultrastar_txt(process_data.pitched_data,
                                                                                        process_data.parsed_file)
 
+    # Create audio chunks after transcribed_data is finalized
+    if settings.create_audio_chunks:
+        create_audio_chunks(process_data)
+
     # Split notes at pitch change boundaries (melismas, runs)
-    if not settings.ignore_audio and settings.pitch_change_split:
+    # (Skip when reference_first is active — it already handles pitch segmentation)
+    if not settings.ignore_audio and settings.pitch_change_split and not reference_first_used:
         process_data.midi_segments = split_notes_at_pitch_changes(
             process_data.midi_segments, process_data.pitched_data
         )
@@ -289,7 +398,9 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = apply_octave_shift(process_data.midi_segments, settings.octave_shift)
 
     # Merge syllable segments
-    if not settings.ignore_audio:
+    # (Skip when reference_first is active — notes are already correctly segmented;
+    # merging would undo that)
+    if not settings.ignore_audio and not reference_first_used:
         process_data.midi_segments, process_data.transcribed_data = merge_syllable_segments(
             process_data.midi_segments,
             process_data.transcribed_data,
@@ -336,6 +447,9 @@ def run() -> tuple[str, Score, Score]:
             detected_language=process_data.media_info.language,
             lyrics_lookup_result=lyrics_lookup_result,
             llm_result=llm_result,
+            reference_first_used=reference_first_used,
+            whisper_skipped=whisper_skipped,
+            has_synced_lyrics=process_data.synced_lyrics is not None,
         )
 
     # Cleanup
@@ -355,6 +469,9 @@ def _write_settings_info_file(
         detected_language: str | None = None,
         lyrics_lookup_result=None,
         llm_result: "LLMResult | None" = None,
+        reference_first_used: bool = False,
+        whisper_skipped: bool = False,
+        has_synced_lyrics: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
     from datetime import datetime, timezone
@@ -390,6 +507,34 @@ def _write_settings_info_file(
             f.write(f"  No-speech threshold:      {settings.no_speech_threshold}\n")
             f.write("\n")
 
+            # Pipeline
+            f.write("[Pipeline]\n")
+            if reference_first_used:
+                f.write(f"  Pipeline:                 Reference-Lyrics-First\n")
+                f.write(f"  LRCLIB synced lyrics:     found\n")
+                f.write(f"  Whisper transcription:    skipped\n")
+                f.write(f"  Alignment:                wav2vec2 CTC forced alignment\n")
+            elif has_synced_lyrics:
+                f.write(f"  Pipeline:                 Whisper (reference-first failed, fell back)\n")
+                f.write(f"  LRCLIB synced lyrics:     found (but alignment failed)\n")
+                f.write(f"  Whisper transcription:    full\n")
+            elif whisper_skipped:
+                f.write(f"  Pipeline:                 Whisper skipped (no audio)\n")
+                f.write(f"  LRCLIB synced lyrics:     not found\n")
+            else:
+                f.write(f"  Pipeline:                 Standard Whisper\n")
+                f.write(f"  LRCLIB synced lyrics:     not found\n")
+                f.write(f"  Whisper transcription:    full\n")
+                f.write(f"  Alignment:                WhisperX wav2vec2\n")
+            if whisper_skipped and not reference_first_used:
+                lang_method = "Whisper tiny (fast detection)"
+            elif settings.language:
+                lang_method = f"manual (--language {settings.language})"
+            else:
+                lang_method = "Whisper (full transcription)"
+            f.write(f"  Language detection:        {lang_method}\n")
+            f.write("\n")
+
             # Post-processing
             f.write("[Post-Processing]\n")
             f.write(f"  Hyphenation:              {settings.hyphenation}\n")
@@ -400,6 +545,7 @@ def _write_settings_info_file(
             f.write(f"  Syllable split:           {settings.syllable_split}\n")
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
+            f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -862,10 +1008,14 @@ def TranscribeAudio(process_data):
             from modules.lrclib_client import search_lyrics
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
             lyrics_info = search_lyrics(process_data.media_info.artist, process_data.media_info.title)
-            if lyrics_info is not None and lyrics_info.plain_lyrics:
-                process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
-                    process_data.transcribed_data, lyrics_info.plain_lyrics
-                )
+            if lyrics_info is not None:
+                # Save synced lyrics for reference-first pipeline (independent of plain lyrics)
+                if lyrics_info.synced_lyrics:
+                    process_data.synced_lyrics = lyrics_info.synced_lyrics
+                if lyrics_info.plain_lyrics:
+                    process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
+                        process_data.transcribed_data, lyrics_info.plain_lyrics
+                    )
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Lyrics lookup correction skipped: {e}")
 
@@ -1306,6 +1456,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.pitch_change_split = True
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
+        elif opt in ("--disable_reference_lyrics"):
+            settings.disable_reference_lyrics = True
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
@@ -1401,6 +1553,7 @@ def arg_options():
         "vocal_gap_fill",
         "pitch_change_split",
         "disable_lyrics_lookup",
+        "disable_reference_lyrics",
         "interactive",
         "cookiefile=",
         "ffmpeg=",

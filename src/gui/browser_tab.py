@@ -2,9 +2,11 @@
 
 import logging
 import re
+import subprocess
+import shutil
 from urllib.parse import parse_qs, urlparse
 
-from PySide6.QtCore import QUrl, Signal, Qt
+from PySide6.QtCore import QObject, QThread, QUrl, Signal, Qt
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -26,6 +28,141 @@ from .cookie_manager import CookieManager
 from .media_interceptor import MediaInterceptor
 
 logger = logging.getLogger(__name__)
+
+
+class _FormatProbeWorker(QObject):
+    """Probe available download formats for a YouTube video via yt-dlp.
+
+    Runs ``yt-dlp --dump-json`` in a background thread.  This only fetches
+    metadata (no download) and does NOT trigger bot detection — the API
+    calls are identical to what YouTube's own player makes.
+
+    **Limitation:** The probe does not pass the user's cookie file, so
+    age-restricted or member-only videos may report different availability
+    than the authenticated download.  This is acceptable because the probe
+    is purely informational (the badge text) and does not affect the actual
+    download path which uses ``--cookiefile`` when configured.
+    """
+
+    finished = Signal(str, str)  # video_id, info_text (HTML)
+
+    def __init__(self, video_id: str, parent: QObject | None = None):
+        super().__init__(parent)
+        self._video_id = video_id
+
+    def run(self):
+        import json
+
+        yt_dlp = shutil.which("yt-dlp")
+        if not yt_dlp:
+            self.finished.emit(self._video_id, "")
+            return
+
+        url = f"https://www.youtube.com/watch?v={self._video_id}"
+        cmd = [
+            yt_dlp, "--dump-json", "--no-download",
+            "--no-playlist", "--skip-download", url,
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode != 0:
+                self.finished.emit(self._video_id, "")
+                return
+
+            info = json.loads(result.stdout)
+            formats = info.get("formats", [])
+
+            # Find best video resolution
+            best_height = 0
+            best_vcodec = ""
+            for f in formats:
+                h = f.get("height") or 0
+                vcodec = f.get("vcodec", "none")
+                if vcodec != "none" and h > best_height:
+                    best_height = h
+                    best_vcodec = vcodec.split(".")[0]  # e.g. "avc1" → "avc1"
+
+            # Find best audio
+            best_abr = 0
+            best_acodec = ""
+            for f in formats:
+                acodec = f.get("acodec", "none")
+                abr = f.get("abr") or 0
+                if acodec != "none" and abr > best_abr:
+                    best_abr = abr
+                    best_acodec = acodec.split(".")[0]
+
+            # Duration
+            duration = info.get("duration", 0)
+            dur_str = f"{duration // 60}:{duration % 60:02d}" if duration else ""
+
+            # LRCLIB lyrics check — yt-dlp only has artist/track for
+            # YouTube Music; regular videos need title parsing.
+            artist = info.get("artist") or info.get("creator") or ""
+            track = info.get("track") or ""
+            if not artist or not track:
+                # Parse "Artist - Title (extra)" from video title
+                video_title = info.get("title") or ""
+                if " - " in video_title:
+                    parts_split = video_title.split(" - ", 1)
+                    artist = artist or parts_split[0].strip()
+                    track = track or parts_split[1].strip()
+                    # Remove common suffixes like "(Official Video)", "(Live)"
+                    import re as _re
+                    track = _re.sub(
+                        r"\s*[\(\[](official|lyric|music|live|audio|hd|hq|video|visuali|4k|summerbreeze|wacken).*$",
+                        "", track, flags=_re.IGNORECASE,
+                    ).strip()
+                elif not artist:
+                    artist = info.get("uploader") or info.get("channel") or ""
+                    track = track or video_title
+            lyrics_status = self._check_lrclib(artist, track)
+
+            codec_names = {
+                "avc1": "H.264", "vp9": "VP9", "vp09": "VP9",
+                "av01": "AV1", "opus": "Opus", "mp4a": "AAC",
+            }
+
+            parts = []
+            if best_height:
+                vname = codec_names.get(best_vcodec, best_vcodec)
+                parts.append(f"\U0001f4f9 {best_height}p {vname}")
+            if best_abr:
+                aname = codec_names.get(best_acodec, best_acodec)
+                parts.append(f"\U0001f50a {best_abr:.0f}k {aname}")
+            if dur_str:
+                parts.append(f"\u23f1 {dur_str}")
+            parts.append(lyrics_status)
+
+            self.finished.emit(self._video_id, " \u00b7 ".join(parts))
+
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+            self.finished.emit(self._video_id, "")
+
+    @staticmethod
+    def _check_lrclib(artist: str, title: str) -> str:
+        """Query LRCLIB for lyrics availability (silent, no console output)."""
+        if not artist or not title:
+            return "\U0001f4dd No metadata"
+        try:
+            from modules.lrclib_client import _search_by_fields, _search_by_query
+            result = _search_by_fields(artist, title)
+            if result is None:
+                result = _search_by_query(f"{artist} {title}")
+            if result is None:
+                return "\U0001f4dd No lyrics"
+            if result.synced_lyrics:
+                return "\u2705 Synced lyrics"
+            if result.plain_lyrics:
+                return "\u26a0\ufe0f Plain lyrics only"
+            return "\U0001f4dd No lyrics"
+        except Exception:
+            return "\U0001f4dd Lyrics N/A"
+
 
 # Regex for accepted video URL patterns (used to validate user-pasted URLs).
 _VIDEO_URL_RE = re.compile(
@@ -116,12 +253,28 @@ _CONVERT_OVERLAY_JS = r"""
                     encodeURIComponent(cleanUrl);
             });
             document.body.appendChild(btn);
+
+            /* Quality badge — populated asynchronously from Python */
+            if (!document.getElementById('ultrasinger-quality-badge')) {
+                var badge = document.createElement('div');
+                badge.id = 'ultrasinger-quality-badge';
+                badge.style.cssText =
+                    'position:fixed;top:80px;left:160px;z-index:2147483647;' +
+                    'background:rgba(30,30,30,0.92);color:#aaa;' +
+                    'padding:6px 14px;border-radius:16px;font-size:12px;' +
+                    'font-family:system-ui,sans-serif;pointer-events:none;' +
+                    'backdrop-filter:blur(4px);line-height:1.4;' +
+                    'display:none;';
+                document.body.appendChild(badge);
+            }
             console.log('[UltraSinger] Convert button injected');
         } else {
             if (existing) {
                 existing.remove();
                 console.log('[UltraSinger] Convert button removed (not a video page)');
             }
+            var badge = document.getElementById('ultrasinger-quality-badge');
+            if (badge) badge.remove();
         }
     }
 
@@ -286,12 +439,71 @@ class BrowserTab(QWidget):
         params = parse_qs(urlparse(url.toString()).query)
         self._current_video_id = params.get("v", [""])[0]
 
+        # Probe available formats when navigating to a video page
+        if self._current_video_id:
+            self._probe_formats(self._current_video_id)
+
     def _on_audio_captured(self, stream):
         """When a new audio stream is captured, assign it to the current video."""
         if hasattr(self, "_current_video_id") and self._current_video_id:
             self.media_interceptor.assign_to_video(
                 self._current_video_id, stream
             )
+
+    # ── Format probe ──────────────────────────────────────────────────────
+
+    def _probe_formats(self, video_id: str):
+        """Query available download formats in the background."""
+        # Let any previous probe finish on its own; stale results are
+        # discarded by the video_id check in _on_format_probed.
+        self._probe_video_id = video_id
+
+        # Hide badge while loading
+        if self._page:
+            self._page.runJavaScript(
+                "(function() {"
+                "  var b = document.getElementById('ultrasinger-quality-badge');"
+                "  if (b) { b.style.display = 'none'; b.textContent = ''; }"
+                "})();"
+            )
+
+        thread = QThread(self)
+        worker = _FormatProbeWorker(video_id)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_format_probed)
+        worker.finished.connect(thread.quit)
+        # prevent Qt from garbage-collecting thread/worker prematurely
+        thread.finished.connect(lambda: self._cleanup_probe(thread, worker))
+        thread.start()
+
+    def _cleanup_probe(self, thread, worker):
+        """Clean up finished probe thread and worker."""
+        thread.deleteLater()
+        worker.deleteLater()
+
+    def _on_format_probed(self, video_id: str, info_text: str):
+        """Show the format info badge in the browser overlay."""
+        if not info_text or not self._page:
+            return
+        # Only update if still on the same video
+        if self._probe_video_id != video_id:
+            return
+
+        # Escape for JS string literal (backslash, quotes, control chars)
+        safe_text = (
+            info_text
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        )
+        self._page.runJavaScript(
+            "(function() {"
+            "  var b = document.getElementById('ultrasinger-quality-badge');"
+            f"  if (b) {{ b.textContent = '{safe_text}'; b.style.display = 'block'; }}"
+            "})();"
+        )
 
     def _on_url_bar_submit(self):
         """Navigate to a user-pasted URL after validating it."""
