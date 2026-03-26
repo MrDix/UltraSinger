@@ -203,6 +203,24 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._separator_backend.setCurrentText(
                          _DEFAULTS["separator_backend"]))
 
+        self._audio_separator_model = _NoScrollComboBox()
+        audio_sep_models = [
+            "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+            "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt",
+        ]
+        self._audio_separator_model.addItems(audio_sep_models)
+        self._audio_separator_model.setCurrentText(
+            self._config.get("audio_separator_model",
+                             "model_bs_roformer_ep_317_sdr_12.9755.ckpt"))
+        card.add_row("Audio-Separator Model", self._audio_separator_model,
+                     "The model for audio-separator backend. "
+                     "'BS-Roformer' (SDR 12.97) is the default with best quality "
+                     "and deterministic output. "
+                     "'Mel-Band Roformer' (SDR 11.44) is a lighter alternative.",
+                     reset_callback=lambda: self._audio_separator_model.setCurrentText(
+                         _DEFAULTS.get("audio_separator_model",
+                                       "model_bs_roformer_ep_317_sdr_12.9755.ckpt")))
+
         self._demucs_model = _NoScrollComboBox()
         demucs_models = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "hdemucs_mmi",
                         "mdx", "mdx_extra", "mdx_q", "mdx_extra_q", "SIG"]
@@ -214,6 +232,15 @@ class ConversionSettingsForm(QWidget):
                      "'htdemucs_ft' is fine-tuned and may be slightly better.",
                      reset_callback=lambda: self._demucs_model.setCurrentText(
                          _DEFAULTS["demucs_model"]))
+
+        # Show/hide model combos based on selected backend
+        def _update_model_visibility(backend_text: str):
+            is_audio_sep = backend_text == "audio_separator"
+            self._audio_separator_model.setEnabled(is_audio_sep)
+            self._demucs_model.setEnabled(not is_audio_sep)
+
+        self._separator_backend.currentTextChanged.connect(_update_model_visibility)
+        _update_model_visibility(self._separator_backend.currentText())
 
         self._main_layout.addWidget(card)
 
@@ -840,6 +867,7 @@ class ConversionSettingsForm(QWidget):
             "vad_offset": self._vad_offset.value(),
             "no_speech_threshold": self._no_speech_threshold.value(),
             "separator_backend": self._separator_backend.currentText(),
+            "audio_separator_model": self._audio_separator_model.currentText(),
             "demucs_model": self._demucs_model.currentText(),
             "language_mode": "manual" if self._lang_manual.isChecked() else "auto",
             "language": self._language_combo.currentText(),

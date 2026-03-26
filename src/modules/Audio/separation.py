@@ -166,8 +166,20 @@ def separate_vocal_from_audio(
 
     Returns the directory containing ``vocals.wav`` and ``no_vocals.wav``.
     """
+    # Resolve (backend, model) once so cache key and execution are consistent.
+    if backend == SeparatorBackend.AUDIO_SEPARATOR:
+        resolved_model: DemucsModel | AudioSeparatorModel = (
+            model if isinstance(model, AudioSeparatorModel)
+            else DEFAULT_AUDIO_SEPARATOR_MODEL
+        )
+    else:
+        resolved_model = (
+            model if isinstance(model, DemucsModel)
+            else DemucsModel.HTDEMUCS
+        )
+
     basename = os.path.splitext(os.path.basename(audio_output_file_path))[0]
-    model_key = model.value if hasattr(model, "value") else str(model)
+    model_key = resolved_model.value
     audio_separation_path = os.path.join(
         cache_folder_path, "separated", model_key, basename,
     )
@@ -187,15 +199,13 @@ def separate_vocal_from_audio(
                 _separate_with_audio_separator(
                     input_file_path=audio_output_file_path,
                     output_dir=audio_separation_path,
-                    model=model if isinstance(model, AudioSeparatorModel)
-                    else DEFAULT_AUDIO_SEPARATOR_MODEL,
+                    model=resolved_model,
                 )
             else:
                 _separate_with_demucs(
                     input_file_path=audio_output_file_path,
                     output_folder=cache_folder_path,
-                    model=model if isinstance(model, DemucsModel)
-                    else DemucsModel.HTDEMUCS,
+                    model=resolved_model,
                     device=pytorch_device,
                 )
         else:
