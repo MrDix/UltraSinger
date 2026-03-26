@@ -216,6 +216,11 @@ def create_midi_segments_from_transcribed_data(transcribed_data: list[Transcribe
                                                             pitched_data, allowed_notes)
 
         # Transfer LRCLIB metadata (freestyle, linebreak) from TranscribedData
+        if len(transcribed_data) != len(midi_segments):
+            print(
+                f"{ULTRASINGER_HEAD} Warning: TranscribedData ({len(transcribed_data)}) "
+                f"and MidiSegments ({len(midi_segments)}) length mismatch during metadata transfer"
+            )
         for i, td in enumerate(transcribed_data):
             if i < len(midi_segments):
                 if td.is_freestyle:
