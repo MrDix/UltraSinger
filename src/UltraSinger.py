@@ -296,10 +296,17 @@ def run() -> tuple[str, Score, Score]:
                 from modules.Speech_Recognition.reference_lyrics_aligner import (
                     create_midi_segments_from_reference_lyrics,
                 )
+                ref_language = process_data.media_info.language
+                if not ref_language:
+                    ref_language = "en"
+                    print(
+                        f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
+                        f"Language unknown — falling back to English alignment model"
+                    )
                 ref_segments = create_midi_segments_from_reference_lyrics(
                     synced_lyrics=process_data.synced_lyrics,
                     audio_path=process_data.process_data_paths.whisper_audio_path,
-                    language=process_data.media_info.language or "en",
+                    language=ref_language,
                     pitched_data=process_data.pitched_data,
                     device=settings.pytorch_device,
                     allowed_notes=allowed_notes_for_key,

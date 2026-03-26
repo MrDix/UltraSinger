@@ -36,7 +36,13 @@ class TestParseLrcSyncedLyrics:
         lrc = "[01:00.00] Only line"
         segs = parse_lrc_synced_lyrics(lrc)
         assert len(segs) == 1
-        assert segs[0]["end"] == pytest.approx(70.0)  # start + 10s
+        assert segs[0]["end"] == pytest.approx(70.0)  # start + 10s (fallback)
+
+    def test_last_segment_end_with_audio_duration(self):
+        lrc = "[01:00.00] Only line"
+        segs = parse_lrc_synced_lyrics(lrc, audio_duration=180.0)
+        assert len(segs) == 1
+        assert segs[0]["end"] == pytest.approx(180.0)  # actual audio duration
 
     def test_empty_lines_skipped(self):
         lrc = "[00:10.00] First\n[00:15.00] \n[00:20.00] Third"
@@ -197,9 +203,11 @@ class TestSplitWordAtPitchChanges:
 class TestCreateMidiSegmentsFromReferenceLyrics:
     """Tests for create_midi_segments_from_reference_lyrics (mocked alignment)."""
 
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
     @patch("modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio")
-    def test_basic_pipeline(self, mock_align):
+    def test_basic_pipeline(self, mock_align, mock_librosa):
         """Test full pipeline with mocked alignment."""
+        mock_librosa.get_duration.return_value = 5.0
         mock_align.return_value = [
             {"word": "Hello", "start": 1.0, "end": 1.5},
             {"word": "world", "start": 1.6, "end": 2.0},
@@ -221,8 +229,10 @@ class TestCreateMidiSegmentsFromReferenceLyrics:
         assert result[0].start == pytest.approx(1.0)
         assert result[1].word == "world"  # last word has no trailing space
 
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
     @patch("modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio")
-    def test_empty_alignment_returns_empty(self, mock_align):
+    def test_empty_alignment_returns_empty(self, mock_align, mock_librosa):
+        mock_librosa.get_duration.return_value = 10.0
         mock_align.return_value = []
         pd = _make_pitched_data()
         result = create_midi_segments_from_reference_lyrics(
@@ -230,16 +240,20 @@ class TestCreateMidiSegmentsFromReferenceLyrics:
         )
         assert result == []
 
-    def test_empty_lrc_returns_empty(self):
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
+    def test_empty_lrc_returns_empty(self, mock_librosa):
+        mock_librosa.get_duration.return_value = 10.0
         pd = _make_pitched_data()
         result = create_midi_segments_from_reference_lyrics(
             "", "/fake/audio.wav", "en", pd
         )
         assert result == []
 
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
     @patch("modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio")
-    def test_melisma_split_enabled(self, mock_align):
+    def test_melisma_split_enabled(self, mock_align, mock_librosa):
         """With melisma split and a pitch change, should produce extra notes."""
+        mock_librosa.get_duration.return_value = 5.0
         mock_align.return_value = [
             {"word": "oooh", "start": 0.5, "end": 4.5},
         ]
@@ -265,9 +279,11 @@ class TestCreateMidiSegmentsFromReferenceLyrics:
         for seg in result[1:]:
             assert seg.word == "~ "
 
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
     @patch("modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio")
-    def test_no_melisma_split(self, mock_align):
+    def test_no_melisma_split(self, mock_align, mock_librosa):
         """Without melisma split, even pitch changes produce single note."""
+        mock_librosa.get_duration.return_value = 5.0
         mock_align.return_value = [
             {"word": "oooh", "start": 0.5, "end": 4.5},
         ]

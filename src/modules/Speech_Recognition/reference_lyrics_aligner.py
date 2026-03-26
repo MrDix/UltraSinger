@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+import librosa
 import numpy as np
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
@@ -42,16 +43,22 @@ from modules.Audio.key_detector import quantize_note_to_key
 _LRC_LINE_RE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)")
 
 
-def parse_lrc_synced_lyrics(synced_lyrics: str) -> list[dict]:
+def parse_lrc_synced_lyrics(
+    synced_lyrics: str,
+    audio_duration: Optional[float] = None,
+) -> list[dict]:
     """Parse LRC format synced lyrics into line segments.
 
     Args:
         synced_lyrics: Raw LRC text, e.g. ``"[01:23.45] Hello world\\n..."``.
+        audio_duration: Total audio duration in seconds.  Used to set the
+            last segment's ``end`` time.  Falls back to ``start + 10 s``
+            when *None*.
 
     Returns:
         List of ``{"text": str, "start": float, "end": float}`` dicts,
         sorted by start time.  ``end`` is set to the next line's start
-        (or start + 10 s for the last line).
+        (or *audio_duration* / ``start + 10 s`` for the last line).
     """
     lines: list[dict] = []
     for raw_line in synced_lyrics.strip().splitlines():
@@ -73,7 +80,12 @@ def parse_lrc_synced_lyrics(synced_lyrics: str) -> list[dict]:
     # Build segments with start/end
     segments = []
     for i, line in enumerate(lines):
-        end = lines[i + 1]["time"] if i + 1 < len(lines) else line["time"] + 10.0
+        if i + 1 < len(lines):
+            end = lines[i + 1]["time"]
+        elif audio_duration is not None:
+            end = audio_duration
+        else:
+            end = line["time"] + 10.0
         segments.append({
             "text": line["text"],
             "start": line["time"],
@@ -113,7 +125,6 @@ def align_lyrics_to_audio(
         one per word, sorted by start time.
     """
     import whisperx
-    import librosa
 
     print(f"{ULTRASINGER_HEAD} Loading alignment model for reference lyrics")
     align_model, align_metadata = whisperx.load_align_model(
@@ -356,8 +367,9 @@ def create_midi_segments_from_reference_lyrics(
     Returns:
         List of MidiSegments with lyrics and pitch.
     """
-    # Step 1: Parse LRC
-    segments = parse_lrc_synced_lyrics(synced_lyrics)
+    # Step 1: Parse LRC (use actual audio duration for the last segment)
+    audio_duration = librosa.get_duration(path=audio_path)
+    segments = parse_lrc_synced_lyrics(synced_lyrics, audio_duration=audio_duration)
     if not segments:
         print(f"{ULTRASINGER_HEAD} No valid LRC segments found — "
               f"falling back to standard pipeline")
