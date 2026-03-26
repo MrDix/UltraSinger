@@ -167,7 +167,13 @@ class MainWindow(QMainWindow):
                 self._sidebar.set_active(self._TAB_CONSOLE)
                 return
         else:
-            title = p.stem
+            # Try to read metadata from audio/video file
+            try:
+                from modules.Audio.metadata_reader import read_media_metadata, format_display_title
+                metadata = read_media_metadata(str(p))
+                title = format_display_title(metadata, fallback=p.stem)
+            except Exception:
+                title = p.stem
 
         logger.info("Add to queue from file: %s", title)
         self._queue_mgr.add_item(path, "file", title)

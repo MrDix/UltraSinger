@@ -465,6 +465,72 @@ def run() -> tuple[str, Score, Score]:
     return ultrastar_file_output, simple_score, accurate_score
 
 
+def _write_metadata_tags(process_data: ProcessData) -> None:
+    """Write metadata tags (ID3/Vorbis) to all output audio files."""
+    from modules.Audio.metadata_writer import write_metadata_to_audio
+
+    media = process_data.media_info
+    if not media:
+        return
+
+    # Find cover image
+    cover_path = None
+    if process_data.basename:
+        cover_candidate = os.path.join(
+            settings.output_folder_path,
+            process_data.basename + " [CO].jpg",
+        )
+        if os.path.exists(cover_candidate):
+            cover_path = cover_candidate
+
+    # Collect all output audio files
+    audio_ext = media.audio_extension or "ogg"
+    output_files = []
+
+    # Main audio
+    main_audio = os.path.join(
+        settings.output_folder_path,
+        process_data.basename + "." + audio_ext,
+    )
+    if os.path.exists(main_audio):
+        output_files.append(main_audio)
+
+    # Instrumental
+    instrumental = os.path.join(
+        settings.output_folder_path,
+        process_data.basename + " [Instrumental]." + audio_ext,
+    )
+    if os.path.exists(instrumental):
+        output_files.append(instrumental)
+
+    # Vocals
+    vocals = os.path.join(
+        settings.output_folder_path,
+        process_data.basename + " [Vocals]." + audio_ext,
+    )
+    if os.path.exists(vocals):
+        output_files.append(vocals)
+
+    tagged_count = 0
+    for audio_path in output_files:
+        success = write_metadata_to_audio(
+            audio_path,
+            title=media.title,
+            artist=media.artist,
+            year=media.year,
+            genre=media.genre,
+            cover_image_path=cover_path,
+        )
+        if success:
+            tagged_count += 1
+
+    if tagged_count > 0:
+        print(
+            f"{ULTRASINGER_HEAD} Wrote metadata tags to "
+            f"{tagged_count} audio file{'s' if tagged_count != 1 else ''}"
+        )
+
+
 def _write_settings_info_file(
         output_folder: str,
         simple_score: "Score | None",
@@ -1105,6 +1171,10 @@ def CreateUltraStarTxt(process_data: ProcessData):
         vocals_output_path = os.path.join(settings.output_folder_path, process_data.basename + " [Vocals]." + process_data.media_info.audio_extension)
         convert_audio_format(process_data.process_data_paths.vocals_audio_file_path, vocals_output_path)
 
+    # Write metadata tags to output audio files
+    if settings.write_metadata_tags:
+        _write_metadata_tags(process_data)
+
     # Create Ultrastar txt
     if not settings.ignore_audio:
         ultrastar_file_output = create_ultrastar_txt_from_automation(
@@ -1508,6 +1578,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.lyrics_lookup = False
         elif opt in ("--disable_reference_lyrics"):
             settings.disable_reference_lyrics = True
+        elif opt in ("--no_metadata_tags"):
+            settings.write_metadata_tags = False
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
@@ -1606,6 +1678,7 @@ def arg_options():
         "pitch_change_split",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
+        "no_metadata_tags",
         "interactive",
         "cookiefile=",
         "ffmpeg=",
