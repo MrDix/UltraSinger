@@ -167,9 +167,10 @@ def separate_vocal_from_audio(
     Returns the directory containing ``vocals.wav`` and ``no_vocals.wav``.
     """
     # Resolve (backend, model) once so cache key and execution are consistent.
+    # Accept raw strings so callers can pass custom model filenames.
     if backend == SeparatorBackend.AUDIO_SEPARATOR:
-        resolved_model: DemucsModel | AudioSeparatorModel = (
-            model if isinstance(model, AudioSeparatorModel)
+        resolved_model: DemucsModel | AudioSeparatorModel | str = (
+            model if isinstance(model, (AudioSeparatorModel, str))
             else DEFAULT_AUDIO_SEPARATOR_MODEL
         )
     else:
@@ -179,7 +180,7 @@ def separate_vocal_from_audio(
         )
 
     basename = os.path.splitext(os.path.basename(audio_output_file_path))[0]
-    model_key = resolved_model.value
+    model_key = resolved_model.value if hasattr(resolved_model, "value") else str(resolved_model)
     audio_separation_path = os.path.join(
         cache_folder_path, "separated", model_key, basename,
     )
