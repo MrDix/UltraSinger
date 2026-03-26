@@ -11,7 +11,7 @@ from matplotlib.patches import Rectangle
 from modules.ProcessData import ProcessData
 from modules.console_colors import ULTRASINGER_HEAD
 from modules.Pitcher.pitched_data import PitchedData
-from modules.Pitcher.pitcher import get_pitched_data_with_high_confidence
+from modules.Pitcher.Pitcher import get_pitched_data_with_high_confidence
 from modules.Midi.MidiSegment import MidiSegment
 
 
