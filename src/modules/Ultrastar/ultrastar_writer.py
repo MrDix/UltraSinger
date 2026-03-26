@@ -161,8 +161,8 @@ def create_ultrastar_txt(
                     separated_word_silence.append(silence)
                     continue
 
-                if silence_split_duration is not None and (
-                        i != len(midi_segments) - 1 and silence > silence_split_duration
+                if silence_split_duration is not None and i != len(midi_segments) - 1 and (
+                        silence > silence_split_duration
                         or any(s > silence_split_duration for s in separated_word_silence)):
                     show_next = (
                             second_to_beat(midi_segment.end - gap, real_bpm)

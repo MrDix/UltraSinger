@@ -332,7 +332,7 @@ class TestCorrectTranscription(unittest.TestCase):
             _td("ooh ", 0.5, 1.0),
             _td("world ", 1.0, 1.5),
         ]
-        data, result = correct_transcription_from_lyrics(
+        data, _ = correct_transcription_from_lyrics(
             td, "Hello (ooh)\nworld"
         )
         self.assertTrue(data[1].is_freestyle)
