@@ -15,7 +15,7 @@ def _get_detector():
     if _swift_f0_detector is None:
         # Initialize for general music/speech (wide frequency range) fmin=46.875, fmax=2093.75
         # For speech only: fmin=65, fmax=400
-        _swift_f0_detector = SwiftF0(fmin=46.875, fmax=2093.75, confidence_threshold=0.9)
+        _swift_f0_detector = SwiftF0(fmin=46.875, fmax=2093.75, confidence_threshold=0.7)
     return _swift_f0_detector
 
 
