@@ -36,6 +36,12 @@ class _FormatProbeWorker(QObject):
     Runs ``yt-dlp --dump-json`` in a background thread.  This only fetches
     metadata (no download) and does NOT trigger bot detection — the API
     calls are identical to what YouTube's own player makes.
+
+    **Limitation:** The probe does not pass the user's cookie file, so
+    age-restricted or member-only videos may report different availability
+    than the authenticated download.  This is acceptable because the probe
+    is purely informational (the badge text) and does not affect the actual
+    download path which uses ``--cookiefile`` when configured.
     """
 
     finished = Signal(str, str)  # video_id, info_text (HTML)
@@ -484,8 +490,14 @@ class BrowserTab(QWidget):
         if self._probe_video_id != video_id:
             return
 
-        # Escape for JS string
-        safe_text = info_text.replace("\\", "\\\\").replace("'", "\\'")
+        # Escape for JS string literal (backslash, quotes, control chars)
+        safe_text = (
+            info_text
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        )
         self._page.runJavaScript(
             "(function() {"
             "  var b = document.getElementById('ultrasinger-quality-badge');"
