@@ -209,7 +209,14 @@ def _split_single_segment(
         else:
             word = "~"
 
-        sub_segments.append(MidiSegment(note, sub_start, sub_end, word))
+        sub_seg = MidiSegment(note, sub_start, sub_end, word)
+        # Propagate LRCLIB metadata from original segment
+        sub_seg.note_type = getattr(segment, "note_type", ":")
+        sub_segments.append(sub_seg)
+
+    # The last sub-segment inherits line_break_after from the original
+    if sub_segments:
+        sub_segments[-1].line_break_after = getattr(segment, "line_break_after", False)
 
     # Merge adjacent sub-segments that resolved to the same note
     # (e.g. a single-frame glitch splits into two C4 regions)
@@ -220,6 +227,9 @@ def _split_single_segment(
             # Transfer trailing space if present
             if seg.word.endswith(" ") and not merged[-1].word.endswith(" "):
                 merged[-1].word += " "
+            # Transfer line_break_after from later segment
+            if seg.line_break_after:
+                merged[-1].line_break_after = True
         else:
             merged.append(seg)
     sub_segments = merged

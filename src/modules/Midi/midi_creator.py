@@ -214,6 +214,15 @@ def create_midi_segments_from_transcribed_data(transcribed_data: list[Transcribe
             words.append(midi_segment.word)
         midi_segments = create_midi_notes_from_pitched_data(start_times, end_times, words,
                                                             pitched_data, allowed_notes)
+
+        # Transfer LRCLIB metadata (freestyle, linebreak) from TranscribedData
+        for i, td in enumerate(transcribed_data):
+            if i < len(midi_segments):
+                if td.is_freestyle:
+                    midi_segments[i].note_type = "F"
+                if td.line_break_after:
+                    midi_segments[i].line_break_after = True
+
         return midi_segments
 
 
