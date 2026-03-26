@@ -360,6 +360,17 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._reference_lyrics.setChecked(
                                not _DEFAULTS["disable_reference_lyrics"]))
 
+        # Growl/Scream detection
+        self._detect_growl = ToggleSwitch(
+            checked=self._config.get("detect_growl", _DEFAULTS["detect_growl"])
+        )
+        card.add_toggle_row("Growl/Scream Detection", self._detect_growl,
+                           "Detect unpitchable vocal passages (growl, scream, rap, spoken word) "
+                           "and mark them as freestyle notes. Uses SwiftF0 confidence analysis "
+                           "and spectral flatness to identify noisy, aperiodic vocal segments.",
+                           reset_callback=lambda: self._detect_growl.setChecked(
+                               _DEFAULTS["detect_growl"]))
+
         # Vocal separation
         self._separation = ToggleSwitch(
             checked=not self._config.get("disable_separation", False)
@@ -909,6 +920,7 @@ class ConversionSettingsForm(QWidget):
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),
+            "detect_growl": self._detect_growl.isChecked(),
             "llm_correct": self._llm_correct.isChecked(),
             "llm_provider_id": self.get_selected_provider_id(),
             "llm_retry_on_rate_limit": self._llm_retry.isChecked(),

@@ -88,6 +88,14 @@ def print_help() -> None:
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.
                             Falls back to standard Whisper pipeline when disabled or when no synced lyrics available.
 
+    [growl/scream detection]
+    --detect_growl              Mark unpitchable vocal passages (growl, scream, rap, spoken) as freestyle notes.
+                                Uses SwiftF0 confidence + pitch stability (Tier 1) and spectral flatness (Tier 2).
+    --growl_confidence          SwiftF0 median confidence threshold >> ((default) is 0.35)
+    --growl_pitch_stdev         Pitch standard deviation threshold in semitones >> ((default) is 4.0)
+    --growl_spectral_flatness   Spectral flatness threshold >> ((default) is 0.25)
+    --no_growl_spectral         Disable Tier 2 spectral flatness analysis (use only SwiftF0 confidence + pitch stdev)
+
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
                                 and uses the game's C++ ptAKF pitch detector to find and fix poorly-scoring notes.

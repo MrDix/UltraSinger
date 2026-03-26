@@ -484,6 +484,20 @@ def run() -> tuple[str, Score, Score]:
             preserve_syllables=settings.syllable_split,
         )
 
+    # Growl/scream detection — mark unpitchable segments as freestyle
+    if not settings.ignore_audio and settings.detect_growl:
+        from modules.Pitcher.growl_detector import detect_growl_segments
+
+        process_data.midi_segments = detect_growl_segments(
+            midi_segments=process_data.midi_segments,
+            pitched_data=process_data.pitched_data,
+            vocal_audio_path=process_data.process_data_paths.vocals_audio_file_path,
+            confidence_threshold=settings.growl_confidence_threshold,
+            pitch_stdev_threshold=settings.growl_pitch_stdev_threshold,
+            spectral_flatness_threshold=settings.growl_spectral_flatness_threshold,
+            use_spectral=settings.growl_use_spectral,
+        )
+
     # Reverse-scoring refinement pass
     if not settings.ignore_audio and settings.refine_from_vocal:
         from modules.Refinement.refine_from_vocal import refine_notes
@@ -699,6 +713,7 @@ def _write_settings_info_file(
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
+            f.write(f"  Growl detection:          {settings.detect_growl}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -1661,6 +1676,16 @@ def init_settings(argv: list[str]) -> Settings:
             settings.disable_reference_lyrics = True
         elif opt in ("--no_metadata_tags"):
             settings.write_metadata_tags = False
+        elif opt in ("--detect_growl"):
+            settings.detect_growl = True
+        elif opt in ("--growl_confidence"):
+            settings.growl_confidence_threshold = float(arg)
+        elif opt in ("--growl_pitch_stdev"):
+            settings.growl_pitch_stdev_threshold = float(arg)
+        elif opt in ("--growl_spectral_flatness"):
+            settings.growl_spectral_flatness_threshold = float(arg)
+        elif opt in ("--no_growl_spectral"):
+            settings.growl_use_spectral = False
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
@@ -1761,6 +1786,11 @@ def arg_options():
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",
+        "detect_growl",
+        "growl_confidence=",
+        "growl_pitch_stdev=",
+        "growl_spectral_flatness=",
+        "no_growl_spectral",
         "interactive",
         "cookiefile=",
         "ffmpeg=",
