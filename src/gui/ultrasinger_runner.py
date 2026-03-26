@@ -272,8 +272,13 @@ class UltraSingerRunner(QObject):
         if config.get("format_version"):
             args.extend(["--format_version", config["format_version"]])
 
-        # Demucs
-        if config.get("demucs_model"):
+        # Vocal separation backend — only forward backend-relevant model arg
+        separator = config.get("separator_backend", "audio_separator")
+        if separator:
+            args.extend(["--separator", separator])
+        if separator == "audio_separator" and config.get("audio_separator_model"):
+            args.extend(["--audio_separator_model", config["audio_separator_model"]])
+        elif separator == "demucs" and config.get("demucs_model"):
             args.extend(["--demucs", config["demucs_model"]])
 
         # BPM override
