@@ -37,7 +37,11 @@ def print_help() -> None:
                             Not needed when -i is already a YouTube URL.
 
     [separation]
-    # Default is htdemucs
+    --separator             Vocal separation backend: demucs|audio_separator >> ((default) is audio_separator)
+                            audio_separator uses BS-Roformer which is deterministic and produces higher SDR.
+                            demucs uses Facebook's Hybrid Transformer Demucs (non-deterministic).
+    --audio_separator_model Model for audio-separator backend. Presets: BS_ROFORMER|MEL_BAND_ROFORMER
+                            or a raw model filename for custom models >> ((default) is BS_ROFORMER)
     --demucs              Model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
 
     [transcription]

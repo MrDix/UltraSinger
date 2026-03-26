@@ -190,16 +190,28 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._no_speech_threshold.setValue(
                          _DEFAULTS["no_speech_threshold"]))
 
+        # Separator backend
+        self._separator_backend = _NoScrollComboBox()
+        self._separator_backend.addItems(["audio_separator", "demucs"])
+        self._separator_backend.setCurrentText(
+            self._config.get("separator_backend", "audio_separator"))
+        card.add_row("Separation Backend", self._separator_backend,
+                     "Which library to use for vocal isolation. "
+                     "'audio_separator' (default) uses BS-Roformer which is deterministic "
+                     "and produces higher quality separation. "
+                     "'demucs' uses Facebook's Hybrid Transformer Demucs (non-deterministic).",
+                     reset_callback=lambda: self._separator_backend.setCurrentText(
+                         _DEFAULTS["separator_backend"]))
+
         self._demucs_model = _NoScrollComboBox()
         demucs_models = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "hdemucs_mmi",
                         "mdx", "mdx_extra", "mdx_q", "mdx_extra_q", "SIG"]
         self._demucs_model.addItems(demucs_models)
         self._demucs_model.setCurrentText(self._config.get("demucs_model", "htdemucs"))
-        card.add_row("Vocal Separation Model", self._demucs_model,
-                     "The AI model that isolates vocals from background music. "
+        card.add_row("Demucs Model", self._demucs_model,
+                     "The Demucs model (only used when backend is 'demucs'). "
                      "'htdemucs' is the default and works well for most songs. "
-                     "'htdemucs_ft' is fine-tuned and may be slightly better. "
-                     "'mdx_extra' can handle complex mixes but is slower.",
+                     "'htdemucs_ft' is fine-tuned and may be slightly better.",
                      reset_callback=lambda: self._demucs_model.setCurrentText(
                          _DEFAULTS["demucs_model"]))
 
@@ -827,6 +839,7 @@ class ConversionSettingsForm(QWidget):
             "vad_onset": self._vad_onset.value(),
             "vad_offset": self._vad_offset.value(),
             "no_speech_threshold": self._no_speech_threshold.value(),
+            "separator_backend": self._separator_backend.currentText(),
             "demucs_model": self._demucs_model.currentText(),
             "language_mode": "manual" if self._lang_manual.isChecked() else "auto",
             "language": self._language_combo.currentText(),

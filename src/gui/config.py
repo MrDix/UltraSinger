@@ -78,7 +78,8 @@ _DEFAULTS = {
     # BPM / Octave overrides
     "bpm_override": "",
     "octave_shift": "",
-    # Demucs
+    # Vocal separation
+    "separator_backend": "audio_separator",
     "demucs_model": "htdemucs",
     # Paths
     "musescore_path": "",

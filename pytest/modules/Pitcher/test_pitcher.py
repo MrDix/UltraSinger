@@ -2,7 +2,7 @@
 
 import os
 import unittest
-import src.modules.Pitcher.pitcher as test_subject
+import src.modules.Pitcher.Pitcher as test_subject
 import pytest
 from src.modules.plot import plot
 
