@@ -286,12 +286,13 @@ def _split_word_at_pitch_changes(
         midi_smooth = midi_values
 
     # Find pitch change points
-    # SwiftF0 uses 16kHz sample rate with STFT hop=256 → ~16ms per frame (62.5 fps).
-    # Derive frame duration from actual data when possible, otherwise use 16ms default.
-    if len(voiced_times) >= 2:
-        frame_ms = (voiced_times[1] - voiced_times[0]) * 1000.0
+    # Derive frame duration from pitched_data timestamps (the raw, uniformly-spaced
+    # analysis grid) rather than voiced_times, which may skip frames and yield an
+    # incorrect delta.  Fallback: 16ms (SwiftF0 default: 16kHz SR, STFT hop=256).
+    if len(pitched_data.times) >= 2:
+        frame_ms = (pitched_data.times[1] - pitched_data.times[0]) * 1000.0
     else:
-        frame_ms = 16.0
+        frame_ms = 16.0  # SwiftF0 default: 16kHz sample rate, hop=256
     min_frames = max(1, int(min_note_ms / frame_ms))
     change_points = [0]
     last_change = 0
