@@ -45,5 +45,7 @@ if ! command -v ffmpeg &> /dev/null; then
     echo ""
 fi
 
+# Suppress compile-time SyntaxWarnings from third-party packages (e.g. pydub)
+export PYTHONWARNINGS="ignore::SyntaxWarning"
 echo "Starting UltraSinger GUI..."
 uv run --extra gui python src/gui_main.py

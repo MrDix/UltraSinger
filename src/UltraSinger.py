@@ -10,6 +10,7 @@ import warnings
 # Must run before any transitive imports of requests, torchaudio, pyannote, etc.
 warnings.filterwarnings("ignore", module="requests")
 warnings.filterwarnings("ignore", module="pyannote")
+warnings.filterwarnings("ignore", module="pydub")
 warnings.filterwarnings("ignore", message="In 2\\.9.*torchaudio\\.save_with_torchcodec")
 
 # Reconfigure console streams to UTF-8 on Windows to prevent UnicodeEncodeError
@@ -184,6 +185,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-change split enabled')}")
     if settings.disable_reference_lyrics:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Reference-lyrics-first pipeline disabled')}")
+    if settings.pitch_notes:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-based note generation enabled (notes from pitch contour)')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -405,12 +408,41 @@ def run() -> tuple[str, Score, Score]:
                     except Exception as e:
                         print(f"{ULTRASINGER_HEAD} Vocal gap fill skipped: {e}")
 
-            process_data.midi_segments = create_midi_segments_from_transcribed_data(
-                process_data.transcribed_data,
-                process_data.pitched_data,
-                allowed_notes_for_key
-            )
-
+            if settings.pitch_notes:
+                from modules.Pitcher.pitch_based_note_generator import (
+                    create_midi_segments_from_pitch,
+                    fill_lyrics_from_reference,
+                )
+                process_data.midi_segments = create_midi_segments_from_pitch(
+                    process_data.pitched_data,
+                    process_data.transcribed_data,
+                    allowed_notes_for_key,
+                )
+                # Fill remaining ~ placeholders with LRCLIB reference lyrics
+                if process_data.plain_lyrics:
+                    process_data.midi_segments = fill_lyrics_from_reference(
+                        process_data.midi_segments,
+                        process_data.transcribed_data,
+                        process_data.plain_lyrics,
+                    )
+                # Rebuild transcribed_data to match pitch-derived midi_segments 1:1
+                # (downstream merge_syllable_segments requires same length)
+                process_data.transcribed_data = [
+                    TranscribedData(
+                        word=seg.word,
+                        start=seg.start,
+                        end=seg.end,
+                        confidence=1.0,
+                        is_word_end=not seg.word.strip().startswith("~"),
+                    )
+                    for seg in process_data.midi_segments
+                ]
+            else:
+                process_data.midi_segments = create_midi_segments_from_transcribed_data(
+                    process_data.transcribed_data,
+                    process_data.pitched_data,
+                    allowed_notes_for_key
+                )
     else:
         process_data.midi_segments = create_repitched_midi_segments_from_ultrastar_txt(process_data.pitched_data,
                                                                                        process_data.parsed_file)
@@ -420,8 +452,8 @@ def run() -> tuple[str, Score, Score]:
         create_audio_chunks(process_data)
 
     # Split notes at pitch change boundaries (melismas, runs)
-    # (Skip when reference_first is active — it already handles pitch segmentation)
-    if not settings.ignore_audio and settings.pitch_change_split and not reference_first_used:
+    # (Skip when reference_first or pitch_notes is active — they already handle pitch segmentation)
+    if not settings.ignore_audio and settings.pitch_change_split and not reference_first_used and not settings.pitch_notes:
         process_data.midi_segments = split_notes_at_pitch_changes(
             process_data.midi_segments, process_data.pitched_data
         )
@@ -442,9 +474,9 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = apply_octave_shift(process_data.midi_segments, settings.octave_shift)
 
     # Merge syllable segments
-    # (Skip when reference_first is active — notes are already correctly segmented;
-    # merging would undo that)
-    if not settings.ignore_audio and not reference_first_used:
+    # (Skip when reference_first or pitch_notes is active — notes are already correctly
+    # segmented; merging would undo that)
+    if not settings.ignore_audio and not reference_first_used and not settings.pitch_notes:
         process_data.midi_segments, process_data.transcribed_data = merge_syllable_segments(
             process_data.midi_segments,
             process_data.transcribed_data,
@@ -666,6 +698,7 @@ def _write_settings_info_file(
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
+            f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -1620,6 +1653,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.vocal_gap_fill = True
         elif opt in ("--pitch_change_split"):
             settings.pitch_change_split = True
+        elif opt in ("--pitch_notes"):
+            settings.pitch_notes = True
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
         elif opt in ("--disable_reference_lyrics"):
@@ -1722,6 +1757,7 @@ def arg_options():
         "syllable_split",
         "vocal_gap_fill",
         "pitch_change_split",
+        "pitch_notes",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",

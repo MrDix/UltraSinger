@@ -184,6 +184,10 @@ _Not all options working now!_
     --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Detects
                             sustained pitch changes (melismas, runs) and creates separate notes for each pitch
                             region. Disabled by default.
+    --pitch_notes           Generate notes from pitch contour instead of word timing (experimental). Best for
+                            melismatic songs with runs and slides. Notes are segmented by pitch stability, then
+                            split at word boundaries so each word gets its own note. When lyrics lookup is active,
+                            reference lyrics fill remaining placeholder notes. Disabled by default.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup. Enabled by default, fetches verified reference
                             lyrics to correct Whisper transcription errors. No API key needed.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
@@ -486,6 +490,16 @@ Detects unrecognized vocal segments between transcribed words -- such as ad-libs
 
 ```commandline
 -i XYZ --vocal_gap_fill
+```
+
+#### Pitch-Based Note Generation (`--pitch_notes`)
+
+Generates notes directly from the pitch contour (SwiftF0) instead of Whisper word-level timing boundaries. This is best for melismatic songs with runs, slides, and ornaments where Whisper's word-level timing produces flat, unusable notes (e.g. R&B runs, opera, yodel passages).
+
+Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones held for 80ms+), then split at word boundaries. Whisper lyrics are overlaid by time alignment, and when lyrics lookup is active, LRCLIB reference lyrics fill remaining placeholder notes.
+
+```commandline
+-i XYZ --pitch_notes
 ```
 
 ### 🏆 Ultrastar Score Calculation
