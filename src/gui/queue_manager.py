@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 import tempfile
@@ -107,7 +108,7 @@ class QueueManager(QObject):
                     title=item.title,
                     video_id=item.video_id,
                     yt_language=item.yt_language,
-                    settings_overrides=dict(item.settings_overrides),
+                    settings_overrides=copy.deepcopy(item.settings_overrides),
                 )
                 self._items.append(clone)
                 self.item_added.emit(clone)
@@ -359,6 +360,8 @@ class QueueManager(QObject):
                 info["lyrics_source"] = "synced"
             elif "plain" in ltype:
                 info["lyrics_source"] = "plain"
+            elif "instrumental" in ltype:
+                info["lyrics_source"] = "instrumental"
 
         if _RE_SYNCED_SKIP.search(line):
             info["lyrics_source"] = "synced"
