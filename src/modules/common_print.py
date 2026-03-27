@@ -93,7 +93,8 @@ def print_help() -> None:
                                     notes (displayed but not scored). Covers growls, screams, rap, spoken word,
                                     harsh vocals, and any non-melodic vocal style.
                                     Primary: HPSS harmonicity analysis (genre/gender-independent, measures harmonic
-                                    vs. percussive energy). Fallback: SwiftF0 confidence + pitch stability.
+                                    vs. percussive energy). Fallback (when HPSS is unavailable): SwiftF0
+                                    confidence + pitch stability.
     --freestyle_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
     --freestyle_energy              RMS energy threshold — segments below this are treated as silence >> ((default) is 0.01)
     --freestyle_confidence          SwiftF0 median confidence threshold (fallback) >> ((default) is 0.35)

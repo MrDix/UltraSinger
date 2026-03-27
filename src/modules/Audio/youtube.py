@@ -150,7 +150,10 @@ _logger = logging.getLogger(__name__)
 
 # yt-dlp warnings that are harmless and should not be shown to users
 _SUPPRESSED_WARNINGS = [
-    "SABR-only streaming experiment",  # YouTube SABR format test — irrelevant, other formats work
+    "SABR-only streaming experiment",
+    "YouTube is forcing SABR streaming for this client",
+    "SABR-only or Server-Side Ad Placement experiment",
+    "SABR streaming",  # catch-all for future yt-dlp wording changes
 ]
 
 
