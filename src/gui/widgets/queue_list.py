@@ -266,6 +266,9 @@ class QueueItemWidget(QWidget):
         #   Orange = plain lyrics (Whisper + correction, medium quality)
         #   Red    = transcribed only (Whisper, lowest quality)
         source = info.get("lyrics_source", "")
+        # Combine source + fallback flag into display key
+        if source == "synced" and info.get("whisper_fallback"):
+            source = "synced (fallback)"
         _SOURCE_COLORS = {
             "synced": "#4caf50",              # green — best
             "synced (fallback)": "#ffa726",   # orange — had synced but fell back
