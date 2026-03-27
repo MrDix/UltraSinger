@@ -44,6 +44,7 @@ if errorlevel 1 (
 )
 
 set UV_LINK_MODE=copy
+:: Suppress compile-time SyntaxWarnings from third-party packages (e.g. pydub)
+set PYTHONWARNINGS=ignore::SyntaxWarning
 echo Starting UltraSinger GUI...
 uv run --extra gui python src/gui_main.py
-pause
