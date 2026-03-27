@@ -214,13 +214,14 @@ def _embed_cover_in_vorbis(audio, cover_path: str) -> None:
 
     Large cover images are resized to fit within the Vorbis comment header
     size limits of common players.  Karedi's JOrbis reader has a 64 KB
-    mark limit for header parsing — a ~48 KB JPEG (≈500×500) stays safely
-    below that after base64 encoding (~64 KB) plus other header overhead.
+    mark limit for header parsing.  The JPEG must stay under ~32 KB so
+    that after base64 + FLAC Picture wrapper (~43 KB) plus Ogg page
+    overhead (~18%) the total header stays well under 64 KB.
     """
     import base64
     from mutagen.flac import Picture
 
-    cover_data = _load_and_resize_cover(cover_path, max_size=500, max_bytes=48_000)
+    cover_data = _load_and_resize_cover(cover_path)
     if cover_data is None:
         return
 
@@ -234,10 +235,13 @@ def _embed_cover_in_vorbis(audio, cover_path: str) -> None:
 
 
 # Maximum pixel dimension and file size for OGG-embedded covers.
-# Keeps the base64 METADATA_BLOCK_PICTURE under ~64 KB so that
-# Karedi (JOrbis 64 001-byte mark limit) can parse the headers.
+# Karedi's JOrbis reader wraps the InputStream with a 64,001-byte mark
+# limit.  The full Vorbis header (ident + comment + setup packets) plus
+# Ogg page framing (~18% overhead) must fit within that.  A 32 KB JPEG
+# produces ~43 KB base64, which with page overhead lands around 50 KB —
+# safely under the limit.
 _COVER_MAX_DIMENSION = 500
-_COVER_MAX_BYTES = 48_000
+_COVER_MAX_BYTES = 32_000
 
 
 def _load_and_resize_cover(
