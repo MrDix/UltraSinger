@@ -110,6 +110,14 @@ class MainWindow(QMainWindow):
         self._sidebar.queue_list.settings_requested.connect(
             self._on_per_song_settings
         )
+        # Wire re-queue button
+        self._sidebar.queue_list.requeue_requested.connect(
+            self._on_requeue_item
+        )
+        # Wire clone button
+        self._sidebar.queue_list.clone_requested.connect(
+            self._on_clone_item
+        )
 
         # Wire Start All / Clear buttons
         self._sidebar.start_all_requested.connect(self._on_start_all)
@@ -122,6 +130,9 @@ class MainWindow(QMainWindow):
         self._queue_mgr.queue_started.connect(self._on_queue_started)
         self._queue_mgr.queue_finished.connect(self._on_queue_finished)
         self._queue_mgr.item_status_changed.connect(self._on_item_status_changed)
+        self._queue_mgr.item_result_info.connect(
+            self._sidebar.queue_list.set_result_info
+        )
 
         # Wire console cancel → queue manager
         self._queue_tab.cancel_requested.connect(self._queue_mgr.cancel_all)
@@ -141,6 +152,11 @@ class MainWindow(QMainWindow):
         from urllib.parse import parse_qs, urlparse
         params = parse_qs(urlparse(url).query)
         video_id = params.get("v", [""])[0]
+        # Store YouTube language metadata as pipeline hint
+        yt_lang = self._browser_tab.yt_language
+        if yt_lang:
+            item.yt_language = yt_lang
+
         if video_id:
             item.video_id = video_id
             # Check if we already have an intercepted stream
@@ -183,6 +199,11 @@ class MainWindow(QMainWindow):
     def _on_remove_from_queue(self, item_id: str):
         """Remove a pending item from the queue."""
         self._queue_mgr.remove_item(item_id)
+        self._update_queue_buttons()
+
+    def _on_clone_item(self, item_id: str):
+        """Clone a pending item — duplicate it with same settings."""
+        self._queue_mgr.clone_item(item_id)
         self._update_queue_buttons()
 
     def _on_clear_queue(self):
@@ -235,6 +256,33 @@ class MainWindow(QMainWindow):
                 "Per-song overrides for '%s': %d keys",
                 item.title, len(item.settings_overrides),
             )
+
+    def _on_requeue_item(self, item_id: str):
+        """Re-queue a completed item for re-conversion.
+
+        Creates a new pending queue item with the same source, then opens
+        the per-song settings dialog so the user can set overrides
+        (e.g. manual language) before starting.
+        """
+        old_item = next(
+            (it for it in self._queue_mgr.items if it.id == item_id), None
+        )
+        if old_item is None:
+            return
+
+        # Create a new pending item with the same source
+        new_item = self._queue_mgr.add_item(
+            old_item.input_source, old_item.input_type, old_item.title,
+        )
+        if old_item.video_id:
+            new_item.video_id = old_item.video_id
+        if old_item.yt_language:
+            new_item.yt_language = old_item.yt_language
+
+        self._update_queue_buttons()
+
+        # Auto-open per-song settings so the user can adjust language etc.
+        self._on_per_song_settings(new_item.id)
 
     def _on_start_all(self):
         """Start processing all pending queue items."""

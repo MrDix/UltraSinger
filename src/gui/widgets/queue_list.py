@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtGui import QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -20,6 +20,22 @@ from PySide6.QtWidgets import (
 from ..models import QueueItem
 from .file_drop_zone import ALL_EXTENSIONS
 
+# Try to get human-readable language names
+try:
+    from langcodes import Language
+    def _lang_display_name(code: str) -> str:
+        try:
+            return Language.get(code).display_name()
+        except Exception:
+            return code.upper()
+except ImportError:
+    def _lang_display_name(code: str) -> str:  # type: ignore[misc]
+        return code.upper()
+
+import logging
+
+logger = logging.getLogger(__name__)
+
 # Simple colored dot for status (no confusing emoji)
 _STATUS_COLORS = {
     "pending": "#a09888",
@@ -31,18 +47,34 @@ _STATUS_COLORS = {
 
 
 class QueueItemWidget(QWidget):
-    """A single compact row representing a queue item."""
+    """A single compact row representing a queue item.
+
+    After conversion completes, an info line is shown below the title
+    with language badge, lyrics source, and a folder-open button.
+    """
 
     remove_requested = Signal(str)  # item_id
     settings_requested = Signal(str)  # item_id
+    requeue_requested = Signal(str)  # item_id
+    clone_requested = Signal(str)  # item_id
 
     def __init__(self, item: QueueItem, parent=None):
         super().__init__(parent)
         self._item_id = item.id
-        self.setFixedHeight(30)
-        self.setToolTip(item.input_source)
+        self._output_folder = ""
+        # Two-line tooltip: full title on line 1, source URL/path on line 2
+        self._tooltip_title = item.title
+        self._tooltip_source = item.input_source
+        self._update_item_tooltip()
 
-        layout = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── Row 1: title row (fixed 30px) ──────────────────────────
+        title_row = QWidget()
+        title_row.setFixedHeight(30)
+        layout = QHBoxLayout(title_row)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(4)
 
@@ -78,6 +110,20 @@ class QueueItemWidget(QWidget):
         )
         layout.addWidget(self._gear_btn)
 
+        # Clone button — ⧉ (two overlapping squares, clearly recognizable)
+        self._clone_btn = QPushButton("\u29C9")
+        self._clone_btn.setFixedSize(22, 22)
+        self._clone_btn.setToolTip("Clone (duplicate this item with same settings)")
+        self._clone_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clone_btn.setStyleSheet(
+            "font-size: 13px; color: #a09888; background: transparent; "
+            "border: none; padding: 0px; margin: 0px;"
+        )
+        self._clone_btn.clicked.connect(
+            lambda: self.clone_requested.emit(self._item_id)
+        )
+        layout.addWidget(self._clone_btn)
+
         # Remove button — U+00D7 (clean ×, no serifs)
         self._remove_btn = QPushButton("\u00D7")
         self._remove_btn.setFixedSize(22, 22)
@@ -92,11 +138,95 @@ class QueueItemWidget(QWidget):
         )
         layout.addWidget(self._remove_btn)
 
+        outer.addWidget(title_row)
+
+        # ── Row 2: info line (hidden until completion) ─────────────
+        self._info_row = QWidget()
+        self._info_row.setFixedHeight(20)
+        self._info_row.setVisible(False)
+        info_layout = QHBoxLayout(self._info_row)
+        info_layout.setContentsMargins(22, 0, 4, 2)
+        info_layout.setSpacing(4)
+
+        # Language badge (e.g. "en" with green/red background)
+        self._lang_badge = QLabel("")
+        self._lang_badge.setFixedHeight(16)
+        self._lang_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lang_badge.setStyleSheet(
+            "font-size: 9px; font-weight: bold; color: #fff; "
+            "background: #4caf50; border-radius: 3px; "
+            "padding: 0px 4px; margin: 0px;"
+        )
+        self._lang_badge.setVisible(False)
+        info_layout.addWidget(self._lang_badge)
+
+        # Lyrics source label
+        self._lyrics_label = QLabel("")
+        self._lyrics_label.setStyleSheet(
+            "font-size: 9px; color: #807060; background: transparent;"
+        )
+        info_layout.addWidget(self._lyrics_label, 1)
+
+        # Info button (ℹ) — view settings used for this conversion
+        self._info_btn = QPushButton("\u2139\uFE0F")  # ℹ️
+        self._info_btn.setFixedSize(18, 18)
+        self._info_btn.setToolTip("View settings used for this conversion")
+        self._info_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._info_btn.setStyleSheet(
+            "font-size: 11px; color: #a09888; background: transparent; "
+            "border: none; padding: 0px; margin: 0px;"
+        )
+        self._info_btn.clicked.connect(
+            lambda: self.settings_requested.emit(self._item_id)
+        )
+        info_layout.addWidget(self._info_btn)
+
+        # Folder-open button (cross-platform file manager)
+        self._folder_btn = QPushButton("\U0001F4C2")  # 📂
+        self._folder_btn.setFixedSize(18, 18)
+        self._folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._folder_btn.setStyleSheet(
+            "font-size: 11px; background: transparent; "
+            "border: none; padding: 0px; margin: 0px;"
+        )
+        self._folder_btn.clicked.connect(self._open_output_folder)
+        self._folder_btn.setVisible(False)
+        info_layout.addWidget(self._folder_btn)
+
+        # Re-queue button — shown for completed items where re-conversion
+        # with different settings (e.g. manual language) may improve results
+        self._requeue_btn = QPushButton("\U0001F504")  # 🔄
+        self._requeue_btn.setFixedSize(18, 18)
+        self._requeue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._requeue_btn.setStyleSheet(
+            "font-size: 11px; background: transparent; "
+            "border: none; padding: 0px; margin: 0px;"
+        )
+        self._requeue_btn.setToolTip(
+            "Re-queue this song.\n"
+            "Tip: Use per-song settings (\u2699) to set\n"
+            "the language manually for better results."
+        )
+        self._requeue_btn.clicked.connect(
+            lambda: self.requeue_requested.emit(self._item_id)
+        )
+        self._requeue_btn.setVisible(False)
+        info_layout.addWidget(self._requeue_btn)
+
+        outer.addWidget(self._info_row)
+
         self.update_status(item.status)
 
     @property
     def item_id(self) -> str:
         return self._item_id
+
+    def _update_item_tooltip(self):
+        """Build a two-line tooltip: full title + source URL/path."""
+        lines = [self._tooltip_title]
+        if self._tooltip_source and self._tooltip_source != self._tooltip_title:
+            lines.append(self._tooltip_source)
+        self.setToolTip("\n".join(lines))
 
     def update_status(self, status: str):
         """Update the visual status of this item."""
@@ -105,16 +235,11 @@ class QueueItemWidget(QWidget):
             f"font-size: 8px; color: {color}; background: transparent;"
         )
 
-        # Remove button only for pending items; gear always visible
+        # Remove button and gear only for pending items.
+        # Completed items show the ℹ button in the info row instead.
         self._remove_btn.setVisible(status == "pending")
-
-        # Gear: editable icon for pending, read-only info icon for others
-        if status == "pending":
-            self._gear_btn.setText("\u2699")
-            self._gear_btn.setToolTip("Per-song settings (click to override defaults)")
-        else:
-            self._gear_btn.setText("\u2139")  # ℹ info icon
-            self._gear_btn.setToolTip("View settings used for this conversion")
+        self._gear_btn.setVisible(status == "pending")
+        self._clone_btn.setVisible(status == "pending")
 
         # Dim completed/cancelled items
         if status in ("done", "failed", "cancelled"):
@@ -131,6 +256,76 @@ class QueueItemWidget(QWidget):
                 "font-size: 12px; color: #f0dfc0; background: transparent;"
             )
 
+    def set_result_info(self, info: dict):
+        """Show the info line with conversion result metadata."""
+        if not info:
+            return
+
+        # Lyrics source determines badge color:
+        #   Green  = synced lyrics (reference pipeline, best quality)
+        #   Orange = plain lyrics (Whisper + correction, medium quality)
+        #   Red    = transcribed only (Whisper, lowest quality)
+        source = info.get("lyrics_source", "")
+        # Combine source + fallback flag into display key
+        if source == "synced" and info.get("whisper_fallback"):
+            source = "synced (fallback)"
+        _SOURCE_COLORS = {
+            "synced": "#4caf50",              # green — best
+            "synced (fallback)": "#ffa726",   # orange — had synced but fell back
+            "plain": "#ffa726",               # orange — medium
+            "transcribed": "#ef5350",         # red — lowest
+            "instrumental": "#7e57c2",        # purple — no vocals
+        }
+        _SOURCE_LABELS = {
+            "synced": "Synced lyrics",
+            "synced (fallback)": "Synced lyrics (Whisper fallback)",
+            "plain": "Plain lyrics",
+            "transcribed": "Transcribed",
+            "instrumental": "Instrumental",
+        }
+        badge_bg = _SOURCE_COLORS.get(source, "#a09888")
+        source_text = _SOURCE_LABELS.get(source, source)
+        self._lyrics_label.setText(source_text)
+
+        # Language badge
+        lang = info.get("language", "")
+        if lang:
+            self._lang_badge.setText(lang.upper())
+            self._lang_badge.setStyleSheet(
+                f"font-size: 9px; font-weight: bold; color: #fff; "
+                f"background: {badge_bg}; border-radius: 3px; "
+                f"padding: 0px 4px; margin: 0px;"
+            )
+            lang_name = _lang_display_name(lang)
+            pipeline_name = "Reference" if info.get("pipeline") == "reference" else "Whisper"
+            tooltip = f"Language: {lang.upper()} ({lang_name}) — Pipeline: {pipeline_name}"
+            if info.get("whisper_fallback"):
+                tooltip += "\nReference pipeline fell back to Whisper"
+            self._lang_badge.setToolTip(tooltip)
+            self._lang_badge.setVisible(True)
+
+        # Folder button — show whenever output_folder is known
+        output_folder = info.get("output_folder", "")
+        if output_folder:
+            self._output_folder = output_folder
+            self._folder_btn.setToolTip(output_folder)
+            self._folder_btn.setVisible(True)
+
+        # Re-queue button — always visible for completed items
+        self._requeue_btn.setVisible(True)
+
+        self._info_row.setVisible(True)
+
+    def _open_output_folder(self):
+        """Open the song output folder in the system file manager."""
+        folder = self._output_folder
+        if not folder or not Path(folder).is_dir():
+            return
+        folder_path = str(Path(folder).resolve())
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path))
+        if not opened:
+            logger.warning("Failed to open folder: %s", folder_path)
+
     def set_has_overrides(self, has_overrides: bool):
         """Show visual indicator when per-song overrides are active."""
         color = "#00d4d4" if has_overrides else "#a09888"
@@ -145,7 +340,7 @@ class QueueItemWidget(QWidget):
 
 
 class _ElidingLabel(QLabel):
-    """QLabel that truncates text with '…' when space is tight."""
+    """QLabel that truncates text with '...' when space is tight."""
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
@@ -185,6 +380,8 @@ class QueueListWidget(QWidget):
 
     remove_requested = Signal(str)  # item_id
     settings_requested = Signal(str)  # item_id
+    requeue_requested = Signal(str)  # item_id
+    clone_requested = Signal(str)  # item_id
     file_dropped = Signal(str)  # file path
 
     def __init__(self, parent=None):
@@ -238,6 +435,8 @@ class QueueListWidget(QWidget):
         widget = QueueItemWidget(item, self._container)
         widget.remove_requested.connect(self.remove_requested.emit)
         widget.settings_requested.connect(self.settings_requested.emit)
+        widget.requeue_requested.connect(self.requeue_requested.emit)
+        widget.clone_requested.connect(self.clone_requested.emit)
         self._item_widgets[item.id] = widget
 
         # Insert before the stretch
@@ -264,6 +463,12 @@ class QueueListWidget(QWidget):
         widget = self._item_widgets.get(item_id)
         if widget:
             widget.set_has_overrides(has_overrides)
+
+    def set_result_info(self, item_id: str, info: dict):
+        """Show conversion result info on a completed queue item."""
+        widget = self._item_widgets.get(item_id)
+        if widget:
+            widget.set_result_info(info)
 
     # ── Drag-and-drop support ──────────────────────────────────────
 

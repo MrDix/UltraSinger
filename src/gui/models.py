@@ -53,5 +53,13 @@ class QueueItem:
     settings_overrides: dict = field(default_factory=dict)
     resolved_config: dict = field(default_factory=dict)  # filled at run time
     video_id: str = ""  # YouTube video ID (for interceptor lookup)
+    yt_language: str = ""  # YouTube language metadata (from yt-dlp)
     exit_code: int | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    result_info: dict = field(default_factory=dict)
+    # result_info keys (populated during/after conversion):
+    #   language: str          — detected language code (e.g. "en", "de")
+    #   lyrics_source: str     — "synced" | "plain" | "transcribed"
+    #   pipeline: str          — "reference" | "whisper"
+    #   whisper_fallback: bool — True if reference pipeline failed
+    #   output_folder: str     — path to the song output folder
