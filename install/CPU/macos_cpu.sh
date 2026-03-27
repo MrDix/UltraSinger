@@ -46,12 +46,12 @@ sed -i '' 's|whl/cu[0-9]*|whl/cpu|' pyproject.toml
 echo "Resolving dependencies..."
 uv lock
 echo "Syncing dependencies..."
-uv sync --extra macos
+uv sync
 
 echo "Installation completed successfully!"
 echo ""
 echo "Optional: Install scoring support:"
-echo "  uv sync --extra macos --extra scoring"
+echo "  uv sync --extra scoring"
 echo ""
 echo "To run UltraSinger:"
 echo "  source .venv/bin/activate"
