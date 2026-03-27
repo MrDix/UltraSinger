@@ -492,6 +492,16 @@ Detects unrecognized vocal segments between transcribed words -- such as ad-libs
 -i XYZ --vocal_gap_fill
 ```
 
+#### Pitch-Based Note Generation (`--pitch_notes`)
+
+Generates notes directly from the pitch contour (SwiftF0) instead of Whisper word-level timing boundaries. This is best for melismatic songs with runs, slides, and ornaments where Whisper's word-level timing produces flat, unusable notes (e.g. R&B runs, opera, yodel passages).
+
+Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones held for 80ms+), then split at word boundaries. Whisper lyrics are overlaid by time alignment, and when lyrics lookup is active, LRCLIB reference lyrics fill remaining placeholder notes.
+
+```commandline
+-i XYZ --pitch_notes
+```
+
 ### 🏆 Ultrastar Score Calculation
 
 The score that the singer in the audio would receive will be measured.
