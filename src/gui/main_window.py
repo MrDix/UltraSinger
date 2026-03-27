@@ -172,7 +172,8 @@ class MainWindow(QMainWindow):
                 from modules.Audio.metadata_reader import read_media_metadata, format_display_title
                 metadata = read_media_metadata(str(p))
                 title = format_display_title(metadata, fallback=p.stem)
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to read metadata from %s: %s", p, e)
                 title = p.stem
 
         logger.info("Add to queue from file: %s", title)
