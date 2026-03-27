@@ -308,8 +308,6 @@ class UltraSingerRunner(QObject):
             args.append("--disable_lyrics_lookup")
         if config.get("disable_reference_lyrics"):
             args.append("--disable_reference_lyrics")
-        if config.get("detect_growl"):
-            args.append("--detect_freestyle")
         if config.get("disable_onset_correction"):
             args.append("--disable_onset_correction")
         if config.get("disable_denoise_track_noise"):

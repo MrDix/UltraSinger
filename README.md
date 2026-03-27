@@ -196,20 +196,6 @@ _Not all options working now!_
                             accuracy. Falls back to standard Whisper pipeline when disabled or when no
                             synced lyrics are available. Enabled by default.
 
-    [freestyle detection]
-    --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
-                                    notes (displayed but not scored). Covers growls, screams, rap, spoken word,
-                                    harsh vocals, and any non-melodic vocal style.
-                                    Primary: HPSS harmonicity analysis (genre/gender-independent, measures harmonic
-                                    vs. percussive energy). Fallback (when HPSS is unavailable): SwiftF0
-                                    confidence + pitch stability.
-    --freestyle_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
-    --freestyle_energy              RMS energy threshold — segments below this are treated as silence >> ((default) is 0.01)
-    --freestyle_confidence          SwiftF0 median confidence threshold (fallback) >> ((default) is 0.35)
-    --freestyle_pitch_stdev         Pitch standard deviation threshold in semitones (fallback) >> ((default) is 4.0)
-    --freestyle_spectral_flatness   Spectral flatness threshold (fallback) >> ((default) is 0.25)
-    --no_freestyle_spectral         Disable spectral flatness analysis (fallback)
-
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
                                 and uses the game's C++ ptAKF pitch detector to find and fix poorly-scoring notes.
@@ -514,21 +500,6 @@ Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones 
 
 ```commandline
 -i XYZ --pitch_notes
-```
-
-#### Freestyle Detection (`--detect_freestyle`)
-
-Detects vocal passages that cannot be reliably pitched and marks them as freestyle notes (displayed but not scored). This covers growls, screams, harsh vocals, rap, spoken word, and any non-melodic vocal style — useful for any song where parts of the vocal performance fall outside traditional singing.
-
-The primary detection method uses **HPSS (Harmonic-Percussive Source Separation)**: clean singing has a high harmonic-to-total energy ratio (typically 0.7+), while unpitchable passages have a low ratio (below 0.40). This approach is **genre- and gender-independent**. When HPSS is unavailable (e.g. no separated vocal audio or HPSS preprocessing fails), a fallback method uses SwiftF0 pitch confidence and pitch stability analysis.
-
-```commandline
--i XYZ --detect_freestyle
-```
-
-You can tune the detection thresholds:
-```commandline
--i XYZ --detect_freestyle --freestyle_harmonicity 0.35 --freestyle_energy 0.005
 ```
 
 ### 🏆 Ultrastar Score Calculation

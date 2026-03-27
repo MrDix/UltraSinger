@@ -1,6 +1,5 @@
 """YouTube Downloader"""
 
-import logging
 import os
 import re
 
@@ -80,7 +79,6 @@ def get_youtube_title(url: str, cookiefile: str | None = None) -> tuple[str, str
 
     ydl_opts = {
         "cookiefile": cookiefile,
-        "logger": _FilteredLogger(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         result = ydl.extract_info(
@@ -108,7 +106,6 @@ def __download_youtube_video_with_audio(url: str, clear_filename: str, output_pa
         "outtmpl": output_path + "/" + clear_filename + ".%(ext)s",
         "merge_output_format": "mp4",
         "cookiefile": cookiefile,
-        "logger": _FilteredLogger(),
     }
     __start_download(ydl_opts, url)
     return "mp4"
@@ -131,7 +128,6 @@ def __download_youtube_thumbnail(url: str, clear_filename: str, output_path: str
 def download_and_convert_thumbnail(ydl_opts, url: str, clear_filename: str, output_path: str) -> str:
     """Download and convert thumbnail from YouTube"""
 
-    ydl_opts.setdefault("logger", _FilteredLogger())
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=False)
         thumbnail_url = info_dict.get("thumbnail")
@@ -146,39 +142,9 @@ def download_and_convert_thumbnail(ydl_opts, url: str, clear_filename: str, outp
 
 
 
-_logger = logging.getLogger(__name__)
-
-# yt-dlp warnings that are harmless and should not be shown to users
-_SUPPRESSED_WARNINGS = [
-    "SABR-only streaming experiment",
-    "YouTube is forcing SABR streaming for this client",
-    "SABR-only or Server-Side Ad Placement experiment",
-    "SABR streaming",  # catch-all for future yt-dlp wording changes
-]
-
-
-class _FilteredLogger:
-    """Custom yt-dlp logger that suppresses known harmless warnings."""
-
-    def debug(self, msg):
-        _logger.debug(msg)
-
-    def info(self, msg):
-        print(msg)
-
-    def warning(self, msg):
-        if any(phrase in msg for phrase in _SUPPRESSED_WARNINGS):
-            _logger.debug("Suppressed yt-dlp warning: %s", msg)
-            return
-        print(f"WARNING: {msg}")
-
-    def error(self, msg):
-        print(f"ERROR: {msg}")
-
-
 def __start_download(ydl_opts, url: str) -> None:
     """Start the download the ydl_opts"""
-    ydl_opts.setdefault("logger", _FilteredLogger())
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         errors = ydl.download(url)
         if errors:

@@ -360,19 +360,6 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._reference_lyrics.setChecked(
                                not _DEFAULTS["disable_reference_lyrics"]))
 
-        # Freestyle detection (unpitchable passages)
-        self._detect_growl = ToggleSwitch(
-            checked=self._config.get("detect_growl", _DEFAULTS["detect_growl"])
-        )
-        card.add_toggle_row("Freestyle Detection", self._detect_growl,
-                           "Detect vocal passages that cannot be reliably pitched and mark them "
-                           "as freestyle notes (displayed but not scored). Covers growls, screams, "
-                           "rap, spoken word, harsh vocals, and any non-melodic vocal style. "
-                           "Uses HPSS harmonicity analysis (genre/gender-independent). "
-                           "Fallback: SwiftF0 confidence + pitch stability.",
-                           reset_callback=lambda: self._detect_growl.setChecked(
-                               _DEFAULTS["detect_growl"]))
-
         # Vocal separation
         self._separation = ToggleSwitch(
             checked=not self._config.get("disable_separation", False)
@@ -922,7 +909,6 @@ class ConversionSettingsForm(QWidget):
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),
-            "detect_growl": self._detect_growl.isChecked(),
             "llm_correct": self._llm_correct.isChecked(),
             "llm_provider_id": self.get_selected_provider_id(),
             "llm_retry_on_rate_limit": self._llm_retry.isChecked(),

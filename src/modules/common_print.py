@@ -88,20 +88,6 @@ def print_help() -> None:
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.
                             Falls back to standard Whisper pipeline when disabled or when no synced lyrics available.
 
-    [freestyle detection]
-    --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
-                                    notes (displayed but not scored). Covers growls, screams, rap, spoken word,
-                                    harsh vocals, and any non-melodic vocal style.
-                                    Primary: HPSS harmonicity analysis (genre/gender-independent, measures harmonic
-                                    vs. percussive energy). Fallback (when HPSS is unavailable): SwiftF0
-                                    confidence + pitch stability.
-    --freestyle_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
-    --freestyle_energy              RMS energy threshold — segments below this are treated as silence >> ((default) is 0.01)
-    --freestyle_confidence          SwiftF0 median confidence threshold (fallback) >> ((default) is 0.35)
-    --freestyle_pitch_stdev         Pitch standard deviation threshold in semitones (fallback) >> ((default) is 4.0)
-    --freestyle_spectral_flatness   Spectral flatness threshold (fallback) >> ((default) is 0.25)
-    --no_freestyle_spectral         Disable spectral flatness analysis (fallback)
-
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
                                 and uses the game's C++ ptAKF pitch detector to find and fix poorly-scoring notes.
