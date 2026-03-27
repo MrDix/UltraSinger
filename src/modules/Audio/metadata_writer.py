@@ -210,15 +210,92 @@ def _write_wav_tags(
 
 
 def _embed_cover_in_vorbis(audio, cover_path: str) -> None:
-    """Embed cover art in OGG Vorbis using METADATA_BLOCK_PICTURE."""
+    """Embed cover art in OGG Vorbis using METADATA_BLOCK_PICTURE.
+
+    Large cover images are resized to fit within the Vorbis comment header
+    size limits of common players.  Karedi's JOrbis reader has a 64 KB
+    mark limit for header parsing — a ~48 KB JPEG (≈500×500) stays safely
+    below that after base64 encoding (~64 KB) plus other header overhead.
+    """
     import base64
     from mutagen.flac import Picture
 
+    cover_data = _load_and_resize_cover(cover_path, max_size=500, max_bytes=48_000)
+    if cover_data is None:
+        return
+
     pic = Picture()
     pic.type = 3  # Front cover
-    pic.mime = "image/jpeg" if cover_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
-    with open(cover_path, "rb") as f:
-        pic.data = f.read()
+    pic.mime = "image/jpeg"
+    pic.data = cover_data
 
     # Encode as base64 FLAC picture block (standard for Vorbis comments)
     audio["METADATA_BLOCK_PICTURE"] = [base64.b64encode(pic.write()).decode("ascii")]
+
+
+# Maximum pixel dimension and file size for OGG-embedded covers.
+# Keeps the base64 METADATA_BLOCK_PICTURE under ~64 KB so that
+# Karedi (JOrbis 64 001-byte mark limit) can parse the headers.
+_COVER_MAX_DIMENSION = 500
+_COVER_MAX_BYTES = 48_000
+
+
+def _load_and_resize_cover(
+    cover_path: str,
+    max_size: int = _COVER_MAX_DIMENSION,
+    max_bytes: int = _COVER_MAX_BYTES,
+) -> Optional[bytes]:
+    """Load a cover image and resize/recompress if needed for OGG embedding.
+
+    Returns JPEG bytes that fit within *max_bytes*, or None on failure.
+    """
+    import io
+
+    try:
+        from PIL import Image
+    except ImportError:
+        # Pillow not available — fall back to raw file, hope it's small enough
+        with open(cover_path, "rb") as f:
+            data = f.read()
+        if len(data) <= max_bytes:
+            return data
+        logger.warning(
+            "Cover image %d bytes exceeds %d byte limit but Pillow is not "
+            "installed for resizing — skipping OGG cover embed",
+            len(data), max_bytes,
+        )
+        return None
+
+    try:
+        img = Image.open(cover_path)
+        img = img.convert("RGB")  # Ensure JPEG-compatible mode
+
+        # Resize if larger than max_size
+        if img.width > max_size or img.height > max_size:
+            img.thumbnail((max_size, max_size), Image.LANCZOS)
+
+        # Compress at decreasing quality until within budget
+        for quality in (85, 75, 60, 45):
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            data = buf.getvalue()
+            if len(data) <= max_bytes:
+                return data
+
+        # Last resort: even smaller
+        img.thumbnail((300, 300), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=45, optimize=True)
+        return buf.getvalue()
+
+    except Exception as e:
+        logger.warning("Failed to resize cover for OGG embedding: %s", e)
+        # Try raw file as fallback
+        try:
+            with open(cover_path, "rb") as f:
+                data = f.read()
+            if len(data) <= max_bytes:
+                return data
+        except OSError:
+            pass
+        return None
