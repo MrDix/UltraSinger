@@ -335,6 +335,46 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Reference-first pipeline failed: {e}")
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
 
+        # Fallback: Plain lyrics alignment when no synced lyrics available
+        if not reference_first_used and process_data.plain_lyrics and not settings.disable_reference_lyrics:
+            try:
+                from modules.Speech_Recognition.reference_lyrics_aligner import (
+                    create_midi_segments_from_plain_lyrics,
+                )
+                ref_language = process_data.media_info.language
+                if not ref_language:
+                    ref_language = "en"
+                    print(
+                        f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
+                        f"Language unknown — falling back to English alignment model"
+                    )
+                plain_segments = create_midi_segments_from_plain_lyrics(
+                    plain_lyrics=process_data.plain_lyrics,
+                    audio_path=process_data.process_data_paths.whisper_audio_path,
+                    language=ref_language,
+                    pitched_data=process_data.pitched_data,
+                    device=settings.pytorch_device,
+                    allowed_notes=allowed_notes_for_key,
+                    melisma_split=settings.pitch_change_split,
+                    align_model_name=settings.whisper_align_model,
+                )
+                if plain_segments:
+                    process_data.midi_segments = plain_segments
+                    reference_first_used = True
+                    process_data.transcribed_data = [
+                        TranscribedData(
+                            word=seg.word,
+                            start=seg.start,
+                            end=seg.end,
+                            confidence=1.0,
+                            is_word_end=not seg.word.strip().startswith("~"),
+                        )
+                        for seg in process_data.midi_segments
+                    ]
+            except Exception as e:
+                print(f"{ULTRASINGER_HEAD} Plain lyrics alignment failed: {e}")
+                print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
+
         if not reference_first_used:
             # If Whisper was skipped but reference-first failed, run Whisper now
             if whisper_skipped:
@@ -454,6 +494,7 @@ def run() -> tuple[str, Score, Score]:
             reference_first_used=reference_first_used,
             whisper_skipped=whisper_skipped,
             has_synced_lyrics=process_data.synced_lyrics is not None,
+            has_plain_lyrics=bool(process_data.plain_lyrics),
         )
 
     # Cleanup
@@ -542,6 +583,7 @@ def _write_settings_info_file(
         reference_first_used: bool = False,
         whisper_skipped: bool = False,
         has_synced_lyrics: bool = False,
+        has_plain_lyrics: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
     from datetime import datetime, timezone
@@ -584,23 +626,26 @@ def _write_settings_info_file(
 
             # Pipeline
             f.write("[Pipeline]\n")
-            if reference_first_used:
-                f.write(f"  Pipeline:                 Reference-Lyrics-First\n")
-                f.write(f"  LRCLIB synced lyrics:     found\n")
-                f.write(f"  Whisper transcription:    skipped\n")
-                f.write(f"  Alignment:                wav2vec2 CTC forced alignment\n")
+            if reference_first_used and has_synced_lyrics:
+                f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
+                f.write("  LRCLIB synced lyrics:     found\n")
+            elif reference_first_used and has_plain_lyrics:
+                f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
+                f.write("  LRCLIB plain lyrics:      found (no synced available)\n")
+                f.write("  Whisper transcription:    skipped\n")
+                f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif has_synced_lyrics:
-                f.write(f"  Pipeline:                 Whisper (reference-first failed, fell back)\n")
-                f.write(f"  LRCLIB synced lyrics:     found (but alignment failed)\n")
-                f.write(f"  Whisper transcription:    full\n")
+                f.write("  Pipeline:                 Whisper (reference-first failed, fell back)\n")
+                f.write("  LRCLIB synced lyrics:     found (but alignment failed)\n")
+                f.write("  Whisper transcription:    full\n")
             elif whisper_skipped:
-                f.write(f"  Pipeline:                 Whisper skipped (no audio)\n")
-                f.write(f"  LRCLIB synced lyrics:     not found\n")
+                f.write("  Pipeline:                 Whisper skipped (no audio)\n")
+                f.write("  LRCLIB synced lyrics:     not found\n")
             else:
-                f.write(f"  Pipeline:                 Standard Whisper\n")
-                f.write(f"  LRCLIB synced lyrics:     not found\n")
-                f.write(f"  Whisper transcription:    full\n")
-                f.write(f"  Alignment:                WhisperX wav2vec2\n")
+                f.write("  Pipeline:                 Standard Whisper\n")
+                f.write("  LRCLIB synced lyrics:     not found\n")
+                f.write("  Whisper transcription:    full\n")
+                f.write("  Alignment:                WhisperX wav2vec2\n")
             if whisper_skipped and not reference_first_used:
                 lang_method = "Whisper tiny (fast detection)"
             elif settings.language:
@@ -658,7 +703,7 @@ def _write_settings_info_file(
                 for w in nondeterministic_warnings:
                     f.write(f"    - {w}\n")
             else:
-                f.write(f"  Non-deterministic ops:    none detected\n")
+                f.write("  Non-deterministic ops:    none detected\n")
             f.write("\n")
 
             # Refinement
@@ -707,7 +752,7 @@ def _write_settings_info_file(
                 f.write("[Score Results]\n")
                 if simple_score is not None:
                     pct = round(simple_score.score / 100, 2)
-                    f.write(f"  Simple (octave-ignoring):\n")
+                    f.write("  Simple (octave-ignoring):\n")
                     f.write(f"    Total:                  {simple_score.score} ({pct}%)\n")
                     f.write(f"    Notes:                  {simple_score.notes}\n")
                     f.write(f"    Golden notes:           {simple_score.golden}\n")
@@ -715,7 +760,7 @@ def _write_settings_info_file(
                     f.write(f"    Max possible:           {simple_score.max_score}\n")
                 if accurate_score is not None:
                     pct = round(accurate_score.score / 100, 2)
-                    f.write(f"  Accurate (octave-matched):\n")
+                    f.write("  Accurate (octave-matched):\n")
                     f.write(f"    Total:                  {accurate_score.score} ({pct}%)\n")
                     f.write(f"    Notes:                  {accurate_score.notes}\n")
                     f.write(f"    Golden notes:           {accurate_score.golden}\n")
@@ -1111,6 +1156,7 @@ def TranscribeAudio(process_data):
                 if lyrics_info.synced_lyrics:
                     process_data.synced_lyrics = lyrics_info.synced_lyrics
                 if lyrics_info.plain_lyrics:
+                    process_data.plain_lyrics = lyrics_info.plain_lyrics
                     process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
                         process_data.transcribed_data, lyrics_info.plain_lyrics
                     )
