@@ -360,15 +360,16 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._reference_lyrics.setChecked(
                                not _DEFAULTS["disable_reference_lyrics"]))
 
-        # Growl/Scream detection
+        # Freestyle detection (unpitchable passages)
         self._detect_growl = ToggleSwitch(
             checked=self._config.get("detect_growl", _DEFAULTS["detect_growl"])
         )
-        card.add_toggle_row("Growl/Scream Detection", self._detect_growl,
-                           "Detect unpitchable vocal passages (growl, scream, rap, spoken word) "
-                           "and mark them as freestyle notes. Useful for metal, screamo, hardcore, "
-                           "and songs with mixed clean/harsh vocals. Uses HPSS harmonicity analysis "
-                           "(genre/gender-independent). Fallback: SwiftF0 confidence + pitch stability.",
+        card.add_toggle_row("Freestyle Detection", self._detect_growl,
+                           "Detect vocal passages that cannot be reliably pitched and mark them "
+                           "as freestyle notes (displayed but not scored). Covers growls, screams, "
+                           "rap, spoken word, harsh vocals, and any non-melodic vocal style. "
+                           "Uses HPSS harmonicity analysis (genre/gender-independent). "
+                           "Fallback: SwiftF0 confidence + pitch stability.",
                            reset_callback=lambda: self._detect_growl.setChecked(
                                _DEFAULTS["detect_growl"]))
 

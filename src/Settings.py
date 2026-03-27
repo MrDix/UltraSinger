@@ -100,10 +100,10 @@ class Settings:
     llm_retry_wait: int = 60  # Seconds to wait between retries
     llm_retry_max: int = 3  # Maximum retries per chunk
 
-    # Growl/Scream detection — mark unpitchable passages as freestyle
-    # Useful for metal, screamo, hardcore, and songs with mixed clean/harsh vocals.
+    # Freestyle detection — mark unpitchable passages as freestyle
+    # Covers growls, screams, rap, spoken word, harsh vocals, and any non-melodic vocal style.
     # Detected segments become UltraStar freestyle notes (displayed but not scored).
-    detect_growl = False  # Enable growl/scream/spoken detection (marks notes as freestyle)
+    detect_growl = False  # Enable freestyle detection for unpitchable passages
     growl_harmonicity_threshold: float = 0.40  # HPSS harmonic ratio below this → unpitchable
     growl_energy_threshold: float = 0.01  # RMS below this → silence (not growl)
     growl_confidence_threshold: float = 0.35  # SwiftF0 median confidence below this → suspect (fallback)

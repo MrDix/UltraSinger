@@ -53,7 +53,7 @@ _DEFAULTS = {
     # Lyrics Lookup
     "disable_lyrics_lookup": False,
     "disable_reference_lyrics": False,
-    # Growl/Scream detection
+    # Freestyle detection
     "detect_growl": False,
     # LLM
     "llm_correct": False,

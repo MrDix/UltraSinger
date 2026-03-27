@@ -88,9 +88,10 @@ def print_help() -> None:
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.
                             Falls back to standard Whisper pipeline when disabled or when no synced lyrics available.
 
-    [growl/scream detection]
-    --detect_growl              Mark unpitchable vocal passages (growl, scream, rap, spoken) as freestyle notes.
-                                Useful for metal, screamo, hardcore, and songs with mixed clean/harsh vocals.
+    [freestyle detection]
+    --detect_growl              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
+                                notes (displayed but not scored). Covers growls, screams, rap, spoken word,
+                                harsh vocals, and any non-melodic vocal style.
                                 Primary: HPSS harmonicity analysis (genre/gender-independent, measures harmonic
                                 vs. percussive energy). Fallback: SwiftF0 confidence + pitch stability.
     --growl_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
