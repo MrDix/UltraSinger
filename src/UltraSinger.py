@@ -494,6 +494,7 @@ def run() -> tuple[str, Score, Score]:
             reference_first_used=reference_first_used,
             whisper_skipped=whisper_skipped,
             has_synced_lyrics=process_data.synced_lyrics is not None,
+            has_plain_lyrics=bool(process_data.plain_lyrics),
         )
 
     # Cleanup
@@ -516,6 +517,7 @@ def _write_settings_info_file(
         reference_first_used: bool = False,
         whisper_skipped: bool = False,
         has_synced_lyrics: bool = False,
+        has_plain_lyrics: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
     from datetime import datetime, timezone
@@ -558,26 +560,26 @@ def _write_settings_info_file(
 
             # Pipeline
             f.write("[Pipeline]\n")
-            if reference_first_used and process_data.synced_lyrics:
-                f.write(f"  Pipeline:                 Reference-Lyrics-First (synced)\n")
-                f.write(f"  LRCLIB synced lyrics:     found\n")
-            elif reference_first_used and process_data.plain_lyrics:
-                f.write(f"  Pipeline:                 Reference-Lyrics-First (plain)\n")
-                f.write(f"  LRCLIB plain lyrics:      found (no synced available)\n")
-                f.write(f"  Whisper transcription:    skipped\n")
-                f.write(f"  Alignment:                wav2vec2 CTC forced alignment\n")
+            if reference_first_used and has_synced_lyrics:
+                f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
+                f.write("  LRCLIB synced lyrics:     found\n")
+            elif reference_first_used and has_plain_lyrics:
+                f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
+                f.write("  LRCLIB plain lyrics:      found (no synced available)\n")
+                f.write("  Whisper transcription:    skipped\n")
+                f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif has_synced_lyrics:
-                f.write(f"  Pipeline:                 Whisper (reference-first failed, fell back)\n")
-                f.write(f"  LRCLIB synced lyrics:     found (but alignment failed)\n")
-                f.write(f"  Whisper transcription:    full\n")
+                f.write("  Pipeline:                 Whisper (reference-first failed, fell back)\n")
+                f.write("  LRCLIB synced lyrics:     found (but alignment failed)\n")
+                f.write("  Whisper transcription:    full\n")
             elif whisper_skipped:
-                f.write(f"  Pipeline:                 Whisper skipped (no audio)\n")
-                f.write(f"  LRCLIB synced lyrics:     not found\n")
+                f.write("  Pipeline:                 Whisper skipped (no audio)\n")
+                f.write("  LRCLIB synced lyrics:     not found\n")
             else:
-                f.write(f"  Pipeline:                 Standard Whisper\n")
-                f.write(f"  LRCLIB synced lyrics:     not found\n")
-                f.write(f"  Whisper transcription:    full\n")
-                f.write(f"  Alignment:                WhisperX wav2vec2\n")
+                f.write("  Pipeline:                 Standard Whisper\n")
+                f.write("  LRCLIB synced lyrics:     not found\n")
+                f.write("  Whisper transcription:    full\n")
+                f.write("  Alignment:                WhisperX wav2vec2\n")
             if whisper_skipped and not reference_first_used:
                 lang_method = "Whisper tiny (fast detection)"
             elif settings.language:
@@ -635,7 +637,7 @@ def _write_settings_info_file(
                 for w in nondeterministic_warnings:
                     f.write(f"    - {w}\n")
             else:
-                f.write(f"  Non-deterministic ops:    none detected\n")
+                f.write("  Non-deterministic ops:    none detected\n")
             f.write("\n")
 
             # Refinement
@@ -684,7 +686,7 @@ def _write_settings_info_file(
                 f.write("[Score Results]\n")
                 if simple_score is not None:
                     pct = round(simple_score.score / 100, 2)
-                    f.write(f"  Simple (octave-ignoring):\n")
+                    f.write("  Simple (octave-ignoring):\n")
                     f.write(f"    Total:                  {simple_score.score} ({pct}%)\n")
                     f.write(f"    Notes:                  {simple_score.notes}\n")
                     f.write(f"    Golden notes:           {simple_score.golden}\n")
@@ -692,7 +694,7 @@ def _write_settings_info_file(
                     f.write(f"    Max possible:           {simple_score.max_score}\n")
                 if accurate_score is not None:
                     pct = round(accurate_score.score / 100, 2)
-                    f.write(f"  Accurate (octave-matched):\n")
+                    f.write("  Accurate (octave-matched):\n")
                     f.write(f"    Total:                  {accurate_score.score} ({pct}%)\n")
                     f.write(f"    Notes:                  {accurate_score.notes}\n")
                     f.write(f"    Golden notes:           {accurate_score.golden}\n")

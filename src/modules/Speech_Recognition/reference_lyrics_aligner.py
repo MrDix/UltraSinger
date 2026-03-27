@@ -428,7 +428,7 @@ def create_midi_segments_from_reference_lyrics(
 
 
 def create_midi_segments_from_plain_lyrics(
-    plain_lyrics: str,
+    plain_lyrics: Optional[str],
     audio_path: str,
     language: str,
     pitched_data: PitchedData,
