@@ -40,7 +40,7 @@ sed -i 's|whl/cpu|whl/cu128|' pyproject.toml
 echo "Resolving dependencies..."
 uv lock
 echo "Syncing dependencies..."
-uv sync --extra linux
+uv sync
 
 # Protect local CUDA config from being reverted by git operations
 # (branch switches, pulls, etc. would otherwise reset to CPU default)
@@ -53,7 +53,7 @@ fi
 echo "Installation completed successfully!"
 echo ""
 echo "Optional: Install scoring support:"
-echo "  uv sync --extra linux --extra scoring"
+echo "  uv sync --extra scoring"
 echo ""
 echo "To run UltraSinger:"
 echo "  source .venv/bin/activate"
