@@ -44,7 +44,7 @@ class _FormatProbeWorker(QObject):
     download path which uses ``--cookiefile`` when configured.
     """
 
-    finished = Signal(str, str)  # video_id, info_text (HTML)
+    finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
 
     def __init__(self, video_id: str, parent: QObject | None = None):
         super().__init__(parent)
@@ -55,7 +55,7 @@ class _FormatProbeWorker(QObject):
 
         yt_dlp = shutil.which("yt-dlp")
         if not yt_dlp:
-            self.finished.emit(self._video_id, "")
+            self.finished.emit(self._video_id, "", "")
             return
 
         url = f"https://www.youtube.com/watch?v={self._video_id}"
@@ -70,7 +70,7 @@ class _FormatProbeWorker(QObject):
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if result.returncode != 0:
-                self.finished.emit(self._video_id, "")
+                self.finished.emit(self._video_id, "", "")
                 return
 
             info = json.loads(result.stdout)
@@ -122,6 +122,9 @@ class _FormatProbeWorker(QObject):
                     track = track or video_title
             lyrics_status = self._check_lrclib(artist, track)
 
+            # YouTube video language metadata
+            yt_language = info.get("language") or ""
+
             codec_names = {
                 "avc1": "H.264", "vp9": "VP9", "vp09": "VP9",
                 "av01": "AV1", "opus": "Opus", "mp4a": "AAC",
@@ -136,12 +139,16 @@ class _FormatProbeWorker(QObject):
                 parts.append(f"\U0001f50a {best_abr:.0f}k {aname}")
             if dur_str:
                 parts.append(f"\u23f1 {dur_str}")
+            if yt_language:
+                parts.append(f"\U0001f310 {yt_language.upper()}")
             parts.append(lyrics_status)
 
-            self.finished.emit(self._video_id, " \u00b7 ".join(parts))
+            self.finished.emit(
+                self._video_id, "\n".join(parts), yt_language
+            )
 
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
-            self.finished.emit(self._video_id, "")
+            self.finished.emit(self._video_id, "", "")
 
     @staticmethod
     def _check_lrclib(artist: str, title: str) -> str:
@@ -254,16 +261,18 @@ _CONVERT_OVERLAY_JS = r"""
             });
             document.body.appendChild(btn);
 
-            /* Quality badge — populated asynchronously from Python */
+            /* Quality badge — below the Queue button so it doesn't
+               overlap YouTube's search suggestion dropdown. */
             if (!document.getElementById('ultrasinger-quality-badge')) {
                 var badge = document.createElement('div');
                 badge.id = 'ultrasinger-quality-badge';
                 badge.style.cssText =
-                    'position:fixed;top:130px;left:16px;z-index:2147483647;' +
+                    'position:fixed;top:140px;left:16px;z-index:2147483647;' +
                     'background:rgba(30,30,30,0.92);color:#aaa;' +
-                    'padding:6px 14px;border-radius:16px;font-size:12px;' +
+                    'padding:6px 12px;border-radius:10px;font-size:11px;' +
                     'font-family:system-ui,sans-serif;pointer-events:none;' +
-                    'backdrop-filter:blur(4px);line-height:1.4;' +
+                    'backdrop-filter:blur(4px);line-height:1.6;' +
+                    'white-space:pre-line;max-width:180px;' +
                     'display:none;';
                 document.body.appendChild(badge);
             }
@@ -354,6 +363,7 @@ class BrowserTab(QWidget):
         # Media interceptor — passively captures audio stream URLs
         self.media_interceptor = MediaInterceptor(self)
         self._profile.setUrlRequestInterceptor(self.media_interceptor)
+        self._probe_yt_language = ""  # YouTube language from yt-dlp metadata
 
         # Web page + view
         self._page = UltraSingerWebPage(self._profile, self)
@@ -457,6 +467,7 @@ class BrowserTab(QWidget):
         # Let any previous probe finish on its own; stale results are
         # discarded by the video_id check in _on_format_probed.
         self._probe_video_id = video_id
+        self._probe_yt_language = ""  # reset until probe completes
 
         # Hide badge while loading
         if self._page:
@@ -482,13 +493,15 @@ class BrowserTab(QWidget):
         thread.deleteLater()
         worker.deleteLater()
 
-    def _on_format_probed(self, video_id: str, info_text: str):
+    def _on_format_probed(self, video_id: str, info_text: str, yt_language: str):
         """Show the format info badge in the browser overlay."""
         if not info_text or not self._page:
             return
         # Only update if still on the same video
         if self._probe_video_id != video_id:
             return
+        # Store the YouTube language for use as pipeline hint
+        self._probe_yt_language = yt_language or ""
 
         # Escape for JS string literal (backslash, quotes, control chars)
         safe_text = (
@@ -551,6 +564,11 @@ class BrowserTab(QWidget):
         else:
             self._cookie_dot.setStyleSheet("color: #605848; font-size: 14px;")
             self._cookie_dot.setToolTip("Not logged in")
+
+    @property
+    def yt_language(self) -> str:
+        """Return the YouTube language metadata for the current video, if available."""
+        return getattr(self, "_probe_yt_language", "")
 
     def _on_convert_with_title(self, url: str):
         """Extract the page title asynchronously, then emit convert_requested."""

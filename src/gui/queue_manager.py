@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,6 +18,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Regex patterns for parsing UltraSinger stdout
+_RE_LANG_DETECTED = re.compile(r"Language detected:\s*\x1b\[\d+m(\w+)\x1b|Language detected:\s*(\w+)")
+_RE_LANG_WHISPER = re.compile(r"Detected language:\s*\x1b\[\d+m(\w+)\x1b|Detected language:\s*(\w+)")
+_RE_LRCLIB_FOUND = re.compile(r"Found lyrics on LRCLIB:.*\[(.*?)\]")
+_RE_OUTPUT_FOLDER = re.compile(r"Creating output folder\.\s*->\s*(.+)")
+_RE_REFERENCE_PIPELINE = re.compile(r"Reference-first pipeline:")
+_RE_REFERENCE_FALLBACK = re.compile(r"Falling back to standard pipeline")
+_RE_SYNCED_SKIP = re.compile(r"Synced lyrics found.*skipping Whisper")
+_RE_NO_LRCLIB = re.compile(r"No lyrics found on LRCLIB")
+
 
 class QueueManager(QObject):
     """Manages a queue of conversion items and runs them sequentially."""
@@ -30,6 +41,7 @@ class QueueManager(QObject):
     # Forwarded from the runner for the currently active item
     line_output = Signal(str)
     stage_changed = Signal(str)
+    item_result_info = Signal(str, dict)  # item_id, result_info dict
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +55,7 @@ class QueueManager(QObject):
         self._download_worker = None  # MediaDownloadWorker | None
 
         self._runner.line_output.connect(self.line_output.emit)
+        self._runner.line_output.connect(self._parse_output_line)
         self._runner.stage_changed.connect(self.stage_changed.emit)
         # Use QueuedConnection so _on_item_finished runs on the main thread,
         # avoiding races with add_item/remove_item/cancel_all.
@@ -83,6 +96,24 @@ class QueueManager(QObject):
         self.item_added.emit(item)
         logger.info("Queue: added '%s' (%s)", title, input_type)
         return item
+
+    def clone_item(self, item_id: str) -> QueueItem | None:
+        """Clone a pending item — duplicate it with the same settings."""
+        for item in self._items:
+            if item.id == item_id and item.status == "pending":
+                clone = QueueItem(
+                    input_source=item.input_source,
+                    input_type=item.input_type,
+                    title=item.title,
+                    video_id=item.video_id,
+                    yt_language=item.yt_language,
+                    settings_overrides=dict(item.settings_overrides),
+                )
+                self._items.append(clone)
+                self.item_added.emit(clone)
+                logger.info("Queue: cloned '%s'", item.title)
+                return clone
+        return None
 
     def remove_item(self, item_id: str):
         """Remove a pending item from the queue."""
@@ -291,6 +322,51 @@ class QueueManager(QObject):
                 self.line_output.emit(f"[Queue] Cookie file: {cookie_file}")
             self._runner.start(args)
 
+    def _parse_output_line(self, line: str):
+        """Parse UltraSinger stdout to extract result metadata."""
+        item = self._current_item
+        if item is None:
+            return
+
+        info = item.result_info
+
+        m = _RE_LANG_DETECTED.search(line)
+        if m:
+            lang = m.group(1) or m.group(2)
+            if lang:
+                info["language"] = lang.lower()
+
+        m = _RE_LANG_WHISPER.search(line)
+        if m:
+            lang = m.group(1) or m.group(2)
+            if lang:
+                info["language"] = lang.lower()
+
+        m = _RE_OUTPUT_FOLDER.search(line)
+        if m:
+            info["output_folder"] = m.group(1).strip()
+
+        if _RE_REFERENCE_PIPELINE.search(line):
+            info["pipeline"] = "reference"
+
+        if _RE_REFERENCE_FALLBACK.search(line):
+            info["whisper_fallback"] = True
+
+        m = _RE_LRCLIB_FOUND.search(line)
+        if m:
+            ltype = m.group(1).strip().lower()
+            if "synced" in ltype:
+                info["lyrics_source"] = "synced"
+            elif "plain" in ltype:
+                info["lyrics_source"] = "plain"
+
+        if _RE_SYNCED_SKIP.search(line):
+            info["lyrics_source"] = "synced"
+            info["pipeline"] = "reference"
+
+        if _RE_NO_LRCLIB.search(line):
+            info["lyrics_source"] = "transcribed"
+
     def _on_item_finished(self, exit_code: int):
         """Handle completion of a single item, then run next."""
         item = self._current_item
@@ -306,6 +382,11 @@ class QueueManager(QObject):
             item.status = "failed"
 
         self.item_status_changed.emit(item.id, item.status)
+
+        # Emit result info for the GUI to display
+        if item.result_info:
+            self.item_result_info.emit(item.id, item.result_info)
+
         self.line_output.emit("")
 
         status_text = {
