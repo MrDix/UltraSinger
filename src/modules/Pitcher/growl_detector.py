@@ -167,9 +167,9 @@ def detect_growl_segments(
         detail = ""
         if propagated > 0:
             detail = f" ({propagated} via syllable propagation)"
-        print(
-            f"{ULTRASINGER_HEAD} Freestyle detection: marked {growl_count}/{len(midi_segments)} "
-            f"segments as freestyle (unpitchable){detail}"
+        logger.info(
+            "%s Freestyle detection: marked %d/%d segments as freestyle (unpitchable)%s",
+            ULTRASINGER_HEAD, growl_count, len(midi_segments), detail
         )
 
     return midi_segments
