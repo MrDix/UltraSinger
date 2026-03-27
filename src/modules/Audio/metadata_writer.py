@@ -30,7 +30,7 @@ def write_metadata_to_audio(
     """
     try:
         import mutagen
-        from mutagen import File as MutagenFile
+
     except ImportError:
         print(f"{ULTRASINGER_HEAD} mutagen not installed, skipping metadata tags")
         return False
@@ -89,7 +89,7 @@ def _write_mp3_tags(
     if cover_path and Path(cover_path).exists():
         with open(cover_path, "rb") as f:
             cover_data = f.read()
-        mime = "image/jpeg" if cover_path.lower().endswith(".jpg") else "image/png"
+        mime = "image/jpeg" if cover_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
         audio.tags.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=cover_data))
 
     audio.save()
@@ -142,7 +142,7 @@ def _write_flac_tags(
     if cover_path and Path(cover_path).exists():
         pic = Picture()
         pic.type = 3  # Front cover
-        pic.mime = "image/jpeg" if cover_path.lower().endswith(".jpg") else "image/png"
+        pic.mime = "image/jpeg" if cover_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
         with open(cover_path, "rb") as f:
             pic.data = f.read()
         audio.clear_pictures()
@@ -176,7 +176,7 @@ def _write_m4a_tags(
     if cover_path and Path(cover_path).exists():
         with open(cover_path, "rb") as f:
             cover_data = f.read()
-        fmt = MP4Cover.FORMAT_JPEG if cover_path.lower().endswith(".jpg") else MP4Cover.FORMAT_PNG
+        fmt = MP4Cover.FORMAT_JPEG if cover_path.lower().endswith((".jpg", ".jpeg")) else MP4Cover.FORMAT_PNG
         audio.tags["covr"] = [MP4Cover(cover_data, imageformat=fmt)]
 
     audio.save()
@@ -216,7 +216,7 @@ def _embed_cover_in_vorbis(audio, cover_path: str) -> None:
 
     pic = Picture()
     pic.type = 3  # Front cover
-    pic.mime = "image/jpeg" if cover_path.lower().endswith(".jpg") else "image/png"
+    pic.mime = "image/jpeg" if cover_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
     with open(cover_path, "rb") as f:
         pic.data = f.read()
 

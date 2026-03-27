@@ -11,7 +11,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-def read_media_metadata(file_path: str) -> dict[str, Optional[str]]:
+def read_media_metadata(file_path: Optional[str]) -> dict[str, Optional[str]]:
     """Read metadata tags from an audio or video file.
 
     Returns a dict with keys: title, artist, album, year, genre.
