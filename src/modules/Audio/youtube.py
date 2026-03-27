@@ -108,6 +108,7 @@ def __download_youtube_video_with_audio(url: str, clear_filename: str, output_pa
         "outtmpl": output_path + "/" + clear_filename + ".%(ext)s",
         "merge_output_format": "mp4",
         "cookiefile": cookiefile,
+        "logger": _FilteredLogger(),
     }
     __start_download(ydl_opts, url)
     return "mp4"
@@ -130,6 +131,7 @@ def __download_youtube_thumbnail(url: str, clear_filename: str, output_path: str
 def download_and_convert_thumbnail(ydl_opts, url: str, clear_filename: str, output_path: str) -> str:
     """Download and convert thumbnail from YouTube"""
 
+    ydl_opts.setdefault("logger", _FilteredLogger())
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=False)
         thumbnail_url = info_dict.get("thumbnail")
