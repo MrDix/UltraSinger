@@ -484,7 +484,7 @@ def run() -> tuple[str, Score, Score]:
             preserve_syllables=settings.syllable_split,
         )
 
-    # Growl/scream detection — mark unpitchable segments as freestyle
+    # Freestyle detection — mark unpitchable segments as freestyle
     if not settings.ignore_audio and settings.detect_growl:
         from modules.Pitcher.growl_detector import detect_growl_segments
 
@@ -715,10 +715,10 @@ def _write_settings_info_file(
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
-            f.write(f"  Growl detection:          {settings.detect_growl}\n")
+            f.write(f"  Freestyle detection:      {settings.detect_growl}\n")
             if settings.detect_growl:
-                f.write(f"  Growl harmonicity thr:    {settings.growl_harmonicity_threshold}\n")
-                f.write(f"  Growl energy thr:         {settings.growl_energy_threshold}\n")
+                f.write(f"  Freestyle harmonicity:    {settings.growl_harmonicity_threshold}\n")
+                f.write(f"  Freestyle energy thr:     {settings.growl_energy_threshold}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -1681,39 +1681,39 @@ def init_settings(argv: list[str]) -> Settings:
             settings.disable_reference_lyrics = True
         elif opt in ("--no_metadata_tags"):
             settings.write_metadata_tags = False
-        elif opt in ("--detect_growl"):
+        elif opt in ("--detect_freestyle"):
             settings.detect_growl = True
-        elif opt in ("--growl_harmonicity"):
+        elif opt in ("--freestyle_harmonicity"):
             val = float(arg)
             if not 0.0 <= val <= 1.0:
-                print(f"Error: --growl_harmonicity must be between 0.0 and 1.0, got {val}")
+                print(f"Error: --freestyle_harmonicity must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
             settings.growl_harmonicity_threshold = val
-        elif opt in ("--growl_energy"):
+        elif opt in ("--freestyle_energy"):
             val = float(arg)
             if val < 0:
-                print(f"Error: --growl_energy must be non-negative, got {val}")
+                print(f"Error: --freestyle_energy must be non-negative, got {val}")
                 sys.exit(1)
             settings.growl_energy_threshold = val
-        elif opt in ("--growl_confidence"):
+        elif opt in ("--freestyle_confidence"):
             val = float(arg)
             if not 0.0 <= val <= 1.0:
-                print(f"Error: --growl_confidence must be between 0.0 and 1.0, got {val}")
+                print(f"Error: --freestyle_confidence must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
             settings.growl_confidence_threshold = val
-        elif opt in ("--growl_pitch_stdev"):
+        elif opt in ("--freestyle_pitch_stdev"):
             val = float(arg)
             if val <= 0:
-                print(f"Error: --growl_pitch_stdev must be positive, got {val}")
+                print(f"Error: --freestyle_pitch_stdev must be positive, got {val}")
                 sys.exit(1)
             settings.growl_pitch_stdev_threshold = val
-        elif opt in ("--growl_spectral_flatness"):
+        elif opt in ("--freestyle_spectral_flatness"):
             val = float(arg)
             if not 0.0 <= val <= 1.0:
-                print(f"Error: --growl_spectral_flatness must be between 0.0 and 1.0, got {val}")
+                print(f"Error: --freestyle_spectral_flatness must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
             settings.growl_spectral_flatness_threshold = val
-        elif opt in ("--no_growl_spectral"):
+        elif opt in ("--no_freestyle_spectral"):
             settings.growl_use_spectral = False
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
@@ -1815,13 +1815,13 @@ def arg_options():
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",
-        "detect_growl",
-        "growl_harmonicity=",
-        "growl_energy=",
-        "growl_confidence=",
-        "growl_pitch_stdev=",
-        "growl_spectral_flatness=",
-        "no_growl_spectral",
+        "detect_freestyle",
+        "freestyle_harmonicity=",
+        "freestyle_energy=",
+        "freestyle_confidence=",
+        "freestyle_pitch_stdev=",
+        "freestyle_spectral_flatness=",
+        "no_freestyle_spectral",
         "interactive",
         "cookiefile=",
         "ffmpeg=",

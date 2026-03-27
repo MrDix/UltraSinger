@@ -1,5 +1,6 @@
 """YouTube Downloader"""
 
+import logging
 import os
 import re
 
@@ -79,6 +80,7 @@ def get_youtube_title(url: str, cookiefile: str | None = None) -> tuple[str, str
 
     ydl_opts = {
         "cookiefile": cookiefile,
+        "logger": _FilteredLogger(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         result = ydl.extract_info(
@@ -142,9 +144,36 @@ def download_and_convert_thumbnail(ydl_opts, url: str, clear_filename: str, outp
 
 
 
+_logger = logging.getLogger(__name__)
+
+# yt-dlp warnings that are harmless and should not be shown to users
+_SUPPRESSED_WARNINGS = [
+    "SABR-only streaming experiment",  # YouTube SABR format test — irrelevant, other formats work
+]
+
+
+class _FilteredLogger:
+    """Custom yt-dlp logger that suppresses known harmless warnings."""
+
+    def debug(self, msg):
+        _logger.debug(msg)
+
+    def info(self, msg):
+        print(msg)
+
+    def warning(self, msg):
+        if any(phrase in msg for phrase in _SUPPRESSED_WARNINGS):
+            _logger.debug("Suppressed yt-dlp warning: %s", msg)
+            return
+        print(f"WARNING: {msg}")
+
+    def error(self, msg):
+        print(f"ERROR: {msg}")
+
+
 def __start_download(ydl_opts, url: str) -> None:
     """Start the download the ydl_opts"""
-
+    ydl_opts.setdefault("logger", _FilteredLogger())
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         errors = ydl.download(url)
         if errors:
