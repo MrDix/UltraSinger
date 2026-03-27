@@ -117,7 +117,10 @@ def _write_ogg_tags(
     if cover_path and Path(cover_path).exists():
         _embed_cover_in_vorbis(audio, cover_path)
 
-    audio.save()
+    # Zero padding keeps the Vorbis comment header small enough for
+    # Karedi's JOrbis reader (64 KB mark limit).  Default mutagen
+    # padding can leave tens of KB of dead space after tag rewrites.
+    audio.save(padding=lambda x: 0)
     return True
 
 
