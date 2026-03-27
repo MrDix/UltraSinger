@@ -259,7 +259,7 @@ _CONVERT_OVERLAY_JS = r"""
                 var badge = document.createElement('div');
                 badge.id = 'ultrasinger-quality-badge';
                 badge.style.cssText =
-                    'position:fixed;top:80px;left:160px;z-index:2147483647;' +
+                    'position:fixed;top:130px;left:16px;z-index:2147483647;' +
                     'background:rgba(30,30,30,0.92);color:#aaa;' +
                     'padding:6px 14px;border-radius:16px;font-size:12px;' +
                     'font-family:system-ui,sans-serif;pointer-events:none;' +
