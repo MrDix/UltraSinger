@@ -425,3 +425,103 @@ def create_midi_segments_from_reference_lyrics(
     )
 
     return midi_segments
+
+
+def create_midi_segments_from_plain_lyrics(
+    plain_lyrics: Optional[str],
+    audio_path: str,
+    language: str,
+    pitched_data: PitchedData,
+    device: str = "cpu",
+    allowed_notes: Optional[set[str]] = None,
+    melisma_split: bool = True,
+    threshold_st: float = 2.0,
+    min_note_ms: float = 80.0,
+    align_model_name: Optional[str] = None,
+) -> list[MidiSegment]:
+    """Create MidiSegments from plain lyrics (no timestamps) + forced alignment.
+
+    This is a fallback when LRCLIB provides plain_lyrics but no synced_lyrics.
+    The plain text is fed directly to WhisperX forced alignment which uses
+    CTC to find word positions in the audio.
+
+    Args:
+        plain_lyrics: Raw plain text lyrics (line breaks separate lines).
+        audio_path: Path to the separated vocals audio file.
+        language: Language code for the alignment model.
+        pitched_data: SwiftF0 pitch data.
+        device: ``"cpu"`` or ``"cuda"``.
+        allowed_notes: Optional key quantization set.
+        melisma_split: Whether to split notes at pitch changes within words.
+        threshold_st: Semitone threshold for melisma detection.
+        min_note_ms: Minimum note duration for melisma splits.
+        align_model_name: Optional custom alignment model name.
+
+    Returns:
+        List of MidiSegments with lyrics and pitch.
+    """
+    if not plain_lyrics or not plain_lyrics.strip():
+        return []
+
+    # Clean up the lyrics: normalize line breaks, strip empty lines
+    lines = [line.strip() for line in plain_lyrics.replace("\r\n", "\n").split("\n")]
+    lines = [line for line in lines if line]
+    if not lines:
+        return []
+
+    all_text = " ".join(lines)
+    print(
+        f"{ULTRASINGER_HEAD} Plain lyrics alignment: "
+        f"{blue_highlighted(str(len(all_text.split())))} words to align"
+    )
+
+    # Create a single pseudo-segment spanning the full audio
+    audio_duration = librosa.get_duration(path=audio_path)
+    segments = [{"text": all_text, "start": 0.0, "end": audio_duration}]
+
+    # Use the same alignment function as the synced pipeline
+    words = align_lyrics_to_audio(
+        segments, audio_path, language, device, align_model_name,
+    )
+    if not words:
+        print(f"{ULTRASINGER_HEAD} Plain lyrics alignment returned no words — "
+              f"falling back to standard pipeline")
+        return []
+
+    # Step 3: Assign pitch to each word (same as synced pipeline)
+    midi_segments: list[MidiSegment] = []
+    words_with_pitch = 0
+    melisma_splits_count = 0
+
+    for i, w in enumerate(words):
+        word_text = w["word"]
+        is_last = (i == len(words) - 1)
+        if not word_text.startswith("~") and not is_last:
+            word_text = word_text + " "
+
+        if melisma_split:
+            segs = _split_word_at_pitch_changes(
+                word_text, w["start"], w["end"],
+                pitched_data, allowed_notes,
+                threshold_st, min_note_ms,
+            )
+            if len(segs) > 1:
+                melisma_splits_count += 1
+            midi_segments.extend(segs)
+        else:
+            note = _compute_note_for_word(
+                w["start"], w["end"], pitched_data, allowed_notes,
+            )
+            midi_segments.append(MidiSegment(note, w["start"], w["end"], word_text))
+
+        words_with_pitch += 1
+
+    total_notes = len(midi_segments)
+    print(
+        f"{ULTRASINGER_HEAD} Plain lyrics pipeline: "
+        f"{blue_highlighted(str(total_notes))} notes from "
+        f"{blue_highlighted(str(words_with_pitch))} words"
+        + (f" ({melisma_splits_count} melisma splits)" if melisma_splits_count > 0 else "")
+    )
+
+    return midi_segments
