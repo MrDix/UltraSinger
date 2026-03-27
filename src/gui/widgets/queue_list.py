@@ -271,12 +271,14 @@ class QueueItemWidget(QWidget):
             "synced (fallback)": "#ffa726",   # orange — had synced but fell back
             "plain": "#ffa726",               # orange — medium
             "transcribed": "#ef5350",         # red — lowest
+            "instrumental": "#7e57c2",        # purple — no vocals
         }
         _SOURCE_LABELS = {
             "synced": "Synced lyrics",
             "synced (fallback)": "Synced lyrics (Whisper fallback)",
             "plain": "Plain lyrics",
             "transcribed": "Transcribed",
+            "instrumental": "Instrumental",
         }
         badge_bg = _SOURCE_COLORS.get(source, "#a09888")
         source_text = _SOURCE_LABELS.get(source, source)
@@ -294,15 +296,8 @@ class QueueItemWidget(QWidget):
             lang_name = _lang_display_name(lang)
             pipeline_name = "Reference" if info.get("pipeline") == "reference" else "Whisper"
             tooltip = f"Language: {lang.upper()} ({lang_name}) — Pipeline: {pipeline_name}"
-            initial = info.get("initial_language", "")
-            if initial and initial != lang:
-                initial_name = _lang_display_name(initial)
-                tooltip += (
-                    f"\nInitial detection: {initial.upper()} ({initial_name}) (wrong)"
-                    f" \u2192 Whisper corrected to {lang.upper()} ({lang_name})"
-                )
-            if info.get("reference_recovered"):
-                tooltip += "\nReference pipeline recovered after correction"
+            if info.get("whisper_fallback"):
+                tooltip += "\nReference pipeline fell back to Whisper"
             self._lang_badge.setToolTip(tooltip)
             self._lang_badge.setVisible(True)
 
