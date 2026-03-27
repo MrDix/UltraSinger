@@ -1684,15 +1684,35 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--detect_growl"):
             settings.detect_growl = True
         elif opt in ("--growl_harmonicity"):
-            settings.growl_harmonicity_threshold = float(arg)
+            val = float(arg)
+            if not 0.0 <= val <= 1.0:
+                print(f"Error: --growl_harmonicity must be between 0.0 and 1.0, got {val}")
+                sys.exit(1)
+            settings.growl_harmonicity_threshold = val
         elif opt in ("--growl_energy"):
-            settings.growl_energy_threshold = float(arg)
+            val = float(arg)
+            if val < 0:
+                print(f"Error: --growl_energy must be non-negative, got {val}")
+                sys.exit(1)
+            settings.growl_energy_threshold = val
         elif opt in ("--growl_confidence"):
-            settings.growl_confidence_threshold = float(arg)
+            val = float(arg)
+            if not 0.0 <= val <= 1.0:
+                print(f"Error: --growl_confidence must be between 0.0 and 1.0, got {val}")
+                sys.exit(1)
+            settings.growl_confidence_threshold = val
         elif opt in ("--growl_pitch_stdev"):
-            settings.growl_pitch_stdev_threshold = float(arg)
+            val = float(arg)
+            if val <= 0:
+                print(f"Error: --growl_pitch_stdev must be positive, got {val}")
+                sys.exit(1)
+            settings.growl_pitch_stdev_threshold = val
         elif opt in ("--growl_spectral_flatness"):
-            settings.growl_spectral_flatness_threshold = float(arg)
+            val = float(arg)
+            if not 0.0 <= val <= 1.0:
+                print(f"Error: --growl_spectral_flatness must be between 0.0 and 1.0, got {val}")
+                sys.exit(1)
+            settings.growl_spectral_flatness_threshold = val
         elif opt in ("--no_growl_spectral"):
             settings.growl_use_spectral = False
         elif opt in ("--ffmpeg"):

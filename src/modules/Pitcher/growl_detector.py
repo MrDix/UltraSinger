@@ -9,7 +9,6 @@ Fallback: SwiftF0 confidence + pitch stability (when no vocal audio).
 """
 
 import logging
-import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -39,8 +38,8 @@ class _HpssData:
 
 class _SegmentAnalysis:
     """Result of analyzing a single segment."""
-    __slots__ = ("is_growl", "median_conf", "pitch_stdev", "spectral_flat",
-                 "voiced_ratio", "harmonicity_ratio")
+    __slots__ = ("harmonicity_ratio", "is_growl", "median_conf", "pitch_stdev",
+                 "spectral_flat", "voiced_ratio")
 
     def __init__(self):
         self.is_growl = False
@@ -165,7 +164,7 @@ def _precompute_hpss(
             frame_times=frame_times,
             duration=duration,
         )
-    except Exception as e:
+    except (FileNotFoundError, OSError, ValueError, RuntimeError) as e:
         logger.warning("HPSS pre-computation failed: %s", e)
         return None
 
@@ -295,6 +294,6 @@ def _compute_spectral_flatness(
             np.arange(len(flatness)), sr=sr_actual, hop_length=hop_length
         )
         return frame_times, flatness
-    except Exception as e:
+    except (FileNotFoundError, OSError, ValueError, RuntimeError) as e:
         logger.warning("Spectral flatness computation failed: %s", e)
         return None, None
