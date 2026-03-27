@@ -254,6 +254,42 @@ def run() -> tuple[str, Score, Score]:
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Early lyrics lookup failed: {e}")
 
+    # YouTube subtitle fallback: if no synced LRCLIB lyrics found, try
+    # manually uploaded YouTube subtitles (only for YouTube URLs).
+    if (not settings.ignore_audio
+            and not whisper_skipped
+            and not settings.disable_reference_lyrics
+            and not settings.disable_youtube_subtitle_lyrics
+            and (settings.input_file_path.startswith("https:") or settings.youtube_url)):
+        try:
+            from modules.Audio.youtube_subtitles import extract_manual_subtitles
+            yt_url = settings.youtube_url or settings.input_file_path
+            yt_sub_info = extract_manual_subtitles(
+                url=yt_url,
+                preferred_lang=(
+                    process_data.media_info.language
+                    or settings.language
+                ),
+            )
+            if yt_sub_info is not None and yt_sub_info.synced_lyrics:
+                process_data.synced_lyrics = yt_sub_info.synced_lyrics
+                if yt_sub_info.language and process_data.media_info.language is None:
+                    process_data.media_info.language = yt_sub_info.language
+                # Detect language if still not set
+                if process_data.media_info.language is None:
+                    from modules.Speech_Recognition.Whisper import detect_language_from_audio
+                    process_data.media_info.language = detect_language_from_audio(
+                        process_data.process_data_paths.whisper_audio_path,
+                        device=settings.pytorch_device,
+                    )
+                whisper_skipped = True
+                print(
+                    f"{ULTRASINGER_HEAD} "
+                    f"{cyan_highlighted('YouTube manual subtitles found — skipping Whisper transcription')}"
+                )
+        except Exception as e:
+            print(f"{ULTRASINGER_HEAD} YouTube subtitle lookup failed: {e}")
+
     if not settings.ignore_audio and not whisper_skipped:
         lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
 
@@ -698,6 +734,7 @@ def _write_settings_info_file(
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
+            f.write(f"  YouTube subtitle lyrics:  {not settings.disable_youtube_subtitle_lyrics}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
@@ -1659,6 +1696,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.lyrics_lookup = False
         elif opt in ("--disable_reference_lyrics"):
             settings.disable_reference_lyrics = True
+        elif opt in ("--disable_youtube_lyrics"):
+            settings.disable_youtube_subtitle_lyrics = True
         elif opt in ("--no_metadata_tags"):
             settings.write_metadata_tags = False
         elif opt in ("--ffmpeg"):
@@ -1760,6 +1799,7 @@ def arg_options():
         "pitch_notes",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
+        "disable_youtube_lyrics",
         "no_metadata_tags",
         "interactive",
         "cookiefile=",

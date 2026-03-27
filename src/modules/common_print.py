@@ -87,6 +87,9 @@ def print_help() -> None:
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain precise
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.
                             Falls back to standard Whisper pipeline when disabled or when no synced lyrics available.
+    --disable_youtube_lyrics    Disable YouTube manual subtitle fallback. When LRCLIB has no synced lyrics,
+                            UltraSinger checks for manually uploaded YouTube subtitles (not auto-generated)
+                            and uses them as synced lyrics. Enabled by default for YouTube URL inputs.
 
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default

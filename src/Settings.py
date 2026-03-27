@@ -41,6 +41,7 @@ class Settings:
     pitch_notes = False  # Generate notes from pitch contour instead of word timing
     lyrics_lookup = True  # Look up reference lyrics from LRCLIB and correct Whisper transcription
     disable_reference_lyrics = False  # Disable reference-lyrics-first pipeline (forced alignment with LRCLIB synced lyrics)
+    disable_youtube_subtitle_lyrics = False  # Disable YouTube manual subtitle fallback for lyrics
     keep_audio_in_video = False  # Keep full audio (vocals+instrumental) embedded in the output video
     write_settings_info = False  # Write ultrasinger_parameter.info with settings + score to output dir
     write_metadata_tags = True  # Write ID3/Vorbis metadata tags to output audio files
