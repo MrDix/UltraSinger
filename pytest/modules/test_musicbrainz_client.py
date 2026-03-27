@@ -177,19 +177,9 @@ class TestGetMusicInfos(unittest.TestCase):
 
         # Arrange
         search_list = [
-            # (search_artist, seartch_title, expected_artist, expected_title)
-
+            # (search_artist, search_title, expected_artist, expected_title)
+            # Use your own test data here — do not commit copyrighted song/artist names.
             (None, 't', None, None),  # this should return "Unknown artist"
-            ('Căsuța noastră', 'Gică Petrescu', 'Gică Petrescu', 'Căsuța noastră'),  # Gică Petrescu - Gică Petrescu
-            ("Shawn James - Through the Valley - Official Music Video", None, "Shawn James", "Through the Valley"),
-            # (None, 'Corey Taylor Snuff (Acoustic)', 'Corey Taylor', 'Snuff'), # Fixme: is wrong
-            # (None, 'Corey Taylor Snuff', 'Corey Taylor', 'Snuff'), # Fixme: is wrong
-            # (None, 'Songs für Liam Kraftklub', 'Kraftklub', 'Songs Für Liam'), # Fixme: is wrong
-            # ('Kummer feat. Fred Rabe', 'Der letzte Song (Alles wird gut)', 'Kummer feat. Fred Rabe', 'Der letzte Song (Alles wird gut)'),  # Todo: Wrong image?
-            # ('Der letzte Song (Alles wird gut)', 'Kummer feat. Fred Rabe', 'Kummer feat. Fred Rabe', 'Der letzte Song (Alles wird gut)'),  # Todo: Wrong image?
-            # (None, 'Der letzte Song (Alles wird gut) Kummer feat. Fred Rabe', 'Kummer feat. Fred Rabe', 'Der letzte Song (Alles wird gut)'), # Todo: Wrong image?
-            # (None, 'Thats life Shawn James', 'Shawn James', 'Thats life'),  # Fixme: is wrong
-            # (None, 'Gloryhole Explicit Steel Panther', 'Steel Panther', 'Gloryhole Explicit'), # Fixme: is wrong
         ]
 
         failed = 0
@@ -204,7 +194,7 @@ class TestGetMusicInfos(unittest.TestCase):
             song_info = search_musicbrainz(title, artist)
             print(f'\t{search_string}\t -> {song_info.artist}, {song_info.title}, {song_info.year}, {song_info.genres}')
             print('-------------------------------')
-        print(f"Faild: {failed} | Success: {success} Count: {count}")
+        print(f"Failed: {failed} | Success: {success} Count: {count}")
 
 
 if __name__ == '__main__':
