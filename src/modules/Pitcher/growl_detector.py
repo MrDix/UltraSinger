@@ -146,10 +146,30 @@ def detect_growl_segments(
                 seg.note_type = "F"
                 growl_count += 1
 
+    # Syllable propagation: if a word-starting note is freestyle, all
+    # following continuation notes ("~") belong to the same sustained
+    # vocal gesture and should inherit the freestyle marking.  A growl
+    # doesn't become pitched mid-syllable — partial harmonicity spikes
+    # within a sustained scream are measurement artefacts.
+    propagated = 0
+    is_propagating = False
+    for seg in midi_segments:
+        if seg.word.strip() not in ("~", ""):
+            # New word/syllable — start propagating if it's freestyle
+            is_propagating = seg.note_type == "F"
+        elif is_propagating and seg.note_type != "F":
+            seg.note_type = "F"
+            propagated += 1
+
+    growl_count += propagated
+
     if growl_count > 0:
+        detail = ""
+        if propagated > 0:
+            detail = f" ({propagated} via syllable propagation)"
         print(
-            f"{ULTRASINGER_HEAD} Growl detection: marked {growl_count}/{len(midi_segments)} "
-            f"segments as freestyle (unpitchable)"
+            f"{ULTRASINGER_HEAD} Freestyle detection: marked {growl_count}/{len(midi_segments)} "
+            f"segments as freestyle (unpitchable){detail}"
         )
 
     return midi_segments
