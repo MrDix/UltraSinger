@@ -496,6 +496,8 @@ def run() -> tuple[str, Score, Score]:
             pitch_stdev_threshold=settings.growl_pitch_stdev_threshold,
             spectral_flatness_threshold=settings.growl_spectral_flatness_threshold,
             use_spectral=settings.growl_use_spectral,
+            harmonicity_threshold=settings.growl_harmonicity_threshold,
+            energy_threshold=settings.growl_energy_threshold,
         )
 
     # Reverse-scoring refinement pass
@@ -714,6 +716,9 @@ def _write_settings_info_file(
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
             f.write(f"  Growl detection:          {settings.detect_growl}\n")
+            if settings.detect_growl:
+                f.write(f"  Growl harmonicity thr:    {settings.growl_harmonicity_threshold}\n")
+                f.write(f"  Growl energy thr:         {settings.growl_energy_threshold}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -1678,6 +1683,10 @@ def init_settings(argv: list[str]) -> Settings:
             settings.write_metadata_tags = False
         elif opt in ("--detect_growl"):
             settings.detect_growl = True
+        elif opt in ("--growl_harmonicity"):
+            settings.growl_harmonicity_threshold = float(arg)
+        elif opt in ("--growl_energy"):
+            settings.growl_energy_threshold = float(arg)
         elif opt in ("--growl_confidence"):
             settings.growl_confidence_threshold = float(arg)
         elif opt in ("--growl_pitch_stdev"):
@@ -1787,6 +1796,8 @@ def arg_options():
         "disable_reference_lyrics",
         "no_metadata_tags",
         "detect_growl",
+        "growl_harmonicity=",
+        "growl_energy=",
         "growl_confidence=",
         "growl_pitch_stdev=",
         "growl_spectral_flatness=",

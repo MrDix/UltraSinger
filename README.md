@@ -196,6 +196,18 @@ _Not all options working now!_
                             accuracy. Falls back to standard Whisper pipeline when disabled or when no
                             synced lyrics are available. Enabled by default.
 
+    [growl/scream detection]
+    --detect_growl              Mark unpitchable vocal passages (growl, scream, rap, spoken) as freestyle notes.
+                                Useful for metal, screamo, hardcore, and songs with mixed clean/harsh vocals.
+                                Primary: HPSS harmonicity analysis (genre/gender-independent, measures harmonic
+                                vs. percussive energy). Fallback: SwiftF0 confidence + pitch stability.
+    --growl_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
+    --growl_energy              RMS energy threshold — segments below this are treated as silence >> ((default) is 0.01)
+    --growl_confidence          SwiftF0 median confidence threshold (fallback) >> ((default) is 0.35)
+    --growl_pitch_stdev         Pitch standard deviation threshold in semitones (fallback) >> ((default) is 4.0)
+    --growl_spectral_flatness   Spectral flatness threshold (fallback) >> ((default) is 0.25)
+    --no_growl_spectral         Disable spectral flatness analysis (fallback)
+
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
                                 and uses the game's C++ ptAKF pitch detector to find and fix poorly-scoring notes.
@@ -500,6 +512,21 @@ Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones 
 
 ```commandline
 -i XYZ --pitch_notes
+```
+
+#### Growl/Scream Detection (`--detect_growl`)
+
+Detects unpitchable vocal passages -- growl, scream, harsh vocals, rap, spoken word -- and marks them as freestyle notes (displayed but not scored). This is particularly useful for metal, screamo, hardcore, and any song with mixed clean and harsh vocals.
+
+The primary detection method uses **HPSS (Harmonic-Percussive Source Separation)**: clean singing has a high harmonic-to-total energy ratio (typically 0.7+), while growls and screams have a low ratio (below 0.40). This approach is **genre- and gender-independent** -- it works equally well for female and male harsh vocals. When no separated vocal audio is available, a fallback method uses SwiftF0 pitch confidence and pitch stability analysis.
+
+```commandline
+-i XYZ --detect_growl
+```
+
+You can tune the detection thresholds:
+```commandline
+-i XYZ --detect_growl --growl_harmonicity 0.35 --growl_energy 0.005
 ```
 
 ### 🏆 Ultrastar Score Calculation

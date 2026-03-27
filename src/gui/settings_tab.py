@@ -366,8 +366,9 @@ class ConversionSettingsForm(QWidget):
         )
         card.add_toggle_row("Growl/Scream Detection", self._detect_growl,
                            "Detect unpitchable vocal passages (growl, scream, rap, spoken word) "
-                           "and mark them as freestyle notes. Uses SwiftF0 confidence analysis "
-                           "and spectral flatness to identify noisy, aperiodic vocal segments.",
+                           "and mark them as freestyle notes. Useful for metal, screamo, hardcore, "
+                           "and songs with mixed clean/harsh vocals. Uses HPSS harmonicity analysis "
+                           "(genre/gender-independent). Fallback: SwiftF0 confidence + pitch stability.",
                            reset_callback=lambda: self._detect_growl.setChecked(
                                _DEFAULTS["detect_growl"]))
 

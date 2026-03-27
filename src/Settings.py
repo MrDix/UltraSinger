@@ -101,11 +101,15 @@ class Settings:
     llm_retry_max: int = 3  # Maximum retries per chunk
 
     # Growl/Scream detection — mark unpitchable passages as freestyle
+    # Useful for metal, screamo, hardcore, and songs with mixed clean/harsh vocals.
+    # Detected segments become UltraStar freestyle notes (displayed but not scored).
     detect_growl = False  # Enable growl/scream/spoken detection (marks notes as freestyle)
-    growl_confidence_threshold: float = 0.35  # SwiftF0 median confidence below this → suspect
-    growl_pitch_stdev_threshold: float = 4.0  # Pitch stdev (semitones) above this → suspect
-    growl_spectral_flatness_threshold: float = 0.25  # Spectral flatness above this → noisy
-    growl_use_spectral: bool = True  # Enable Tier 2 spectral flatness analysis
+    growl_harmonicity_threshold: float = 0.40  # HPSS harmonic ratio below this → unpitchable
+    growl_energy_threshold: float = 0.01  # RMS below this → silence (not growl)
+    growl_confidence_threshold: float = 0.35  # SwiftF0 median confidence below this → suspect (fallback)
+    growl_pitch_stdev_threshold: float = 4.0  # Pitch stdev (semitones) above this → suspect (fallback)
+    growl_spectral_flatness_threshold: float = 0.25  # Spectral flatness above this → noisy (fallback)
+    growl_use_spectral: bool = True  # Enable spectral flatness analysis (fallback)
 
     # Denoise
     denoise_noise_reduction = 20  # Noise reduction in dB (0.01-97, default: 20). Previous default was 70 which destroyed vocal nuances needed by Whisper.
