@@ -64,41 +64,55 @@ def detect_growl_segments(
 ) -> list[MidiSegment]:
     """Analyze each MidiSegment and mark unpitchable ones as freestyle.
 
-    Primary detection uses HPSS (Harmonic-Percussive Source Separation):
-    clean singing has a high harmonic-to-total energy ratio (0.7+),
-    while growls/screams have a low ratio (< 0.40).
+    Detection strategy (two paths, chosen automatically):
 
-    When no vocal audio is available, falls back to SwiftF0 pitch
-    confidence + pitch stability analysis.
+    1. **HPSS (primary)** — When vocal_audio_path is available and HPSS
+       succeeds, segments are classified by their harmonic-to-total energy
+       ratio.  Clean singing scores 0.7+; growls/screams score < 0.40.
+       Only ``harmonicity_threshold`` and ``energy_threshold`` are used.
+
+    2. **Pitch-confidence fallback** — When HPSS is unavailable (no vocal
+       audio or librosa failure), classification falls back to SwiftF0
+       confidence + pitch stability, optionally augmented with spectral
+       flatness.  The ``confidence_threshold``, ``pitch_stdev_threshold``,
+       ``spectral_flatness_threshold``, ``min_voiced_ratio``, and
+       ``use_spectral`` parameters are only active in this path.
 
     Args:
         midi_segments: List of MidiSegments to analyze.
         pitched_data: SwiftF0 output with times, frequencies, confidence.
+            May be None/empty when only HPSS analysis is desired.
         vocal_audio_path: Path to separated vocals audio (for HPSS).
-        confidence_threshold: Median confidence below this -> suspect (fallback).
-        pitch_stdev_threshold: Pitch stdev (semitones) above this -> suspect (fallback).
-        spectral_flatness_threshold: Spectral flatness above this -> noisy (fallback).
-        min_voiced_ratio: Minimum fraction of voiced frames required (fallback).
-        use_spectral: Enable spectral flatness analysis (fallback).
-        harmonicity_threshold: HPSS harmonic ratio below this -> unpitchable.
-        energy_threshold: RMS energy below this -> silence, not growl.
+        confidence_threshold: Median confidence below this -> suspect (fallback only).
+        pitch_stdev_threshold: Pitch stdev (semitones) above this -> suspect (fallback only).
+        spectral_flatness_threshold: Spectral flatness above this -> noisy (fallback only).
+        min_voiced_ratio: Minimum fraction of voiced frames required (fallback only).
+        use_spectral: Enable spectral flatness in fallback path (fallback only).
+        harmonicity_threshold: HPSS harmonic ratio below this -> unpitchable (primary).
+        energy_threshold: RMS energy below this -> silence, not growl (primary).
 
     Returns:
         The same list with unpitchable segments marked as note_type = "F".
     """
-    if not midi_segments or not pitched_data or not pitched_data.times:
+    if not midi_segments:
         return midi_segments
 
-    # Try HPSS primary detection
+    # Try HPSS primary detection (works even without pitched_data)
     hpss = None
     if vocal_audio_path:
         hpss = _precompute_hpss(vocal_audio_path)
 
-    times = np.array(pitched_data.times)
-    freqs = np.array(pitched_data.frequencies)
-    confs = np.array(pitched_data.confidence)
+    # If HPSS failed and no pitch data available, nothing to analyze
+    has_pitch_data = pitched_data and pitched_data.times and len(pitched_data.times) > 0
+    if hpss is None and not has_pitch_data:
+        return midi_segments
 
-    # Pre-compute spectral flatness for fallback Tier 2
+    times = np.array(pitched_data.times) if has_pitch_data else np.array([])
+    freqs = np.array(pitched_data.frequencies) if has_pitch_data else np.array([])
+    confs = np.array(pitched_data.confidence) if has_pitch_data else np.array([])
+
+    # Pre-compute spectral flatness for fallback path
+    # (only used when HPSS is unavailable and use_spectral is enabled)
     sf_times = None
     sf_values = None
     if hpss is None and use_spectral and vocal_audio_path:
@@ -208,7 +222,9 @@ def _detect_by_harmonicity(
     total_energy = harm_energy + perc_energy
 
     # Below energy threshold → silence/breath, not growl
-    if total_energy < energy_threshold:
+    # Use RMS so the threshold is independent of segment length
+    rms = np.sqrt(np.mean(H_seg ** 2 + P_seg ** 2))
+    if rms < energy_threshold:
         return False
 
     harmonicity_ratio = harm_energy / total_energy
