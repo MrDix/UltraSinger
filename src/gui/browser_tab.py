@@ -576,6 +576,10 @@ class BrowserTab(QWidget):
             # Clean up common suffixes from video platform titles
             if title and " - " in title:
                 title = title.rsplit(" - ", 1)[0].strip()
+            # Strip YouTube notification count prefix like "(1) " or "(23) "
+            if title:
+                import re
+                title = re.sub(r"^\(\d+\)\s*", "", title)
             if not title:
                 title = url
             self.convert_requested.emit(url, title)
