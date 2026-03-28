@@ -190,6 +190,20 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._no_speech_threshold.setValue(
                          _DEFAULTS["no_speech_threshold"]))
 
+        card.add_separator()
+
+        # Pitcher backend
+        self._pitcher = _NoScrollComboBox()
+        self._pitcher.addItems(["swiftf0", "fcpe"])
+        self._pitcher.setCurrentText(self._config.get("pitcher", "swiftf0"))
+        card.add_row("Pitch Detection", self._pitcher,
+                     "Pitch detection backend. 'swiftf0' (default) is ONNX-based and CPU-only. "
+                     "'fcpe' (torchfcpe) is GPU-accelerated with more stable pitch contours "
+                     "and fewer outlier jumps. Better for difficult vocals (metal, screamo). "
+                     "Best performance on CUDA, falls back to CPU if unavailable.",
+                     reset_callback=lambda: self._pitcher.setCurrentText(
+                         _DEFAULTS.get("pitcher", "swiftf0")))
+
         # Separator backend
         self._separator_backend = _NoScrollComboBox()
         self._separator_backend.addItems(["audio_separator", "demucs"])
@@ -639,8 +653,7 @@ class ConversionSettingsForm(QWidget):
         )
         card.add_toggle_row("Calculate Score", self._calculate_score,
                            "After conversion, play back the generated notes against the audio "
-                           "and calculate a karaoke score. Helps evaluate conversion quality. "
-                           "Requires the optional 'ultrastar-score' package.",
+                           "and calculate a karaoke score. Helps evaluate conversion quality.",
                            reset_callback=lambda: self._calculate_score.setChecked(
                                _DEFAULTS["calculate_score"]))
         if not scoring_available:
@@ -902,6 +915,7 @@ class ConversionSettingsForm(QWidget):
             "vad_onset": self._vad_onset.value(),
             "vad_offset": self._vad_offset.value(),
             "no_speech_threshold": self._no_speech_threshold.value(),
+            "pitcher": self._pitcher.currentText(),
             "separator_backend": self._separator_backend.currentText(),
             "audio_separator_model": self._audio_separator_model.currentText(),
             "demucs_model": self._demucs_model.currentText(),

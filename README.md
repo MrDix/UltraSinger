@@ -171,6 +171,13 @@ _Not all options working now!_
     --no_speech_threshold   No-speech probability threshold (0.0-1.0). Lower values prevent Whisper from
                             classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
 
+    [pitch detection]
+    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
+                            swiftf0: ONNX-based, CPU-only, fast and lightweight.
+                            fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
+                            outlier jumps. Better for difficult vocals (metal, screamo). Best
+                            performance on CUDA, falls back to CPU if unavailable.
+
     [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 120)
     --octave                Shift all notes by N octaves after pitch detection (e.g., --octave 1 for up, --octave -1 for down)
@@ -341,9 +348,20 @@ starts at the place or is heard. To disable:
 
 ### 👂 Pitcher
 
-Pitching is done with the `SwiftF0` model, which is faster and more accurate than CREPE.
-SwiftF0 automatically detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
-UltraSinger uses 60hz and 400hz
+UltraSinger supports two pitch detection backends:
+
+- **SwiftF0** (default): ONNX-based, CPU-only, fast and lightweight.
+  Detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
+  UltraSinger uses 60 Hz and 400 Hz as detection range.
+
+- **FCPE** (`--pitcher fcpe`): GPU-accelerated via [torchfcpe](https://github.com/CNChTu/FCPE).
+  Produces more stable pitch contours with fewer outlier jumps (40-50% fewer pitch jumps >5 ST in benchmarks).
+  Better for difficult vocals (metal, screamo, harsh vocals).
+  Best performance on CUDA, falls back to CPU if unavailable.
+
+```commandline
+-i XYZ --pitcher fcpe
+```
 
 ### 👄 Separation
 

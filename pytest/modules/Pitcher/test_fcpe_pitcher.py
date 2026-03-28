@@ -38,7 +38,7 @@ class TestFcpePitcherOutput(unittest.TestCase):
 
     @patch("src.modules.Pitcher.fcpe_pitcher._get_model")
     def test_confidence_reflects_voicing(self, mock_get_model):
-        """Voiced frames get 0.9 confidence, unvoiced get 0.0."""
+        """Voiced frames get positive confidence, unvoiced get 0.0."""
         import torch
 
         fake_f0 = torch.zeros(1, 50, 1)
@@ -56,9 +56,32 @@ class TestFcpePitcherOutput(unittest.TestCase):
         # Unvoiced frames should have 0.0 confidence
         for i in range(10):
             self.assertEqual(result.confidence[i], 0.0)
-        # Voiced frames should have 0.9 confidence
+        # Voiced frames should have positive confidence in [0.3, 0.95]
         for i in range(10, 40):
-            self.assertEqual(result.confidence[i], 0.9)
+            self.assertGreater(result.confidence[i], 0.0)
+            self.assertLessEqual(result.confidence[i], 0.95)
+
+    @patch("src.modules.Pitcher.fcpe_pitcher._get_model")
+    def test_confidence_range(self, mock_get_model):
+        """All confidence values must be in [0.0, 0.95]."""
+        import torch
+
+        fake_f0 = torch.zeros(1, 100, 1)
+        for i in range(100):
+            fake_f0[0, i, 0] = 440.0 if i % 2 == 0 else 0.0
+
+        mock_model = MagicMock()
+        mock_model.infer.return_value = fake_f0
+        mock_get_model.return_value = (mock_model, "cpu")
+
+        from src.modules.Pitcher.fcpe_pitcher import get_pitch_with_fcpe
+
+        audio = np.random.randn(16000).astype(np.float32)
+        result = get_pitch_with_fcpe(audio, 16000)
+
+        for c in result.confidence:
+            self.assertGreaterEqual(c, 0.0)
+            self.assertLessEqual(c, 0.95)
 
     @patch("src.modules.Pitcher.fcpe_pitcher._get_model")
     def test_timestamps_are_monotonic(self, mock_get_model):

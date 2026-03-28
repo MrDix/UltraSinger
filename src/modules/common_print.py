@@ -68,7 +68,8 @@ def print_help() -> None:
     --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
                             swiftf0: ONNX-based, CPU-only, fast and lightweight.
                             fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
-                            outlier jumps. Better for difficult vocals (metal, screamo). Requires CUDA.
+                            outlier jumps. Better for difficult vocals (metal, screamo). Best
+                            performance on CUDA, falls back to CPU if unavailable.
 
     [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 340)

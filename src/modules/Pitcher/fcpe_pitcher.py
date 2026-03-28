@@ -20,6 +20,70 @@ def _get_model():
     return _fcpe_model
 
 
+def _compute_frame_confidence(
+    audio: np.ndarray, sample_rate: int,
+    frequencies: list[float], hop_size: int, target_sr: int,
+) -> list[float]:
+    """Derive per-frame confidence from local RMS energy and pitch stability.
+
+    FCPE does not output native per-frame confidence. Instead we combine:
+    - RMS energy: frames with louder audio are more likely correctly pitched
+    - Pitch stability: frames whose pitch agrees with neighbors are more reliable
+
+    The two signals are combined via geometric mean and scaled to [0.3, 0.95]
+    for voiced frames. Unvoiced frames (frequency == 0) get confidence 0.0.
+    """
+    n_frames = len(frequencies)
+    if n_frames == 0:
+        return []
+
+    # --- Per-frame RMS energy ---
+    frame_len = hop_size
+    energy = np.zeros(n_frames)
+    for i in range(n_frames):
+        start = i * frame_len
+        end = min(start + frame_len, len(audio))
+        if start < len(audio):
+            chunk = audio[start:end]
+            energy[i] = np.sqrt(np.mean(chunk ** 2)) if len(chunk) > 0 else 0.0
+
+    # Normalize energy to 0-1
+    max_energy = energy.max()
+    if max_energy > 0:
+        energy_norm = energy / max_energy
+    else:
+        energy_norm = energy
+
+    # --- Pitch stability (low variance in neighborhood = high confidence) ---
+    freqs_arr = np.array(frequencies, dtype=np.float64)
+    stability = np.zeros(n_frames)
+    neighborhood = 3  # frames on each side
+    for i in range(n_frames):
+        lo = max(0, i - neighborhood)
+        hi = min(n_frames, i + neighborhood + 1)
+        local = freqs_arr[lo:hi]
+        voiced_local = local[local > 0]
+        if len(voiced_local) >= 2 and freqs_arr[i] > 0:
+            # Coefficient of variation (lower = more stable)
+            cv = np.std(voiced_local) / np.mean(voiced_local)
+            stability[i] = max(0.0, 1.0 - cv * 5.0)  # scale: cv=0.2 -> 0.0
+        elif freqs_arr[i] > 0:
+            stability[i] = 0.5  # isolated voiced frame, moderate confidence
+
+    # --- Combine: geometric mean of energy and stability ---
+    confidence = []
+    for i in range(n_frames):
+        if frequencies[i] <= 0:
+            confidence.append(0.0)
+        else:
+            combined = np.sqrt(energy_norm[i] * stability[i])
+            # Scale to [0.3, 0.95] range for voiced frames
+            scaled = 0.3 + combined * 0.65
+            confidence.append(float(min(0.95, scaled)))
+
+    return confidence
+
+
 def get_pitch_with_fcpe(
     audio: np.ndarray, sample_rate: int
 ) -> PitchedData:
@@ -27,7 +91,7 @@ def get_pitch_with_fcpe(
 
     FCPE processes audio at 16kHz with 160-sample hop size internally.
     Returns frames at approximately 10 ms intervals.
-    GPU-accelerated when CUDA is available.
+    GPU-accelerated when CUDA is available, falls back to CPU.
     """
     import torch
     import librosa
@@ -61,8 +125,9 @@ def get_pitch_with_fcpe(
     times = [float(i * hop_size / target_sr) for i in range(n_frames)]
     frequencies = [max(float(f), 0.0) for f in f0_np]
 
-    # FCPE doesn't output per-frame confidence directly.
-    # Use voicing as binary confidence: voiced (f0 > 0) = 0.9, unvoiced = 0.0
-    confidence = [0.9 if f > 0 else 0.0 for f in frequencies]
+    # Derive confidence from energy and pitch stability
+    confidence = _compute_frame_confidence(
+        audio_16k, sample_rate, frequencies, hop_size, target_sr
+    )
 
     return PitchedData(times, frequencies, confidence)

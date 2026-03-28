@@ -174,6 +174,7 @@ def analyze_result(result: dict, conf_threshold: float = 0.4) -> dict:
             "n_frames": n_total, "n_voiced": 0, "voiced_pct": 0.0,
             "mean_conf": 0.0, "median_midi": 0.0, "pitch_range_st": 0.0,
             "pitch_std_st": 0.0, "frame_jumps_gt2st": 0,
+            "frame_jumps_gt5st": 0,
         }
 
     midi_values = np.array([hz_to_midi(f) for f in voiced_freqs])
