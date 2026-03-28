@@ -21,8 +21,8 @@ def _get_model():
 
 
 def _compute_frame_confidence(
-    audio: np.ndarray, sample_rate: int,
-    frequencies: list[float], hop_size: int, target_sr: int,
+    audio: np.ndarray,
+    frequencies: list[float], hop_size: int,
 ) -> list[float]:
     """Derive per-frame confidence from local RMS energy and pitch stability.
 
@@ -127,7 +127,7 @@ def get_pitch_with_fcpe(
 
     # Derive confidence from energy and pitch stability
     confidence = _compute_frame_confidence(
-        audio_16k, sample_rate, frequencies, hop_size, target_sr
+        audio_16k, frequencies, hop_size
     )
 
     return PitchedData(times, frequencies, confidence)

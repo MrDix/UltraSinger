@@ -57,7 +57,7 @@ def midi_to_note_name(midi: float) -> str:
     """Convert MIDI number to note name."""
     if np.isnan(midi):
         return "--"
-    return librosa.midi_to_note(int(round(midi)))
+    return librosa.midi_to_note(round(midi))
 
 
 # ── SwiftF0 ──────────────────────────────────────────────────────────────────
@@ -396,36 +396,37 @@ def process_file(audio_path: str, ref_path: str | None,
 
     results = []
 
-    if "swiftf0" in trackers:
-        try:
-            if tmp_wav:
-                audio_sf, sr_sf = load_audio_wav(tmp_wav.name)
-            else:
-                audio_sf, sr_sf = load_audio_wav(audio_path)
-            result = run_swiftf0(audio_sf, sr_sf)
-            results.append(result)
-            print(f"  SwiftF0: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
-        except Exception as e:
-            print(f"  SwiftF0 FAILED: {e}")
+    try:
+        if "swiftf0" in trackers:
+            try:
+                if tmp_wav:
+                    audio_sf, sr_sf = load_audio_wav(tmp_wav.name)
+                else:
+                    audio_sf, sr_sf = load_audio_wav(audio_path)
+                result = run_swiftf0(audio_sf, sr_sf)
+                results.append(result)
+                print(f"  SwiftF0: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
+            except Exception as e:
+                print(f"  SwiftF0 FAILED: {e}")
 
-    if "fcpe" in trackers:
-        try:
-            result = run_fcpe(audio_librosa, sr_librosa)
-            results.append(result)
-            print(f"  FCPE: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
-        except Exception as e:
-            print(f"  FCPE FAILED: {e}")
+        if "fcpe" in trackers:
+            try:
+                result = run_fcpe(audio_librosa, sr_librosa)
+                results.append(result)
+                print(f"  FCPE: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
+            except Exception as e:
+                print(f"  FCPE FAILED: {e}")
 
-    if "penn" in trackers:
-        try:
-            result = run_penn(audio_librosa, sr_librosa)
-            results.append(result)
-            print(f"  Penn: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
-        except Exception as e:
-            print(f"  Penn FAILED: {e}")
-
-    if tmp_wav:
-        os.unlink(tmp_wav.name)
+        if "penn" in trackers:
+            try:
+                result = run_penn(audio_librosa, sr_librosa)
+                results.append(result)
+                print(f"  Penn: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
+            except Exception as e:
+                print(f"  Penn FAILED: {e}")
+    finally:
+        if tmp_wav and os.path.exists(tmp_wav.name):
+            os.unlink(tmp_wav.name)
 
     # Analysis
     compare_trackers(results)
