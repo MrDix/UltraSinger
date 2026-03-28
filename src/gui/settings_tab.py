@@ -98,6 +98,7 @@ class ConversionSettingsForm(QWidget):
         self._main_layout.setSpacing(4)
 
         self._build_transcription_section()
+        self._build_pipeline_section()
         self._build_language_section()
         self._build_postprocessing_section()
         self._build_output_section()
@@ -190,7 +191,12 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._no_speech_threshold.setValue(
                          _DEFAULTS["no_speech_threshold"]))
 
-        card.add_separator()
+        self._main_layout.addWidget(card)
+
+    # ─── Audio Pipeline (Pitch Detection & Separation) ────────────────────
+
+    def _build_pipeline_section(self):
+        card = SettingsCard("Audio Pipeline")
 
         # Pitcher backend
         self._pitcher = _NoScrollComboBox()
@@ -203,6 +209,8 @@ class ConversionSettingsForm(QWidget):
                      "Best performance on CUDA, falls back to CPU if unavailable.",
                      reset_callback=lambda: self._pitcher.setCurrentText(
                          _DEFAULTS.get("pitcher", "swiftf0")))
+
+        card.add_separator()
 
         # Separator backend
         self._separator_backend = _NoScrollComboBox()
