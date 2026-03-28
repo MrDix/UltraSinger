@@ -114,8 +114,13 @@ def run_fcpe(audio: np.ndarray, sr: int) -> dict:
     times = np.arange(n_frames) * (hop_size / target_sr)
     freqs = np.maximum(f0_np, 0.0)  # Clip negatives
 
-    # FCPE doesn't directly output confidence; use voicing as proxy
-    confs = np.where(freqs > 0, 0.9, 0.0)
+    # Derive confidence from energy and pitch stability (same as production)
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from modules.Pitcher.fcpe_pitcher import _compute_frame_confidence
+    confs = np.array(_compute_frame_confidence(
+        audio_16k, freqs.tolist(), hop_size
+    ))
 
     return {"name": "FCPE", "times": times, "freqs": freqs, "confs": confs,
             "elapsed": elapsed}
@@ -407,7 +412,7 @@ def process_file(audio_path: str, ref_path: str | None,
                 results.append(result)
                 print(f"  SwiftF0: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
             except Exception as e:
-                print(f"  SwiftF0 FAILED: {e}")
+                print(f"  SwiftF0 FAILED ({type(e).__name__}): {e}")
 
         if "fcpe" in trackers:
             try:
@@ -415,7 +420,7 @@ def process_file(audio_path: str, ref_path: str | None,
                 results.append(result)
                 print(f"  FCPE: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
             except Exception as e:
-                print(f"  FCPE FAILED: {e}")
+                print(f"  FCPE FAILED ({type(e).__name__}): {e}")
 
         if "penn" in trackers:
             try:
@@ -423,7 +428,7 @@ def process_file(audio_path: str, ref_path: str | None,
                 results.append(result)
                 print(f"  Penn: {len(result['freqs'])} frames in {result['elapsed']:.2f}s")
             except Exception as e:
-                print(f"  Penn FAILED: {e}")
+                print(f"  Penn FAILED ({type(e).__name__}): {e}")
     finally:
         if tmp_wav and os.path.exists(tmp_wav.name):
             os.unlink(tmp_wav.name)
@@ -452,7 +457,9 @@ def find_vocal_files(path: str) -> list[tuple[str, str | None]]:
         entries.append((str(p), ref))
     elif p.is_dir():
         # Look for [Vocals] files in subdirectories
-        for vocal in sorted(p.rglob("*[Vocals]*")):
+        for vocal in sorted(p.rglob("*")):
+            if "[Vocals]" not in vocal.name:
+                continue
             if vocal.suffix.lower() in (".ogg", ".wav", ".mp3", ".flac"):
                 # Find corresponding .txt
                 txt_candidates = list(vocal.parent.glob("*.txt"))
