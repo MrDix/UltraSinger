@@ -112,10 +112,9 @@ class _FormatProbeWorker(QObject):
                     artist = artist or parts_split[0].strip()
                     track = track or parts_split[1].strip()
                     # Remove common suffixes like "(Official Video)", "(Live)"
-                    import re as _re
-                    track = _re.sub(
+                    track = re.sub(
                         r"\s*[\(\[](official|lyric|music|live|audio|hd|hq|video|visuali|4k|summerbreeze|wacken).*$",
-                        "", track, flags=_re.IGNORECASE,
+                        "", track, flags=re.IGNORECASE,
                     ).strip()
                 elif not artist:
                     artist = info.get("uploader") or info.get("channel") or ""
@@ -578,7 +577,6 @@ class BrowserTab(QWidget):
                 title = title.rsplit(" - ", 1)[0].strip()
             # Strip YouTube notification count prefix like "(1) " or "(23) "
             if title:
-                import re
                 title = re.sub(r"^\(\d+\)\s*", "", title)
             if not title:
                 title = url
