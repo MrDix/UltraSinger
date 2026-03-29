@@ -299,6 +299,15 @@ class QueueItemWidget(QWidget):
             lang_name = _lang_display_name(lang)
             pipeline_name = "Reference" if info.get("pipeline") == "reference" else "Whisper"
             tooltip = f"Language: {lang.upper()} ({lang_name}) — Pipeline: {pipeline_name}"
+            initial = info.get("initial_language", "")
+            if initial and initial != lang:
+                initial_name = _lang_display_name(initial)
+                tooltip += (
+                    f"\nInitial detection: {initial.upper()} ({initial_name}) (wrong)"
+                    f" \u2192 Whisper corrected to {lang.upper()} ({lang_name})"
+                )
+            if info.get("reference_recovered"):
+                tooltip += "\nReference pipeline recovered after correction"
             if info.get("whisper_fallback"):
                 tooltip += "\nReference pipeline fell back to Whisper"
             self._lang_badge.setToolTip(tooltip)
