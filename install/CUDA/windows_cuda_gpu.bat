@@ -99,8 +99,8 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 
-echo Syncing dependencies...
-uv sync --python "!PYTHON_EXE!"
+echo Syncing dependencies (core + GUI + scoring)...
+uv sync --python "!PYTHON_EXE!" --extra gui --extra scoring
 if !errorlevel! neq 0 (
     echo Error during uv sync
     pause
@@ -117,8 +117,5 @@ if !errorlevel! equ 0 (
 )
 
 echo Installation completed successfully!
-echo.
-echo Optional: Install scoring support:
-echo   uv sync --extra scoring
 echo.
 pause

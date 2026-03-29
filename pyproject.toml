@@ -37,6 +37,7 @@ dependencies = [
     "torchaudio==2.8.0",
     "torchvision==0.23.0",
     "torchfcpe>=0.0.4",
+    "audio-separator>=0.25",
 ]
 
 [project.optional-dependencies]
