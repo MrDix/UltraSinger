@@ -219,10 +219,30 @@ def run() -> tuple[str, Score, Score]:
         process_data.media_info.music_key = f"{detected_key} {detected_mode}"
 
     # Audio transcription
-    process_data.media_info.language = settings.language
+    # Language priority: --language CLI flag > YouTube metadata > Whisper detect
+    if settings.language is not None:
+        process_data.media_info.language = settings.language
+        print(
+            f"{ULTRASINGER_HEAD} Language set: "
+            f"{blue_highlighted(settings.language)} (--language)"
+        )
+    elif process_data.media_info.language:
+        # YouTube metadata language already set by download_from_youtube()
+        print(
+            f"{ULTRASINGER_HEAD} Using YouTube language metadata: "
+            f"{blue_highlighted(process_data.media_info.language)}"
+        )
     lyrics_lookup_result = None
     llm_result = None
     whisper_skipped = False
+    # Track language source for info file
+    _lang_source = (
+        "manual" if settings.language is not None
+        else "youtube" if process_data.media_info.language
+        else "pending"  # will be set to "whisper_fast" or "whisper_full" later
+    )
+    _initial_language = None  # tracks pre-correction language
+    _reference_recovered = False  # tracks recovery after language correction
 
     # Early LRCLIB lookup: if synced lyrics are available, we can skip the
     # expensive Whisper transcription entirely (~2 min saved per song).
@@ -239,13 +259,14 @@ def run() -> tuple[str, Score, Score]:
             )
             if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
                 process_data.synced_lyrics = early_lyrics_info.synced_lyrics
-                # Detect language if not explicitly set
+                # Detect language if not explicitly set and no YouTube hint
                 if process_data.media_info.language is None:
                     from modules.Speech_Recognition.Whisper import detect_language_from_audio
                     process_data.media_info.language = detect_language_from_audio(
                         process_data.process_data_paths.whisper_audio_path,
                         device=settings.pytorch_device,
                     )
+                    _lang_source = "whisper_fast"
                 whisper_skipped = True
                 print(
                     f"{ULTRASINGER_HEAD} "
@@ -256,6 +277,8 @@ def run() -> tuple[str, Score, Score]:
 
     if not settings.ignore_audio and not whisper_skipped:
         lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
+        if _lang_source == "pending":
+            _lang_source = "whisper_full"
 
     # Onset correction — snap note starts to audio onsets for better timing
     if not settings.ignore_audio and not whisper_skipped and settings.onset_correction:
@@ -382,8 +405,58 @@ def run() -> tuple[str, Score, Score]:
             # If Whisper was skipped but reference-first failed, run Whisper now
             if whisper_skipped:
                 print(f"{ULTRASINGER_HEAD} Running Whisper as fallback")
+                initial_language = process_data.media_info.language
+                _initial_language = initial_language
                 lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
                 whisper_skipped = False
+                _lang_source = "whisper_full"
+
+                # If Whisper detected a DIFFERENT language, retry the reference
+                # pipeline with the corrected language.  This recovers from
+                # fast-detect misidentification (e.g. "cy" -> "en") and still
+                # delivers maximum quality from synced lyrics.
+                corrected_language = process_data.media_info.language
+                if (process_data.synced_lyrics
+                        and not settings.disable_reference_lyrics
+                        and corrected_language
+                        and corrected_language != initial_language):
+                    print(
+                        f"{ULTRASINGER_HEAD} Language corrected: "
+                        f"{blue_highlighted(initial_language)} -> {blue_highlighted(corrected_language)} "
+                        f"— retrying reference pipeline"
+                    )
+                    try:
+                        ref_segments = create_midi_segments_from_reference_lyrics(
+                            synced_lyrics=process_data.synced_lyrics,
+                            audio_path=process_data.process_data_paths.whisper_audio_path,
+                            language=corrected_language,
+                            pitched_data=process_data.pitched_data,
+                            device=settings.pytorch_device,
+                            allowed_notes=allowed_notes_for_key,
+                            melisma_split=settings.pitch_change_split,
+                            align_model_name=settings.whisper_align_model,
+                        )
+                        if ref_segments:
+                            process_data.midi_segments = ref_segments
+                            reference_first_used = True
+                            process_data.transcribed_data = [
+                                TranscribedData(
+                                    word=seg.word,
+                                    start=seg.start,
+                                    end=seg.end,
+                                    confidence=1.0,
+                                    is_word_end=not seg.word.strip().startswith("~"),
+                                )
+                                for seg in process_data.midi_segments
+                            ]
+                            _reference_recovered = True
+                            print(
+                                f"{ULTRASINGER_HEAD} "
+                                f"{cyan_highlighted('Reference pipeline recovered after language correction')}"
+                            )
+                    except Exception as e:
+                        print(f"{ULTRASINGER_HEAD} Reference retry also failed: {e}")
+
                 # Run the intermediate steps we skipped
                 if settings.onset_correction:
                     try:
@@ -543,6 +616,9 @@ def run() -> tuple[str, Score, Score]:
             whisper_skipped=whisper_skipped,
             has_synced_lyrics=process_data.synced_lyrics is not None,
             has_plain_lyrics=bool(process_data.plain_lyrics),
+            lang_source=_lang_source,
+            initial_language=_initial_language,
+            reference_recovered=_reference_recovered,
         )
 
     # Cleanup
@@ -632,6 +708,9 @@ def _write_settings_info_file(
         whisper_skipped: bool = False,
         has_synced_lyrics: bool = False,
         has_plain_lyrics: bool = False,
+        lang_source: str = "pending",
+        initial_language: str | None = None,
+        reference_recovered: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
     from datetime import datetime, timezone
@@ -674,7 +753,12 @@ def _write_settings_info_file(
 
             # Pipeline
             f.write("[Pipeline]\n")
-            if reference_first_used and has_synced_lyrics:
+            if reference_first_used and reference_recovered:
+                f.write("  Pipeline:                 Reference-Lyrics-First (recovered after language correction)\n")
+                f.write("  LRCLIB synced lyrics:     found\n")
+                f.write("  Whisper transcription:    full (for language correction)\n")
+                f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
+            elif reference_first_used and has_synced_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
             elif reference_first_used and has_plain_lyrics:
@@ -694,13 +778,34 @@ def _write_settings_info_file(
                 f.write("  LRCLIB synced lyrics:     not found\n")
                 f.write("  Whisper transcription:    full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
-            if whisper_skipped and not reference_first_used:
-                lang_method = "Whisper tiny (fast detection)"
-            elif settings.language:
-                lang_method = f"manual (--language {settings.language})"
-            else:
-                lang_method = "Whisper (full transcription)"
+            # Language detection method
+            _LANG_SOURCE_LABELS = {
+                "manual": f"manual (--language {settings.language})",
+                "youtube": f"YouTube metadata -> {detected_language}",
+                "whisper_fast": f"Whisper tiny (fast) -> {detected_language}",
+                "whisper_full": f"Whisper (full transcription) -> {detected_language}",
+                "pending": "unknown",
+            }
+            lang_method = _LANG_SOURCE_LABELS.get(lang_source, lang_source)
             f.write(f"  Language detection:        {lang_method}\n")
+            f.write(f"  Language used:             {detected_language or '(none)'}\n")
+
+            # Whisper language hint: did Whisper receive an explicit language?
+            whisper_had_hint = settings.language is not None or lang_source in ("youtube", "whisper_fast")
+            if not whisper_skipped or reference_recovered:
+                if whisper_had_hint:
+                    hint_lang = settings.language or detected_language or "?"
+                    f.write(f"  Whisper language hint:     yes (--language {hint_lang})\n")
+                else:
+                    f.write("  Whisper language hint:     no (auto-detect)\n")
+
+            # Language correction (if initial fast-detect was wrong)
+            if initial_language and initial_language != detected_language:
+                f.write(f"  Language correction:       {initial_language} -> {detected_language}\n")
+                if reference_recovered:
+                    f.write("  Reference recovery:        yes (retried with corrected language)\n")
+                else:
+                    f.write("  Reference recovery:        no (stayed on Whisper pipeline)\n")
             f.write("\n")
 
             # Post-processing
@@ -1153,11 +1258,11 @@ def InitProcessData():
         # fetch metadata BEFORE deriving the local song identity so that
         # the output folder and basename use the correct artist/title
         # instead of the temporary intercepted filename.
-        yt_artist, yt_title = None, None
+        yt_artist, yt_title, yt_language = None, None, None
         if settings.youtube_url:
             try:
                 from modules.Audio.youtube import get_youtube_title
-                yt_artist, yt_title, _video_title = get_youtube_title(
+                yt_artist, yt_title, _video_title, yt_language = get_youtube_title(
                     settings.youtube_url, settings.cookiefile
                 )
                 print(
@@ -1183,6 +1288,8 @@ def InitProcessData():
             process_data.basename = f"{yt_artist} - {yt_title}" if yt_title else yt_artist
         if yt_title:
             process_data.media_info.title = yt_title
+        if yt_language and not process_data.media_info.language:
+            process_data.media_info.language = yt_language
 
     return process_data
 
@@ -1193,8 +1300,15 @@ def TranscribeAudio(process_data):
     transcription_result = transcribe_audio(process_data.process_data_paths.cache_folder_path,
                                             process_data.process_data_paths.whisper_audio_path)
 
-    if process_data.media_info.language is None:
-        process_data.media_info.language = transcription_result.detected_language
+    # Full Whisper large-v2 detection is more accurate than Whisper tiny
+    # fast-detect or YouTube metadata.  Always update the language from
+    # full transcription unless the user explicitly set --language.
+    if transcription_result.detected_language:
+        if settings.language is not None:
+            # User specified --language: keep it, but log if Whisper disagrees
+            pass  # warning already printed by transcribe_with_whisper()
+        else:
+            process_data.media_info.language = transcription_result.detected_language
 
     process_data.transcribed_data = transcription_result.transcribed_data
 
