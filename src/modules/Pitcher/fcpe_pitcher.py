@@ -92,8 +92,10 @@ def _compute_frame_confidence(
             confidence.append(0.0)
         else:
             combined = np.sqrt(energy_norm[i] * stability[i])
-            # Scale to [0.35, 0.95] range for voiced frames
-            # Floor > 0.3 to stay above downstream confidence cutoff (0.3)
+            # Scale to [0.35, 0.95] for voiced frames. Two downstream gates:
+            # - _find_voiced_regions uses > 0.3 → 0.35 floor passes this
+            # - get_frequencies_with_high_confidence uses > 0.4 → only
+            #   frames with sufficient energy+stability contribute to notes
             scaled = 0.35 + combined * 0.60
             confidence.append(float(min(0.95, scaled)))
 
