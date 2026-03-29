@@ -128,7 +128,7 @@ def _create_gap_note(
     # Try to get a pitch from low-confidence frames
     valid_freqs = []
     valid_confs = []
-    for f, c in zip(freqs, confs):
+    for f, c in zip(freqs, confs, strict=True):
         if f > 0 and c > low_conf_threshold:
             valid_freqs.append(f)
             valid_confs.append(c)
@@ -228,7 +228,7 @@ def fuse_pitch_notes_with_lyrics(
         fused = fill_lyrics_from_reference(fused, mock_td, plain_lyrics)
 
     # Step 4: Ensure proper word spacing
-    for i, seg in enumerate(fused):
+    for seg in fused:
         if seg.word and not seg.word.endswith(" "):
             seg.word += " "
 
