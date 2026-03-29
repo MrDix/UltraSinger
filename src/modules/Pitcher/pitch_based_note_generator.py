@@ -162,6 +162,10 @@ def _segment_voiced_region(
 ) -> list[tuple[int, int]]:
     """Segment a voiced region into stable pitch sub-regions.
 
+    Uses *region median* comparison instead of single-frame tracking so
+    that vibrato (symmetric oscillation around a centre pitch) does not
+    trigger false splits.
+
     Returns:
         List of (start_idx, end_idx) within the region (local indices).
     """
@@ -171,16 +175,16 @@ def _segment_voiced_region(
     min_duration_s = min_note_duration_ms / 1000.0
 
     # Find the first valid MIDI value
-    current_midi: Optional[float] = None
     current_start = 0
+    region_values: list[float] = []
 
     for i, m in enumerate(smoothed_midi):
         if m is not None:
-            current_midi = m
+            region_values.append(m)
             current_start = i
             break
 
-    if current_midi is None:
+    if not region_values:
         return [(0, len(times))]
 
     segments: list[tuple[int, int]] = []
@@ -192,14 +196,18 @@ def _segment_voiced_region(
             i += 1
             continue
 
-        diff = abs(m - current_midi)
+        region_center = float(np.median(region_values))
+        diff = abs(m - region_center)
+
         if diff >= min_semitone_change:
             # Check if the new pitch is sustained
+            sustained_values: list[float] = [m]
             sustained_until = times[i]
-            for j in range(i, len(times)):
+            for j in range(i + 1, len(times)):
                 if smoothed_midi[j] is None:
                     continue
                 if abs(smoothed_midi[j] - m) < min_semitone_change:
+                    sustained_values.append(smoothed_midi[j])
                     sustained_until = times[j]
                 else:
                     break
@@ -210,7 +218,12 @@ def _segment_voiced_region(
                 if i > current_start:
                     segments.append((current_start, i))
                 current_start = i
-                current_midi = m
+                region_values = sustained_values
+            else:
+                # Not sustained — absorb into current region
+                region_values.append(m)
+        else:
+            region_values.append(m)
 
         i += 1
 
@@ -419,7 +432,7 @@ def create_midi_segments_from_pitch(
     confidence_threshold: float = 0.3,
     min_semitone_change: float = 2.0,
     min_note_duration_ms: float = 80.0,
-    median_filter_window: int = 5,
+    median_filter_window: int = 9,
 ) -> list[MidiSegment]:
     """Generate MIDI segments from pitch contour with lyrics overlay.
 

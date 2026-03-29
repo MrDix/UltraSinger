@@ -63,6 +63,32 @@ def _get_frames_for_segment(
     return times, freqs, confs
 
 
+def _median_smooth(values: list[Optional[float]], window: int = 9) -> list[Optional[float]]:
+    """Apply median filter over valid (non-None) values to smooth vibrato.
+
+    Vibrato typically oscillates at 4-8 Hz.  At a ~16 ms frame interval
+    that is 8-16 frames per cycle.  A window of 9 covers roughly one
+    half-cycle, enough to pull the median toward the centre pitch and
+    prevent vibrato from triggering false pitch-change splits.
+    """
+    n = len(values)
+    smoothed: list[Optional[float]] = [None] * n
+    half_w = window // 2
+
+    for i in range(n):
+        if values[i] is None:
+            continue
+        vals = [
+            values[j]
+            for j in range(max(0, i - half_w), min(n, i + half_w + 1))
+            if values[j] is not None
+        ]
+        if vals:
+            smoothed[i] = float(np.median(vals))
+
+    return smoothed
+
+
 def _detect_pitch_change_points(
     times: list[float],
     frequencies: list[float],
@@ -73,9 +99,12 @@ def _detect_pitch_change_points(
     """Detect frame indices where significant pitch changes occur.
 
     A pitch change is detected when:
-    1. The MIDI note difference between adjacent confident frames
-       exceeds min_semitone_change
-    2. The new pitch is sustained for at least min_note_duration_ms
+    1. The **region median** of the current stable pitch differs from
+       the candidate new pitch by at least *min_semitone_change*
+       semitones (vibrato-resistant — comparing region medians instead
+       of adjacent frames prevents periodic oscillation from triggering
+       false splits).
+    2. The new pitch is sustained for at least *min_note_duration_ms*.
 
     Returns:
         List of frame indices where splits should occur (the first frame
@@ -87,27 +116,39 @@ def _detect_pitch_change_points(
     min_duration_s = min_note_duration_ms / 1000.0
 
     # Convert frequencies to MIDI values, filtering by confidence
-    midi_values: list[Optional[float]] = []
+    midi_raw: list[Optional[float]] = []
     for freq, conf in zip(frequencies, confidences, strict=True):
         if conf > 0.3 and freq > 0:
-            midi_values.append(_freq_to_midi_safe(freq))
+            midi_raw.append(_freq_to_midi_safe(freq))
         else:
-            midi_values.append(None)
+            midi_raw.append(None)
 
-    # Find candidate change points
+    # Smooth with a wide median filter to suppress vibrato oscillation
+    midi_values = _median_smooth(midi_raw, window=9)
+
+    # Scan for change points using *region median* comparison.
+    # region_values collects the MIDI values of the current stable region
+    # so that vibrato (which oscillates symmetrically around a centre)
+    # averages out and does not trigger false positives.
+    region_values: list[float] = []
     candidates: list[int] = []
-    last_valid_midi: Optional[float] = None
 
     for i, midi_val in enumerate(midi_values):
         if midi_val is None:
             continue
 
-        if last_valid_midi is not None:
-            diff = abs(midi_val - last_valid_midi)
-            if diff >= min_semitone_change:
-                candidates.append(i)
+        if not region_values:
+            region_values.append(midi_val)
+            continue
 
-        last_valid_midi = midi_val
+        region_center = float(np.median(region_values))
+        diff = abs(midi_val - region_center)
+
+        if diff >= min_semitone_change:
+            candidates.append(i)
+            # Don't add to current region — will be resolved below
+        else:
+            region_values.append(midi_val)
 
     # Filter candidates: only keep those where the new pitch is sustained
     confirmed: list[int] = []
@@ -118,12 +159,14 @@ def _detect_pitch_change_points(
 
         cand_time = times[cand_idx]
 
-        # Check how long this pitch is sustained after the change point
+        # Collect the sustained region after the change point
+        sustained_values: list[float] = [cand_midi]
         sustained_until = cand_time
-        for j in range(cand_idx, len(times)):
+        for j in range(cand_idx + 1, len(times)):
             if midi_values[j] is None:
                 continue
             if abs(midi_values[j] - cand_midi) < min_semitone_change:
+                sustained_values.append(midi_values[j])
                 sustained_until = times[j]
             else:
                 break
@@ -131,6 +174,8 @@ def _detect_pitch_change_points(
         duration = sustained_until - cand_time
         if duration >= min_duration_s:
             confirmed.append(cand_idx)
+            # Reset region to the new sustained pitch
+            region_values = sustained_values
 
     return confirmed
 
