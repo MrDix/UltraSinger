@@ -184,6 +184,28 @@ class QueueManager(QObject):
 
         # Merge global config with per-song overrides
         merged = {**self._global_config, **next_item.settings_overrides}
+
+        # YouTube language as explicit --language hint: if no manual
+        # language is set and the video has language metadata from yt-dlp,
+        # pass it via --language so the subprocess uses it immediately.
+        # (The core also extracts it from yt-dlp, but for the interceptor
+        # path where a local file is passed, the CLI flag is the only way.)
+        if (
+            merged.get("language_mode") != "manual"
+            and not merged.get("language")
+            and next_item.yt_language
+        ):
+            merged["language_mode"] = "manual"
+            merged["language"] = next_item.yt_language
+            self.line_output.emit(
+                f"[Queue] YouTube language hint: "
+                f"--language {next_item.yt_language}"
+            )
+            logger.info(
+                "Using YouTube language '%s' as --language for '%s'",
+                next_item.yt_language, next_item.title,
+            )
+
         next_item.resolved_config = dict(merged)
 
         # Ensure per-provider API keys are available for build_args
