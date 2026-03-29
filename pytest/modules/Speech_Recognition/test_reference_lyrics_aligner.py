@@ -93,7 +93,7 @@ class TestParseLrcSyncedLyrics:
 # ---------------------------------------------------------------------------
 
 
-def _make_pitched_data(duration_s=10.0, base_freq=440.0, confidence=0.9):
+def _make_pitched_data(duration_s=10.0, base_freq=440.0, confidence=0.95):
     """Create synthetic PitchedData for testing."""
     # SwiftF0: 16kHz, hop=256 → ~62.5 fps → 16ms per frame
     fps = 62.5
@@ -152,7 +152,7 @@ class TestSplitWordAtPitchChanges:
         n_frames = int(5.0 * fps)  # 5 seconds
         times = [i / fps for i in range(n_frames)]
         frequencies = []
-        confidences = [0.9] * n_frames
+        confidences = [0.95] * n_frames
         mid = n_frames // 2
         for i in range(n_frames):
             if i < mid:
@@ -188,7 +188,7 @@ class TestSplitWordAtPitchChanges:
                 frequencies.append(440.0)
             else:
                 frequencies.append(880.0)
-        pd = PitchedData(times=times, frequencies=frequencies, confidence=[0.9] * n_frames)
+        pd = PitchedData(times=times, frequencies=frequencies, confidence=[0.95] * n_frames)
 
         result = _split_word_at_pitch_changes("test", 0.5, 4.5, pd)
         assert result[0].start == pytest.approx(0.5)
@@ -263,7 +263,7 @@ class TestCreateMidiSegmentsFromReferenceLyrics:
         n = int(5.0 * fps)
         times = [i / fps for i in range(n)]
         freqs = [440.0 if i < n // 2 else 880.0 for i in range(n)]
-        pd = PitchedData(times=times, frequencies=freqs, confidence=[0.9] * n)
+        pd = PitchedData(times=times, frequencies=freqs, confidence=[0.95] * n)
 
         result = create_midi_segments_from_reference_lyrics(
             "[00:00.50] oooh",
@@ -292,7 +292,7 @@ class TestCreateMidiSegmentsFromReferenceLyrics:
         n = int(5.0 * fps)
         times = [i / fps for i in range(n)]
         freqs = [440.0 if i < n // 2 else 880.0 for i in range(n)]
-        pd = PitchedData(times=times, frequencies=freqs, confidence=[0.9] * n)
+        pd = PitchedData(times=times, frequencies=freqs, confidence=[0.95] * n)
 
         result = create_midi_segments_from_reference_lyrics(
             "[00:00.50] oooh",
