@@ -73,7 +73,10 @@ def _median_smooth(values: list[Optional[float]], window: int = 9) -> list[Optio
 
     Args:
         values: MIDI note values (None for unvoiced frames).
-        window: Must be a positive odd integer.
+        window: Positive integer; even values are rounded up to the
+            next odd number.  Choose based on frame hop: at ~16 ms
+            hops, window=9 spans ~144 ms (roughly one vibrato
+            half-cycle at 4-8 Hz).
     """
     if not isinstance(window, int) or window <= 0:
         raise ValueError(f"window must be a positive integer, got {window}")
@@ -157,15 +160,20 @@ def _detect_pitch_change_points(
         diff = abs(midi_val - region_center)
 
         if diff >= min_semitone_change:
-            # Immediately check if this new pitch is sustained
+            # Immediately check if this new pitch is sustained.
+            # Compare each candidate frame against the running center
+            # of the new region (not just the initial frame) so that
+            # gradual slides like 60→62→64 are accepted as one region.
             sustained_values: list[float] = [midi_val]
+            candidate_center = midi_val
             sustained_until = times[i]
             last_sustained = i
             for j in range(i + 1, len(times)):
                 if midi_values[j] is None:
                     break  # unvoiced gap ends sustain
-                if abs(midi_values[j] - midi_val) < min_semitone_change:
+                if abs(midi_values[j] - candidate_center) < min_semitone_change:
                     sustained_values.append(midi_values[j])
+                    candidate_center = float(np.median(sustained_values))
                     sustained_until = times[j]
                     last_sustained = j
                 else:
@@ -399,12 +407,14 @@ def split_notes_at_pitch_changes(
             trigger a split (default 2.0).
         min_note_duration_ms: Minimum duration in milliseconds for a
             sub-note to survive (shorter fragments are merged back).
-        median_filter_window: Window size for the median filter used
-            to suppress vibrato oscillation (default 9).  Must be a
-            positive odd integer.  A very large window can smooth out
-            short pitch regions before *min_note_duration_ms* is ever
-            checked — as a rule of thumb keep
-            ``median_filter_window * frame_hop_ms < min_note_duration_ms``.
+        median_filter_window: Positive integer for the median filter
+            used to suppress vibrato oscillation (default 9).  Even
+            values are rounded up to the next odd number.  At ~16 ms
+            hops, window=9 spans ~144 ms — roughly one vibrato
+            half-cycle.  A very large window can smooth out short
+            pitch regions before *min_note_duration_ms* is ever
+            checked — keep ``window * hop_ms`` well below
+            *min_note_duration_ms*.
 
     Returns:
         New list of MidiSegments, potentially longer than the input
