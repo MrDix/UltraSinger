@@ -1,20 +1,25 @@
 """FCPE (Fast Context-based Pitch Estimation) pitch detection backend."""
 
 import io
-import os
 import sys
+import threading
 import numpy as np
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 from modules.Pitcher.pitched_data import PitchedData
 
 _fcpe_model = None
+_fcpe_lock = threading.Lock()
 
 
 def _get_model():
     """Lazy initialize FCPE model on GPU if available."""
     global _fcpe_model
-    if _fcpe_model is None:
+    if _fcpe_model is not None:
+        return _fcpe_model
+    with _fcpe_lock:
+        if _fcpe_model is not None:
+            return _fcpe_model
         import torch
         from torchfcpe import spawn_bundled_infer_model
 
@@ -40,7 +45,7 @@ def _compute_frame_confidence(
     - RMS energy: frames with louder audio are more likely correctly pitched
     - Pitch stability: frames whose pitch agrees with neighbors are more reliable
 
-    The two signals are combined via geometric mean and scaled to [0.3, 0.95]
+    The two signals are combined via geometric mean and scaled to [0.35, 0.95]
     for voiced frames. Unvoiced frames (frequency == 0) get confidence 0.0.
     """
     n_frames = len(frequencies)
@@ -87,8 +92,9 @@ def _compute_frame_confidence(
             confidence.append(0.0)
         else:
             combined = np.sqrt(energy_norm[i] * stability[i])
-            # Scale to [0.3, 0.95] range for voiced frames
-            scaled = 0.3 + combined * 0.65
+            # Scale to [0.35, 0.95] range for voiced frames
+            # Floor > 0.3 to stay above downstream confidence cutoff (0.3)
+            scaled = 0.35 + combined * 0.60
             confidence.append(float(min(0.95, scaled)))
 
     return confidence
@@ -124,8 +130,9 @@ def get_pitch_with_fcpe(
 
     # Run inference
     hop_size = 160  # 10ms at 16kHz
-    f0 = model.infer(audio_tensor, sr=target_sr, decoder_mode="local_argmax",
-                     threshold=0.006)
+    with torch.inference_mode():
+        f0 = model.infer(audio_tensor, sr=target_sr, decoder_mode="local_argmax",
+                         threshold=0.006)
 
     # f0 shape: [batch, frames, 1]
     f0_np = np.atleast_1d(f0.squeeze().cpu().numpy())

@@ -56,9 +56,9 @@ class TestFcpePitcherOutput(unittest.TestCase):
         # Unvoiced frames should have 0.0 confidence
         for i in range(10):
             self.assertEqual(result.confidence[i], 0.0)
-        # Voiced frames should have confidence in [0.3, 0.95]
+        # Voiced frames should have confidence in [0.35, 0.95]
         for i in range(10, 40):
-            self.assertGreaterEqual(result.confidence[i], 0.3)
+            self.assertGreaterEqual(result.confidence[i], 0.35)
             self.assertLessEqual(result.confidence[i], 0.95)
 
     @patch("src.modules.Pitcher.fcpe_pitcher._get_model")
