@@ -187,6 +187,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Reference-lyrics-first pipeline disabled')}")
     if settings.pitch_notes:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-based note generation enabled (notes from pitch contour)')}")
+    if settings.hybrid_pipeline:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Hybrid pipeline enabled (pitch-contour notes + lyrics fusion)')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -318,10 +320,82 @@ def run() -> tuple[str, Score, Score]:
 
     # Create Midi_Segments
     reference_first_used = False
+    hybrid_pipeline_used = False
     if not settings.ignore_audio:
+        # Hybrid pipeline: pitch-contour notes + lyrics fusion (takes priority
+        # over reference-first when explicitly enabled by the user)
+        if settings.hybrid_pipeline:
+            from modules.Pitcher.pitch_based_note_generator import create_pitch_notes_only
+            from modules.Pitcher.hybrid_fusion import (
+                fuse_pitch_notes_with_lyrics,
+                transcribed_data_to_word_timings,
+                WordTiming,
+            )
+
+            # Phase 1: Pitch track (notes from pitch contour)
+            pitch_notes_list = create_pitch_notes_only(
+                process_data.pitched_data, allowed_notes_for_key,
+            )
+
+            # Phase 2: Lyrics track (word timings)
+            if process_data.synced_lyrics or process_data.plain_lyrics:
+                # Use WhisperX forced alignment for best word timing
+                try:
+                    from modules.Speech_Recognition.reference_lyrics_aligner import (
+                        align_lyrics_to_audio,
+                        parse_lrc_synced_lyrics,
+                    )
+                    ref_language = process_data.media_info.language or "en"
+                    if process_data.synced_lyrics:
+                        lrc_segments = parse_lrc_synced_lyrics(process_data.synced_lyrics)
+                        aligned = align_lyrics_to_audio(
+                            lrc_segments,
+                            process_data.process_data_paths.whisper_audio_path,
+                            ref_language,
+                            device=settings.pytorch_device,
+                            align_model_name=settings.whisper_align_model,
+                        )
+                    else:
+                        aligned = align_lyrics_to_audio(
+                            [{"text": process_data.plain_lyrics, "start": 0.0, "end": 9999.0}],
+                            process_data.process_data_paths.whisper_audio_path,
+                            ref_language,
+                            device=settings.pytorch_device,
+                            align_model_name=settings.whisper_align_model,
+                        )
+                    word_timings = [
+                        WordTiming(word=w["word"], start=w["start"], end=w["end"])
+                        for w in aligned if "word" in w and "start" in w and "end" in w
+                    ]
+                except Exception as e:
+                    print(f"{ULTRASINGER_HEAD} Hybrid lyrics alignment failed: {e}")
+                    word_timings = transcribed_data_to_word_timings(process_data.transcribed_data)
+            else:
+                word_timings = transcribed_data_to_word_timings(process_data.transcribed_data)
+
+            # Phase 3: Fusion
+            process_data.midi_segments = fuse_pitch_notes_with_lyrics(
+                pitch_notes_list, word_timings,
+                pitched_data=process_data.pitched_data,
+                plain_lyrics=process_data.plain_lyrics,
+            )
+
+            hybrid_pipeline_used = True
+
+            process_data.transcribed_data = [
+                TranscribedData(
+                    word=seg.word,
+                    start=seg.start,
+                    end=seg.end,
+                    confidence=1.0,
+                    is_word_end=not seg.word.strip().startswith("~"),
+                )
+                for seg in process_data.midi_segments
+            ]
+
         # Reference-Lyrics-First pipeline: use LRCLIB synced lyrics + forced alignment
         # when available (produces dramatically better lyrics coverage and timing)
-        if process_data.synced_lyrics and not settings.disable_reference_lyrics:
+        if not hybrid_pipeline_used and process_data.synced_lyrics and not settings.disable_reference_lyrics:
             try:
                 from modules.Speech_Recognition.reference_lyrics_aligner import (
                     create_midi_segments_from_reference_lyrics,
@@ -362,7 +436,7 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
 
         # Fallback: Plain lyrics alignment when no synced lyrics available
-        if not reference_first_used and process_data.plain_lyrics and not settings.disable_reference_lyrics:
+        if not reference_first_used and not hybrid_pipeline_used and process_data.plain_lyrics and not settings.disable_reference_lyrics:
             try:
                 from modules.Speech_Recognition.reference_lyrics_aligner import (
                     create_midi_segments_from_plain_lyrics,
@@ -401,7 +475,7 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Plain lyrics alignment failed: {e}")
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
 
-        if not reference_first_used:
+        if not reference_first_used and not hybrid_pipeline_used:
             # If Whisper was skipped but reference-first failed, run Whisper now
             if whisper_skipped:
                 print(f"{ULTRASINGER_HEAD} Running Whisper as fallback")
@@ -526,7 +600,7 @@ def run() -> tuple[str, Score, Score]:
 
     # Split notes at pitch change boundaries (melismas, runs)
     # (Skip when reference_first or pitch_notes is active — they already handle pitch segmentation)
-    if not settings.ignore_audio and settings.pitch_change_split and not reference_first_used and not settings.pitch_notes:
+    if not settings.ignore_audio and settings.pitch_change_split and not reference_first_used and not hybrid_pipeline_used and not settings.pitch_notes:
         process_data.midi_segments = split_notes_at_pitch_changes(
             process_data.midi_segments, process_data.pitched_data
         )
@@ -549,7 +623,7 @@ def run() -> tuple[str, Score, Score]:
     # Merge syllable segments
     # (Skip when reference_first or pitch_notes is active — notes are already correctly
     # segmented; merging would undo that)
-    if not settings.ignore_audio and not reference_first_used and not settings.pitch_notes:
+    if not settings.ignore_audio and not reference_first_used and not hybrid_pipeline_used and not settings.pitch_notes:
         process_data.midi_segments, process_data.transcribed_data = merge_syllable_segments(
             process_data.midi_segments,
             process_data.transcribed_data,
@@ -613,6 +687,7 @@ def run() -> tuple[str, Score, Score]:
             lyrics_lookup_result=lyrics_lookup_result,
             llm_result=llm_result,
             reference_first_used=reference_first_used,
+            hybrid_pipeline_used=hybrid_pipeline_used,
             whisper_skipped=whisper_skipped,
             has_synced_lyrics=process_data.synced_lyrics is not None,
             has_plain_lyrics=bool(process_data.plain_lyrics),
@@ -705,6 +780,7 @@ def _write_settings_info_file(
         lyrics_lookup_result=None,
         llm_result: "LLMResult | None" = None,
         reference_first_used: bool = False,
+        hybrid_pipeline_used: bool = False,
         whisper_skipped: bool = False,
         has_synced_lyrics: bool = False,
         has_plain_lyrics: bool = False,
@@ -753,7 +829,17 @@ def _write_settings_info_file(
 
             # Pipeline
             f.write("[Pipeline]\n")
-            if reference_first_used and reference_recovered:
+            if hybrid_pipeline_used:
+                f.write("  Pipeline:                 Hybrid (pitch-contour + lyrics fusion)\n")
+                if has_synced_lyrics:
+                    f.write("  LRCLIB synced lyrics:     found (used for alignment)\n")
+                elif has_plain_lyrics:
+                    f.write("  LRCLIB plain lyrics:      found (used for alignment)\n")
+                else:
+                    f.write("  Lyrics source:            Whisper transcription\n")
+                f.write("  Pitch track:              pitch-contour segmentation\n")
+                f.write("  Fusion:                   time-overlap word assignment\n")
+            elif reference_first_used and reference_recovered:
                 f.write("  Pipeline:                 Reference-Lyrics-First (recovered after language correction)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
                 f.write("  Whisper transcription:    full (for language correction)\n")
@@ -821,6 +907,7 @@ def _write_settings_info_file(
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Pitcher backend:          {settings.pitcher}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
+            f.write(f"  Hybrid pipeline:          {settings.hybrid_pipeline}\n")
             f.write(f"  Freestyle detection:      {settings.detect_growl}\n")
             if settings.detect_growl:
                 f.write(f"  Freestyle harmonicity:    {settings.growl_harmonicity_threshold}\n")
@@ -1804,6 +1891,9 @@ def init_settings(argv: list[str]) -> Settings:
             settings.pitcher = arg.lower()
         elif opt in ("--pitch_notes"):
             settings.pitch_notes = True
+        elif opt in ("--hybrid_pipeline"):
+            settings.hybrid_pipeline = True
+            settings.pitch_notes = False  # hybrid supersedes pitch_notes
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
         elif opt in ("--disable_reference_lyrics"):
@@ -1943,6 +2033,7 @@ def arg_options():
         "no_pitch_change_split",
         "pitcher=",
         "pitch_notes",
+        "hybrid_pipeline",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",

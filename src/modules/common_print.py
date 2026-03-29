@@ -95,6 +95,9 @@ def print_help() -> None:
                             timing produces flat, unusable notes. Notes are segmented by pitch stability, then
                             split at word boundaries. When lyrics lookup is active, reference lyrics fill remaining
                             placeholder notes. Whisper lyrics are overlaid by time alignment.
+    --hybrid_pipeline       Hybrid pipeline: pitch-contour note boundaries + lyrics from WhisperX alignment
+                            (experimental). Combines the best note segmentation from pitch contours with the
+                            best lyrics coverage from reference lyrics or Whisper. Disabled by default.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
