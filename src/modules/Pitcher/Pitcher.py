@@ -87,5 +87,15 @@ def get_pitched_data_with_high_confidence(
     return new_pitched_data
 
 
+def get_pitch_with_file_fcpe(filename: str) -> PitchedData:
+    """Pitch detection using FCPE (torchfcpe)"""
+    import librosa
+    from modules.Pitcher.fcpe_pitcher import get_pitch_with_fcpe
+
+    audio, sr = librosa.load(filename, sr=None, mono=True)
+    audio = audio.astype(np.float32)
+    return get_pitch_with_fcpe(audio, sr)
+
+
 class Pitcher:
     """Docstring"""

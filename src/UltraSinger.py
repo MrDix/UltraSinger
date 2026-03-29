@@ -714,6 +714,7 @@ def _write_settings_info_file(
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
+            f.write(f"  Pitcher backend:          {settings.pitcher}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
             f.write(f"  Freestyle detection:      {settings.detect_growl}\n")
             if settings.detect_growl:
@@ -1479,14 +1480,20 @@ def pitch_audio(
         process_data_paths: ProcessDataPaths) -> PitchedData:
     """Pitch audio"""
 
-    pitching_config = f"swiftf0_{settings.ignore_audio}"
+    pitching_config = f"{settings.pitcher}_{settings.ignore_audio}"
     pitched_data_path = os.path.join(process_data_paths.cache_folder_path, f"{pitching_config}.json")
     cache_available = check_file_exists(pitched_data_path)
 
     if settings.skip_cache_pitch_detection or not cache_available:
-        pitched_data = get_pitch_with_file(
-            process_data_paths.processing_audio_path
-        )
+        if settings.pitcher == "fcpe":
+            from modules.Pitcher.Pitcher import get_pitch_with_file_fcpe
+            pitched_data = get_pitch_with_file_fcpe(
+                process_data_paths.processing_audio_path
+            )
+        else:
+            pitched_data = get_pitch_with_file(
+                process_data_paths.processing_audio_path
+            )
 
         pitched_data_json = pitched_data.to_json()
         with open(pitched_data_path, "w", encoding=FILE_ENCODING) as file:
@@ -1673,6 +1680,12 @@ def init_settings(argv: list[str]) -> Settings:
             settings.vocal_gap_fill = True
         elif opt in ("--pitch_change_split"):
             settings.pitch_change_split = True
+        elif opt in ("--pitcher"):
+            valid_pitchers = ("swiftf0", "fcpe")
+            if arg.lower() not in valid_pitchers:
+                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Unknown pitcher '{arg}'. Use: {blue_highlighted(', '.join(valid_pitchers))}")
+                sys.exit(1)
+            settings.pitcher = arg.lower()
         elif opt in ("--pitch_notes"):
             settings.pitch_notes = True
         elif opt in ("--disable_lyrics_lookup"):
@@ -1811,6 +1824,7 @@ def arg_options():
         "syllable_split",
         "vocal_gap_fill",
         "pitch_change_split",
+        "pitcher=",
         "pitch_notes",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
