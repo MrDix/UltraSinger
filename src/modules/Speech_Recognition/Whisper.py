@@ -41,18 +41,10 @@ re_split_preserve_space = re.compile(r'(\d+|\W+|\w+)')
 MEMORY_ERROR_MESSAGE = f"{ULTRASINGER_HEAD} {blue_highlighted('whisper')} ran out of GPU memory; reduce --whisper_batch_size or force usage of cpu with --force_cpu"
 
 
-# Core languages with high-quality Whisper transcription AND wav2vec2
-# forced-alignment models.  These are the languages documented in the
-# README and tested to produce good UltraStar results.
-CORE_LANGUAGES = frozenset({
-    "en", "fr", "de", "es", "it", "ja", "zh", "nl", "uk", "pt",
-})
-
-# Minimum confidence threshold for language detection.  When Whisper
-# tiny fast-detect reports confidence BELOW this threshold AND the
-# language is not in CORE_LANGUAGES, we fall back to English — the
-# most common language in music.
-_LANG_CONFIDENCE_THRESHOLD = 0.5
+from modules.Speech_Recognition.language_constants import (
+    CORE_LANGUAGES,
+    LANG_CONFIDENCE_THRESHOLD as _LANG_CONFIDENCE_THRESHOLD,
+)
 
 
 def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:

@@ -6,7 +6,7 @@ import copy
 import logging
 import re
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal
@@ -325,25 +325,26 @@ class QueueManager(QObject):
         clean = re.sub(r"\x1b\[[0-9;]*m", "", line)
 
         # Language detection (fast Whisper tiny, full Whisper, YouTube metadata, or --language)
-        m = (re.search(r"Language detected:\s*(\w+)", clean)
-             or re.search(r"Detected language:\s*(\w+)", clean)
-             or re.search(r"Using YouTube language metadata:\s*(\w+)", clean)
-             or re.search(r"Language set:\s*(\w+)", clean))
+        lang_pat = r"([A-Za-z0-9_-]+)"
+        m = (re.search(rf"Language detected:\s*{lang_pat}", clean)
+             or re.search(rf"Detected language:\s*{lang_pat}", clean)
+             or re.search(rf"Using YouTube language metadata:\s*{lang_pat}", clean)
+             or re.search(rf"Language set:\s*{lang_pat}", clean))
         if m:
             new_lang = m.group(1)
             if "language" in info and info["language"] != new_lang:
                 info["language_changed"] = True
-                info["initial_language"] = info["language"]
+                info.setdefault("initial_language", info["language"])
             info["language"] = new_lang
             return
 
         # Low-confidence fallback to English (non-core language detected)
-        m = re.search(r"falling back to\s+(\w+)", clean)
+        m = re.search(rf"falling back to\s+{lang_pat}", clean)
         if m and "confidence" in clean.lower():
             new_lang = m.group(1)
             if "language" in info and info["language"] != new_lang:
                 info["language_changed"] = True
-                info["initial_language"] = info["language"]
+                info.setdefault("initial_language", info["language"])
             info["language"] = new_lang
             return
 
@@ -393,7 +394,13 @@ class QueueManager(QObject):
         m = re.search(r"Creating UltraStar file\s+(.+)", clean)
         if m:
             try:
-                info["output_folder"] = str(Path(m.group(1).strip()).parent)
+                raw_path = m.group(1).strip()
+                path_obj = (
+                    PureWindowsPath(raw_path)
+                    if "\\" in raw_path or re.match(r"^[A-Za-z]:", raw_path)
+                    else PurePosixPath(raw_path)
+                )
+                info["output_folder"] = str(path_obj.parent)
             except (ValueError, OSError):
                 pass
             return
@@ -422,20 +429,23 @@ class QueueManager(QObject):
 
         # Derive final lyrics_source from collected info
         info = item.result_info
-        if info.get("pipeline") == "reference":
-            info["lyrics_source"] = "synced"
-        elif info.get("lrclib_result") == "synced" and info.get("whisper_fallback"):
-            info["lyrics_source"] = "synced (fallback)"
-            if info.get("language_changed"):
-                info["language_caused_fallback"] = True
-        elif info.get("lrclib_result") in ("plain", "found"):
-            info["lyrics_source"] = "plain"
-        elif info.get("lrclib_result") == "none" or "pipeline" not in info:
-            info["lyrics_source"] = "transcribed"
-            if "pipeline" not in info:
+        if exit_code == 0:
+            if info.get("pipeline") == "reference":
+                info["lyrics_source"] = "synced"
+            elif info.get("lrclib_result") == "synced" and info.get("whisper_fallback"):
+                info["lyrics_source"] = "synced (fallback)"
+                if info.get("language_changed"):
+                    info["language_caused_fallback"] = True
+            elif info.get("lrclib_result") in ("plain", "found"):
+                info["lyrics_source"] = "plain"
+            elif info.get("lrclib_result") == "none":
+                info["lyrics_source"] = "transcribed"
+                info.setdefault("pipeline", "whisper")
+            elif "pipeline" not in info and "lrclib_result" not in info:
+                info["lyrics_source"] = "transcribed"
                 info["pipeline"] = "whisper"
 
-        if info:
+        if exit_code == 0 and info:
             self.item_result_info.emit(item.id, dict(info))
 
         self.item_status_changed.emit(item.id, item.status)

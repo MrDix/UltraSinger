@@ -1,8 +1,8 @@
 """Tests for language detection fallback logic."""
 
-from modules.Speech_Recognition.Whisper import (
+from modules.Speech_Recognition.language_constants import (
     CORE_LANGUAGES,
-    _LANG_CONFIDENCE_THRESHOLD,
+    LANG_CONFIDENCE_THRESHOLD,
 )
 
 
@@ -18,4 +18,4 @@ class TestCoreLanguages:
         assert isinstance(CORE_LANGUAGES, frozenset)
 
     def test_confidence_threshold_is_reasonable(self):
-        assert 0.0 < _LANG_CONFIDENCE_THRESHOLD < 1.0
+        assert 0.0 < LANG_CONFIDENCE_THRESHOLD < 1.0
