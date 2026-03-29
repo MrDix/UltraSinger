@@ -182,6 +182,10 @@ class QueueManager(QObject):
         next_item.status = "running"
         self.item_status_changed.emit(next_item.id, "running")
 
+        # Re-queued items reuse the same QueueItem instance.
+        # Clear run-scoped parsed metadata to avoid stale state leakage.
+        next_item.result_info = {}
+
         # Merge global config with per-song overrides
         merged = {**self._global_config, **next_item.settings_overrides}
 
