@@ -13,12 +13,10 @@ assigned by time-overlap alignment.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Midi.midi_creator import confidence_weighted_median_note
 from modules.Pitcher.pitched_data import PitchedData
-from modules.Pitcher.pitched_data_helper import get_frequencies_with_high_confidence
 from modules.Pitcher.pitch_based_note_generator import fill_lyrics_from_reference
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 
@@ -69,8 +67,8 @@ def _split_note_at_word_boundaries(
     """
     if len(words) <= 1:
         if words:
-            note.word = words[0].word + " "
-        return [note]
+            return [MidiSegment(note.note, note.start, note.end, words[0].word + " ")]
+        return [MidiSegment(note.note, note.start, note.end, note.word)]
 
     # Sort words by start time
     words = sorted(words, key=lambda w: w.start)
@@ -174,6 +172,7 @@ def fuse_pitch_notes_with_lyrics(
 
     # Track which words get assigned to a note
     assigned_words: set[int] = set()
+    word_to_idx = {id(wt): j for j, wt in enumerate(word_timings)}
 
     # Step 1: Assign words to pitch notes
     fused: list[MidiSegment] = []
@@ -188,9 +187,9 @@ def fuse_pitch_notes_with_lyrics(
 
         # Mark words as assigned
         for w in overlapping:
-            for j, wt in enumerate(word_timings):
-                if wt is w:
-                    assigned_words.add(j)
+            idx = word_to_idx.get(id(w))
+            if idx is not None:
+                assigned_words.add(idx)
 
         if len(overlapping) == 1:
             # Single word — assign directly
