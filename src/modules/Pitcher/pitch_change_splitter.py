@@ -63,19 +63,60 @@ def _get_frames_for_segment(
     return times, freqs, confs
 
 
+def _median_smooth(values: list[Optional[float]], window: int = 9) -> list[Optional[float]]:
+    """Apply median filter over valid (non-None) values to smooth vibrato.
+
+    Vibrato typically oscillates at 4-8 Hz.  At a ~16 ms frame interval
+    that is 8-16 frames per cycle.  A window of 9 covers roughly one
+    half-cycle, enough to pull the median toward the centre pitch and
+    prevent vibrato from triggering false pitch-change splits.
+
+    Args:
+        values: MIDI note values (None for unvoiced frames).
+        window: Positive integer; even values are rounded up to the
+            next odd number.  Choose based on frame hop: at ~16 ms
+            hops, window=9 spans ~144 ms (roughly one vibrato
+            half-cycle at 4-8 Hz).
+    """
+    if not isinstance(window, int) or window <= 0:
+        raise ValueError(f"window must be a positive integer, got {window}")
+    if window % 2 == 0:
+        window += 1  # silently round up to next odd value
+    n = len(values)
+    smoothed: list[Optional[float]] = [None] * n
+    half_w = window // 2
+
+    for i in range(n):
+        if values[i] is None:
+            continue
+        vals = [
+            values[j]
+            for j in range(max(0, i - half_w), min(n, i + half_w + 1))
+            if values[j] is not None
+        ]
+        if vals:
+            smoothed[i] = float(np.median(vals))
+
+    return smoothed
+
+
 def _detect_pitch_change_points(
     times: list[float],
     frequencies: list[float],
     confidences: list[float],
     min_semitone_change: float,
     min_note_duration_ms: float,
+    median_filter_window: int = 9,
 ) -> list[int]:
     """Detect frame indices where significant pitch changes occur.
 
     A pitch change is detected when:
-    1. The MIDI note difference between adjacent confident frames
-       exceeds min_semitone_change
-    2. The new pitch is sustained for at least min_note_duration_ms
+    1. The **region median** of the current stable pitch differs from
+       the candidate new pitch by at least *min_semitone_change*
+       semitones (vibrato-resistant — comparing region medians instead
+       of adjacent frames prevents periodic oscillation from triggering
+       false splits).
+    2. The new pitch is sustained for at least *min_note_duration_ms*.
 
     Returns:
         List of frame indices where splits should occur (the first frame
@@ -87,50 +128,71 @@ def _detect_pitch_change_points(
     min_duration_s = min_note_duration_ms / 1000.0
 
     # Convert frequencies to MIDI values, filtering by confidence
-    midi_values: list[Optional[float]] = []
+    midi_raw: list[Optional[float]] = []
     for freq, conf in zip(frequencies, confidences, strict=True):
         if conf > 0.3 and freq > 0:
-            midi_values.append(_freq_to_midi_safe(freq))
+            midi_raw.append(_freq_to_midi_safe(freq))
         else:
-            midi_values.append(None)
+            midi_raw.append(None)
 
-    # Find candidate change points
-    candidates: list[int] = []
-    last_valid_midi: Optional[float] = None
+    # Smooth with a wide median filter to suppress vibrato oscillation
+    midi_values = _median_smooth(midi_raw, window=median_filter_window)
 
-    for i, midi_val in enumerate(midi_values):
-        if midi_val is None:
-            continue
-
-        if last_valid_midi is not None:
-            diff = abs(midi_val - last_valid_midi)
-            if diff >= min_semitone_change:
-                candidates.append(i)
-
-        last_valid_midi = midi_val
-
-    # Filter candidates: only keep those where the new pitch is sustained
+    # Single-pass scan: detect candidate change points and immediately
+    # verify sustain in one forward sweep.  This keeps region_center
+    # up-to-date so later real changes are not missed.
+    region_values: list[float] = []
     confirmed: list[int] = []
-    for cand_idx in candidates:
-        cand_midi = midi_values[cand_idx]
-        if cand_midi is None:
+
+    i = 0
+    while i < len(midi_values):
+        midi_val = midi_values[i]
+        if midi_val is None:
+            i += 1
             continue
 
-        cand_time = times[cand_idx]
+        if not region_values:
+            region_values.append(midi_val)
+            i += 1
+            continue
 
-        # Check how long this pitch is sustained after the change point
-        sustained_until = cand_time
-        for j in range(cand_idx, len(times)):
-            if midi_values[j] is None:
+        region_center = float(np.median(region_values))
+        diff = abs(midi_val - region_center)
+
+        if diff >= min_semitone_change:
+            # Immediately check if this new pitch is sustained.
+            # Compare each candidate frame against the running center
+            # of the new region (not just the initial frame) so that
+            # gradual slides like 60→62→64 are accepted as one region.
+            sustained_values: list[float] = [midi_val]
+            candidate_center = midi_val
+            sustained_until = times[i]
+            last_sustained = i
+            for j in range(i + 1, len(times)):
+                if midi_values[j] is None:
+                    break  # unvoiced gap ends sustain
+                if abs(midi_values[j] - candidate_center) < min_semitone_change:
+                    sustained_values.append(midi_values[j])
+                    candidate_center = float(np.median(sustained_values))
+                    sustained_until = times[j]
+                    last_sustained = j
+                else:
+                    break
+
+            duration = sustained_until - times[i]
+            if duration >= min_duration_s:
+                confirmed.append(i)
+                region_values = sustained_values
+                # Skip past the sustained region to avoid reprocessing
+                i = last_sustained + 1
                 continue
-            if abs(midi_values[j] - cand_midi) < min_semitone_change:
-                sustained_until = times[j]
             else:
-                break
+                # Not sustained — noise, absorb into current region
+                region_values.append(midi_val)
+        else:
+            region_values.append(midi_val)
 
-        duration = sustained_until - cand_time
-        if duration >= min_duration_s:
-            confirmed.append(cand_idx)
+        i += 1
 
     return confirmed
 
@@ -153,6 +215,7 @@ def _split_single_segment(
     pitched_data: PitchedData,
     min_semitone_change: float,
     min_note_duration_ms: float,
+    median_filter_window: int = 9,
 ) -> list[MidiSegment]:
     """Split a single MidiSegment at pitch change boundaries.
 
@@ -165,7 +228,8 @@ def _split_single_segment(
         return [segment]
 
     change_points = _detect_pitch_change_points(
-        times, freqs, confs, min_semitone_change, min_note_duration_ms
+        times, freqs, confs, min_semitone_change, min_note_duration_ms,
+        median_filter_window,
     )
 
     if not change_points:
@@ -328,6 +392,7 @@ def split_notes_at_pitch_changes(
     pitched_data: PitchedData,
     min_semitone_change: float = 2.0,
     min_note_duration_ms: float = 80.0,
+    median_filter_window: int = 9,
 ) -> list[MidiSegment]:
     """Split MIDI segments at pitch change boundaries.
 
@@ -342,6 +407,14 @@ def split_notes_at_pitch_changes(
             trigger a split (default 2.0).
         min_note_duration_ms: Minimum duration in milliseconds for a
             sub-note to survive (shorter fragments are merged back).
+        median_filter_window: Positive integer for the median filter
+            used to suppress vibrato oscillation (default 9).  Even
+            values are rounded up to the next odd number.  At ~16 ms
+            hops, window=9 spans ~144 ms — roughly one vibrato
+            half-cycle.  A very large window can smooth out short
+            pitch regions before *min_note_duration_ms* is ever
+            checked — keep ``window * hop_ms`` well below
+            *min_note_duration_ms*.
 
     Returns:
         New list of MidiSegments, potentially longer than the input
@@ -355,7 +428,8 @@ def split_notes_at_pitch_changes(
 
     for segment in midi_segments:
         sub_segments = _split_single_segment(
-            segment, pitched_data, min_semitone_change, min_note_duration_ms
+            segment, pitched_data, min_semitone_change, min_note_duration_ms,
+            median_filter_window,
         )
 
         # Merge back short fragments

@@ -141,6 +141,62 @@ class TestBriefFluctuation:
         assert len(result) == 1
 
 
+class TestVibratoResistance:
+    """Vibrato (periodic oscillation around a centre pitch) should not cause splits."""
+
+    def test_wide_vibrato_no_split(self):
+        """Vibrato spanning ±1.5 semitones (3 ST peak-to-peak) around C4 should
+        not trigger splits because the region median stays near C4."""
+        import librosa
+        import numpy as np
+
+        # Simulate 5 Hz vibrato over 40 frames (640ms at 16ms/frame)
+        # ±1.5 ST around C4 (MIDI 60) means oscillating between ~58.5 and ~61.5
+        times = [i * 0.016 for i in range(40)]
+        c4_midi = 60.0
+        midi_vibrato = [c4_midi + 1.5 * np.sin(2 * np.pi * 5.0 * t) for t in times]
+        freqs = [float(librosa.midi_to_hz(m)) for m in midi_vibrato]
+        pitched = _make_pitched_data(times, freqs)
+
+        segment = MidiSegment("C4", 0.0, times[-1], "vibrato ")
+        result = split_notes_at_pitch_changes(
+            [segment], pitched, min_semitone_change=2.0, min_note_duration_ms=80.0
+        )
+
+        # Vibrato should be filtered by region-median comparison — no split
+        assert len(result) == 1
+        assert result[0].word == "vibrato "
+
+    def test_vibrato_then_real_change(self):
+        """Vibrato followed by a genuine pitch change should produce exactly 2 notes."""
+        import librosa
+        import numpy as np
+
+        # 20 frames of vibrato around C4, then 20 frames of stable E4
+        times = [i * 0.016 for i in range(40)]
+        c4_midi = 60.0
+        e4_midi = 64.0
+        midi_vals = (
+            [c4_midi + 1.0 * np.sin(2 * np.pi * 6.0 * t) for t in times[:20]]
+            + [e4_midi] * 20
+        )
+        freqs = [float(librosa.midi_to_hz(m)) for m in midi_vals]
+        pitched = _make_pitched_data(times, freqs)
+
+        segment = MidiSegment("C4", 0.0, times[-1], "slide ")
+        result = split_notes_at_pitch_changes(
+            [segment], pitched, min_semitone_change=2.0, min_note_duration_ms=80.0
+        )
+
+        # Should split into vibrato region + stable E4 region
+        assert len(result) == 2
+        assert result[0].word == "slide"
+        assert result[1].word in ("~", "~ ")
+        # Verify pitch values: first note near C4, second note near E4
+        assert result[0].note == "C4"
+        assert result[1].note == "E4"
+
+
 class TestShortFragmentMerging:
     """Short fragments should be merged with nearest neighbor."""
 
