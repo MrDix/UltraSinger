@@ -145,10 +145,10 @@ def run_penn(audio: np.ndarray, sr: int) -> dict:
         interp_unvoiced_at=0.065,
         gpu=(0 if device == "cuda" else None)
     )
-    elapsed = time.perf_counter() - start
 
     freqs = np.atleast_1d(pitch.squeeze().cpu().numpy())
     confs = np.atleast_1d(periodicity.squeeze().cpu().numpy())
+    elapsed = time.perf_counter() - start
     n_frames = len(freqs)
     hop_seconds = penn.HOPSIZE / penn.SAMPLE_RATE
     times = np.arange(n_frames) * hop_seconds
@@ -399,7 +399,7 @@ def process_file(audio_path: str, ref_path: str | None,
     tmp_wav = None
     if not audio_path.lower().endswith(".wav"):
         tmp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        sf.write(tmp_wav.name, audio_librosa, sr_librosa)
+        sf.write(tmp_wav.name, audio_librosa, sr_librosa, subtype="FLOAT")
         tmp_wav.close()
 
     results = []
