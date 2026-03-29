@@ -45,13 +45,10 @@ sed -i '' 's|whl/cu[0-9]*|whl/cpu|' pyproject.toml
 # Regenerate lockfile with CPU PyTorch index and sync
 echo "Resolving dependencies..."
 uv lock
-echo "Syncing dependencies..."
-uv sync
+echo "Syncing dependencies (core + GUI + scoring)..."
+uv sync --extra gui --extra scoring
 
 echo "Installation completed successfully!"
-echo ""
-echo "Optional: Install scoring support:"
-echo "  uv sync --extra scoring"
 echo ""
 echo "To run UltraSinger:"
 echo "  source .venv/bin/activate"

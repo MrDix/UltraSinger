@@ -148,8 +148,11 @@ _Not all options working now!_
     default  Creates all
 
     [separation]
-    # Default is htdemucs
-    --demucs              Model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
+    --separator           Vocal separation backend: demucs|audio_separator >> ((default) is audio_separator)
+                          audio_separator uses BS-Roformer models with higher vocal isolation quality.
+    --audio_separator_model  Model for audio-separator. Preset names or filenames from
+                          https://github.com/nomadkaraoke/python-audio-separator >> ((default) is model_bs_roformer_ep_317_sdr_12.9755.ckpt)
+    --demucs              Demucs model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
 
     [transcription]
     # Default is whisper
@@ -170,6 +173,13 @@ _Not all options working now!_
                             longer during vocal dips. >> ((default) is 0.20, WhisperX default: 0.363)
     --no_speech_threshold   No-speech probability threshold (0.0-1.0). Lower values prevent Whisper from
                             classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
+
+    [pitch detection]
+    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
+                            swiftf0: ONNX-based, CPU-only, fast and lightweight.
+                            fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
+                            outlier jumps. Better for difficult vocals (metal, screamo). Best
+                            performance on CUDA, falls back to CPU if unavailable.
 
     [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 120)
@@ -341,9 +351,20 @@ starts at the place or is heard. To disable:
 
 ### 👂 Pitcher
 
-Pitching is done with the `SwiftF0` model, which is faster and more accurate than CREPE.
-SwiftF0 automatically detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
-UltraSinger uses 60hz and 400hz
+UltraSinger supports two pitch detection backends:
+
+- **SwiftF0** (default): ONNX-based, CPU-only, fast and lightweight.
+  Detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
+  UltraSinger uses 60 Hz and 400 Hz as detection range.
+
+- **FCPE** (`--pitcher fcpe`): GPU-accelerated via [torchfcpe](https://github.com/CNChTu/FCPE).
+  Produces more stable pitch contours with fewer outlier jumps (40-50% fewer pitch jumps >5 ST in benchmarks).
+  Better for difficult vocals (metal, screamo, harsh vocals).
+  Best performance on CUDA, falls back to CPU if unavailable.
+
+```commandline
+-i XYZ --pitcher fcpe
+```
 
 ### 👄 Separation
 

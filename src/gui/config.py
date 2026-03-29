@@ -82,6 +82,8 @@ _DEFAULTS = {
     # BPM / Octave overrides
     "bpm_override": "",
     "octave_shift": "",
+    # Pitch detection
+    "pitcher": "swiftf0",
     # Vocal separation
     "separator_backend": "audio_separator",
     "audio_separator_model": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",

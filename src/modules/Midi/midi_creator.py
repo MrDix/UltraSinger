@@ -183,7 +183,7 @@ def create_midi_note_from_pitched_data(start_time: float, end_time: float, pitch
 
     conf_f, conf_weights = get_frequencies_with_high_confidence(freqs, confs)
 
-    if not conf_f:
+    if not conf_f or sum(conf_weights) == 0:
         # No valid frequencies found; fall back to a neutral middle note
         note = "C4"
     else:

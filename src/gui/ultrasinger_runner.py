@@ -339,6 +339,11 @@ class UltraSingerRunner(QObject):
         if config.get("force_whisper_cpu"):
             args.append("--force_whisper_cpu")
 
+        # Pitcher backend
+        pitcher = config.get("pitcher", "swiftf0")
+        if pitcher and pitcher != "swiftf0":
+            args.extend(["--pitcher", pitcher])
+
         # Experimental features
         if config.get("syllable_split"):
             args.append("--syllable_split")

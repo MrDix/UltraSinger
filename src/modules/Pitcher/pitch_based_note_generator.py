@@ -229,7 +229,7 @@ def _compute_note_for_frames(
     conf_f, conf_weights = get_frequencies_with_high_confidence(
         frequencies, confidences
     )
-    if not conf_f:
+    if not conf_f or sum(conf_weights) == 0:
         return "C4"
     return confidence_weighted_median_note(conf_f, conf_weights)
 
