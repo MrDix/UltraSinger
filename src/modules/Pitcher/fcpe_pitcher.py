@@ -1,5 +1,8 @@
 """FCPE (Fast Context-based Pitch Estimation) pitch detection backend."""
 
+import io
+import os
+import sys
 import numpy as np
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
@@ -16,7 +19,14 @@ def _get_model():
         from torchfcpe import spawn_bundled_infer_model
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        _fcpe_model = (spawn_bundled_infer_model(device=device), device)
+        # torchfcpe prints noisy INFO/WARN to stdout (device info,
+        # harmonic_emb defaults) — suppress to avoid confusing users.
+        _prev_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            _fcpe_model = (spawn_bundled_infer_model(device=device), device)
+        finally:
+            sys.stdout = _prev_stdout
     return _fcpe_model
 
 
