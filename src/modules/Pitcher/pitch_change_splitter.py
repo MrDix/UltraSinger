@@ -126,56 +126,56 @@ def _detect_pitch_change_points(
     # Smooth with a wide median filter to suppress vibrato oscillation
     midi_values = _median_smooth(midi_raw, window=9)
 
-    # Scan for change points using *region median* comparison.
-    # region_values collects the MIDI values of the current stable region
-    # so that vibrato (which oscillates symmetrically around a centre)
-    # averages out and does not trigger false positives.
+    # Single-pass scan: detect candidate change points and immediately
+    # verify sustain in one forward sweep.  This keeps region_center
+    # up-to-date so later real changes are not missed.
     region_values: list[float] = []
-    candidates: list[int] = []
+    confirmed: list[int] = []
 
-    for i, midi_val in enumerate(midi_values):
+    i = 0
+    while i < len(midi_values):
+        midi_val = midi_values[i]
         if midi_val is None:
+            i += 1
             continue
 
         if not region_values:
             region_values.append(midi_val)
+            i += 1
             continue
 
         region_center = float(np.median(region_values))
         diff = abs(midi_val - region_center)
 
         if diff >= min_semitone_change:
-            candidates.append(i)
-            # Don't add to current region — will be resolved below
+            # Immediately check if this new pitch is sustained
+            sustained_values: list[float] = [midi_val]
+            sustained_until = times[i]
+            last_sustained = i
+            for j in range(i + 1, len(times)):
+                if midi_values[j] is None:
+                    continue
+                if abs(midi_values[j] - midi_val) < min_semitone_change:
+                    sustained_values.append(midi_values[j])
+                    sustained_until = times[j]
+                    last_sustained = j
+                else:
+                    break
+
+            duration = sustained_until - times[i]
+            if duration >= min_duration_s:
+                confirmed.append(i)
+                region_values = sustained_values
+                # Skip past the sustained region to avoid reprocessing
+                i = last_sustained + 1
+                continue
+            else:
+                # Not sustained — noise, absorb into current region
+                region_values.append(midi_val)
         else:
             region_values.append(midi_val)
 
-    # Filter candidates: only keep those where the new pitch is sustained
-    confirmed: list[int] = []
-    for cand_idx in candidates:
-        cand_midi = midi_values[cand_idx]
-        if cand_midi is None:
-            continue
-
-        cand_time = times[cand_idx]
-
-        # Collect the sustained region after the change point
-        sustained_values: list[float] = [cand_midi]
-        sustained_until = cand_time
-        for j in range(cand_idx + 1, len(times)):
-            if midi_values[j] is None:
-                continue
-            if abs(midi_values[j] - cand_midi) < min_semitone_change:
-                sustained_values.append(midi_values[j])
-                sustained_until = times[j]
-            else:
-                break
-
-        duration = sustained_until - cand_time
-        if duration >= min_duration_s:
-            confirmed.append(cand_idx)
-            # Reset region to the new sustained pitch
-            region_values = sustained_values
+        i += 1
 
     return confirmed
 

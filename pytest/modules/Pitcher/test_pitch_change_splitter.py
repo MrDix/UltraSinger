@@ -192,6 +192,9 @@ class TestVibratoResistance:
         assert len(result) == 2
         assert result[0].word == "slide"
         assert result[1].word in ("~", "~ ")
+        # Verify pitch values: first note near C4, second note near E4
+        assert result[0].note == "C4"
+        assert result[1].note == "E4"
 
 
 class TestShortFragmentMerging:

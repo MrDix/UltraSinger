@@ -349,7 +349,7 @@ class UltraSingerRunner(QObject):
             args.append("--syllable_split")
         if config.get("vocal_gap_fill"):
             args.append("--vocal_gap_fill")
-        if config.get("pitch_change_split"):
+        if config.get("pitch_change_split", True):
             args.append("--pitch_change_split")
         else:
             args.append("--no_pitch_change_split")

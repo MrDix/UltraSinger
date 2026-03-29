@@ -108,7 +108,7 @@ def _median_filter_midi(
     frequencies: list[float],
     confidences: list[float],
     confidence_threshold: float = 0.3,
-    window: int = 5,
+    window: int = 9,
 ) -> list[Optional[float]]:
     """Convert frequencies to MIDI and apply median filter to smooth vibrato.
 
@@ -203,12 +203,14 @@ def _segment_voiced_region(
             # Check if the new pitch is sustained
             sustained_values: list[float] = [m]
             sustained_until = times[i]
+            last_sustained = i
             for j in range(i + 1, len(times)):
                 if smoothed_midi[j] is None:
                     continue
                 if abs(smoothed_midi[j] - m) < min_semitone_change:
                     sustained_values.append(smoothed_midi[j])
                     sustained_until = times[j]
+                    last_sustained = j
                 else:
                     break
 
@@ -219,6 +221,9 @@ def _segment_voiced_region(
                     segments.append((current_start, i))
                 current_start = i
                 region_values = sustained_values
+                # Skip past sustained region to avoid reprocessing
+                i = last_sustained + 1
+                continue
             else:
                 # Not sustained — absorb into current region
                 region_values.append(m)
