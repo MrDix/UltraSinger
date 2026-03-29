@@ -148,8 +148,11 @@ _Not all options working now!_
     default  Creates all
 
     [separation]
-    # Default is htdemucs
-    --demucs              Model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
+    --separator           Vocal separation backend: demucs|audio_separator >> ((default) is audio_separator)
+                          audio_separator uses BS-Roformer models with higher vocal isolation quality.
+    --audio_separator_model  Model for audio-separator. Preset names or filenames from
+                          https://github.com/nomadkaraoke/python-audio-separator >> ((default) is model_bs_roformer_ep_317_sdr_12.9755.ckpt)
+    --demucs              Demucs model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
 
     [transcription]
     # Default is whisper
