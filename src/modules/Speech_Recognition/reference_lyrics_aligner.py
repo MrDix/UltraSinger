@@ -278,30 +278,34 @@ def _split_word_at_pitch_changes(
     voiced_times = word_times[voiced_mask]
     midi_values = 69 + 12 * np.log2(voiced_freqs / 440.0)
 
-    # Apply median filter to smooth vibrato
+    # Apply wider median filter to suppress vibrato oscillation.
+    # Vibrato at 4-8 Hz spans 8-16 frames at ~16 ms intervals; a window
+    # of 9 covers roughly one half-cycle, pulling the median toward the
+    # centre pitch and preventing false splits.
     if len(midi_values) >= 5:
         from scipy.ndimage import median_filter
-        midi_smooth = median_filter(midi_values, size=5)
+        midi_smooth = median_filter(midi_values, size=min(9, len(midi_values)))
     else:
         midi_smooth = midi_values
 
-    # Find pitch change points
-    # Derive frame duration from pitched_data timestamps (the raw, uniformly-spaced
-    # analysis grid) rather than voiced_times, which may skip frames and yield an
-    # incorrect delta.  Fallback: 16ms (SwiftF0 default: 16kHz SR, STFT hop=256).
+    # Find pitch change points using *region median* comparison.
+    # Comparing each frame against the median of the current stable region
+    # (instead of the single frame at last_change) makes the detection
+    # vibrato-resistant: periodic oscillation averages out in the region.
     if len(pitched_data.times) >= 2:
         frame_ms = (pitched_data.times[1] - pitched_data.times[0]) * 1000.0
     else:
         frame_ms = 16.0  # SwiftF0 default: 16kHz sample rate, hop=256
     min_frames = max(1, int(min_note_ms / frame_ms))
     change_points = [0]
-    last_change = 0
+    region_start = 0
 
     for i in range(1, len(midi_smooth)):
-        if abs(midi_smooth[i] - midi_smooth[last_change]) >= threshold_st:
-            if i - last_change >= min_frames:
+        region_center = float(np.median(midi_smooth[region_start:i]))
+        if abs(midi_smooth[i] - region_center) >= threshold_st:
+            if i - region_start >= min_frames:
                 change_points.append(i)
-                last_change = i
+                region_start = i
 
     if len(change_points) <= 1:
         # No significant pitch changes — single note

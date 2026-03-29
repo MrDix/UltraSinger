@@ -473,12 +473,13 @@ class ConversionSettingsForm(QWidget):
                                _DEFAULTS["syllable_split"]))
 
         self._pitch_change_split = ToggleSwitch(
-            checked=self._config.get("pitch_change_split", False)
+            checked=self._config.get("pitch_change_split", True)
         )
         card.add_toggle_row("Pitch-Change Split", self._pitch_change_split,
                            "Split notes at pitch change boundaries within a syllable "
                            "(melismas, runs, ornaments). Each pitch gets its own note "
-                           "instead of averaging to a single flat note.",
+                           "instead of averaging to a single flat note. Uses vibrato-aware "
+                           "detection to avoid false splits from vocal vibrato.",
                            reset_callback=lambda: self._pitch_change_split.setChecked(
                                _DEFAULTS["pitch_change_split"]))
 

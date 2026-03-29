@@ -191,9 +191,11 @@ _Not all options working now!_
     --disable_quantization  Disable key quantization. Enabled by default, removes pitch slides and out-of-key notes.
     --syllable_split        Keep syllable-level note splits at pitch changes (experimental). Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
-    --pitch_change_split    Split notes at pitch change boundaries within a syllable (experimental). Detects
-                            sustained pitch changes (melismas, runs) and creates separate notes for each pitch
-                            region. Disabled by default.
+    --pitch_change_split    Split notes at pitch change boundaries within a syllable. Detects sustained pitch
+                            changes (melismas, runs) and creates separate notes for each pitch region. Uses
+                            vibrato-aware detection (region median comparison) to avoid false splits. Enabled
+                            by default.
+    --no_pitch_change_split Disable pitch-change splitting (revert to one note per word).
     --pitch_notes           Generate notes from pitch contour instead of word timing (experimental). Best for
                             melismatic songs with runs and slides. Notes are segmented by pitch stability, then
                             split at word boundaries so each word gets its own note. When lyrics lookup is active,

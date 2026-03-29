@@ -1680,6 +1680,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.vocal_gap_fill = True
         elif opt in ("--pitch_change_split"):
             settings.pitch_change_split = True
+        elif opt in ("--no_pitch_change_split"):
+            settings.pitch_change_split = False
         elif opt in ("--pitcher"):
             valid_pitchers = ("swiftf0", "fcpe")
             if arg.lower() not in valid_pitchers:
@@ -1824,6 +1826,7 @@ def arg_options():
         "syllable_split",
         "vocal_gap_fill",
         "pitch_change_split",
+        "no_pitch_change_split",
         "pitcher=",
         "pitch_notes",
         "disable_lyrics_lookup",
