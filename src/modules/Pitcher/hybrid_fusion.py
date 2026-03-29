@@ -15,9 +15,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-import librosa
-import numpy as np
-
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Midi.midi_creator import confidence_weighted_median_note
 from modules.Pitcher.pitched_data import PitchedData
@@ -120,6 +117,7 @@ def _create_gap_note(
 
     start_idx = find_nearest_index(pitched_data.times, word.start)
     end_idx = find_nearest_index(pitched_data.times, word.end)
+    start_idx = min(start_idx, len(pitched_data.times) - 1) if pitched_data.times else 0
     if end_idx <= start_idx:
         end_idx = start_idx + 1
     end_idx = min(end_idx, len(pitched_data.times))
