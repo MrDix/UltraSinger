@@ -69,13 +69,15 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
     return track
 
 
-def get_youtube_title(url: str, cookiefile: str | None = None) -> tuple[str, str, str]:
-    """Get the title of the YouTube video.
+def get_youtube_title(url: str, cookiefile: str | None = None) -> tuple[str, str, str, str]:
+    """Get the title and language of the YouTube video.
 
     Returns:
-        A 3-tuple of (artist, track, video_title).  *video_title* is the
-        raw title string from the YouTube video page, useful for
-        cross-checking metadata from other sources (e.g. MusicBrainz).
+        A 4-tuple of (artist, track, video_title, language).
+        *video_title* is the raw title string from the YouTube video page,
+        useful for cross-checking metadata from other sources.
+        *language* is the ISO 639-1 code from yt-dlp metadata (e.g. "en"),
+        or empty string if unavailable.
     """
 
     ydl_opts = {
@@ -90,13 +92,14 @@ def get_youtube_title(url: str, cookiefile: str | None = None) -> tuple[str, str
     video_title = (result.get("title") or "").strip()
     artist = (result.get("artist") or "").strip()
     track = (result.get("track") or "").strip()
+    language = (result.get("language") or "").strip()
     if artist and track:
-        return artist, strip_unmatched_suffixes(track, video_title), video_title
+        return artist, strip_unmatched_suffixes(track, video_title), video_title, language
     channel = (result.get("channel") or "").strip()
     if "-" in video_title:
         parts = video_title.split("-", 1)
-        return parts[0].strip(), parts[1].strip(), video_title
-    return channel, video_title, video_title
+        return parts[0].strip(), parts[1].strip(), video_title, language
+    return channel, video_title, video_title, language
 
 
 def __download_youtube_video_with_audio(url: str, clear_filename: str, output_path: str, cookiefile: str = None) -> str:
@@ -187,7 +190,7 @@ def __start_download(ydl_opts, url: str) -> None:
 
 def download_from_youtube(input_url: str, output_folder_path: str, cookiefile: str = None, *, keep_audio_in_video: bool = False) -> tuple[str, str, str, MediaInfo]:
     """Download from YouTube"""
-    (artist, title, video_title) = get_youtube_title(input_url, cookiefile)
+    (artist, title, video_title, yt_language) = get_youtube_title(input_url, cookiefile)
 
     # Get additional data for song
     song_info = search_musicbrainz(title, artist)
@@ -231,6 +234,7 @@ def download_from_youtube(input_url: str, output_folder_path: str, cookiefile: s
             title=song_info.title,
             year=song_info.year,
             genre=song_info.genres,
+            language=yt_language or None,
             cover_url=cover_url,
             video_url=input_url,
             audio_extension=audio_ext,
