@@ -70,7 +70,15 @@ def _median_smooth(values: list[Optional[float]], window: int = 9) -> list[Optio
     that is 8-16 frames per cycle.  A window of 9 covers roughly one
     half-cycle, enough to pull the median toward the centre pitch and
     prevent vibrato from triggering false pitch-change splits.
+
+    Args:
+        values: MIDI note values (None for unvoiced frames).
+        window: Must be a positive odd integer.
     """
+    if not isinstance(window, int) or window <= 0:
+        raise ValueError(f"window must be a positive integer, got {window}")
+    if window % 2 == 0:
+        window += 1  # silently round up to next odd value
     n = len(values)
     smoothed: list[Optional[float]] = [None] * n
     half_w = window // 2
@@ -392,7 +400,11 @@ def split_notes_at_pitch_changes(
         min_note_duration_ms: Minimum duration in milliseconds for a
             sub-note to survive (shorter fragments are merged back).
         median_filter_window: Window size for the median filter used
-            to suppress vibrato oscillation (default 9).
+            to suppress vibrato oscillation (default 9).  Must be a
+            positive odd integer.  A very large window can smooth out
+            short pitch regions before *min_note_duration_ms* is ever
+            checked — as a rule of thumb keep
+            ``median_filter_window * frame_hop_ms < min_note_duration_ms``.
 
     Returns:
         New list of MidiSegments, potentially longer than the input
