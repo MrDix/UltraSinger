@@ -19,16 +19,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Regex patterns for parsing UltraSinger stdout
-_RE_LANG_DETECTED = re.compile(r"Language detected:\s*\x1b\[\d+m(\w+)\x1b|Language detected:\s*(\w+)")
-_RE_LANG_WHISPER = re.compile(r"Detected language:\s*\x1b\[\d+m(\w+)\x1b|Detected language:\s*(\w+)")
-_RE_LRCLIB_FOUND = re.compile(r"Found lyrics on LRCLIB:.*\[(.*?)\]")
-_RE_OUTPUT_FOLDER = re.compile(r"Creating output folder\.\s*->\s*(.+)")
-_RE_REFERENCE_PIPELINE = re.compile(r"Reference-first pipeline:")
-_RE_REFERENCE_FALLBACK = re.compile(r"Falling back to standard pipeline")
-_RE_SYNCED_SKIP = re.compile(r"Synced lyrics found.*skipping Whisper")
-_RE_NO_LRCLIB = re.compile(r"No lyrics found on LRCLIB")
-
 
 class QueueManager(QObject):
     """Manages a queue of conversion items and runs them sequentially."""
@@ -324,51 +314,97 @@ class QueueManager(QObject):
             self._runner.start(args)
 
     def _parse_output_line(self, line: str):
-        """Parse UltraSinger stdout to extract result metadata."""
+        """Extract pipeline metadata from UltraSinger stdout lines."""
         item = self._current_item
         if item is None:
             return
 
         info = item.result_info
 
-        m = _RE_LANG_DETECTED.search(line)
-        if m:
-            lang = m.group(1) or m.group(2)
-            if lang:
-                info["language"] = lang.lower()
+        # Strip ANSI escape codes for regex matching
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", line)
 
-        m = _RE_LANG_WHISPER.search(line)
+        # Language detection (fast Whisper tiny, full Whisper, YouTube metadata, or --language)
+        m = (re.search(r"Language detected:\s*(\w+)", clean)
+             or re.search(r"Detected language:\s*(\w+)", clean)
+             or re.search(r"Using YouTube language metadata:\s*(\w+)", clean)
+             or re.search(r"Language set:\s*(\w+)", clean))
         if m:
-            lang = m.group(1) or m.group(2)
-            if lang:
-                info["language"] = lang.lower()
+            new_lang = m.group(1)
+            if "language" in info and info["language"] != new_lang:
+                info["language_changed"] = True
+                info["initial_language"] = info["language"]
+            info["language"] = new_lang
+            return
 
-        m = _RE_OUTPUT_FOLDER.search(line)
+        # Low-confidence fallback to English (non-core language detected)
+        m = re.search(r"falling back to\s+(\w+)", clean)
+        if m and "confidence" in clean.lower():
+            new_lang = m.group(1)
+            if "language" in info and info["language"] != new_lang:
+                info["language_changed"] = True
+                info["initial_language"] = info["language"]
+            info["language"] = new_lang
+            return
+
+        # LRCLIB lyrics found — parse what types are available
+        m = re.search(r"Found lyrics on LRCLIB:.*\[(.*?)\]", clean)
         if m:
-            info["output_folder"] = m.group(1).strip()
+            details = m.group(1).lower()
+            if "synced" in details:
+                info["lrclib_result"] = "synced"
+            elif "plain" in details:
+                info["lrclib_result"] = "plain"
+            elif "instrumental" in details:
+                info["lrclib_result"] = "instrumental"
+            else:
+                info["lrclib_result"] = "found"
+            return
 
-        if _RE_REFERENCE_PIPELINE.search(line):
+        # No lyrics on LRCLIB
+        if "No lyrics found on LRCLIB" in clean:
+            info["lrclib_result"] = "none"
+            return
+
+        # Synced lyrics found — skipping Whisper (reference pipeline)
+        if "Synced lyrics found" in clean and "skipping Whisper" in clean:
+            info["whisper_skipped"] = True
+            return
+
+        # Reference-first pipeline produced results
+        if "Reference-first pipeline:" in clean:
             info["pipeline"] = "reference"
+            return
 
-        if _RE_REFERENCE_FALLBACK.search(line):
+        # Reference pipeline recovered after language correction
+        if "Reference pipeline recovered" in clean:
+            info["pipeline"] = "reference"
+            info["reference_recovered"] = True
+            info.pop("whisper_fallback", None)
+            return
+
+        # Reference pipeline fell back to Whisper
+        if "Falling back to standard pipeline" in clean:
             info["whisper_fallback"] = True
+            info["pipeline"] = "whisper"
+            return
 
-        m = _RE_LRCLIB_FOUND.search(line)
+        # Output folder — derive from "Creating UltraStar file <path>".
+        m = re.search(r"Creating UltraStar file\s+(.+)", clean)
         if m:
-            ltype = m.group(1).strip().lower()
-            if "synced" in ltype:
-                info["lyrics_source"] = "synced"
-            elif "plain" in ltype:
-                info["lyrics_source"] = "plain"
-            elif "instrumental" in ltype:
-                info["lyrics_source"] = "instrumental"
+            try:
+                info["output_folder"] = str(Path(m.group(1).strip()).parent)
+            except (ValueError, OSError):
+                pass
+            return
 
-        if _RE_SYNCED_SKIP.search(line):
-            info["lyrics_source"] = "synced"
-            info["pipeline"] = "reference"
-
-        if _RE_NO_LRCLIB.search(line):
-            info["lyrics_source"] = "transcribed"
+        # Output folder fallback — from create_folder() calls.
+        m = re.search(r"Creating output folder\.\s*->\s*(.+)", clean)
+        if m:
+            folder = m.group(1).strip()
+            if not folder.endswith(("cache", "cache/", "cache\\")):
+                info["output_folder"] = folder
+            return
 
     def _on_item_finished(self, exit_code: int):
         """Handle completion of a single item, then run next."""
@@ -384,12 +420,25 @@ class QueueManager(QObject):
         else:
             item.status = "failed"
 
+        # Derive final lyrics_source from collected info
+        info = item.result_info
+        if info.get("pipeline") == "reference":
+            info["lyrics_source"] = "synced"
+        elif info.get("lrclib_result") == "synced" and info.get("whisper_fallback"):
+            info["lyrics_source"] = "synced (fallback)"
+            if info.get("language_changed"):
+                info["language_caused_fallback"] = True
+        elif info.get("lrclib_result") in ("plain", "found"):
+            info["lyrics_source"] = "plain"
+        elif info.get("lrclib_result") == "none" or "pipeline" not in info:
+            info["lyrics_source"] = "transcribed"
+            if "pipeline" not in info:
+                info["pipeline"] = "whisper"
+
+        if info:
+            self.item_result_info.emit(item.id, dict(info))
+
         self.item_status_changed.emit(item.id, item.status)
-
-        # Emit result info for the GUI to display
-        if item.result_info:
-            self.item_result_info.emit(item.id, item.result_info)
-
         self.line_output.emit("")
 
         status_text = {

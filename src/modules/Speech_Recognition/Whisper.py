@@ -41,11 +41,29 @@ re_split_preserve_space = re.compile(r'(\d+|\W+|\w+)')
 MEMORY_ERROR_MESSAGE = f"{ULTRASINGER_HEAD} {blue_highlighted('whisper')} ran out of GPU memory; reduce --whisper_batch_size or force usage of cpu with --force_cpu"
 
 
+# Core languages with high-quality Whisper transcription AND wav2vec2
+# forced-alignment models.  These are the languages documented in the
+# README and tested to produce good UltraStar results.
+CORE_LANGUAGES = frozenset({
+    "en", "fr", "de", "es", "it", "ja", "zh", "nl", "uk", "pt",
+})
+
+# Minimum confidence threshold for language detection.  When Whisper
+# tiny fast-detect reports confidence BELOW this threshold AND the
+# language is not in CORE_LANGUAGES, we fall back to English — the
+# most common language in music.
+_LANG_CONFIDENCE_THRESHOLD = 0.5
+
+
 def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
     """Detect language from audio using Whisper tiny model.
 
     Much faster than full transcription (~2-3s vs ~2min) because it only
     loads the tiny model and processes the first 30s of audio.
+
+    When confidence is below the threshold and the detected language is not
+    in the well-supported set, falls back to English — the most common
+    language in music — to avoid wrong transcription/alignment.
 
     Args:
         audio_path: Path to the audio file.
@@ -61,10 +79,22 @@ def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
     audio = whisperx.load_audio(audio_path)
 
     language, probability, _ = model.detect_language(audio)
+
     print(
         f"{ULTRASINGER_HEAD} Language detected: "
         f"{blue_highlighted(language)} ({probability:.0%} confidence)"
     )
+
+    if (
+        probability < _LANG_CONFIDENCE_THRESHOLD
+        and language not in CORE_LANGUAGES
+    ):
+        print(
+            f"{ULTRASINGER_HEAD} {gold_highlighted('Low confidence for non-core language')} "
+            f"— falling back to {blue_highlighted('en')}"
+        )
+        language = "en"
+
     return language
 
 
@@ -181,10 +211,18 @@ def transcribe_with_whisper(
         detected_language = result["language"]
         if language is None:
             language = detected_language
-            print(
-                f"{ULTRASINGER_HEAD} Detected language: "
-                f"{blue_highlighted(language)}"
-            )
+            if language not in CORE_LANGUAGES and alignment_model is None:
+                print(
+                    f"{ULTRASINGER_HEAD} Detected language: "
+                    f"{blue_highlighted(language)} "
+                    f"— {gold_highlighted('not a core language')}. "
+                    f"If results are poor, try --language en"
+                )
+            else:
+                print(
+                    f"{ULTRASINGER_HEAD} Detected language: "
+                    f"{blue_highlighted(language)}"
+                )
         elif language != detected_language:
             print(
                 f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
