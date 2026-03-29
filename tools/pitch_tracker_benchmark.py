@@ -92,6 +92,7 @@ def run_fcpe(audio: np.ndarray, sr: int) -> dict:
 
     # FCPE expects [batch, samples] tensor at 16kHz
     target_sr = 16000
+    start = time.perf_counter()
     if sr != target_sr:
         audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
     else:
@@ -99,15 +100,13 @@ def run_fcpe(audio: np.ndarray, sr: int) -> dict:
 
     audio_tensor = torch.from_numpy(audio_16k).float().unsqueeze(0).to(device)
 
-    start = time.perf_counter()
     # hop_size in samples at target_sr, default 160 (10ms)
     hop_size = 160
     f0 = model.infer(audio_tensor, sr=target_sr, decoder_mode="local_argmax",
                      threshold=0.006)
-    elapsed = time.perf_counter() - start
 
     # f0 shape: [batch, frames, 1]
-    f0_np = f0.squeeze().cpu().numpy()
+    f0_np = np.atleast_1d(f0.squeeze().cpu().numpy())
 
     # Generate timestamps
     n_frames = len(f0_np)
@@ -115,12 +114,11 @@ def run_fcpe(audio: np.ndarray, sr: int) -> dict:
     freqs = np.maximum(f0_np, 0.0)  # Clip negatives
 
     # Derive confidence from energy and pitch stability (same as production)
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
     from modules.Pitcher.fcpe_pitcher import _compute_frame_confidence
     confs = np.array(_compute_frame_confidence(
         audio_16k, freqs.tolist(), hop_size
     ))
+    elapsed = time.perf_counter() - start
 
     return {"name": "FCPE", "times": times, "freqs": freqs, "confs": confs,
             "elapsed": elapsed}
@@ -149,8 +147,8 @@ def run_penn(audio: np.ndarray, sr: int) -> dict:
     )
     elapsed = time.perf_counter() - start
 
-    freqs = pitch.squeeze().cpu().numpy()
-    confs = periodicity.squeeze().cpu().numpy()
+    freqs = np.atleast_1d(pitch.squeeze().cpu().numpy())
+    confs = np.atleast_1d(periodicity.squeeze().cpu().numpy())
     n_frames = len(freqs)
     hop_seconds = penn.HOPSIZE / penn.SAMPLE_RATE
     times = np.arange(n_frames) * hop_seconds
@@ -257,6 +255,10 @@ def compute_pitch_agreement(ref: dict, test: dict,
     test_times = test["times"]
     test_freqs = test["freqs"]
     test_confs = test["confs"]
+
+    if len(ref_times) == 0 or len(test_times) == 0:
+        return {"n_overlap": 0, "agree_1st": 0.0, "agree_2st": 0.0,
+                "median_diff_st": 0.0}
 
     # For each ref frame, find nearest test frame
     n_overlap = 0
@@ -381,7 +383,8 @@ def evaluate_against_reference(results: list[dict], ref_notes: list[dict],
 
 
 def process_file(audio_path: str, ref_path: str | None,
-                 trackers: list[str]) -> list[dict]:
+                 trackers: list[str],
+                 conf_threshold: float = 0.4) -> list[dict]:
     """Run all trackers on a single audio file."""
     print(f"\nProcessing: {os.path.basename(audio_path)}")
     duration = librosa.get_duration(path=audio_path)
@@ -434,13 +437,13 @@ def process_file(audio_path: str, ref_path: str | None,
             os.unlink(tmp_wav.name)
 
     # Analysis
-    compare_trackers(results)
+    compare_trackers(results, conf_threshold=conf_threshold)
 
     # Reference comparison if available
     if ref_path and os.path.exists(ref_path):
         ref_notes = parse_ultrastar_notes(ref_path)
         if ref_notes:
-            evaluate_against_reference(results, ref_notes)
+            evaluate_against_reference(results, ref_notes, conf_threshold)
 
     return results
 
@@ -499,7 +502,8 @@ def main():
 
     all_results = []
     for audio_path, ref_path in entries:
-        results = process_file(audio_path, ref_path, trackers)
+        results = process_file(audio_path, ref_path, trackers,
+                                    args.conf_threshold)
         all_results.append((audio_path, results))
 
     # Summary across all files
@@ -515,7 +519,7 @@ def main():
             for _, results in all_results:
                 for r in results:
                     if r["name"].lower().replace(" ", "") == tracker_name.replace(" ", ""):
-                        stats = analyze_result(r)
+                        stats = analyze_result(r, args.conf_threshold)
                         speeds.append(r["elapsed"])
                         voiced_pcts.append(stats["voiced_pct"])
                         stds.append(stats["pitch_std_st"])

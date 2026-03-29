@@ -128,7 +128,7 @@ def get_pitch_with_fcpe(
                      threshold=0.006)
 
     # f0 shape: [batch, frames, 1]
-    f0_np = f0.squeeze().cpu().numpy()
+    f0_np = np.atleast_1d(f0.squeeze().cpu().numpy())
     n_frames = len(f0_np)
 
     # Generate timestamps
