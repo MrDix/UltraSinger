@@ -180,6 +180,12 @@ class QueueManager(QObject):
 
         self._current_item = next_item
         next_item.status = "running"
+
+        # Defensive reset: clear run-scoped parsed metadata so that
+        # retry/restart paths don't carry stale flags (reference_recovered,
+        # initial_language, etc.) into the new run.
+        next_item.result_info = {}
+
         self.item_status_changed.emit(next_item.id, "running")
 
         # Merge global config with per-song overrides
