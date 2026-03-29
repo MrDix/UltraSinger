@@ -147,6 +147,7 @@ class ConversionSettingsForm(QWidget):
         self._align_model = QLineEdit()
         self._align_model.setPlaceholderText("e.g., gigant/romanian-wav2vec2")
         self._align_model.setText(self._config.get("whisper_align_model", ""))
+        self._align_model.editingFinished.connect(self._validate_align_model)
         card.add_row("Custom Align Model", self._align_model,
                      "Override the default forced-alignment model (wav2vec2). "
                      "Useful for languages where the default model performs poorly. "
@@ -306,8 +307,9 @@ class ConversionSettingsForm(QWidget):
         )
 
         card.add_info(
-            "Auto-detect uses Whisper's built-in language detection. "
-            "Manual selection forces a specific language."
+            "Language priority: Manual selection > YouTube video metadata > "
+            "Whisper auto-detect. For YouTube URLs, the video language is used "
+            "automatically when set to Auto-detect."
         )
 
         self._main_layout.addWidget(card)
@@ -920,6 +922,75 @@ class ConversionSettingsForm(QWidget):
     def get_selected_provider_id(self) -> str:
         """Return the ID of the currently selected LLM provider."""
         return self._llm_provider.currentData() or ""
+
+    # ─── Validation ──────────────────────────────────────────────────────
+
+    def _validate_align_model(self):
+        """Validate the custom alignment model ID against HuggingFace.
+
+        Runs a lightweight HEAD request to the HuggingFace API on
+        editingFinished.  Clears the field border on success or adds
+        a red border + tooltip on failure.
+        """
+        model_id = self._align_model.text().strip()
+        if not model_id:
+            self._align_model.setStyleSheet("")
+            self._align_model.setToolTip("")
+            return
+
+        # Quick format check: must be "owner/model"
+        if "/" not in model_id or model_id.count("/") != 1:
+            self._align_model.setStyleSheet("border: 1px solid #ef5350;")
+            self._align_model.setToolTip(
+                "Invalid format. Expected 'owner/model' "
+                "(e.g., 'gigant/romanian-wav2vec2')."
+            )
+            return
+
+        # Non-blocking HuggingFace API check
+        import threading
+
+        def _check():
+            try:
+                import urllib.request
+                import urllib.parse
+                url = f"https://huggingface.co/api/models/{model_id}"
+                # SSRF guard: ensure the final URL still uses https
+                if not urllib.parse.urlparse(url).scheme == "https":
+                    raise ValueError("URL scheme must be https")
+                req = urllib.request.Request(url, method="HEAD")
+                req.add_header("User-Agent", "UltraSinger")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    exists = resp.status == 200
+            except Exception:
+                exists = False
+
+            # Schedule UI update on main thread
+            from PySide6.QtCore import QMetaObject, Q_ARG
+            if exists:
+                QMetaObject.invokeMethod(
+                    self._align_model, "setStyleSheet",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, "border: 1px solid #4caf50;"),
+                )
+                QMetaObject.invokeMethod(
+                    self._align_model, "setToolTip",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, f"Model found on HuggingFace: {model_id}"),
+                )
+            else:
+                QMetaObject.invokeMethod(
+                    self._align_model, "setStyleSheet",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, "border: 1px solid #ef5350;"),
+                )
+                QMetaObject.invokeMethod(
+                    self._align_model, "setToolTip",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, f"Model not found on HuggingFace: {model_id}"),
+                )
+
+        threading.Thread(target=_check, daemon=True).start()
 
     # ─── Public API ───────────────────────────────────────────────────────
 

@@ -76,6 +76,13 @@ class ConversionWorker(QObject):
             else:
                 kwargs["start_new_session"] = True
 
+            # Force unbuffered stdout so every print() in the child
+            # process is immediately visible in the GUI — without this,
+            # Python block-buffers piped stdout and the user sees nothing
+            # until the buffer fills (e.g. silence after demucs 100%).
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+
             self._process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -85,6 +92,7 @@ class ConversionWorker(QObject):
                 cwd=str(project_root),
                 encoding="utf-8",
                 errors="replace",
+                env=env,
                 **kwargs,
             )
 

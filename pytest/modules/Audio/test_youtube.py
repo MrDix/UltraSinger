@@ -148,13 +148,43 @@ class TestGetYoutubeTitle(unittest.TestCase):
         url = "   https://fakeUrl   "
 
         # Act
-        artist, title, video_title = get_youtube_title(url)
+        artist, title, video_title, _language = get_youtube_title(url)
 
         # Assert
         self.assertEqual(artist, "Test Artist")
         self.assertEqual(title, "Test Track")
         self.assertEqual(video_title, "Test Artist - Test Track")
         mock_youtube_dl.assert_called_once()
+
+    @patch("yt_dlp.YoutubeDL")
+    def test_get_youtube_title_returns_language(self, mock_youtube_dl):
+        """Language metadata from yt-dlp should be returned as 4th element."""
+        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+            "artist": "Artist",
+            "track": "Track",
+            "title": "Artist - Track",
+            "channel": "Channel",
+            "language": "de",
+        }
+
+        artist, title, video_title, language = get_youtube_title("https://fakeUrl")
+
+        self.assertEqual(language, "de")
+        self.assertEqual(artist, "Artist")
+
+    @patch("yt_dlp.YoutubeDL")
+    def test_get_youtube_title_empty_language_when_missing(self, mock_youtube_dl):
+        """When yt-dlp has no language field, return empty string."""
+        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+            "artist": "Artist",
+            "track": "Track",
+            "title": "Artist - Track",
+            "channel": "Channel",
+        }
+
+        _, _, _, language = get_youtube_title("https://fakeUrl")
+
+        self.assertEqual(language, "")
 
     @patch("yt_dlp.YoutubeDL")
     def test_get_youtube_title_strips_yt_music_suffix(self, mock_youtube_dl):
@@ -166,7 +196,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "Electric Callboy",
         }
 
-        artist, title, video_title = get_youtube_title("https://fakeUrl")
+        artist, title, video_title, _language = get_youtube_title("https://fakeUrl")
 
         self.assertEqual(artist, "Electric Callboy")
         self.assertEqual(title, "Pump It")
@@ -182,7 +212,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "ArtistChannel",
         }
 
-        artist, title, _video_title = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title, _language = get_youtube_title("https://fakeUrl")
 
         self.assertEqual(artist, "Artist")
         self.assertEqual(title, "Song (Live)")
@@ -195,7 +225,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "SomeChannel",
         }
 
-        artist, title, video_title = get_youtube_title("https://fakeUrl")
+        artist, title, video_title, _language = get_youtube_title("https://fakeUrl")
 
         self.assertEqual(artist, "Some Artist")
         self.assertEqual(title, "Some Song")
@@ -209,7 +239,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "ArtistChannel",
         }
 
-        artist, title, _video_title = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title, _language = get_youtube_title("https://fakeUrl")
 
         self.assertEqual(artist, "Artist Name")
         self.assertEqual(title, "Song - Part 2")
@@ -222,7 +252,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "MyChannel",
         }
 
-        artist, title, video_title = get_youtube_title("https://fakeUrl")
+        artist, title, video_title, _language = get_youtube_title("https://fakeUrl")
 
         self.assertEqual(artist, "MyChannel")
         self.assertEqual(title, "Just A Title")
@@ -237,7 +267,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "SomeChannel",
         }
 
-        artist, title, _video_title = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title, _language = get_youtube_title("https://fakeUrl")
 
         # Should fall through to title-split logic
         self.assertEqual(artist, "Some Artist")
@@ -253,7 +283,7 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "channel": "SomeChannel",
         }
 
-        artist, title, _video_title = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title, _language = get_youtube_title("https://fakeUrl")
 
         # Should fall through to title-split logic
         self.assertEqual(artist, "Some Artist")

@@ -117,7 +117,12 @@ Or use the platform-specific launcher scripts:
 
 - **Video Browser** — Browse video platforms, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads. A **quality badge** next to the Queue button shows the best available download resolution, audio codec, duration, and LRCLIB lyrics availability — so you can evaluate video quality even when the embedded browser cannot play certain codecs.
 - **Settings Panel** — All CLI parameters available as form controls: Whisper model, language, post-processing options, experimental features, LLM lyric correction, and more.
-- **Conversion Queue** — Real-time color-coded log output with stage detection (Separating Vocals → Transcribing → Pitching → …), elapsed timer, and cancel support.
+- **Conversion Queue** — Real-time color-coded log output with stage detection (Separating Vocals → Transcribing → Pitching → …), elapsed timer, and cancel support. After conversion, each song shows an **info line** with:
+  - **Language badge** — detected language code with color-coded background: green = synced lyrics (best quality), orange = plain lyrics or fallback, red = transcribed only (Whisper)
+  - **Lyrics source** — "Synced lyrics", "Plain lyrics", or "Transcribed"
+  - **Info button** — view the settings used for this conversion
+  - **Folder button** — open the output folder in your system file manager (hover to see the path)
+  - **Re-queue button** — re-queue the song with different settings (opens per-song settings dialog; useful for correcting wrong language detection)
 - **Preferences** — Default output folder, LLM/Groq API configuration, cookie management.
 
 > **Note:** The GUI is a native desktop application (Qt). It requires a display and cannot run inside a Docker container. Use the [CLI](#run-cli) for containerized workflows.
@@ -158,12 +163,13 @@ _Not all options working now!_
     # Default is whisper
     --whisper               Multilingual model > tiny|base|small|medium|large-v1|large-v2|large-v3  >> ((default) is large-v2)
                             English-only model > tiny.en|base.en|small.en|medium.en
-    --whisper_align_model   Use other languages model for Whisper provided from huggingface.co
-    --language              Override the language detected by Whisper for alignment and hyphenation.
-                            Default: auto-detect. When LRCLIB synced lyrics are found, language is
-                            detected quickly via Whisper tiny (~2-3s) instead of full transcription.
-                            WARNING: setting this for non-matching songs will degrade alignment
-                            quality (e.g. --language en for German songs).
+    --whisper_align_model   Custom wav2vec2 forced-alignment model from HuggingFace
+                            (e.g. --whisper_align_model gigant/romanian-wav2vec2)
+    --language              Override language for alignment and hyphenation.
+                            Priority: --language > YouTube metadata > Whisper auto-detect.
+                            For YouTube URLs, the video language is used automatically.
+                            WARNING: setting this for non-matching songs will degrade
+                            alignment quality (e.g. --language en for German songs).
     --whisper_batch_size    Reduce if low on GPU mem >> ((default) is 16)
     --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words
@@ -440,7 +446,15 @@ You can choose between different format versions. The default is `1.2.0`.
 
 ### Settings Info File
 
-When enabled, UltraSinger writes a `ultrasinger_parameter.info` file to the output directory containing all conversion settings, detected language, LLM correction status, and score results. Useful for tracking what parameters produced a given output.
+When enabled, UltraSinger writes a `ultrasinger_parameter.info` file to the output directory containing all conversion settings and a detailed pipeline trace. The `[Pipeline]` section shows exactly how the song was processed:
+
+- Which pipeline was used (Reference-Lyrics-First vs Standard Whisper)
+- How the language was determined (manual / YouTube metadata / Whisper fast-detect / Whisper full)
+- Whether Whisper received an explicit language hint or used auto-detect
+- Language correction history (if fast-detect was wrong and Whisper corrected it)
+- Whether the reference pipeline was recovered after language correction
+- LRCLIB lyrics availability (synced / plain / none)
+- LLM correction results and score breakdown
 
 ```commandline
 -i XYZ --write_settings_info
@@ -453,9 +467,17 @@ When LRCLIB provides **synced (timestamped) lyrics** for a song, UltraSinger use
 - **100% lyrics coverage** — every word from the verified reference lyrics is included
 - **Precise word-level timing** — wav2vec2 CTC alignment snaps words to the actual audio
 - **~2 minutes faster** — the expensive Whisper transcription step is skipped entirely
-- **Automatic language detection** — when no `--language` is specified, Whisper's tiny model detects the language in ~2-3 seconds (vs ~2 minutes for full transcription)
+- **Automatic language detection** — language is resolved in this order:
+  1. `--language` CLI flag (highest priority, manual override)
+  2. YouTube video metadata (yt-dlp extracts the video's language automatically)
+  3. Whisper tiny fast-detect (~2-3 seconds)
+  4. Whisper full transcription (fallback)
 
 The pipeline is **enabled by default** and falls back to standard Whisper transcription when no synced lyrics are available on LRCLIB. Use `--disable_reference_lyrics` to force the Whisper path.
+
+**Auto-recovery from wrong language detection:** If the fast language detection (Whisper tiny, ~2-3s) misidentifies the language (e.g. "cy" instead of "en"), the reference pipeline may fail because no alignment model exists for that language. In this case, UltraSinger automatically runs full Whisper transcription which detects the correct language, then **retries the reference pipeline** with the corrected language — recovering to full synced-lyrics quality without user intervention.
+
+**Plain lyrics** from LRCLIB (without timestamps) do not enable the reference pipeline. They are used to **post-correct** Whisper transcription by comparing words against the verified lyrics text, improving recall by ~5 percentage points. Timing still comes from Whisper in this case.
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used.
 

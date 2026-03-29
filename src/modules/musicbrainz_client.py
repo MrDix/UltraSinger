@@ -196,7 +196,10 @@ def __get_image(recording) -> (bytes, str):
                         image_url = image['image']
                         break
                 break
-            except musicbrainzngs.ResponseError:
+            except Exception as e:
+                # Catch all exceptions (including CAA errors) to prevent
+                # cover art failures from crashing the entire pipeline.
+                print(f"{ULTRASINGER_HEAD} Cover art download failed: {e}")
                 continue
     if image_data is not None:
         print(f"{ULTRASINGER_HEAD} Found cover image")
