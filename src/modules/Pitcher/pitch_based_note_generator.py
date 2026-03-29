@@ -430,6 +430,91 @@ def _overlay_lyrics(
 # Public API
 # ---------------------------------------------------------------------------
 
+def create_pitch_notes_only(
+    pitched_data: PitchedData,
+    allowed_notes: set[str] | None = None,
+    confidence_threshold: float = 0.3,
+    min_semitone_change: float = 2.0,
+    min_note_duration_ms: float = 80.0,
+    median_filter_window: int = 9,
+) -> list[MidiSegment]:
+    """Generate MIDI segments from pitch contour WITHOUT lyrics overlay.
+
+    Segments the pitch contour directly and creates notes from stable
+    pitch regions.  All notes have placeholder words (``"~ "``).
+    Used by the hybrid pipeline which handles lyrics assignment separately.
+
+    Args:
+        pitched_data: Raw pitch data from SwiftF0/FCPE.
+        allowed_notes: Optional key-quantization note set.
+        confidence_threshold: Minimum confidence for a frame to be voiced.
+        min_semitone_change: Minimum pitch change to trigger a new note.
+        min_note_duration_ms: Minimum note duration in ms.
+        median_filter_window: Window size for vibrato smoothing.
+
+    Returns:
+        List of MidiSegments with pitch-derived timing (word="~ ").
+    """
+    if not pitched_data or not pitched_data.times:
+        return []
+
+    # Stage 1: Find voiced regions
+    voiced_regions = _find_voiced_regions(
+        pitched_data,
+        confidence_threshold=confidence_threshold,
+    )
+
+    if not voiced_regions:
+        return []
+
+    # Stage 2: Smooth pitch contour and segment each voiced region
+    all_segments: list[MidiSegment] = []
+
+    for region_start, region_end in voiced_regions:
+        region_times = pitched_data.times[region_start:region_end]
+        region_freqs = pitched_data.frequencies[region_start:region_end]
+        region_confs = pitched_data.confidence[region_start:region_end]
+
+        smoothed = _median_filter_midi(
+            region_freqs, region_confs,
+            confidence_threshold=confidence_threshold,
+            window=median_filter_window,
+        )
+
+        sub_regions = _segment_voiced_region(
+            region_times, region_freqs, region_confs, smoothed,
+            min_semitone_change=min_semitone_change,
+            min_note_duration_ms=min_note_duration_ms,
+        )
+
+        for sub_start, sub_end in sub_regions:
+            if sub_start >= sub_end:
+                continue
+
+            sub_freqs = region_freqs[sub_start:sub_end]
+            sub_confs = region_confs[sub_start:sub_end]
+
+            note = _compute_note_for_frames(sub_freqs, sub_confs)
+
+            if allowed_notes is not None:
+                from modules.Audio.key_detector import quantize_note_to_key
+                note = quantize_note_to_key(note, allowed_notes)
+
+            seg_start_time = region_times[sub_start]
+            seg_end_time = region_times[min(sub_end - 1, len(region_times) - 1)]
+
+            if seg_end_time - seg_start_time < min_note_duration_ms / 1000.0:
+                seg_end_time = seg_start_time + min_note_duration_ms / 1000.0
+
+            all_segments.append(MidiSegment(note, seg_start_time, seg_end_time, "~ "))
+
+    # Stage 3: Merge short fragments and same-pitch neighbors
+    all_segments = _merge_short_notes(all_segments, min_note_duration_ms)
+    all_segments = _merge_same_pitch_neighbors(all_segments)
+
+    return all_segments
+
+
 def create_midi_segments_from_pitch(
     pitched_data: PitchedData,
     transcribed_data: list[TranscribedData],
@@ -458,73 +543,21 @@ def create_midi_segments_from_pitch(
     Returns:
         List of MidiSegments with pitch-derived timing and lyrics overlay.
     """
-    if not pitched_data or not pitched_data.times:
-        return []
-
     print(
         f"{ULTRASINGER_HEAD} Generating notes from pitch contour "
         f"(threshold={min_semitone_change} ST, "
         f"min_duration={min_note_duration_ms}ms)"
     )
 
-    # Stage 1: Find voiced regions
-    voiced_regions = _find_voiced_regions(
-        pitched_data,
-        confidence_threshold=confidence_threshold,
+    all_segments = create_pitch_notes_only(
+        pitched_data, allowed_notes,
+        confidence_threshold, min_semitone_change,
+        min_note_duration_ms, median_filter_window,
     )
 
-    if not voiced_regions:
+    if not all_segments:
         print(f"{ULTRASINGER_HEAD} No voiced regions found in pitch data")
         return []
-
-    # Stage 2: Smooth pitch contour and segment each voiced region
-    all_segments: list[MidiSegment] = []
-
-    for region_start, region_end in voiced_regions:
-        region_times = pitched_data.times[region_start:region_end]
-        region_freqs = pitched_data.frequencies[region_start:region_end]
-        region_confs = pitched_data.confidence[region_start:region_end]
-
-        # Median-filter the MIDI values to smooth vibrato
-        smoothed = _median_filter_midi(
-            region_freqs, region_confs,
-            confidence_threshold=confidence_threshold,
-            window=median_filter_window,
-        )
-
-        # Segment by pitch stability
-        sub_regions = _segment_voiced_region(
-            region_times, region_freqs, region_confs, smoothed,
-            min_semitone_change=min_semitone_change,
-            min_note_duration_ms=min_note_duration_ms,
-        )
-
-        # Create MidiSegments for each sub-region
-        for sub_start, sub_end in sub_regions:
-            if sub_start >= sub_end:
-                continue
-
-            sub_freqs = region_freqs[sub_start:sub_end]
-            sub_confs = region_confs[sub_start:sub_end]
-
-            note = _compute_note_for_frames(sub_freqs, sub_confs)
-
-            if allowed_notes is not None:
-                from modules.Audio.key_detector import quantize_note_to_key
-                note = quantize_note_to_key(note, allowed_notes)
-
-            seg_start_time = region_times[sub_start]
-            seg_end_time = region_times[min(sub_end - 1, len(region_times) - 1)]
-
-            # Ensure minimum duration
-            if seg_end_time - seg_start_time < min_note_duration_ms / 1000.0:
-                seg_end_time = seg_start_time + min_note_duration_ms / 1000.0
-
-            all_segments.append(MidiSegment(note, seg_start_time, seg_end_time, "~ "))
-
-    # Stage 3: Merge short fragments and same-pitch neighbors
-    all_segments = _merge_short_notes(all_segments, min_note_duration_ms)
-    all_segments = _merge_same_pitch_neighbors(all_segments)
 
     # Stage 4: Overlay lyrics from Whisper transcription
     all_segments = _overlay_lyrics(all_segments, transcribed_data)

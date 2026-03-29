@@ -355,6 +355,8 @@ class UltraSingerRunner(QObject):
             args.append("--no_pitch_change_split")
         if config.get("pitch_notes"):
             args.append("--pitch_notes")
+        if config.get("hybrid_pipeline"):
+            args.append("--hybrid_pipeline")
 
         # LLM correction
         if config.get("llm_correct"):

@@ -494,6 +494,16 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._pitch_notes.setChecked(
                                _DEFAULTS["pitch_notes"]))
 
+        self._hybrid_pipeline = ToggleSwitch(
+            checked=self._config.get("hybrid_pipeline", False)
+        )
+        card.add_toggle_row("Hybrid Pipeline", self._hybrid_pipeline,
+                           "Combine pitch-contour note boundaries with lyrics from "
+                           "WhisperX alignment for the best of both worlds: accurate "
+                           "note segmentation and maximum lyrics coverage.",
+                           reset_callback=lambda: self._hybrid_pipeline.setChecked(
+                               _DEFAULTS["hybrid_pipeline"]))
+
         self._vocal_gap_fill = ToggleSwitch(
             checked=self._config.get("vocal_gap_fill", False)
         )
@@ -942,6 +952,7 @@ class ConversionSettingsForm(QWidget):
             "vocal_gap_fill": self._vocal_gap_fill.isChecked(),
             "pitch_change_split": self._pitch_change_split.isChecked(),
             "pitch_notes": self._pitch_notes.isChecked(),
+            "hybrid_pipeline": self._hybrid_pipeline.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),

@@ -49,6 +49,7 @@ _DEFAULTS = {
     "vocal_gap_fill": False,
     "pitch_change_split": True,
     "pitch_notes": False,
+    "hybrid_pipeline": False,
     "keep_numbers": False,
     # Lyrics Lookup
     "disable_lyrics_lookup": False,

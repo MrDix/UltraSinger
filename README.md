@@ -200,6 +200,9 @@ _Not all options working now!_
                             melismatic songs with runs and slides. Notes are segmented by pitch stability, then
                             split at word boundaries so each word gets its own note. When lyrics lookup is active,
                             reference lyrics fill remaining placeholder notes. Disabled by default.
+    --hybrid_pipeline       Hybrid pipeline: pitch-contour note boundaries + lyrics from WhisperX alignment
+                            (experimental). Combines the best note segmentation from pitch contours with the
+                            best lyrics coverage from reference lyrics or Whisper. Disabled by default.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup. Enabled by default, fetches verified reference
                             lyrics to correct Whisper transcription errors. No API key needed.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
@@ -537,6 +540,14 @@ Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones 
 
 ```commandline
 -i XYZ --pitch_notes
+```
+
+#### Hybrid Pipeline (`--hybrid_pipeline`)
+
+Combines the best of both worlds: note boundaries from pitch contour analysis and lyrics from WhisperX forced alignment (or Whisper transcription). The pitch track segments notes by pitch stability (same as `--pitch_notes`), while the lyrics track provides word-level timing via LRCLIB + WhisperX CTC alignment. The fusion engine assigns words to pitch notes by time overlap, splits notes at word boundaries when multiple words overlap a single pitch region, and creates gap notes for words without pitch coverage.
+
+```commandline
+-i XYZ --hybrid_pipeline
 ```
 
 #### Freestyle Detection (`--detect_freestyle`)
