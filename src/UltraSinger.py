@@ -797,15 +797,15 @@ def _write_settings_info_file(
                     hint_lang = settings.language or detected_language or "?"
                     f.write(f"  Whisper language hint:     yes (--language {hint_lang})\n")
                 else:
-                    f.write(f"  Whisper language hint:     no (auto-detect)\n")
+                    f.write("  Whisper language hint:     no (auto-detect)\n")
 
             # Language correction (if initial fast-detect was wrong)
             if initial_language and initial_language != detected_language:
                 f.write(f"  Language correction:       {initial_language} -> {detected_language}\n")
                 if reference_recovered:
-                    f.write(f"  Reference recovery:        yes (retried with corrected language)\n")
+                    f.write("  Reference recovery:        yes (retried with corrected language)\n")
                 else:
-                    f.write(f"  Reference recovery:        no (stayed on Whisper pipeline)\n")
+                    f.write("  Reference recovery:        no (stayed on Whisper pipeline)\n")
             f.write("\n")
 
             # Post-processing

@@ -943,7 +943,11 @@ class ConversionSettingsForm(QWidget):
         def _check():
             try:
                 import urllib.request
+                import urllib.parse
                 url = f"https://huggingface.co/api/models/{model_id}"
+                # SSRF guard: ensure the final URL still uses https
+                if not urllib.parse.urlparse(url).scheme == "https":
+                    raise ValueError("URL scheme must be https")
                 req = urllib.request.Request(url, method="HEAD")
                 req.add_header("User-Agent", "UltraSinger")
                 with urllib.request.urlopen(req, timeout=5) as resp:
