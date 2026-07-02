@@ -45,10 +45,21 @@ sed -i '' 's|whl/cu[0-9]*|whl/cpu|' pyproject.toml
 # Regenerate lockfile with CPU PyTorch index and sync
 echo "Resolving dependencies..."
 uv lock
-echo "Syncing dependencies (core + GUI + scoring)..."
-uv sync --extra gui --extra scoring
+echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
+uv sync --extra gui --extra scoring --extra potoken
 
-echo "Installation completed successfully!"
+# Set up the PO-token provider (Node.js) for full-quality YouTube downloads
+POT_RC=0
+bash install/setup_potoken_provider.sh "install/CPU/macos_cpu.sh" || POT_RC=$?
+
+echo ""
+echo "Installation completed."
+if [ "$POT_RC" = "0" ]; then
+    echo "Full-quality YouTube downloads are enabled."
+else
+    echo "NOTE: full-quality YouTube downloads are NOT enabled yet -"
+    echo "see the PO-token provider section above for what to do."
+fi
 echo ""
 echo "To run UltraSinger:"
 echo "  source .venv/bin/activate"

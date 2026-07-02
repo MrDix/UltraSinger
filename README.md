@@ -127,6 +127,22 @@ Or use the platform-specific launcher scripts:
 
 > **Note:** The GUI is a native desktop application (Qt). It requires a display and cannot run inside a Docker container. Use the [CLI](#run-cli) for containerized workflows.
 
+#### Full-quality YouTube downloads (PO token)
+
+YouTube now delivers its player streams via **SABR**, where the media data and the required *Proof-of-Origin* (PO) token are sent in binary POST bodies that an embedded browser cannot read. Without a PO token, `yt-dlp` is limited to a reduced format set (typically 360p) or blocked with HTTP 403.
+
+To restore full-quality downloads UltraSinger uses the maintained [`bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider) yt-dlp plugin (installed by the install scripts via the `potoken` extra). The plugin fetches PO tokens from a small local **provider server**.
+
+- **Node.js (default, no Docker):** if [Node.js](https://nodejs.org) is installed, the install scripts build the provider automatically into `.potoken/` and the **GUI starts it on launch and stops it on exit** — nothing else to do. If Node.js was missing during install, install it and re-run the install script. The console tab reports the provider status (`[PO-Token] …`).
+- **Docker (fallback):** if no Node.js provider is set up but Docker is available, the GUI auto-starts the container `brainicism/bgutil-ytdlp-pot-provider` on port 4416 instead. You can also run it yourself:
+  ```bash
+  docker run -d --rm -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
+  ```
+
+Once a provider responds on `http://127.0.0.1:4416`, `yt-dlp` uses it transparently for every download (GUI and CLI). If no provider is available the app still works, but YouTube downloads fall back to the limited formats.
+
+Provider behaviour can be tuned in the GUI config (`~/.ultrasinger`): `potoken_auto_start` (check on launch), `potoken_auto_start_node` / `potoken_auto_start_docker` (allow the respective auto-launch), `potoken_base_url` (custom server URL).
+
 ## 📖 How to use the App
 
 _Not all options working now!_
