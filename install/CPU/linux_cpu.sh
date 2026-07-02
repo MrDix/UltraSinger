@@ -49,9 +49,17 @@ echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
 uv sync --extra gui --extra scoring --extra potoken
 
 # Set up the PO-token provider (Node.js) for full-quality YouTube downloads
-bash install/setup_potoken_provider.sh
+POT_RC=0
+bash install/setup_potoken_provider.sh "install/CPU/linux_cpu.sh" || POT_RC=$?
 
-echo "Installation completed successfully!"
+echo ""
+echo "Installation completed."
+if [ "$POT_RC" = "0" ]; then
+    echo "Full-quality YouTube downloads are enabled."
+else
+    echo "NOTE: full-quality YouTube downloads are NOT enabled yet -"
+    echo "see the PO-token provider section above for what to do."
+fi
 echo ""
 echo "To run UltraSinger:"
 echo "  source .venv/bin/activate"

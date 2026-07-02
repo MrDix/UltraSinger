@@ -108,7 +108,8 @@ if !errorlevel! neq 0 (
 )
 
 REM Set up the PO-token provider (Node.js) for full-quality YouTube downloads
-call install\setup_potoken_provider.bat
+call install\setup_potoken_provider.bat "install\CUDA\windows_cuda_gpu.bat"
+set "POT_RC=!errorlevel!"
 
 :: Protect local CUDA config from being reverted by git operations
 :: (branch switches, pulls, etc. would otherwise reset to CPU default)
@@ -119,6 +120,13 @@ if !errorlevel! equ 0 (
     git update-index --skip-worktree uv.lock
 )
 
-echo Installation completed successfully!
+echo.
+echo Installation completed.
+if "!POT_RC!"=="0" (
+    echo Full-quality YouTube downloads are enabled.
+) else (
+    echo NOTE: full-quality YouTube downloads are NOT enabled yet -
+    echo see the PO-token provider section above for what to do.
+)
 echo.
 pause

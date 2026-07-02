@@ -115,8 +115,16 @@ if !errorlevel! neq 0 (
 )
 
 REM Set up the PO-token provider (Node.js) for full-quality YouTube downloads
-call install\setup_potoken_provider.bat
+call install\setup_potoken_provider.bat "install\CPU\windows_cpu.bat"
+set "POT_RC=!errorlevel!"
 
-echo Installation completed successfully!
+echo.
+echo Installation completed.
+if "!POT_RC!"=="0" (
+    echo Full-quality YouTube downloads are enabled.
+) else (
+    echo NOTE: full-quality YouTube downloads are NOT enabled yet -
+    echo see the PO-token provider section above for what to do.
+)
 echo.
 pause
