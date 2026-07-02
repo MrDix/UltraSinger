@@ -739,6 +739,7 @@ def _write_settings_info_file(
             f.write(f"  Input:                    {settings.input_file_path}\n")
             f.write(f"  Output folder:            {settings.output_folder_path}\n")
             f.write(f"  Format version:           {settings.format_version.value}\n")
+            f.write(f"  PO token used:            {bool(settings.yt_po_token)}\n")
             f.write("\n")
 
             # Transcription
@@ -1263,6 +1264,7 @@ def InitProcessData():
         ) = download_from_youtube(
             settings.input_file_path, settings.output_folder_path, settings.cookiefile,
             keep_audio_in_video=settings.keep_audio_in_video,
+            po_token=settings.yt_po_token,
         )
     else:
         # Audio/Video File
@@ -1278,7 +1280,7 @@ def InitProcessData():
             try:
                 from modules.Audio.youtube import get_youtube_title
                 yt_artist, yt_title, _video_title, yt_language = get_youtube_title(
-                    settings.youtube_url, settings.cookiefile
+                    settings.youtube_url, settings.cookiefile, settings.yt_po_token
                 )
                 print(
                     f"{ULTRASINGER_HEAD} YouTube metadata: "
@@ -1895,6 +1897,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.llm_retry_max = int(arg)
         elif opt in ("--youtube_url"):
             settings.youtube_url = arg
+        elif opt in ("--yt_po_token"):
+            settings.yt_po_token = arg
         elif opt in ("--refine_from_vocal"):
             settings.refine_from_vocal = True
         elif opt in ("--disable_refine"):
@@ -1988,6 +1992,7 @@ def arg_options():
         "llm_retry_wait=",
         "llm_retry_max=",
         "youtube_url=",
+        "yt_po_token=",
         "refine_from_vocal",
         "disable_refine",
         "disable_refine_pitch",

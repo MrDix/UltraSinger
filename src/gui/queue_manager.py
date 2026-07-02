@@ -230,20 +230,55 @@ class QueueManager(QObject):
         )
         self.line_output.emit("")
 
-        # Try interceptor path for URL items with a captured audio stream
+        # Preferred path: the session PO token captured from the browser
+        # lets yt-dlp download the FULL format list (best audio + video)
+        # with the exported cookies — no stream interception needed.
+        po_token = ""
+        if next_item.input_type == "url" and self._media_interceptor is not None:
+            po_token = getattr(self._media_interceptor, "get_po_token", lambda: "")()
+            if po_token:
+                merged["yt_po_token"] = po_token
+                self.line_output.emit(
+                    "[Queue] Browser PO token captured - using yt-dlp with "
+                    "full-quality formats"
+                )
+
+        # Interceptor stream path for URL items (fallback when no PO token)
         if (
             next_item.input_type == "url"
-            and next_item.video_id
             and self._media_interceptor is not None
+            and not po_token
         ):
-            stream = self._media_interceptor.get_stream(next_item.video_id)
-            if stream and not stream.is_expired:
+            if not next_item.video_id:
                 self.line_output.emit(
-                    f"[Queue] Browser audio stream available "
-                    f"(expires in {stream.seconds_until_expiry:.0f}s)"
+                    "[Queue] No video ID on this item - browser interception "
+                    "unavailable, falling back to yt-dlp"
                 )
-                self._start_intercepted_download(next_item, merged, stream)
-                return
+            else:
+                stream, status = self._media_interceptor.get_stream_with_status(
+                    next_item.video_id
+                )
+                if stream:
+                    self.line_output.emit(
+                        f"[Queue] Browser audio stream available "
+                        f"(expires in {stream.seconds_until_expiry:.0f}s)"
+                    )
+                    self._start_intercepted_download(next_item, merged, stream)
+                    return
+                if status == "expired":
+                    self.line_output.emit(
+                        "[Queue] Intercepted browser stream has EXPIRED - "
+                        "falling back to yt-dlp (bot-detection risk). "
+                        "Re-play the video in the browser tab shortly before "
+                        "starting the queue to refresh it."
+                    )
+                else:
+                    self.line_output.emit(
+                        "[Queue] No intercepted browser stream for this video - "
+                        "falling back to yt-dlp (bot-detection risk). "
+                        "Play the video for a few seconds in the browser tab "
+                        "before queueing so the audio stream can be captured."
+                    )
 
         # Fallback: standard yt-dlp path
         args = self._runner.build_args(merged, next_item.input_source)
@@ -267,9 +302,22 @@ class QueueManager(QObject):
         """
         from .media_downloader import start_media_download
 
-        # Choose file extension from stream mime type
-        _MIME_EXT = {"audio/webm": ".webm", "audio/mp4": ".m4a"}
-        ext = _MIME_EXT.get(stream.mime_type, ".webm")
+        # Choose file extension from stream mime type.  Muxed progressive
+        # streams (video/mp4) are kept as full videos: UltraSinger demuxes
+        # the audio itself and the output song gets its background video.
+        is_muxed = getattr(stream, "is_muxed", False)
+        _MIME_EXT = {
+            "audio/webm": ".webm",
+            "audio/mp4": ".m4a",
+            "video/mp4": ".mp4",
+        }
+        ext = _MIME_EXT.get(stream.mime_type, ".mp4" if is_muxed else ".webm")
+
+        if is_muxed:
+            self.line_output.emit(
+                "[Queue] No separate audio stream available (SABR delivery) - "
+                "downloading the progressive stream (360p video + AAC audio)"
+            )
 
         # Always download into the configured output folder so UltraSinger
         # derives the correct output directory from the local file path.
@@ -278,7 +326,9 @@ class QueueManager(QObject):
             Path(output_dir) / f"_intercepted_{item.video_id}{ext}"
         )
 
-        thread, worker = start_media_download(stream.url, audio_path, self)
+        thread, worker = start_media_download(
+            stream.url, audio_path, keep_video=is_muxed, parent=self
+        )
         self._download_thread = thread
         self._download_worker = worker
 
