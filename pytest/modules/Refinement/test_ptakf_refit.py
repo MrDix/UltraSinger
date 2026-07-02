@@ -153,6 +153,11 @@ class TestPlanFillSegments:
         fills = _plan_fill_segments(grid, min_fill_beats=4, min_note_beats=0.0)
         assert fills == []
 
+    def test_run_exactly_at_min_fill_beats_is_filled(self):
+        grid = [-1] * 4 + [10] * 4 + [-1] * 4
+        fills = _plan_fill_segments(grid, min_fill_beats=4, min_note_beats=0.0)
+        assert fills == [(4, 4, 46)]
+
     def test_covered_beats_break_runs(self):
         # 8 voiced beats but the middle two are masked as covered (-3):
         # neither remaining half reaches min_fill_beats=4
