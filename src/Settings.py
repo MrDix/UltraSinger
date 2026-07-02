@@ -53,6 +53,10 @@ class Settings:
     refine_hit_ratio: float = 0.4  # Notes below this hit ratio are pitch-corrected (0.0-1.0)
     refine_timing_threshold: float = 30.0  # Milliseconds deviation before correcting
 
+    # ptAKF chart refit (score-first chart: note boundaries/pitches from the game's detector)
+    ptakf_refit = False  # Rebuild note boundaries and pitches from ptAKF beat tones
+    ptakf_refit_min_note_ms: float = 100.0  # Merge refit notes shorter than this when score-neutral
+
     # Process data Paths
     input_file_path = ""
     output_folder_path = ""
