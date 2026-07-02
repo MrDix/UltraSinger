@@ -28,7 +28,7 @@ dependencies = [
     "unidecode",
     "pyhyphen",
     "tqdm",
-    "yt-dlp[default]",
+    "yt-dlp[default]>=2026.6.9",
     "deno",
     "music21",
     "dataclasses",
