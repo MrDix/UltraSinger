@@ -38,6 +38,9 @@ dependencies = [
     "torchvision==0.23.0",
     "torchfcpe>=0.0.4",
     "audio-separator>=0.25",
+    # chardet 6+/7+ breaks an implicit dependency of requests and can prevent
+    # UltraSinger from starting (upstream fix, rakuri255/UltraSinger#324)
+    "chardet<6.0.0",
 ]
 
 [project.optional-dependencies]
