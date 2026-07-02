@@ -42,6 +42,7 @@ class QueueManager(QObject):
         self._current_item: QueueItem | None = None
         self._global_config: dict = {}
         self._media_interceptor: MediaInterceptor | None = None
+        self._potoken_available = False  # bgutil PO-token provider is running
         self._download_thread: QThread | None = None
         self._download_worker = None  # MediaDownloadWorker | None
 
@@ -73,6 +74,15 @@ class QueueManager(QObject):
     def set_media_interceptor(self, interceptor: MediaInterceptor):
         """Set the media interceptor for capturing browser audio URLs."""
         self._media_interceptor = interceptor
+
+    def set_potoken_available(self, available: bool):
+        """Mark whether the bgutil PO-token provider is running.
+
+        When it is, plain yt-dlp downloads any URL in full quality (via the
+        plugin + provider), so the browser stream-interception path and its
+        bot-detection warnings are unnecessary.
+        """
+        self._potoken_available = available
 
     def add_item(
         self, source: str, input_type: str, title: str
@@ -230,11 +240,23 @@ class QueueManager(QObject):
         )
         self.line_output.emit("")
 
-        # Preferred path: the session PO token captured from the browser
-        # lets yt-dlp download the FULL format list (best audio + video)
-        # with the exported cookies — no stream interception needed.
+        # Preferred path: the bgutil PO-token provider. When it runs, plain
+        # yt-dlp (with the plugin + exported cookies) downloads any URL in
+        # full quality — no interception needed.
+        if next_item.input_type == "url" and self._potoken_available:
+            self.line_output.emit(
+                "[Queue] Using yt-dlp with the PO-token provider - "
+                "full-quality download"
+            )
+
+        # Next: a session PO token captured from the browser (legacy path;
+        # empty under SABR delivery).
         po_token = ""
-        if next_item.input_type == "url" and self._media_interceptor is not None:
+        if (
+            next_item.input_type == "url"
+            and self._media_interceptor is not None
+            and not self._potoken_available
+        ):
             po_token = getattr(self._media_interceptor, "get_po_token", lambda: "")()
             if po_token:
                 merged["yt_po_token"] = po_token
@@ -243,10 +265,12 @@ class QueueManager(QObject):
                     "full-quality formats"
                 )
 
-        # Interceptor stream path for URL items (fallback when no PO token)
+        # Interceptor stream path for URL items (fallback when no provider
+        # and no PO token)
         if (
             next_item.input_type == "url"
             and self._media_interceptor is not None
+            and not self._potoken_available
             and not po_token
         ):
             if not next_item.video_id:

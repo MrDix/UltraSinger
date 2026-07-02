@@ -237,15 +237,18 @@ _CONVERT_OVERLAY_JS = r"""
         return params.get('v') || '';
     }
 
-    /* The button is only clickable once the audio stream of the CURRENT
-       video has been captured by the media interceptor.  The Python side
-       calls window.__ultrasingerSetQueueReady('<videoId>') when that
-       happens; until then a non-clickable "loading" hint is shown. */
+    /* The button is clickable when EITHER the PO-token provider is running
+       (yt-dlp can then download any video in full quality) OR the audio
+       stream of the CURRENT video was captured by the media interceptor.
+       The Python side calls window.__ultrasingerSetProviderReady(true) /
+       window.__ultrasingerSetQueueReady('<videoId>') accordingly; until
+       then a non-clickable "loading" hint is shown. */
     function applyBtnState() {
         var btn = document.getElementById('ultrasinger-convert-btn');
         if (!btn) return;
         var vid = currentVideoId();
-        var ready = vid !== '' && window.__ultrasingerReadyVideoId === vid;
+        var ready = window.__ultrasingerProviderReady === true ||
+                    (vid !== '' && window.__ultrasingerReadyVideoId === vid);
         var state = ready ? '1' : '0';
         if (btn.dataset.ready === state && btn.dataset.videoId === vid) return;
         btn.dataset.ready = state;
@@ -257,10 +260,15 @@ _CONVERT_OVERLAY_JS = r"""
         } else {
             btn.textContent = '\u23F3 loading...';
             btn.style.cssText = LOADING_CSS;
-            btn.title = 'Waiting for the audio stream - ' +
-                        'play the video so it can be captured';
+            btn.title = 'Waiting for the download source - the PO-token ' +
+                        'provider is starting, or play the video to capture it';
         }
     }
+
+    window.__ultrasingerSetProviderReady = function(ready) {
+        window.__ultrasingerProviderReady = ready;
+        applyBtnState();
+    };
 
     window.__ultrasingerSetQueueReady = function(videoId) {
         window.__ultrasingerReadyVideoId = videoId;
@@ -417,28 +425,14 @@ class BrowserTab(QWidget):
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
 
-        # Normalize the user agent: the default contains a
-        # "QtWebEngine/x.y.z" token that YouTube uses to detect embedded
-        # browsers and then serves a degraded player (progressive 360p
-        # without separate audio streams — which also starves the media
-        # interceptor).  Strip the token so the UA matches a real Chrome
-        # of the same Chromium version.
-        #
-        # Google's SIGN-IN flow however rejects a Chrome UA coming from a
-        # browser without Chrome's client hints ("This browser or app may
-        # not be secure").  Firefox has no client hints, so a Firefox UA
-        # is consistent and passes the sign-in check.  We therefore switch
-        # the UA per host: Firefox on Google account/login domains, Chrome
-        # everywhere else (see _select_ua_for, called on every navigation).
-        default_ua = self._profile.httpUserAgent()
-        self._chrome_ua = re.sub(r"\s*QtWebEngine/\S+", "", default_ua)
-        os_match = re.search(r"\(([^)]+)\)", default_ua)
-        os_part = os_match.group(1) if os_match else "Windows NT 10.0; Win64; x64"
-        self._login_ua = (
-            f"Mozilla/5.0 ({os_part}; rv:140.0) Gecko/20100101 Firefox/140.0"
-        )
-        self._profile.setHttpUserAgent(self._chrome_ua)
-        logger.info("Browser UA normalized: %s", self._chrome_ua)
+        # NOTE: we intentionally keep the DEFAULT QtWebEngine user agent.
+        # Spoofing a plain Chrome UA (to coax YouTube's high-quality player)
+        # breaks Google sign-in ("This browser or app may not be secure",
+        # because a Chrome UA without Chrome client hints is rejected).
+        # Full-quality downloads no longer depend on the embedded player at
+        # all — they go through yt-dlp + the bgutil PO-token provider — so
+        # the browser only needs to log in and pick videos, which the
+        # default UA does reliably.
 
         # Real browsers always send an Accept-Language header; the Qt
         # default is empty, which is another embedded-browser fingerprint.
@@ -457,6 +451,9 @@ class BrowserTab(QWidget):
         # Set by MainWindow to the configured cookie-file path; when set,
         # the format probe exports and uses the browser cookies
         self.probe_cookie_file: str = ""
+        # True once the PO-token provider is running (enables the Queue
+        # button globally; re-asserted to the page on every navigation)
+        self._provider_ready: bool = False
 
         # Media interceptor — passively captures audio stream URLs
         self.media_interceptor = MediaInterceptor(self)
@@ -542,33 +539,21 @@ class BrowserTab(QWidget):
 
     # ── URL bar ──────────────────────────────────────────────────────────
 
-    _LOGIN_HOSTS = ("accounts.youtube.com", "myaccount.google.com")
-
-    def _select_ua_for(self, url: QUrl):
-        """Switch the profile UA depending on the destination host.
-
-        Google's sign-in rejects a Chrome UA without Chrome client hints,
-        while YouTube degrades the player for non-Chrome/embedded UAs —
-        so login domains get a Firefox UA and everything else Chrome.
-        """
-        host = url.host()
-        is_login = host in self._LOGIN_HOSTS or host.endswith("accounts.google.com")
-        target = self._login_ua if is_login else self._chrome_ua
-        if self._profile.httpUserAgent() != target:
-            self._profile.setHttpUserAgent(target)
-            logger.info(
-                "Browser UA switched to %s profile for %s",
-                "login (Firefox)" if is_login else "web (Chrome)", host,
-            )
-
     def _on_url_changed(self, url: QUrl):
         """Sync URL bar with the browser's current location."""
-        self._select_ua_for(url)
         self._url_bar.setText(url.toString())
 
         # Track current video ID for interceptor assignment
         params = parse_qs(urlparse(url.toString()).query)
         self._current_video_id = params.get("v", [""])[0]
+
+        # Re-assert provider readiness on the fresh page (a full page load
+        # resets window globals, so the overlay must be told again).
+        if self._provider_ready and self._page:
+            self._page.runJavaScript(
+                "window.__ultrasingerSetProviderReady && "
+                "window.__ultrasingerSetProviderReady(true);"
+            )
 
         # Probe available formats when navigating to a video page
         if self._current_video_id:
@@ -596,6 +581,23 @@ class BrowserTab(QWidget):
         """Session PO token captured — the Queue button can be unlocked."""
         if getattr(self, "_current_video_id", ""):
             self._notify_queue_ready(self._current_video_id)
+
+    def set_provider_ready(self, ready: bool):
+        """Enable the Queue button globally once the PO-token provider runs.
+
+        With the provider up, yt-dlp downloads any video in full quality, so
+        the button no longer needs a per-video captured stream.  Also
+        re-probes the current video so the quality badge reflects the full
+        format list instead of the anonymous 360p fallback.
+        """
+        self._provider_ready = ready
+        if self._page:
+            self._page.runJavaScript(
+                "window.__ultrasingerSetProviderReady && "
+                f"window.__ultrasingerSetProviderReady({str(bool(ready)).lower()});"
+            )
+        if ready and getattr(self, "_current_video_id", ""):
+            self._probe_formats(self._current_video_id)
 
     def _notify_queue_ready(self, video_id: str):
         """Tell the overlay script that the Queue button may be enabled."""

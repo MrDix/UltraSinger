@@ -215,12 +215,17 @@ class MainWindow(QMainWindow):
         self._potoken_thread.start()
 
     def _on_potoken_ready(self, status):
-        """Report PO-token provider status to the console tab."""
+        """Report PO-token provider status and unlock the Queue button."""
         self._potoken_status = status
         if status is None or self._closing:
             return
         prefix = "[PO-Token] " if status.running else "[PO-Token] WARNING: "
         self._queue_tab.append_log(prefix + status.detail)
+        if status.running:
+            # With the provider up, yt-dlp downloads any video in full
+            # quality — enable the browser Queue button globally.
+            self._browser_tab.set_provider_ready(True)
+            self._queue_mgr.set_potoken_available(True)
 
     def _shutdown_potoken_provider(self):
         """Cancel a pending provider start and stop one we launched."""
