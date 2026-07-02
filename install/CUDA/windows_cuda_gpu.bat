@@ -107,6 +107,9 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 
+REM Set up the PO-token provider (Node.js) for full-quality YouTube downloads
+call install\setup_potoken_provider.bat
+
 :: Protect local CUDA config from being reverted by git operations
 :: (branch switches, pulls, etc. would otherwise reset to CPU default)
 where git >nul 2>&1

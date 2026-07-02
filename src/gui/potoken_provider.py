@@ -9,42 +9,65 @@ plugin installed (same venv as yt-dlp) and the server reachable, yt-dlp
 transparently obtains PO tokens and restores the full format list.
 
 This module only manages the *server*: it checks whether one is already
-running and, when possible, starts one via Docker.  It never blocks the
-GUI and fails open — if no provider is available the app keeps working
-with the previous (degraded) behaviour.
+running and, when possible, starts one.  A local **Node.js** server is
+preferred (set up by the install scripts, no Docker needed); Docker is a
+fallback when its image is available.  It never blocks the GUI and fails
+open — if no provider is available the app keeps working with the
+previous (degraded) behaviour.
 
-Provider server options (either works; the plugin auto-detects the
-default port 4416):
+Provider server options (the plugin auto-detects the default port 4416):
+  * Node.js: the install scripts build the provider under ``.potoken/``;
+    the GUI launches ``node <server>/build/main.js`` on startup.
   * Docker:  docker run -d --rm -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
-  * Node.js: clone the repo, ``npm install`` in ``server/`` and run it.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
+import threading
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://127.0.0.1:4416"
+_DEFAULT_PORT = 4416
 _DOCKER_IMAGE = "brainicism/bgutil-ytdlp-pot-provider"
-_CONTAINER_NAME = "ultrasinger-bgutil-pot"
+_CONTAINER_PREFIX = "ultrasinger-bgutil-pot"
 _PING_TIMEOUT = 2.0
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+# Concrete plugin module shipped by bgutil-ytdlp-pot-provider (checking the
+# shared ``yt_dlp_plugins`` namespace would match any unrelated yt-dlp plugin)
+_PLUGIN_MODULE = "yt_dlp_plugins.extractor.getpot_bgutil"
+_PLUGIN_DIST = "bgutil-ytdlp-pot-provider"
+
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# Location the install scripts build the Node provider into (repo-relative).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_NODE_SERVER_ENTRY = (
+    _REPO_ROOT / ".potoken" / "bgutil-ytdlp-pot-provider"
+    / "server" / "build" / "main.js"
+)
 
 
 @dataclass
 class ProviderStatus:
     """Result of ensuring the PO-token provider is available."""
 
-    running: bool                # a provider server responds on base_url
-    started_by_us: bool = False  # we launched the Docker container
+    running: bool                 # a provider server responds on base_url
+    started_by_us: bool = False   # we launched the server
     base_url: str = DEFAULT_BASE_URL
-    detail: str = ""             # human-readable status / setup hint
+    container_id: str = ""        # id of the Docker container we started
+    process: object = field(default=None, repr=False)  # Popen of a Node server
+    detail: str = ""              # human-readable status / setup hint
 
     @property
     def plugin_installed(self) -> bool:
@@ -52,21 +75,54 @@ class ProviderStatus:
 
 
 def _is_plugin_installed() -> bool:
-    """True if the bgutil yt-dlp plugin is importable in this venv."""
+    """True if the concrete bgutil yt-dlp plugin is available in this venv."""
+    import importlib.metadata
     import importlib.util
 
-    return importlib.util.find_spec("yt_dlp_plugins") is not None
+    try:
+        if importlib.util.find_spec(_PLUGIN_MODULE) is not None:
+            return True
+    except (ImportError, ValueError):
+        pass
+    # Fallback: the distribution is installed even if the namespace import
+    # cannot be resolved standalone.
+    try:
+        importlib.metadata.distribution(_PLUGIN_DIST)
+        return True
+    except importlib.metadata.PackageNotFoundError:
+        return False
+
+
+def _normalize_base_url(base_url: str) -> tuple[str, int]:
+    """Validate and normalize ``base_url``.
+
+    Returns ``(normalized_url, port)``.  Only HTTP(S) loopback URLs are
+    accepted (the provider is always local); anything else raises
+    ``ValueError`` so callers fall back to the default.
+    """
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"unsupported scheme: {parsed.scheme!r}")
+    host = parsed.hostname
+    if host not in _LOOPBACK_HOSTS:
+        raise ValueError(f"non-loopback host: {host!r}")
+    port = parsed.port or _DEFAULT_PORT
+    return f"{parsed.scheme}://{host}:{port}", port
 
 
 def is_provider_running(base_url: str = DEFAULT_BASE_URL) -> bool:
     """Check whether a bgutil provider server responds on ``base_url``."""
     try:
-        with urllib.request.urlopen(
-            f"{base_url}/ping", timeout=_PING_TIMEOUT
+        normalized, _ = _normalize_base_url(base_url)
+    except ValueError as e:
+        logger.warning("Invalid PO-token provider URL %r: %s", base_url, e)
+        return False
+    try:
+        with urllib.request.urlopen(  # noqa: S310 — validated loopback URL
+            f"{normalized}/ping", timeout=_PING_TIMEOUT
         ) as resp:
             if resp.status != 200:
                 return False
-            # /ping returns JSON (server_uptime, version, ...); tolerate any
             try:
                 json.loads(resp.read().decode("utf-8", "replace") or "{}")
             except ValueError:
@@ -76,57 +132,81 @@ def is_provider_running(base_url: str = DEFAULT_BASE_URL) -> bool:
         return False
 
 
-def _docker_available() -> bool:
-    if not shutil.which("docker"):
-        return False
+def _node_exe() -> str | None:
+    """Absolute path to the node executable, or None if not on PATH."""
+    return shutil.which("node")
+
+
+def _start_node_provider(node: str, entry: Path) -> subprocess.Popen | None:
+    """Launch the local Node provider server.  Returns the Popen or None."""
+    try:
+        proc = subprocess.Popen(
+            [node, str(entry)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(entry.parent),
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("Failed to start bgutil provider via Node: %s", e)
+        return None
+    return proc
+
+
+def _docker_exe() -> str | None:
+    """Absolute path to the docker executable, or None if not on PATH."""
+    return shutil.which("docker")
+
+
+def _docker_available(docker: str) -> bool:
     try:
         r = subprocess.run(
-            ["docker", "info"],
+            [docker, "info"],
             capture_output=True, timeout=8,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=_CREATE_NO_WINDOW,
         )
         return r.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
 
-def _start_docker_provider(base_url: str) -> bool:
-    """Best-effort: launch the provider container.  Returns True on start."""
-    # Remove a stale container of the same name first (ignore errors).
-    try:
-        subprocess.run(
-            ["docker", "rm", "-f", _CONTAINER_NAME],
-            capture_output=True, timeout=15,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+def _start_docker_provider(docker: str, port: int) -> str:
+    """Best-effort: launch the provider container.
 
-    port = base_url.rsplit(":", 1)[-1]
+    Returns the container id on success, "" on failure.  Uses a
+    process-unique container name and captures the id so cleanup only ever
+    touches the container this process started.
+    """
+    name = f"{_CONTAINER_PREFIX}-{os.getpid()}"
     try:
         r = subprocess.run(
-            ["docker", "run", "-d", "--rm", "--name", _CONTAINER_NAME,
+            [docker, "run", "-d", "--rm", "--name", name,
              "-p", f"{port}:4416", _DOCKER_IMAGE],
             capture_output=True, timeout=60,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=_CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to start bgutil provider via Docker: %s", e)
-        return False
+        return ""
     if r.returncode != 0:
         logger.warning(
             "docker run for bgutil provider failed: %s",
             r.stderr.decode("utf-8", "replace").strip()[:300],
         )
-        return False
-    return True
+        return ""
+    return r.stdout.decode("utf-8", "replace").strip()
 
 
-def _wait_until_running(base_url: str, attempts: int = 15) -> bool:
+def _wait_until_running(
+    base_url: str, attempts: int = 15,
+    cancel: threading.Event | None = None,
+) -> bool:
     """Poll the provider until it responds (container needs a moment)."""
     import time
 
     for _ in range(attempts):
+        if cancel is not None and cancel.is_set():
+            return False
         if is_provider_running(base_url):
             return True
         time.sleep(1.0)
@@ -135,57 +215,109 @@ def _wait_until_running(base_url: str, attempts: int = 15) -> bool:
 
 _SETUP_HINT = (
     "PO-token provider not available - YouTube downloads may be limited to "
-    "360p / blocked (HTTP 403). Start a provider to restore full quality:\n"
-    "  Docker: docker run -d --rm -p 4416:4416 "
-    "brainicism/bgutil-ytdlp-pot-provider\n"
-    "  or see https://github.com/Brainicism/bgutil-ytdlp-pot-provider "
-    "for a Node.js setup."
+    "360p / blocked (HTTP 403). Re-run the install script to set up the "
+    "Node.js provider (it needs Node.js from https://nodejs.org installed), "
+    "or start one manually - see "
+    "https://github.com/Brainicism/bgutil-ytdlp-pot-provider."
 )
 
 
 def ensure_provider(
     base_url: str = DEFAULT_BASE_URL,
+    auto_start_node: bool = True,
     auto_start_docker: bool = True,
+    node_entry: Path | None = None,
+    cancel: threading.Event | None = None,
 ) -> ProviderStatus:
     """Ensure a PO-token provider is reachable.
 
-    Never raises.  If a server already runs, reports it.  Otherwise tries
-    to start one via Docker (when available and ``auto_start_docker``),
-    else returns a status carrying a setup hint.
+    Never raises.  Order: an already-running server → a local Node server
+    (preferred, no Docker needed) → Docker → a setup hint.  ``cancel``
+    lets the GUI abort a pending start on shutdown.
     """
-    if is_provider_running(base_url):
+    try:
+        normalized, port = _normalize_base_url(base_url)
+    except ValueError:
+        normalized, port = DEFAULT_BASE_URL, _DEFAULT_PORT
+
+    if is_provider_running(normalized):
         return ProviderStatus(
-            running=True, base_url=base_url,
+            running=True, base_url=normalized,
             detail="PO-token provider is running - full-quality downloads enabled",
         )
 
-    if auto_start_docker and _docker_available():
-        logger.info("Starting bgutil PO-token provider via Docker ...")
-        if _start_docker_provider(base_url) and _wait_until_running(base_url):
+    if cancel is not None and cancel.is_set():
+        return ProviderStatus(running=False, base_url=normalized, detail=_SETUP_HINT)
+
+    # Preferred: a local Node.js provider server (set up by the installer).
+    entry = node_entry or _NODE_SERVER_ENTRY
+    node = _node_exe() if auto_start_node else None
+    if node and entry.is_file():
+        logger.info("Starting bgutil PO-token provider via Node ...")
+        proc = _start_node_provider(node, entry)
+        if proc is not None and _wait_until_running(normalized, cancel=cancel):
             return ProviderStatus(
-                running=True, started_by_us=True, base_url=base_url,
+                running=True, started_by_us=True, base_url=normalized,
+                process=proc,
+                detail="Started PO-token provider (Node.js) - full-quality "
+                       "downloads enabled",
+            )
+        if proc is not None:
+            _terminate_process(proc)
+
+    if cancel is not None and cancel.is_set():
+        return ProviderStatus(running=False, base_url=normalized, detail=_SETUP_HINT)
+
+    # Fallback: Docker, when available.
+    docker = _docker_exe() if auto_start_docker else None
+    if docker and _docker_available(docker):
+        logger.info("Starting bgutil PO-token provider via Docker ...")
+        container_id = _start_docker_provider(docker, port)
+        if container_id and _wait_until_running(normalized, cancel=cancel):
+            return ProviderStatus(
+                running=True, started_by_us=True, base_url=normalized,
+                container_id=container_id,
                 detail="Started PO-token provider (Docker) - full-quality "
                        "downloads enabled",
             )
-        return ProviderStatus(
-            running=False, base_url=base_url,
-            detail="Could not start the PO-token provider via Docker. "
-                   + _SETUP_HINT,
-        )
+        if container_id:
+            _stop_container(docker, container_id)
 
-    return ProviderStatus(running=False, base_url=base_url, detail=_SETUP_HINT)
+    return ProviderStatus(running=False, base_url=normalized, detail=_SETUP_HINT)
 
 
-def stop_provider_if_started(status: ProviderStatus) -> None:
-    """Stop the Docker container if this process started it (cleanup)."""
-    if not status.started_by_us:
-        return
+def _terminate_process(proc: subprocess.Popen) -> None:
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        logger.info("Stopped bgutil PO-token provider (Node.js)")
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("Failed to stop Node provider process: %s", e)
+
+
+def _stop_container(docker: str, container_id: str) -> None:
     try:
         subprocess.run(
-            ["docker", "stop", _CONTAINER_NAME],
+            [docker, "stop", container_id],
             capture_output=True, timeout=20,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=_CREATE_NO_WINDOW,
         )
         logger.info("Stopped bgutil PO-token provider container")
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to stop bgutil provider container: %s", e)
+
+
+def stop_provider_if_started(status: ProviderStatus | None) -> None:
+    """Stop the provider this process started (Node process or container)."""
+    if status is None or not status.started_by_us:
+        return
+    if status.process is not None:
+        _terminate_process(status.process)
+        return
+    if status.container_id:
+        docker = _docker_exe()
+        if docker:
+            _stop_container(docker, status.container_id)

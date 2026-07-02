@@ -29,27 +29,37 @@ logger = logging.getLogger(__name__)
 class _PotokenWorker(QObject):
     """Ensures the bgutil PO-token provider is available (off the GUI thread).
 
-    Starting the Docker container can take several seconds, so this runs
-    in a QThread and reports the result back via ``finished``.
+    Starting the provider server can take several seconds, so this runs in
+    a QThread and reports the result via ``finished``.  ``result_status``
+    is also stored directly so the close handler can read it even if the
+    queued ``finished`` signal has not been delivered yet.
     """
 
-    finished = Signal(object)  # ProviderStatus
+    finished = Signal(object)  # ProviderStatus | None
 
-    def __init__(self, base_url: str, auto_start: bool):
+    def __init__(self, base_url: str, auto_start_node: bool,
+                 auto_start_docker: bool, cancel):
         super().__init__()
         self._base_url = base_url
-        self._auto_start = auto_start
+        self._auto_start_node = auto_start_node
+        self._auto_start_docker = auto_start_docker
+        self._cancel = cancel
+        self.result_status = None
 
     def run(self):
         try:
             from .potoken_provider import ensure_provider
 
             status = ensure_provider(
-                self._base_url, auto_start_docker=self._auto_start
+                self._base_url,
+                auto_start_node=self._auto_start_node,
+                auto_start_docker=self._auto_start_docker,
+                cancel=self._cancel,
             )
         except Exception as e:  # noqa: BLE001 — fail open, never crash startup
             logger.warning("PO-token provider check failed: %s", e)
             status = None
+        self.result_status = status
         self.finished.emit(status)
 
 
@@ -173,6 +183,10 @@ class MainWindow(QMainWindow):
         # downloads get full-quality formats (SABR delivery otherwise limits
         # us to 360p / HTTP 403).
         self._potoken_status = None
+        self._potoken_thread = None
+        self._potoken_worker = None
+        self._potoken_cancel = None
+        self._closing = False
         self._start_potoken_provider()
 
     # ── PO-token provider ─────────────────────────────────────────────
@@ -181,12 +195,18 @@ class MainWindow(QMainWindow):
         """Ensure the bgutil PO-token provider is running (background)."""
         if not self._config.get("potoken_auto_start", True):
             return
+        import threading
+
         from .potoken_provider import DEFAULT_BASE_URL
 
         base_url = self._config.get("potoken_base_url") or DEFAULT_BASE_URL
+        self._potoken_cancel = threading.Event()
         self._potoken_thread = QThread(self)
         self._potoken_worker = _PotokenWorker(
-            base_url, self._config.get("potoken_auto_start_docker", True)
+            base_url,
+            self._config.get("potoken_auto_start_node", True),
+            self._config.get("potoken_auto_start_docker", True),
+            self._potoken_cancel,
         )
         self._potoken_worker.moveToThread(self._potoken_thread)
         self._potoken_thread.started.connect(self._potoken_worker.run)
@@ -197,10 +217,36 @@ class MainWindow(QMainWindow):
     def _on_potoken_ready(self, status):
         """Report PO-token provider status to the console tab."""
         self._potoken_status = status
-        if status is None:
+        if status is None or self._closing:
             return
         prefix = "[PO-Token] " if status.running else "[PO-Token] WARNING: "
         self._queue_tab.append_log(prefix + status.detail)
+
+    def _shutdown_potoken_provider(self):
+        """Cancel a pending provider start and stop one we launched."""
+        self._closing = True
+        thread = self._potoken_thread
+        if thread is not None and thread.isRunning():
+            # Signal the worker to abort its wait/start loop, then join it
+            # so the QThread is never destroyed while still running.
+            if self._potoken_cancel is not None:
+                self._potoken_cancel.set()
+            thread.quit()
+            if not thread.wait(8000):
+                logger.warning("PO-token provider thread did not stop in time")
+
+        # Prefer the status delivered via signal; fall back to the value the
+        # worker stored directly (the queued signal may not have run yet).
+        status = self._potoken_status
+        if status is None and self._potoken_worker is not None:
+            status = self._potoken_worker.result_status
+        if status is not None:
+            try:
+                from .potoken_provider import stop_provider_if_started
+
+                stop_provider_if_started(status)
+            except Exception:  # noqa: BLE001 — never block shutdown
+                logger.debug("PO-token provider cleanup failed", exc_info=True)
 
     # ── Queue operations ───────────────────────────────────────────────
 
@@ -489,14 +535,8 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
 
-        # Stop the PO-token provider container if we started it
-        if self._potoken_status is not None:
-            try:
-                from .potoken_provider import stop_provider_if_started
-
-                stop_provider_if_started(self._potoken_status)
-            except Exception:  # noqa: BLE001 — never block shutdown
-                logger.debug("PO-token provider cleanup failed", exc_info=True)
+        # Stop a pending provider start / the server we launched
+        self._shutdown_potoken_provider()
 
         # Shut down the browser engine so Chromium can flush cookies
         self._browser_tab.shutdown()

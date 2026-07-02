@@ -48,6 +48,9 @@ uv lock
 echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
 uv sync --extra gui --extra scoring --extra potoken
 
+# Set up the PO-token provider (Node.js) for full-quality YouTube downloads
+bash install/setup_potoken_provider.sh
+
 echo "Installation completed successfully!"
 echo ""
 echo "To run UltraSinger:"

@@ -42,6 +42,9 @@ uv lock
 echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
 uv sync --extra gui --extra scoring --extra potoken
 
+# Set up the PO-token provider (Node.js) for full-quality YouTube downloads
+bash install/setup_potoken_provider.sh
+
 # Protect local CUDA config from being reverted by git operations
 # (branch switches, pulls, etc. would otherwise reset to CPU default)
 if command -v git &> /dev/null && git rev-parse --is-inside-work-tree &> /dev/null; then

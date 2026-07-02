@@ -101,6 +101,7 @@ _DEFAULTS = {
     "refine_timing_threshold": 30.0,
     # bgutil PO-token provider (full-quality YouTube downloads)
     "potoken_auto_start": True,          # check/start provider on GUI launch
+    "potoken_auto_start_node": True,     # allow launching the local Node.js server
     "potoken_auto_start_docker": True,   # allow launching the provider via Docker
     "potoken_base_url": "",              # empty -> default http://127.0.0.1:4416
 }
