@@ -48,10 +48,11 @@ class _FormatProbeWorker(QObject):
     finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
 
     def __init__(self, video_id: str, cookie_file: str = "",
-                 parent: QObject | None = None):
+                 po_token: str = "", parent: QObject | None = None):
         super().__init__(parent)
         self._video_id = video_id
         self._cookie_file = cookie_file
+        self._po_token = po_token
 
     def run(self):
         import json
@@ -66,11 +67,15 @@ class _FormatProbeWorker(QObject):
             yt_dlp, "--dump-json", "--no-download",
             "--no-playlist", "--skip-download", url,
         ]
-        # With the browser session's cookies the probe sees the same
-        # formats as the authenticated download (without them YouTube
-        # reports only a limited fallback set, e.g. 360p H.264).
+        # With the browser session's cookies and PO token the probe sees
+        # the same formats as the authenticated download (without them
+        # YouTube reports only a limited fallback set, e.g. 360p H.264).
         if self._cookie_file:
             cmd[1:1] = ["--cookies", self._cookie_file]
+        if self._po_token:
+            cmd[1:1] = [
+                "--extractor-args", f"youtube:po_token=web.gvs+{self._po_token}"
+            ]
 
         try:
             result = subprocess.run(
@@ -524,6 +529,9 @@ class BrowserTab(QWidget):
         self.media_interceptor.audio_captured.connect(
             self._on_audio_captured
         )
+        self.media_interceptor.po_token_captured.connect(
+            self._on_po_token_captured
+        )
 
         # Track cookie status
         self.cookie_manager.cookies_changed.connect(self._update_cookie_status)
@@ -565,9 +573,13 @@ class BrowserTab(QWidget):
         # Probe available formats when navigating to a video page
         if self._current_video_id:
             self._probe_formats(self._current_video_id)
-            # Re-visiting a video whose stream is still captured and valid:
-            # unlock the Queue button right away.
-            if self.media_interceptor.get_stream(self._current_video_id):
+            # Unlock the Queue button right away when a still-valid stream
+            # was captured for this video, or when the session PO token is
+            # known (then yt-dlp can download any video in full quality).
+            if (
+                self.media_interceptor.get_stream(self._current_video_id)
+                or self.media_interceptor.get_po_token()
+            ):
                 self._notify_queue_ready(self._current_video_id)
 
     def _on_audio_captured(self, stream):
@@ -578,6 +590,11 @@ class BrowserTab(QWidget):
             )
             # Unlock the overlay Queue button (it shows a non-clickable
             # "loading" hint until the stream is captured)
+            self._notify_queue_ready(self._current_video_id)
+
+    def _on_po_token_captured(self, _pot: str):
+        """Session PO token captured — the Queue button can be unlocked."""
+        if getattr(self, "_current_video_id", ""):
             self._notify_queue_ready(self._current_video_id)
 
     def _notify_queue_ready(self, video_id: str):
@@ -617,7 +634,9 @@ class BrowserTab(QWidget):
                 logger.warning("Cookie export for format probe failed: %s", e)
 
         thread = QThread(self)
-        worker = _FormatProbeWorker(video_id, cookie_file)
+        worker = _FormatProbeWorker(
+            video_id, cookie_file, self.media_interceptor.get_po_token()
+        )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_format_probed)

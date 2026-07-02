@@ -429,6 +429,10 @@ class UltraSingerRunner(QObject):
         if config.get("youtube_url"):
             args.extend(["--youtube_url", config["youtube_url"]])
 
+        # Browser-captured GVS PO token (full yt-dlp format list)
+        if config.get("yt_po_token"):
+            args.extend(["--yt_po_token", config["yt_po_token"]])
+
         # Paths
         if config.get("musescore_path"):
             args.extend(["--musescore_path", config["musescore_path"]])

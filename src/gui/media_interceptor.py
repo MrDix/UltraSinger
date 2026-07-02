@@ -141,6 +141,7 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
     # Signal must be on a QObject, not directly on the interceptor
     # (QWebEngineUrlRequestInterceptor IS a QObject in PySide6)
     audio_captured = Signal(object)  # CapturedAudioStream
+    po_token_captured = Signal(str)  # GVS Proof-of-Origin token
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -150,6 +151,10 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         # capped) so a broken capture (e.g. YouTube switching the embedded
         # player to progressive-only or SABR delivery) is visible in the log
         self._diag_seen: set[str] = set()
+        # Latest GVS Proof-of-Origin token seen on media requests.  It is
+        # session-bound (not per-video) and lets yt-dlp fetch the full
+        # format list instead of the limited anonymous fallback.
+        self._po_token: str = ""
 
     def interceptRequest(self, info):
         """Called for every HTTP request made by QWebEngine.
@@ -181,11 +186,20 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
 
         url_str = url.toString()
 
+        # Harvest the GVS PO token from ANY media request (including SABR
+        # POSTs, which are otherwise useless to us).  It is the key that
+        # lets yt-dlp download full-quality formats with the same session.
+        params = parse_qs(urlparse(url_str).query)
+        pot = params.get("pot", [""])[0]
+        if pot and pot != self._po_token:
+            self._po_token = pot
+            logger.info("Captured GVS PO token (%d chars)", len(pot))
+            self.po_token_captured.emit(pot)
+
         is_audio = _is_audio_request(url_str)
         is_muxed = not is_audio and _is_muxed_request(url_str)
         if not is_audio and not is_muxed:
             if len(self._diag_seen) < 20:
-                params = parse_qs(urlparse(url_str).query)
                 rt = info.resourceType()
                 sig = (
                     f"host={host}"
@@ -193,6 +207,7 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
                     f" mime={params.get('mime', [''])[0]}"
                     f" itag={params.get('itag', [''])[0]}"
                     f" sabr={params.get('sabr', [''])[0]}"
+                    f" pot_len={len(pot)}"
                     f" type={getattr(rt, 'name', rt)}"
                     f" method={bytes(info.requestMethod()).decode('ascii', 'replace')}"
                 )
@@ -294,6 +309,10 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
             logger.debug("Expired stream for %s removed", video_id)
             return None, "expired"
         return stream, "ok"
+
+    def get_po_token(self) -> str:
+        """Latest GVS PO token captured from the browser session ('' if none)."""
+        return self._po_token
 
     def get_all_streams(self) -> dict[str, CapturedAudioStream]:
         """Get all non-expired captured streams."""

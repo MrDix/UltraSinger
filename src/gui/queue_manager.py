@@ -230,8 +230,25 @@ class QueueManager(QObject):
         )
         self.line_output.emit("")
 
-        # Try interceptor path for URL items with a captured audio stream
+        # Preferred path: the session PO token captured from the browser
+        # lets yt-dlp download the FULL format list (best audio + video)
+        # with the exported cookies — no stream interception needed.
+        po_token = ""
         if next_item.input_type == "url" and self._media_interceptor is not None:
+            po_token = getattr(self._media_interceptor, "get_po_token", lambda: "")()
+            if po_token:
+                merged["yt_po_token"] = po_token
+                self.line_output.emit(
+                    "[Queue] Browser PO token captured - using yt-dlp with "
+                    "full-quality formats"
+                )
+
+        # Interceptor stream path for URL items (fallback when no PO token)
+        if (
+            next_item.input_type == "url"
+            and self._media_interceptor is not None
+            and not po_token
+        ):
             if not next_item.video_id:
                 self.line_output.emit(
                     "[Queue] No video ID on this item - browser interception "

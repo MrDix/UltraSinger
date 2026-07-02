@@ -276,6 +276,12 @@ _Not all options working now!_
                             The GUI uses this automatically when downloading via the
                             embedded browser (pre-downloaded audio + YouTube metadata).
                             Not needed when -i is already a YouTube URL.
+    --yt_po_token           GVS Proof-of-Origin token for yt-dlp (web.gvs). Without it YouTube
+                            limits downloads to a reduced format set or blocks them (HTTP 403).
+                            The GUI captures this token automatically from its embedded browser
+                            while a video plays and passes it through together with the cookies,
+                            restoring full-quality downloads. For manual CLI use see yt-dlp's
+                            PO token guide (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
 
     [device]
     --force_cpu             Force all steps to be processed on CPU.
