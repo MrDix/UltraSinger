@@ -610,16 +610,25 @@ def run() -> tuple[str, Score, Score]:
     # Real game score (ptAKF via ultrastar-score) — the metric the games
     # actually use. The internal simple/accurate score above measures
     # against SwiftF0 data and can rank charts differently.
+    # Only meaningful against isolated vocals: without separation the
+    # processing audio is the full mix, so the report is skipped then.
     uscore_result = None
-    if settings.calculate_score and not settings.ignore_audio:
+    if (
+        settings.calculate_score
+        and not settings.ignore_audio
+        and settings.use_separated_vocal
+    ):
         from modules.uscore_report import (
             calculate_uscore_report,
             format_uscore_report,
         )
 
+        vocal_path = (
+            process_data.process_data_paths.vocals_audio_file_path
+            or process_data.process_data_paths.whisper_audio_path
+        )
         uscore_result = calculate_uscore_report(
-            ultrastar_file_output,
-            process_data.process_data_paths.whisper_audio_path,
+            ultrastar_file_output, vocal_path
         )
         if uscore_result:
             print(

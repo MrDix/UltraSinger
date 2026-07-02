@@ -633,7 +633,7 @@ this MIDI and sheet are created. And you also want to have accurate files
 
 In addition to the internal simple/accurate scores, UltraSinger reports the **game score**: the written chart scored against the extracted vocals with [ultrastar-score](https://github.com/MrDix/ultrastar-score) - the same C++ ptAKF pitch-detection and scoring algorithm the games (Vocaluxe/USDX) use - at all three difficulties (Easy +-2 / Medium +-1 / Hard 0 semitones, octave-folded):
 
-```
+```text
 [UltraSinger] Game score (ptAKF): Easy 96.7% | Medium 87.1% | Hard 66.6%
 ```
 
