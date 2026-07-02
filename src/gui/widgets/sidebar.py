@@ -47,7 +47,7 @@ class Sidebar(QWidget):
         super().__init__(parent)
         self.setObjectName("sidebar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedWidth(250)
+        self.setFixedWidth(300)  # wide enough for the queue result line + buttons
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)

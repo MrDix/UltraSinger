@@ -285,17 +285,26 @@ class QueueItemWidget(QWidget):
         }
         badge_bg = _SOURCE_COLORS.get(source, "#a09888")
         source_text = _SOURCE_LABELS.get(source, source)
-        # Append the real game score (ptAKF) when the pipeline reported one
+        # The game score stays OUT of the visible line (it would crowd out
+        # the action buttons) — a small marker indicates it, the values
+        # live in a readable rich-text tooltip.
         uscore = info.get("uscore", "")
         if uscore:
             self._lyrics_label.setText(
-                f"{source_text}   ·   \U0001F3AF {uscore}" if source_text
-                else f"\U0001F3AF {uscore}"
+                f"{source_text}  \U0001F3AF" if source_text else "\U0001F3AF"
+            )
+            rows = "".join(
+                f"<div style='font-size:13px; white-space:pre;'><b>{part.strip()}</b></div>"
+                for part in uscore.split("|")
             )
             self._lyrics_label.setToolTip(
-                "Game score: the written chart scored against the extracted "
-                "vocals with the same ptAKF algorithm the games use "
-                "(Easy ±2 / Medium ±1 / Hard 0 semitones, octave-folded)."
+                "<div style='font-size:13px;'><b>\U0001F3AF Game score</b>"
+                " (ptAKF vs. vocals)</div>"
+                + rows +
+                "<div style='font-size:11px; color:#a09888; margin-top:4px;'>"
+                "Chart scored with the games' own pitch detector.<br>"
+                "Easy &plusmn;2 / Medium &plusmn;1 / Hard 0 semitones "
+                "(octave-folded).</div>"
             )
         else:
             self._lyrics_label.setText(source_text)
