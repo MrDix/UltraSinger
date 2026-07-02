@@ -44,6 +44,22 @@ def _make_item():
 class TestParseOutputLine:
     """Tests for QueueManager._parse_output_line."""
 
+    def test_game_score_parsed(self, queue_manager):
+        item = _make_item()
+        queue_manager._current_item = item
+        queue_manager._parse_output_line(
+            "[UltraSinger] Game score (ptAKF): Easy 96.7% | Medium 87.1% | Hard 66.6%"
+        )
+        assert item.result_info["uscore"] == "Easy 96.7% | Medium 87.1% | Hard 66.6%"
+
+    def test_game_score_parsed_with_ansi(self, queue_manager):
+        item = _make_item()
+        queue_manager._current_item = item
+        queue_manager._parse_output_line(
+            "[UltraSinger] Game score (ptAKF): [94mEasy 96.7% | Medium 87.1% | Hard 66.6%[0m"
+        )
+        assert item.result_info["uscore"] == "Easy 96.7% | Medium 87.1% | Hard 66.6%"
+
     def test_language_detected_plain(self, queue_manager):
         item = _make_item()
         queue_manager._current_item = item

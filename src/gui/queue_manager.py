@@ -426,6 +426,12 @@ class QueueManager(QObject):
         # Strip ANSI escape codes for regex matching
         clean = re.sub(r"\x1b\[[0-9;]*m", "", line)
 
+        # Real game score (ptAKF via ultrastar-score)
+        m = re.search(r"Game score \(ptAKF\):\s*(.+)", clean)
+        if m:
+            info["uscore"] = m.group(1).strip()
+            return
+
         # Language detection (fast Whisper tiny, full Whisper, YouTube metadata, or --language)
         lang_pat = r"([A-Za-z0-9_-]+)"
         m = (re.search(rf"Language detected:\s*{lang_pat}", clean)
