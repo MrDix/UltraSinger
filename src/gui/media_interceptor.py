@@ -18,7 +18,10 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
+from PySide6.QtWebEngineCore import (
+    QWebEngineUrlRequestInfo,
+    QWebEngineUrlRequestInterceptor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,27 +139,45 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         """
         url = info.requestUrl()
         host = url.host()
+        path = url.path()
 
-        # Fast path: skip non-googlevideo requests
-        if not host.endswith("googlevideo.com"):
+        # Media traffic can come from *.googlevideo.com (classic) or be
+        # proxied through other hosts (e.g. *.youtube.com/videoplayback).
+        # Chromium also tags <video>/<audio> element loads as Media.
+        is_media_host = host.endswith("googlevideo.com")
+        is_media_path = (
+            "videoplayback" in path
+            or "initplayback" in path
+            or path.startswith("/ump")
+        )
+        is_media_type = (
+            info.resourceType()
+            == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMedia
+        )
+
+        # Fast path: skip anything that cannot be media traffic
+        if not is_media_host and not is_media_path and not is_media_type:
             return
 
         url_str = url.toString()
 
         if not _is_audio_request(url_str):
-            if len(self._diag_seen) < 12:
+            if len(self._diag_seen) < 20:
                 params = parse_qs(urlparse(url_str).query)
+                rt = info.resourceType()
                 sig = (
-                    f"path={urlparse(url_str).path}"
+                    f"host={host}"
+                    f" path={path}"
                     f" mime={params.get('mime', [''])[0]}"
                     f" itag={params.get('itag', [''])[0]}"
                     f" sabr={params.get('sabr', [''])[0]}"
+                    f" type={getattr(rt, 'name', rt)}"
                     f" method={bytes(info.requestMethod()).decode('ascii', 'replace')}"
                 )
                 if sig not in self._diag_seen:
                     self._diag_seen.add(sig)
                     logger.info(
-                        "googlevideo request NOT classified as audio: %s", sig
+                        "media-ish request NOT classified as audio: %s", sig
                     )
             return
 

@@ -47,9 +47,11 @@ class _FormatProbeWorker(QObject):
 
     finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
 
-    def __init__(self, video_id: str, parent: QObject | None = None):
+    def __init__(self, video_id: str, cookie_file: str = "",
+                 parent: QObject | None = None):
         super().__init__(parent)
         self._video_id = video_id
+        self._cookie_file = cookie_file
 
     def run(self):
         import json
@@ -64,6 +66,11 @@ class _FormatProbeWorker(QObject):
             yt_dlp, "--dump-json", "--no-download",
             "--no-playlist", "--skip-download", url,
         ]
+        # With the browser session's cookies the probe sees the same
+        # formats as the authenticated download (without them YouTube
+        # reports only a limited fallback set, e.g. 360p H.264).
+        if self._cookie_file:
+            cmd[1:1] = ["--cookies", self._cookie_file]
 
         try:
             result = subprocess.run(
@@ -442,6 +449,9 @@ class BrowserTab(QWidget):
 
         # Cookie manager
         self.cookie_manager = CookieManager(self._profile, self)
+        # Set by MainWindow to the configured cookie-file path; when set,
+        # the format probe exports and uses the browser cookies
+        self.probe_cookie_file: str = ""
 
         # Media interceptor — passively captures audio stream URLs
         self.media_interceptor = MediaInterceptor(self)
@@ -596,8 +606,18 @@ class BrowserTab(QWidget):
                 "})();"
             )
 
+        # Export fresh browser cookies for the probe so it sees the same
+        # formats as the authenticated download (badge accuracy).
+        cookie_file = ""
+        if self.probe_cookie_file and self.cookie_manager.has_video_cookies:
+            try:
+                self.cookie_manager.export_netscape(self.probe_cookie_file)
+                cookie_file = self.probe_cookie_file
+            except OSError as e:
+                logger.warning("Cookie export for format probe failed: %s", e)
+
         thread = QThread(self)
-        worker = _FormatProbeWorker(video_id)
+        worker = _FormatProbeWorker(video_id, cookie_file)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_format_probed)

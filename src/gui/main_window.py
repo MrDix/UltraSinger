@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
 
         # Create tabs (3 tabs: Video, Console, Settings)
         self._browser_tab = BrowserTab()
+        self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
         self._queue_tab = QueueTab()
         self._settings_tab = PreferencesTab(
             self._config, self._browser_tab.cookie_manager
