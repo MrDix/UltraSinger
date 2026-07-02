@@ -431,6 +431,11 @@ class UltraSingerRunner(QObject):
             refit_min_ms = config.get("ptakf_refit_min_note_ms", 100.0)
             if refit_min_ms != 100.0:
                 args.extend(["--ptakf_refit_min_note_ms", str(refit_min_ms)])
+            if config.get("ptakf_refit_fill", False):
+                args.append("--ptakf_refit_fill")
+                fill_min_ms = config.get("ptakf_refit_fill_min_ms", 300.0)
+                if fill_min_ms != 300.0:
+                    args.extend(["--ptakf_refit_fill_min_ms", str(fill_min_ms)])
 
         # YouTube metadata URL (when input is pre-downloaded audio)
         if config.get("youtube_url"):

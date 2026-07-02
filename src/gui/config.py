@@ -102,6 +102,8 @@ _DEFAULTS = {
     # ptAKF chart refit
     "ptakf_refit": False,
     "ptakf_refit_min_note_ms": 100.0,
+    "ptakf_refit_fill": False,
+    "ptakf_refit_fill_min_ms": 300.0,
 }
 
 

@@ -128,6 +128,9 @@ def print_help() -> None:
                                 (score-first chart): charts only voiced beats, splits notes at pitch changes.
                                 Maximizes game score but increases note count. Disabled by default
     --ptakf_refit_min_note_ms   Merge refit notes shorter than this when score-neutral >> ((default) is 100)
+    --ptakf_refit_fill          Also chart sung regions outside all notes (ad-libs, vocalises, melisma
+                                tails) as "~" notes. Requires --ptakf_refit. Disabled by default
+    --ptakf_refit_fill_min_ms   Minimum uncharted voiced run length before it is filled >> ((default) is 300)
 
 
     [llm lyric correction]

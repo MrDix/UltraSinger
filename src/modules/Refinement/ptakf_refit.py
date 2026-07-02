@@ -177,12 +177,44 @@ def _continuation_word(word: str) -> str:
     return "~ " if word.endswith(" ") else "~"
 
 
+def _plan_fill_segments(
+    grid_tones: list[int],
+    min_fill_beats: int,
+    min_note_beats: float,
+) -> list[tuple[int, int, int]]:
+    """Plan extra notes for sung-but-uncharted regions (ad-libs, vocalises).
+
+    ``grid_tones`` holds one tone per beat starting at beat 0; beats already
+    covered by chart notes must be pre-masked (any value < 0).  Only maximal
+    voiced runs of at least ``min_fill_beats`` beats are charted, so short
+    blips and separation bleed stay note-free.
+
+    Returns a list of (start_beat, length, midi).
+    """
+    fills: list[tuple[int, int, int]] = []
+    run_start = None
+    for i, bt in enumerate(grid_tones + [-1]):
+        if bt >= 0 and run_start is None:
+            run_start = i
+        elif bt < 0 and run_start is not None:
+            if i - run_start >= min_fill_beats:
+                run = grid_tones[run_start:i]
+                parts = _segment_beat_tones(run)
+                parts = _smooth_segments(parts, run, min_note_beats)
+                fills.extend((run_start + off, length, midi)
+                             for off, length, midi in parts)
+            run_start = None
+    return fills
+
+
 def refit_notes_ptakf(
     midi_segments: list[MidiSegment],
     vocal_audio_path: str,
     bpm: float,
     *,
     min_note_ms: float = 100.0,
+    fill: bool = False,
+    fill_min_ms: float = 300.0,
 ) -> list[MidiSegment]:
     """Refit all notes onto the ptAKF beat-tone sequence.
 
@@ -194,6 +226,10 @@ def refit_notes_ptakf(
         bpm: Real BPM for beat/time conversion.
         min_note_ms: Segments shorter than this are merged back into a
             neighbour when the merge is score-neutral.
+        fill: Also chart sung regions outside all existing notes (ad-libs,
+            vocalises, melisma tails) as "~" notes.
+        fill_min_ms: Minimum length of an uncharted voiced run before it
+            is filled (guards against separation bleed and noise).
 
     Returns:
         New list of MidiSegments (or the original list on failure).
@@ -202,7 +238,8 @@ def refit_notes_ptakf(
         return midi_segments
 
     try:
-        return _refit(midi_segments, vocal_audio_path, bpm, min_note_ms)
+        return _refit(midi_segments, vocal_audio_path, bpm, min_note_ms,
+                      fill, fill_min_ms)
     except (ImportError, OSError, ValueError, RuntimeError,
             AttributeError, KeyError, TypeError, IndexError) as e:
         print(
@@ -217,6 +254,8 @@ def _refit(
     vocal_audio_path: str,
     bpm: float,
     min_note_ms: float,
+    fill: bool = False,
+    fill_min_ms: float = 300.0,
 ) -> list[MidiSegment]:
     from ultrastar_score.audio import load_audio
     from ultrastar_score.parser import parse_ultrastar
@@ -269,61 +308,82 @@ def _refit(
         end = start + (duration - end_backoff) * spb
         return start, end
 
-    new_segments: list[MidiSegment] = []
+    # --- plan phase: collect (start_beat, duration, note_name, word, type,
+    # line_break_after) for every output note, all on the parsed beat grid.
+    #
+    # Passthrough notes (freestyle/rap/no voiced beats) are re-emitted on
+    # the parsed beat grid too — only the seconds representation is
+    # normalised, the note keeps the exact beats the writer would have
+    # produced from the original timings.  Keeping the original seconds
+    # instead is NOT safe: the first emitted segment redefines the GAP, and
+    # mixing time conventions can flip a passthrough note by one beat when
+    # its fractional beat position falls below the new GAP epsilon
+    # (verified end-to-end: max beat-time deviation dropped from ~34 ms,
+    # i.e. a full beat, to the intended epsilon of ~9 ms).
+    planned: list[tuple[int, int, str, str, str, bool]] = []
+    covered: set[int] = set()
     refit_count = 0
 
-    def emit_passthrough(orig: MidiSegment, note) -> None:
-        """Re-emit an unchanged note on the parsed beat grid.
-
-        Only the seconds representation is normalised — the note keeps the
-        exact beats (``note.start_beat``/``note.duration``) the writer would
-        have produced from the original timings.  Keeping the original
-        seconds instead is NOT safe: the first emitted segment redefines
-        the GAP, and mixing time conventions can flip a passthrough note
-        by one beat when its fractional beat position falls below the new
-        GAP epsilon (verified end-to-end: max beat-time deviation dropped
-        from ~34 ms, i.e. a full beat, to the intended epsilon of ~9 ms).
-        """
-        start, end = seg_times(note.start_beat, note.duration,
-                               is_first=not new_segments)
-        new_segments.append(MidiSegment(
-            note=orig.note,
-            start=start,
-            end=end,
-            word=orig.word,
-            note_type=orig.note_type,
-            line_break_after=orig.line_break_after,
-        ))
-
     for orig, note in zip(midi_segments, parsed_notes, strict=True):
+        covered.update(range(note.start_beat, note.start_beat + note.duration))
+
         if orig.note_type in ("F", "R"):
-            emit_passthrough(orig, note)
+            planned.append((note.start_beat, note.duration, orig.note,
+                            orig.word, orig.note_type, orig.line_break_after))
             continue
 
         beat_tones = [beat_tone(note.start_beat + off) for off in range(note.duration)]
         parts = _segment_beat_tones(beat_tones)
         if not parts:
-            emit_passthrough(orig, note)
+            planned.append((note.start_beat, note.duration, orig.note,
+                            orig.word, orig.note_type, orig.line_break_after))
             continue
         parts = _smooth_segments(parts, beat_tones, min_note_beats)
 
         refit_count += 1
         for k, (off, length, midi) in enumerate(parts):
-            start, end = seg_times(note.start_beat + off, length,
-                                   is_first=not new_segments)
-            new_segments.append(MidiSegment(
-                note=librosa.midi_to_note(midi),
-                start=start,
-                end=end,
-                word=orig.word if k == 0 else _continuation_word(orig.word),
-                note_type=orig.note_type,
-                line_break_after=orig.line_break_after and k == len(parts) - 1,
+            planned.append((
+                note.start_beat + off,
+                length,
+                librosa.midi_to_note(midi),
+                orig.word if k == 0 else _continuation_word(orig.word),
+                orig.note_type,
+                orig.line_break_after and k == len(parts) - 1,
             ))
 
+    # --- fill phase: chart sung regions outside all existing notes
+    fill_count = 0
+    if fill and spb > 0:
+        audio_dur = len(tones) * _HOP_SEC
+        max_beat = max(0, int((audio_dur - gap_s) / spb))
+        grid = [beat_tone(b) if b not in covered else -3
+                for b in range(max_beat + 1)]
+        min_fill_beats = max(1, int(round(fill_min_ms / 1000.0 / spb)))
+        for start_beat, length, midi in _plan_fill_segments(
+                grid, min_fill_beats, min_note_beats):
+            planned.append((start_beat, length, librosa.midi_to_note(midi),
+                            "~ ", ":", False))
+            fill_count += 1
+        planned.sort(key=lambda p: p[0])
+
+    # --- emit phase
+    new_segments: list[MidiSegment] = []
+    for idx, (start_beat, duration, note_name, word, note_type, brk) in enumerate(planned):
+        start, end = seg_times(start_beat, duration, is_first=idx == 0)
+        new_segments.append(MidiSegment(
+            note=note_name,
+            start=start,
+            end=end,
+            word=word,
+            note_type=note_type,
+            line_break_after=brk,
+        ))
+
+    fill_info = f", {blue_highlighted(str(fill_count))} fill notes" if fill else ""
     print(
         f"{ULTRASINGER_HEAD} ptAKF refit: "
         f"{blue_highlighted(str(refit_count))} notes refitted, "
         f"{blue_highlighted(str(len(midi_segments)))} -> "
-        f"{blue_highlighted(str(len(new_segments)))} notes"
+        f"{blue_highlighted(str(len(new_segments)))} notes{fill_info}"
     )
     return new_segments
