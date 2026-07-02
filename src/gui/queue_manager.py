@@ -286,19 +286,20 @@ class QueueManager(QObject):
         from .media_downloader import start_media_download
 
         # Choose file extension from stream mime type.  Muxed progressive
-        # streams (video/mp4) carry AAC audio; the downloader drops the
-        # video track (-vn), so the result is an .m4a as well.
+        # streams (video/mp4) are kept as full videos: UltraSinger demuxes
+        # the audio itself and the output song gets its background video.
+        is_muxed = getattr(stream, "is_muxed", False)
         _MIME_EXT = {
             "audio/webm": ".webm",
             "audio/mp4": ".m4a",
-            "video/mp4": ".m4a",
+            "video/mp4": ".mp4",
         }
-        ext = _MIME_EXT.get(stream.mime_type, ".webm")
+        ext = _MIME_EXT.get(stream.mime_type, ".mp4" if is_muxed else ".webm")
 
-        if getattr(stream, "is_muxed", False):
+        if is_muxed:
             self.line_output.emit(
                 "[Queue] No separate audio stream available (SABR delivery) - "
-                "using the progressive stream's audio track (AAC) instead"
+                "downloading the progressive stream (360p video + AAC audio)"
             )
 
         # Always download into the configured output folder so UltraSinger
@@ -308,7 +309,9 @@ class QueueManager(QObject):
             Path(output_dir) / f"_intercepted_{item.video_id}{ext}"
         )
 
-        thread, worker = start_media_download(stream.url, audio_path, self)
+        thread, worker = start_media_download(
+            stream.url, audio_path, keep_video=is_muxed, parent=self
+        )
         self._download_thread = thread
         self._download_worker = worker
 
