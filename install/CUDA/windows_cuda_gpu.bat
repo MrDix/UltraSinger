@@ -99,8 +99,8 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 
-echo Syncing dependencies (core + GUI + scoring)...
-uv sync --python "!PYTHON_EXE!" --extra gui --extra scoring
+echo Syncing dependencies (core + GUI + scoring + PO-token plugin)...
+uv sync --python "!PYTHON_EXE!" --extra gui --extra scoring --extra potoken
 if !errorlevel! neq 0 (
     echo Error during uv sync
     pause

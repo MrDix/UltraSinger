@@ -45,8 +45,8 @@ sed -i 's|whl/cu[0-9]*|whl/cpu|' pyproject.toml
 # Regenerate lockfile with CPU PyTorch index and sync
 echo "Resolving dependencies..."
 uv lock
-echo "Syncing dependencies (core + GUI + scoring)..."
-uv sync --extra gui --extra scoring
+echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
+uv sync --extra gui --extra scoring --extra potoken
 
 echo "Installation completed successfully!"
 echo ""

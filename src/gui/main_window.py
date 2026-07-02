@@ -4,6 +4,7 @@ import importlib.metadata
 import logging
 from pathlib import Path
 
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,6 +24,33 @@ from .settings_dialog import PerSongSettingsDialog, ReadOnlySettingsDialog
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
+
+
+class _PotokenWorker(QObject):
+    """Ensures the bgutil PO-token provider is available (off the GUI thread).
+
+    Starting the Docker container can take several seconds, so this runs
+    in a QThread and reports the result back via ``finished``.
+    """
+
+    finished = Signal(object)  # ProviderStatus
+
+    def __init__(self, base_url: str, auto_start: bool):
+        super().__init__()
+        self._base_url = base_url
+        self._auto_start = auto_start
+
+    def run(self):
+        try:
+            from .potoken_provider import ensure_provider
+
+            status = ensure_provider(
+                self._base_url, auto_start_docker=self._auto_start
+            )
+        except Exception as e:  # noqa: BLE001 — fail open, never crash startup
+            logger.warning("PO-token provider check failed: %s", e)
+            status = None
+        self.finished.emit(status)
 
 
 class MainWindow(QMainWindow):
@@ -140,6 +168,39 @@ class MainWindow(QMainWindow):
 
         # Initial button state
         self._update_queue_buttons()
+
+        # Start / detect the PO-token provider in the background so YouTube
+        # downloads get full-quality formats (SABR delivery otherwise limits
+        # us to 360p / HTTP 403).
+        self._potoken_status = None
+        self._start_potoken_provider()
+
+    # ── PO-token provider ─────────────────────────────────────────────
+
+    def _start_potoken_provider(self):
+        """Ensure the bgutil PO-token provider is running (background)."""
+        if not self._config.get("potoken_auto_start", True):
+            return
+        from .potoken_provider import DEFAULT_BASE_URL
+
+        base_url = self._config.get("potoken_base_url") or DEFAULT_BASE_URL
+        self._potoken_thread = QThread(self)
+        self._potoken_worker = _PotokenWorker(
+            base_url, self._config.get("potoken_auto_start_docker", True)
+        )
+        self._potoken_worker.moveToThread(self._potoken_thread)
+        self._potoken_thread.started.connect(self._potoken_worker.run)
+        self._potoken_worker.finished.connect(self._on_potoken_ready)
+        self._potoken_worker.finished.connect(self._potoken_thread.quit)
+        self._potoken_thread.start()
+
+    def _on_potoken_ready(self, status):
+        """Report PO-token provider status to the console tab."""
+        self._potoken_status = status
+        if status is None:
+            return
+        prefix = "[PO-Token] " if status.running else "[PO-Token] WARNING: "
+        self._queue_tab.append_log(prefix + status.detail)
 
     # ── Queue operations ───────────────────────────────────────────────
 
@@ -427,6 +488,15 @@ class MainWindow(QMainWindow):
             save_config(self._config)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
+
+        # Stop the PO-token provider container if we started it
+        if self._potoken_status is not None:
+            try:
+                from .potoken_provider import stop_provider_if_started
+
+                stop_provider_if_started(self._potoken_status)
+            except Exception:  # noqa: BLE001 — never block shutdown
+                logger.debug("PO-token provider cleanup failed", exc_info=True)
 
         # Shut down the browser engine so Chromium can flush cookies
         self._browser_tab.shutdown()

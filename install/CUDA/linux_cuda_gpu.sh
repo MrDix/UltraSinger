@@ -39,8 +39,8 @@ sed -i 's|whl/cpu|whl/cu128|' pyproject.toml
 # Regenerate lockfile with CUDA PyTorch index and sync
 echo "Resolving dependencies..."
 uv lock
-echo "Syncing dependencies (core + GUI + scoring)..."
-uv sync --extra gui --extra scoring
+echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
+uv sync --extra gui --extra scoring --extra potoken
 
 # Protect local CUDA config from being reverted by git operations
 # (branch switches, pulls, etc. would otherwise reset to CPU default)
