@@ -1,5 +1,6 @@
 """Video browser tab with embedded Chromium, navigation, and Convert overlay."""
 
+import json
 import logging
 import re
 import subprocess
@@ -192,33 +193,76 @@ _CONVERT_OVERLAY_JS = r"""
 (function() {
     'use strict';
 
+    var BASE_CSS =
+        'position:fixed;top:80px;left:16px;z-index:2147483647;' +
+        'padding:10px 24px;border-radius:24px;font-size:15px;' +
+        'font-weight:bold;user-select:none;line-height:1;' +
+        'display:flex;align-items:center;justify-content:center;' +
+        'font-family:system-ui,sans-serif;letter-spacing:0.5px;' +
+        'pointer-events:auto;';
+
+    var READY_CSS = BASE_CSS +
+        'background:linear-gradient(135deg,#e91e63,#c2185b);color:#fff;' +
+        'cursor:pointer;' +
+        'box-shadow:0 0 16px 5px rgba(233,30,99,0.6),' +
+        '0 0 35px 10px rgba(233,30,99,0.4),' +
+        '0 0 60px 18px rgba(233,30,99,0.2);' +
+        'animation:ultrasinger-glow 2s ease-in-out infinite alternate;' +
+        'transition:transform 0.2s,box-shadow 0.2s;';
+
+    var LOADING_CSS = BASE_CSS +
+        'background:linear-gradient(135deg,#4a4a4a,#333);color:#bbb;' +
+        'cursor:default;' +
+        'box-shadow:0 0 8px 2px rgba(0,0,0,0.35);';
+
     function isVideoPage() {
         return window.location.pathname === '/watch' &&
                window.location.search.indexOf('v=') !== -1;
     }
 
+    function currentVideoId() {
+        var params = new URLSearchParams(window.location.search);
+        return params.get('v') || '';
+    }
+
+    /* The button is only clickable once the audio stream of the CURRENT
+       video has been captured by the media interceptor.  The Python side
+       calls window.__ultrasingerSetQueueReady('<videoId>') when that
+       happens; until then a non-clickable "loading" hint is shown. */
+    function applyBtnState() {
+        var btn = document.getElementById('ultrasinger-convert-btn');
+        if (!btn) return;
+        var vid = currentVideoId();
+        var ready = vid !== '' && window.__ultrasingerReadyVideoId === vid;
+        var state = ready ? '1' : '0';
+        if (btn.dataset.ready === state && btn.dataset.videoId === vid) return;
+        btn.dataset.ready = state;
+        btn.dataset.videoId = vid;
+        if (ready) {
+            btn.textContent = '\uD83C\uDFA4 Queue';
+            btn.style.cssText = READY_CSS;
+            btn.title = '';
+        } else {
+            btn.textContent = '\u23F3 loading...';
+            btn.style.cssText = LOADING_CSS;
+            btn.title = 'Waiting for the audio stream - ' +
+                        'play the video so it can be captured';
+        }
+    }
+
+    window.__ultrasingerSetQueueReady = function(videoId) {
+        window.__ultrasingerReadyVideoId = videoId;
+        applyBtnState();
+    };
+
     function updateBtn() {
         var existing = document.getElementById('ultrasinger-convert-btn');
         if (isVideoPage()) {
-            if (existing) return;
+            if (existing) { applyBtnState(); return; }
             if (!document.body) return;
 
             var btn = document.createElement('div');
             btn.id = 'ultrasinger-convert-btn';
-            btn.textContent = '\uD83C\uDFA4 Queue';
-            btn.style.cssText =
-                'position:fixed;top:80px;left:16px;z-index:2147483647;' +
-                'background:linear-gradient(135deg,#e91e63,#c2185b);color:#fff;' +
-                'padding:10px 24px;border-radius:24px;cursor:pointer;font-size:15px;' +
-                'font-weight:bold;user-select:none;line-height:1;' +
-                'display:flex;align-items:center;justify-content:center;' +
-                'font-family:system-ui,sans-serif;letter-spacing:0.5px;' +
-                'pointer-events:auto;' +
-                'box-shadow:0 0 16px 5px rgba(233,30,99,0.6),' +
-                '0 0 35px 10px rgba(233,30,99,0.4),' +
-                '0 0 60px 18px rgba(233,30,99,0.2);' +
-                'animation:ultrasinger-glow 2s ease-in-out infinite alternate;' +
-                'transition:transform 0.2s,box-shadow 0.2s;';
 
             /* Inject glow keyframes once */
             if (!document.getElementById('ultrasinger-glow-style')) {
@@ -237,6 +281,7 @@ _CONVERT_OVERLAY_JS = r"""
             }
 
             btn.addEventListener('mouseover', function() {
+                if (this.dataset.ready !== '1') return;
                 this.style.transform = 'scale(1.08)';
                 this.style.animationPlayState = 'paused';
                 this.style.boxShadow =
@@ -245,11 +290,14 @@ _CONVERT_OVERLAY_JS = r"""
                     '0 0 80px 25px rgba(233,30,99,0.25)';
             });
             btn.addEventListener('mouseout', function() {
+                if (this.dataset.ready !== '1') return;
                 this.style.transform = 'scale(1)';
                 this.style.animationPlayState = 'running';
                 this.style.boxShadow = '';
             });
             btn.addEventListener('click', function() {
+                // Ignore clicks while the audio stream is not captured yet
+                if (this.dataset.ready !== '1') return;
                 // Extract only the video ID — strip &list=, &index= etc.
                 // to prevent yt-dlp from downloading an entire playlist.
                 var params = new URLSearchParams(window.location.search);
@@ -259,6 +307,7 @@ _CONVERT_OVERLAY_JS = r"""
                     encodeURIComponent(cleanUrl);
             });
             document.body.appendChild(btn);
+            applyBtnState();
 
             /* Quality badge — below the Queue button so it doesn't
                overlap YouTube's search suggestion dropdown. */
@@ -451,12 +500,27 @@ class BrowserTab(QWidget):
         # Probe available formats when navigating to a video page
         if self._current_video_id:
             self._probe_formats(self._current_video_id)
+            # Re-visiting a video whose stream is still captured and valid:
+            # unlock the Queue button right away.
+            if self.media_interceptor.get_stream(self._current_video_id):
+                self._notify_queue_ready(self._current_video_id)
 
     def _on_audio_captured(self, stream):
         """When a new audio stream is captured, assign it to the current video."""
         if hasattr(self, "_current_video_id") and self._current_video_id:
             self.media_interceptor.assign_to_video(
                 self._current_video_id, stream
+            )
+            # Unlock the overlay Queue button (it shows a non-clickable
+            # "loading" hint until the stream is captured)
+            self._notify_queue_ready(self._current_video_id)
+
+    def _notify_queue_ready(self, video_id: str):
+        """Tell the overlay script that the Queue button may be enabled."""
+        if self._page:
+            self._page.runJavaScript(
+                "window.__ultrasingerSetQueueReady && "
+                f"window.__ultrasingerSetQueueReady({json.dumps(video_id)});"
             )
 
     # ── Format probe ──────────────────────────────────────────────────────
