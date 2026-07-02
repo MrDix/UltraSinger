@@ -8,6 +8,7 @@ from modules.Refinement.ptakf_refit import (
     _continuation_word,
     _fold,
     _hits_for_class,
+    _plan_fill_segments,
     _segment_beat_tones,
     _segment_midi,
     _smooth_segments,
@@ -135,6 +136,39 @@ class TestSmoothSegments:
         bts = [10] * 6
         segs = [(0, 2, 46), (2, 4, 46)]
         assert _smooth_segments(segs, bts, min_note_beats=0.0) == segs
+
+
+# ---------------------------------------------------------------------------
+# _plan_fill_segments
+# ---------------------------------------------------------------------------
+
+class TestPlanFillSegments:
+    def test_fills_long_uncharted_run(self):
+        grid = [-1] * 4 + [10] * 8 + [-1] * 4
+        fills = _plan_fill_segments(grid, min_fill_beats=4, min_note_beats=0.0)
+        assert fills == [(4, 8, 46)]
+
+    def test_short_run_not_filled(self):
+        grid = [-1] * 4 + [10] * 3 + [-1] * 4
+        fills = _plan_fill_segments(grid, min_fill_beats=4, min_note_beats=0.0)
+        assert fills == []
+
+    def test_run_exactly_at_min_fill_beats_is_filled(self):
+        grid = [-1] * 4 + [10] * 4 + [-1] * 4
+        fills = _plan_fill_segments(grid, min_fill_beats=4, min_note_beats=0.0)
+        assert fills == [(4, 4, 46)]
+
+    def test_covered_beats_break_runs(self):
+        # 8 voiced beats but the middle two are masked as covered (-3):
+        # neither remaining half reaches min_fill_beats=4
+        grid = [10] * 3 + [-3] * 2 + [10] * 3
+        fills = _plan_fill_segments(grid, min_fill_beats=4, min_note_beats=0.0)
+        assert fills == []
+
+    def test_fill_run_splits_at_pitch_change(self):
+        grid = [10] * 4 + [17] * 4
+        fills = _plan_fill_segments(grid, min_fill_beats=4, min_note_beats=0.0)
+        assert fills == [(0, 4, 46), (4, 4, 53)]
 
 
 # ---------------------------------------------------------------------------

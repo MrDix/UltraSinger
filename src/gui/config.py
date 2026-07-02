@@ -102,6 +102,8 @@ _DEFAULTS = {
     # ptAKF chart refit
     "ptakf_refit": False,
     "ptakf_refit_min_note_ms": 100.0,
+    "ptakf_refit_fill": False,
+    "ptakf_refit_fill_min_ms": 300.0,
     # bgutil PO-token provider (full-quality YouTube downloads)
     "potoken_auto_start": True,          # check/start provider on GUI launch
     "potoken_auto_start_node": True,     # allow launching the local Node.js server

@@ -256,6 +256,9 @@ _Not all options working now!_
                                 (score-first chart): charts only voiced beats, splits notes at pitch changes.
                                 Maximizes game score but increases note count. Disabled by default
     --ptakf_refit_min_note_ms   Merge refit notes shorter than this when score-neutral >> ((default) is 100)
+    --ptakf_refit_fill          Also chart sung regions outside all notes (ad-libs, vocalises, melisma
+                                tails) as "~" notes. Requires --ptakf_refit. Disabled by default
+    --ptakf_refit_fill_min_ms   Minimum uncharted voiced run length before it is filled >> ((default) is 300)
 
 
     [llm lyric correction]
@@ -615,6 +618,11 @@ This maximizes the score an exact-match singer (or the extracted vocal track its
 Notes shorter than `--ptakf_refit_min_note_ms` (default 100) are merged back into a neighbour whenever that loses no score:
 ```commandline
 -i XYZ --ptakf_refit --ptakf_refit_min_note_ms 150
+```
+
+With `--ptakf_refit_fill`, sung passages that no note covers (ad-libs, vocalises, melisma tails beyond word boundaries) are additionally charted as `~` notes — the chart then covers everything the singer actually sings. Only uncharted voiced runs of at least `--ptakf_refit_fill_min_ms` (default 300) are filled, so separation bleed and noise stay note-free:
+```commandline
+-i XYZ --ptakf_refit --ptakf_refit_fill
 ```
 
 Requires the optional scoring dependency (`pip install "ultrastar-score"` — already included by the install scripts). Without it the pass is skipped gracefully.
