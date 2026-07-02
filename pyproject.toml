@@ -28,7 +28,7 @@ dependencies = [
     "unidecode",
     "pyhyphen",
     "tqdm",
-    "yt-dlp[default]",
+    "yt-dlp[default]>=2026.6.9",
     "deno",
     "music21",
     "dataclasses",
@@ -45,6 +45,11 @@ windows = []
 linux = []
 macos = []
 scoring = ["ultrastar-score>=0.2.0,<0.3.0"]
+# yt-dlp PO-token plugin: fetches GVS Proof-of-Origin tokens from a local
+# bgutil provider server so YouTube serves the full format list instead of
+# the limited 360p fallback. Requires a provider server (Docker or Node.js);
+# see the README and src/gui/potoken_provider.py.
+potoken = ["bgutil-ytdlp-pot-provider>=1.1"]
 gui = [
     "PySide6>=6.8",
     "keyring>=25.0",
