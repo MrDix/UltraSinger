@@ -35,6 +35,17 @@ _AUDIO_ITAGS = {
     338,                 # webm Opus (immersive)
 }
 
+# Progressive (muxed video+audio) itags — captured as FALLBACK when no
+# separate audio stream is available.  With SABR delivery the adaptive
+# streams arrive as opaque binary POST responses (no capturable URL);
+# the player then still fetches a classic progressive stream we can use.
+# Only the audio track (AAC) is extracted downstream.
+_MUXED_ITAGS = {
+    18,                  # mp4 360p H.264 + AAC 96k
+    22,                  # mp4 720p H.264 + AAC 192k (rarely served)
+    59,                  # mp4 480p H.264 + AAC
+}
+
 
 @dataclass
 class CapturedAudioStream:
@@ -46,6 +57,8 @@ class CapturedAudioStream:
     mime_type: str = ""          # e.g. "audio/webm"
     expire_time: int = 0         # Unix timestamp from &expire= parameter
     captured_at: float = field(default_factory=time.time)
+    is_muxed: bool = False       # Progressive video+audio stream (fallback);
+                                 # only the audio track is used downstream
 
     @property
     def is_expired(self) -> bool:
@@ -106,6 +119,13 @@ def _is_audio_request(url: str) -> bool:
     return False
 
 
+def _is_muxed_request(url: str) -> bool:
+    """Check if a URL is for a progressive (muxed video+audio) stream."""
+    params = parse_qs(urlparse(url).query)
+    itag_str = params.get("itag", [""])[0]
+    return itag_str.isdigit() and int(itag_str) in _MUXED_ITAGS
+
+
 class MediaInterceptor(QWebEngineUrlRequestInterceptor):
     """Intercepts googlevideo.com media requests to capture audio URLs.
 
@@ -161,7 +181,9 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
 
         url_str = url.toString()
 
-        if not _is_audio_request(url_str):
+        is_audio = _is_audio_request(url_str)
+        is_muxed = not is_audio and _is_muxed_request(url_str)
+        if not is_audio and not is_muxed:
             if len(self._diag_seen) < 20:
                 params = parse_qs(urlparse(url_str).query)
                 rt = info.resourceType()
@@ -204,10 +226,12 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
             mime_type=mime,
             expire_time=expire,
             captured_at=time.time(),
+            is_muxed=is_muxed,
         )
 
         logger.debug(
-            "Captured audio stream (itag=%d, mime=%s, expires in %.0fs)",
+            "Captured %s stream (itag=%d, mime=%s, expires in %.0fs)",
+            "muxed fallback" if is_muxed else "audio",
             itag, mime, stream.seconds_until_expiry,
         )
         # Emit the exact stream object — the receiver assigns it to a
@@ -222,12 +246,23 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         signal, so there is no race with subsequent interceptor calls.
         """
         if video_id and stream:
-            is_new = video_id not in self._streams
+            existing = self._streams.get(video_id)
+            # A muxed fallback stream must never replace a pure audio
+            # stream (better quality) that is still valid
+            if (
+                stream.is_muxed
+                and existing is not None
+                and not existing.is_muxed
+                and not existing.is_expired
+            ):
+                return
+            is_new = existing is None
             self._streams[video_id] = stream
             if is_new:
                 logger.info(
-                    "First audio stream captured for video %s "
+                    "First %s stream captured for video %s "
                     "(itag=%d, mime=%s)",
+                    "muxed fallback" if stream.is_muxed else "audio",
                     video_id, stream.itag, stream.mime_type,
                 )
             else:
