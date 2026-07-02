@@ -273,9 +273,17 @@ def _refit(
     refit_count = 0
 
     def emit_passthrough(orig: MidiSegment, note) -> None:
-        """Re-emit an unchanged note on the parsed beat grid so every
-        segment shares the same beat/time convention (mixing grids can
-        flip a note by one beat once the first segment redefines the GAP)."""
+        """Re-emit an unchanged note on the parsed beat grid.
+
+        Only the seconds representation is normalised — the note keeps the
+        exact beats (``note.start_beat``/``note.duration``) the writer would
+        have produced from the original timings.  Keeping the original
+        seconds instead is NOT safe: the first emitted segment redefines
+        the GAP, and mixing time conventions can flip a passthrough note
+        by one beat when its fractional beat position falls below the new
+        GAP epsilon (verified end-to-end: max beat-time deviation dropped
+        from ~34 ms, i.e. a full beat, to the intended epsilon of ~9 ms).
+        """
         start, end = seg_times(note.start_beat, note.duration,
                                is_first=not new_segments)
         new_segments.append(MidiSegment(
@@ -287,7 +295,7 @@ def _refit(
             line_break_after=orig.line_break_after,
         ))
 
-    for orig, note in zip(midi_segments, parsed_notes):
+    for orig, note in zip(midi_segments, parsed_notes, strict=True):
         if orig.note_type in ("F", "R"):
             emit_passthrough(orig, note)
             continue

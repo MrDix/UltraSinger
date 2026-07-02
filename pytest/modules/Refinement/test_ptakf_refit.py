@@ -57,7 +57,7 @@ class TestBestClass:
         assert hits == 3
 
     def test_all_unvoiced(self):
-        cls, hits = _best_class([-1, -1])
+        _, hits = _best_class([-1, -1])
         assert hits == 0
 
 
