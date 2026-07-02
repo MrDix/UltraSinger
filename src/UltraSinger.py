@@ -598,6 +598,8 @@ def run() -> tuple[str, Score, Score]:
             vocal_audio_path=process_data.process_data_paths.whisper_audio_path,
             bpm=process_data.media_info.bpm,
             min_note_ms=settings.ptakf_refit_min_note_ms,
+            fill=settings.ptakf_refit_fill,
+            fill_min_ms=settings.ptakf_refit_fill_min_ms,
         )
 
     # Create plot
@@ -889,6 +891,9 @@ def _write_settings_info_file(
             f.write(f"  ptAKF refit:              {settings.ptakf_refit}\n")
             if settings.ptakf_refit:
                 f.write(f"  Refit min note length:    {settings.ptakf_refit_min_note_ms} ms\n")
+                f.write(f"  Refit fill:               {settings.ptakf_refit_fill}\n")
+                if settings.ptakf_refit_fill:
+                    f.write(f"  Refit fill min run:       {settings.ptakf_refit_fill_min_ms} ms\n")
             f.write("\n")
 
             # Lyrics Lookup
@@ -1915,6 +1920,10 @@ def init_settings(argv: list[str]) -> Settings:
             settings.ptakf_refit = True
         elif opt in ("--ptakf_refit_min_note_ms"):
             settings.ptakf_refit_min_note_ms = float(arg)
+        elif opt in ("--ptakf_refit_fill"):
+            settings.ptakf_refit_fill = True
+        elif opt in ("--ptakf_refit_fill_min_ms"):
+            settings.ptakf_refit_fill_min_ms = float(arg)
     if settings.output_folder_path == "":
         if settings.input_file_path.startswith("https:"):
             dirname = os.getcwd()
@@ -2001,6 +2010,8 @@ def arg_options():
         "refine_timing_threshold=",
         "ptakf_refit",
         "ptakf_refit_min_note_ms=",
+        "ptakf_refit_fill",
+        "ptakf_refit_fill_min_ms=",
     ]
     return long, short
 

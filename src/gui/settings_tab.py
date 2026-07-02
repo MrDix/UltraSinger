@@ -601,6 +601,28 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._ptakf_refit_min_note_ms.setValue(
                          _DEFAULTS.get("ptakf_refit_min_note_ms", 100.0)))
 
+        self._ptakf_refit_fill = ToggleSwitch(
+            checked=self._config.get("ptakf_refit_fill", False)
+        )
+        card.add_toggle_row("Refit Fill Uncharted Vocals", self._ptakf_refit_fill,
+                           "Also chart sung regions outside all existing notes "
+                           "(ad-libs, vocalises, melisma tails) as \"~\" notes. "
+                           "Requires ptAKF Chart Refit.",
+                           reset_callback=lambda: self._ptakf_refit_fill.setChecked(
+                               _DEFAULTS.get("ptakf_refit_fill", False)))
+
+        self._ptakf_refit_fill_min_ms = _NoScrollDoubleSpinBox()
+        self._ptakf_refit_fill_min_ms.setRange(50.0, 2000.0)
+        self._ptakf_refit_fill_min_ms.setSingleStep(50.0)
+        self._ptakf_refit_fill_min_ms.setSuffix(" ms")
+        self._ptakf_refit_fill_min_ms.setValue(
+            self._config.get("ptakf_refit_fill_min_ms", 300.0))
+        card.add_row("Fill Min Run Length", self._ptakf_refit_fill_min_ms,
+                     "Minimum length of an uncharted sung passage before it gets "
+                     "fill notes (guards against separation bleed and noise).",
+                     reset_callback=lambda: self._ptakf_refit_fill_min_ms.setValue(
+                         _DEFAULTS.get("ptakf_refit_fill_min_ms", 300.0)))
+
         # Toggle sub-settings with main switch
         def _toggle_refine(on):
             self._refine_pitch.setEnabled(on)
@@ -612,8 +634,16 @@ class ConversionSettingsForm(QWidget):
 
         def _toggle_ptakf_refit(on):
             self._ptakf_refit_min_note_ms.setEnabled(on)
+            self._ptakf_refit_fill.setEnabled(on)
+            self._ptakf_refit_fill_min_ms.setEnabled(
+                on and self._ptakf_refit_fill.isChecked())
+
+        def _toggle_ptakf_fill(on):
+            self._ptakf_refit_fill_min_ms.setEnabled(
+                on and self._ptakf_refit.isChecked())
 
         self._ptakf_refit.toggled.connect(_toggle_ptakf_refit)
+        self._ptakf_refit_fill.toggled.connect(_toggle_ptakf_fill)
         _toggle_ptakf_refit(self._ptakf_refit.isChecked())
         _toggle_refine(self._refine_from_vocal.isChecked())
 
@@ -1074,4 +1104,6 @@ class ConversionSettingsForm(QWidget):
             "refine_timing_threshold": self._refine_timing_threshold.value(),
             "ptakf_refit": self._ptakf_refit.isChecked(),
             "ptakf_refit_min_note_ms": self._ptakf_refit_min_note_ms.value(),
+            "ptakf_refit_fill": self._ptakf_refit_fill.isChecked(),
+            "ptakf_refit_fill_min_ms": self._ptakf_refit_fill_min_ms.value(),
         }

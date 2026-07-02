@@ -56,6 +56,8 @@ class Settings:
     # ptAKF chart refit (score-first chart: note boundaries/pitches from the game's detector)
     ptakf_refit = False  # Rebuild note boundaries and pitches from ptAKF beat tones
     ptakf_refit_min_note_ms: float = 100.0  # Merge refit notes shorter than this when score-neutral
+    ptakf_refit_fill = False  # Also chart sung regions outside all notes (ad-libs, vocalises) as "~" notes
+    ptakf_refit_fill_min_ms: float = 300.0  # Minimum uncharted voiced run length before it is filled
 
     # Process data Paths
     input_file_path = ""
