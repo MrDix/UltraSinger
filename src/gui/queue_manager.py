@@ -231,19 +231,37 @@ class QueueManager(QObject):
         self.line_output.emit("")
 
         # Try interceptor path for URL items with a captured audio stream
-        if (
-            next_item.input_type == "url"
-            and next_item.video_id
-            and self._media_interceptor is not None
-        ):
-            stream = self._media_interceptor.get_stream(next_item.video_id)
-            if stream and not stream.is_expired:
+        if next_item.input_type == "url" and self._media_interceptor is not None:
+            if not next_item.video_id:
                 self.line_output.emit(
-                    f"[Queue] Browser audio stream available "
-                    f"(expires in {stream.seconds_until_expiry:.0f}s)"
+                    "[Queue] No video ID on this item - browser interception "
+                    "unavailable, falling back to yt-dlp"
                 )
-                self._start_intercepted_download(next_item, merged, stream)
-                return
+            else:
+                stream, status = self._media_interceptor.get_stream_with_status(
+                    next_item.video_id
+                )
+                if stream:
+                    self.line_output.emit(
+                        f"[Queue] Browser audio stream available "
+                        f"(expires in {stream.seconds_until_expiry:.0f}s)"
+                    )
+                    self._start_intercepted_download(next_item, merged, stream)
+                    return
+                if status == "expired":
+                    self.line_output.emit(
+                        "[Queue] Intercepted browser stream has EXPIRED - "
+                        "falling back to yt-dlp (bot-detection risk). "
+                        "Re-play the video in the browser tab shortly before "
+                        "starting the queue to refresh it."
+                    )
+                else:
+                    self.line_output.emit(
+                        "[Queue] No intercepted browser stream for this video - "
+                        "falling back to yt-dlp (bot-detection risk). "
+                        "Play the video for a few seconds in the browser tab "
+                        "before queueing so the audio stream can be captured."
+                    )
 
         # Fallback: standard yt-dlp path
         args = self._runner.build_args(merged, next_item.input_source)

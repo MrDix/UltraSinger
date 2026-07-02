@@ -191,14 +191,27 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
 
     def get_stream(self, video_id: str) -> CapturedAudioStream | None:
         """Get the captured audio stream for a video ID, if available."""
+        stream, _ = self.get_stream_with_status(video_id)
+        return stream
+
+    def get_stream_with_status(
+        self, video_id: str
+    ) -> tuple[CapturedAudioStream | None, str]:
+        """Get the stream plus a status for user-facing diagnostics.
+
+        Returns (stream, status) where status is one of:
+        ``"ok"`` — usable stream, ``"missing"`` — nothing was ever
+        captured for this video, ``"expired"`` — a stream was captured
+        but its signed URL has expired.
+        """
         stream = self._streams.get(video_id)
         if stream is None:
-            return None
+            return None, "missing"
         if stream.is_expired:
             del self._streams[video_id]
             logger.debug("Expired stream for %s removed", video_id)
-            return None
-        return stream
+            return None, "expired"
+        return stream, "ok"
 
     def get_all_streams(self) -> dict[str, CapturedAudioStream]:
         """Get all non-expired captured streams."""
