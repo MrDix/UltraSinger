@@ -37,15 +37,17 @@ class MediaDownloadWorker(QObject):
         self,
         audio_url: str,
         output_path: str,
+        keep_video: bool = False,
         parent: QObject | None = None,
     ):
         super().__init__(parent)
         self._audio_url = audio_url
         self._output_path = output_path
+        self._keep_video = keep_video
         self._process: subprocess.Popen | None = None
 
     def run(self):
-        """Download the audio stream via ffmpeg (stream copy, no re-encode)."""
+        """Download the stream via ffmpeg (stream copy, no re-encode)."""
         ffmpeg = _find_ffmpeg()
         if not ffmpeg:
             self.finished.emit(
@@ -53,16 +55,18 @@ class MediaDownloadWorker(QObject):
             )
             return
 
-        self.progress.emit("[Download] Downloading audio via browser stream...")
+        what = "video" if self._keep_video else "audio"
+        self.progress.emit(f"[Download] Downloading {what} via browser stream...")
 
         cmd = [
             str(ffmpeg),
             "-y",                    # Overwrite output
             "-i", self._audio_url,   # Pre-signed googlevideo URL
             "-c", "copy",            # Stream copy — no re-encode
-            "-vn",                   # No video
-            str(self._output_path),
         ]
+        if not self._keep_video:
+            cmd.append("-vn")        # Audio-only download: drop video
+        cmd.append(str(self._output_path))
 
         try:
             self._process = subprocess.Popen(
@@ -117,6 +121,7 @@ def _find_ffmpeg() -> Path | None:
 def start_media_download(
     audio_url: str,
     output_path: str,
+    keep_video: bool = False,
     parent: QObject | None = None,
 ) -> tuple[QThread, MediaDownloadWorker]:
     """Start a media download in a background thread.
@@ -125,7 +130,7 @@ def start_media_download(
     and worker.progress signals before calling thread.start().
     """
     thread = QThread(parent)
-    worker = MediaDownloadWorker(audio_url, output_path)
+    worker = MediaDownloadWorker(audio_url, output_path, keep_video)
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
     worker.finished.connect(thread.quit)

@@ -95,6 +95,7 @@ class Settings:
     # yt-dlp
     cookiefile = None
     youtube_url: str | None = None  # For metadata when audio is pre-downloaded
+    yt_po_token: str | None = None  # GVS PO token captured by the GUI browser; restores full yt-dlp formats
 
     # LLM lyric correction
     llm_correct_lyrics = False  # Enable LLM-based lyric post-correction

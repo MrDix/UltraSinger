@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
 
         # Create tabs (3 tabs: Video, Console, Settings)
         self._browser_tab = BrowserTab()
+        self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
         self._queue_tab = QueueTab()
         self._settings_tab = PreferencesTab(
             self._config, self._browser_tab.cookie_manager
@@ -159,13 +160,31 @@ class MainWindow(QMainWindow):
 
         if video_id:
             item.video_id = video_id
-            # Check if we already have an intercepted stream
+            # Check if we already have an intercepted stream and tell the
+            # user right away — otherwise the queue will silently fall back
+            # to yt-dlp (bot-detection risk) when the item starts.
             stream = self._browser_tab.media_interceptor.get_stream(video_id)
             if stream:
                 logger.info(
                     "Intercepted audio available for %s (expires in %.0fs)",
                     video_id, stream.seconds_until_expiry,
                 )
+                self._queue_tab.append_log(
+                    f"[Queue] Added: {title} - browser audio stream captured "
+                    f"(expires in {stream.seconds_until_expiry:.0f}s)"
+                )
+            else:
+                self._queue_tab.append_log(
+                    f"[Queue] Added: {title} - WARNING: no browser audio "
+                    f"stream captured yet. Play the video for a few seconds "
+                    f"in the browser tab, otherwise the download will use "
+                    f"yt-dlp (bot-detection risk)."
+                )
+        else:
+            self._queue_tab.append_log(
+                f"[Queue] Added: {title} - no video ID found in URL, "
+                f"download will use yt-dlp"
+            )
 
         self._update_queue_buttons()
 

@@ -1,12 +1,13 @@
 """Video browser tab with embedded Chromium, navigation, and Convert overlay."""
 
+import json
 import logging
 import re
 import subprocess
 import shutil
 from urllib.parse import parse_qs, urlparse
 
-from PySide6.QtCore import QObject, QThread, QUrl, Signal, Qt
+from PySide6.QtCore import QLocale, QObject, QThread, QUrl, Signal, Qt
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -46,9 +47,12 @@ class _FormatProbeWorker(QObject):
 
     finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
 
-    def __init__(self, video_id: str, parent: QObject | None = None):
+    def __init__(self, video_id: str, cookie_file: str = "",
+                 po_token: str = "", parent: QObject | None = None):
         super().__init__(parent)
         self._video_id = video_id
+        self._cookie_file = cookie_file
+        self._po_token = po_token
 
     def run(self):
         import json
@@ -63,6 +67,15 @@ class _FormatProbeWorker(QObject):
             yt_dlp, "--dump-json", "--no-download",
             "--no-playlist", "--skip-download", url,
         ]
+        # With the browser session's cookies and PO token the probe sees
+        # the same formats as the authenticated download (without them
+        # YouTube reports only a limited fallback set, e.g. 360p H.264).
+        if self._cookie_file:
+            cmd[1:1] = ["--cookies", self._cookie_file]
+        if self._po_token:
+            cmd[1:1] = [
+                "--extractor-args", f"youtube:po_token=web.gvs+{self._po_token}"
+            ]
 
         try:
             result = subprocess.run(
@@ -192,33 +205,76 @@ _CONVERT_OVERLAY_JS = r"""
 (function() {
     'use strict';
 
+    var BASE_CSS =
+        'position:fixed;top:80px;left:16px;z-index:2147483647;' +
+        'padding:10px 24px;border-radius:24px;font-size:15px;' +
+        'font-weight:bold;user-select:none;line-height:1;' +
+        'display:flex;align-items:center;justify-content:center;' +
+        'font-family:system-ui,sans-serif;letter-spacing:0.5px;' +
+        'pointer-events:auto;';
+
+    var READY_CSS = BASE_CSS +
+        'background:linear-gradient(135deg,#e91e63,#c2185b);color:#fff;' +
+        'cursor:pointer;' +
+        'box-shadow:0 0 16px 5px rgba(233,30,99,0.6),' +
+        '0 0 35px 10px rgba(233,30,99,0.4),' +
+        '0 0 60px 18px rgba(233,30,99,0.2);' +
+        'animation:ultrasinger-glow 2s ease-in-out infinite alternate;' +
+        'transition:transform 0.2s,box-shadow 0.2s;';
+
+    var LOADING_CSS = BASE_CSS +
+        'background:linear-gradient(135deg,#4a4a4a,#333);color:#bbb;' +
+        'cursor:default;' +
+        'box-shadow:0 0 8px 2px rgba(0,0,0,0.35);';
+
     function isVideoPage() {
         return window.location.pathname === '/watch' &&
                window.location.search.indexOf('v=') !== -1;
     }
 
+    function currentVideoId() {
+        var params = new URLSearchParams(window.location.search);
+        return params.get('v') || '';
+    }
+
+    /* The button is only clickable once the audio stream of the CURRENT
+       video has been captured by the media interceptor.  The Python side
+       calls window.__ultrasingerSetQueueReady('<videoId>') when that
+       happens; until then a non-clickable "loading" hint is shown. */
+    function applyBtnState() {
+        var btn = document.getElementById('ultrasinger-convert-btn');
+        if (!btn) return;
+        var vid = currentVideoId();
+        var ready = vid !== '' && window.__ultrasingerReadyVideoId === vid;
+        var state = ready ? '1' : '0';
+        if (btn.dataset.ready === state && btn.dataset.videoId === vid) return;
+        btn.dataset.ready = state;
+        btn.dataset.videoId = vid;
+        if (ready) {
+            btn.textContent = '\uD83C\uDFA4 Queue';
+            btn.style.cssText = READY_CSS;
+            btn.title = '';
+        } else {
+            btn.textContent = '\u23F3 loading...';
+            btn.style.cssText = LOADING_CSS;
+            btn.title = 'Waiting for the audio stream - ' +
+                        'play the video so it can be captured';
+        }
+    }
+
+    window.__ultrasingerSetQueueReady = function(videoId) {
+        window.__ultrasingerReadyVideoId = videoId;
+        applyBtnState();
+    };
+
     function updateBtn() {
         var existing = document.getElementById('ultrasinger-convert-btn');
         if (isVideoPage()) {
-            if (existing) return;
+            if (existing) { applyBtnState(); return; }
             if (!document.body) return;
 
             var btn = document.createElement('div');
             btn.id = 'ultrasinger-convert-btn';
-            btn.textContent = '\uD83C\uDFA4 Queue';
-            btn.style.cssText =
-                'position:fixed;top:80px;left:16px;z-index:2147483647;' +
-                'background:linear-gradient(135deg,#e91e63,#c2185b);color:#fff;' +
-                'padding:10px 24px;border-radius:24px;cursor:pointer;font-size:15px;' +
-                'font-weight:bold;user-select:none;line-height:1;' +
-                'display:flex;align-items:center;justify-content:center;' +
-                'font-family:system-ui,sans-serif;letter-spacing:0.5px;' +
-                'pointer-events:auto;' +
-                'box-shadow:0 0 16px 5px rgba(233,30,99,0.6),' +
-                '0 0 35px 10px rgba(233,30,99,0.4),' +
-                '0 0 60px 18px rgba(233,30,99,0.2);' +
-                'animation:ultrasinger-glow 2s ease-in-out infinite alternate;' +
-                'transition:transform 0.2s,box-shadow 0.2s;';
 
             /* Inject glow keyframes once */
             if (!document.getElementById('ultrasinger-glow-style')) {
@@ -237,6 +293,7 @@ _CONVERT_OVERLAY_JS = r"""
             }
 
             btn.addEventListener('mouseover', function() {
+                if (this.dataset.ready !== '1') return;
                 this.style.transform = 'scale(1.08)';
                 this.style.animationPlayState = 'paused';
                 this.style.boxShadow =
@@ -245,11 +302,14 @@ _CONVERT_OVERLAY_JS = r"""
                     '0 0 80px 25px rgba(233,30,99,0.25)';
             });
             btn.addEventListener('mouseout', function() {
+                if (this.dataset.ready !== '1') return;
                 this.style.transform = 'scale(1)';
                 this.style.animationPlayState = 'running';
                 this.style.boxShadow = '';
             });
             btn.addEventListener('click', function() {
+                // Ignore clicks while the audio stream is not captured yet
+                if (this.dataset.ready !== '1') return;
                 // Extract only the video ID — strip &list=, &index= etc.
                 // to prevent yt-dlp from downloading an entire playlist.
                 var params = new URLSearchParams(window.location.search);
@@ -259,6 +319,7 @@ _CONVERT_OVERLAY_JS = r"""
                     encodeURIComponent(cleanUrl);
             });
             document.body.appendChild(btn);
+            applyBtnState();
 
             /* Quality badge — below the Queue button so it doesn't
                overlap YouTube's search suggestion dropdown. */
@@ -356,8 +417,46 @@ class BrowserTab(QWidget):
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
 
+        # Normalize the user agent: the default contains a
+        # "QtWebEngine/x.y.z" token that YouTube uses to detect embedded
+        # browsers and then serves a degraded player (progressive 360p
+        # without separate audio streams — which also starves the media
+        # interceptor).  Strip the token so the UA matches a real Chrome
+        # of the same Chromium version.
+        #
+        # Google's SIGN-IN flow however rejects a Chrome UA coming from a
+        # browser without Chrome's client hints ("This browser or app may
+        # not be secure").  Firefox has no client hints, so a Firefox UA
+        # is consistent and passes the sign-in check.  We therefore switch
+        # the UA per host: Firefox on Google account/login domains, Chrome
+        # everywhere else (see _select_ua_for, called on every navigation).
+        default_ua = self._profile.httpUserAgent()
+        self._chrome_ua = re.sub(r"\s*QtWebEngine/\S+", "", default_ua)
+        os_match = re.search(r"\(([^)]+)\)", default_ua)
+        os_part = os_match.group(1) if os_match else "Windows NT 10.0; Win64; x64"
+        self._login_ua = (
+            f"Mozilla/5.0 ({os_part}; rv:140.0) Gecko/20100101 Firefox/140.0"
+        )
+        self._profile.setHttpUserAgent(self._chrome_ua)
+        logger.info("Browser UA normalized: %s", self._chrome_ua)
+
+        # Real browsers always send an Accept-Language header; the Qt
+        # default is empty, which is another embedded-browser fingerprint.
+        if not self._profile.httpAcceptLanguage():
+            locale = QLocale().name().replace("_", "-")  # e.g. de-DE
+            lang = locale.split("-")[0]
+            if lang and lang != "en":
+                accept = f"{locale},{lang};q=0.9,en-US;q=0.8,en;q=0.7"
+            else:
+                accept = "en-US,en;q=0.9"
+            self._profile.setHttpAcceptLanguage(accept)
+            logger.info("Browser Accept-Language set: %s", accept)
+
         # Cookie manager
         self.cookie_manager = CookieManager(self._profile, self)
+        # Set by MainWindow to the configured cookie-file path; when set,
+        # the format probe exports and uses the browser cookies
+        self.probe_cookie_file: str = ""
 
         # Media interceptor — passively captures audio stream URLs
         self.media_interceptor = MediaInterceptor(self)
@@ -430,6 +529,9 @@ class BrowserTab(QWidget):
         self.media_interceptor.audio_captured.connect(
             self._on_audio_captured
         )
+        self.media_interceptor.po_token_captured.connect(
+            self._on_po_token_captured
+        )
 
         # Track cookie status
         self.cookie_manager.cookies_changed.connect(self._update_cookie_status)
@@ -440,8 +542,28 @@ class BrowserTab(QWidget):
 
     # ── URL bar ──────────────────────────────────────────────────────────
 
+    _LOGIN_HOSTS = ("accounts.youtube.com", "myaccount.google.com")
+
+    def _select_ua_for(self, url: QUrl):
+        """Switch the profile UA depending on the destination host.
+
+        Google's sign-in rejects a Chrome UA without Chrome client hints,
+        while YouTube degrades the player for non-Chrome/embedded UAs —
+        so login domains get a Firefox UA and everything else Chrome.
+        """
+        host = url.host()
+        is_login = host in self._LOGIN_HOSTS or host.endswith("accounts.google.com")
+        target = self._login_ua if is_login else self._chrome_ua
+        if self._profile.httpUserAgent() != target:
+            self._profile.setHttpUserAgent(target)
+            logger.info(
+                "Browser UA switched to %s profile for %s",
+                "login (Firefox)" if is_login else "web (Chrome)", host,
+            )
+
     def _on_url_changed(self, url: QUrl):
         """Sync URL bar with the browser's current location."""
+        self._select_ua_for(url)
         self._url_bar.setText(url.toString())
 
         # Track current video ID for interceptor assignment
@@ -451,12 +573,36 @@ class BrowserTab(QWidget):
         # Probe available formats when navigating to a video page
         if self._current_video_id:
             self._probe_formats(self._current_video_id)
+            # Unlock the Queue button right away when a still-valid stream
+            # was captured for this video, or when the session PO token is
+            # known (then yt-dlp can download any video in full quality).
+            if (
+                self.media_interceptor.get_stream(self._current_video_id)
+                or self.media_interceptor.get_po_token()
+            ):
+                self._notify_queue_ready(self._current_video_id)
 
     def _on_audio_captured(self, stream):
         """When a new audio stream is captured, assign it to the current video."""
         if hasattr(self, "_current_video_id") and self._current_video_id:
             self.media_interceptor.assign_to_video(
                 self._current_video_id, stream
+            )
+            # Unlock the overlay Queue button (it shows a non-clickable
+            # "loading" hint until the stream is captured)
+            self._notify_queue_ready(self._current_video_id)
+
+    def _on_po_token_captured(self, _pot: str):
+        """Session PO token captured — the Queue button can be unlocked."""
+        if getattr(self, "_current_video_id", ""):
+            self._notify_queue_ready(self._current_video_id)
+
+    def _notify_queue_ready(self, video_id: str):
+        """Tell the overlay script that the Queue button may be enabled."""
+        if self._page:
+            self._page.runJavaScript(
+                "window.__ultrasingerSetQueueReady && "
+                f"window.__ultrasingerSetQueueReady({json.dumps(video_id)});"
             )
 
     # ── Format probe ──────────────────────────────────────────────────────
@@ -477,8 +623,20 @@ class BrowserTab(QWidget):
                 "})();"
             )
 
+        # Export fresh browser cookies for the probe so it sees the same
+        # formats as the authenticated download (badge accuracy).
+        cookie_file = ""
+        if self.probe_cookie_file and self.cookie_manager.has_video_cookies:
+            try:
+                self.cookie_manager.export_netscape(self.probe_cookie_file)
+                cookie_file = self.probe_cookie_file
+            except OSError as e:
+                logger.warning("Cookie export for format probe failed: %s", e)
+
         thread = QThread(self)
-        worker = _FormatProbeWorker(video_id)
+        worker = _FormatProbeWorker(
+            video_id, cookie_file, self.media_interceptor.get_po_token()
+        )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_format_probed)
