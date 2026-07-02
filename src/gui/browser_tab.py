@@ -7,7 +7,7 @@ import subprocess
 import shutil
 from urllib.parse import parse_qs, urlparse
 
-from PySide6.QtCore import QObject, QThread, QUrl, Signal, Qt
+from PySide6.QtCore import QLocale, QObject, QThread, QUrl, Signal, Qt
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -404,6 +404,30 @@ class BrowserTab(QWidget):
         self._profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
+
+        # Normalize the user agent: the default contains a
+        # "QtWebEngine/x.y.z" token that YouTube uses to detect embedded
+        # browsers and then serves a degraded player (progressive 360p
+        # without separate audio streams — which also starves the media
+        # interceptor).  Strip the token so the UA matches a real Chrome
+        # of the same Chromium version.
+        default_ua = self._profile.httpUserAgent()
+        clean_ua = re.sub(r"\s*QtWebEngine/\S+", "", default_ua)
+        if clean_ua != default_ua:
+            self._profile.setHttpUserAgent(clean_ua)
+            logger.info("Browser UA normalized: %s", clean_ua)
+
+        # Real browsers always send an Accept-Language header; the Qt
+        # default is empty, which is another embedded-browser fingerprint.
+        if not self._profile.httpAcceptLanguage():
+            locale = QLocale().name().replace("_", "-")  # e.g. de-DE
+            lang = locale.split("-")[0]
+            if lang and lang != "en":
+                accept = f"{locale},{lang};q=0.9,en-US;q=0.8,en;q=0.7"
+            else:
+                accept = "en-US,en;q=0.9"
+            self._profile.setHttpAcceptLanguage(accept)
+            logger.info("Browser Accept-Language set: %s", accept)
 
         # Cookie manager
         self.cookie_manager = CookieManager(self._profile, self)

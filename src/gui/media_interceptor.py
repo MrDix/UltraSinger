@@ -123,6 +123,10 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         super().__init__(parent)
         # Streams keyed by YouTube video ID (set externally by BrowserTab)
         self._streams: dict[str, CapturedAudioStream] = {}
+        # Diagnostics: log unclassified googlevideo requests (deduplicated,
+        # capped) so a broken capture (e.g. YouTube switching the embedded
+        # player to progressive-only or SABR delivery) is visible in the log
+        self._diag_seen: set[str] = set()
 
     def interceptRequest(self, info):
         """Called for every HTTP request made by QWebEngine.
@@ -140,6 +144,20 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         url_str = url.toString()
 
         if not _is_audio_request(url_str):
+            if len(self._diag_seen) < 12:
+                params = parse_qs(urlparse(url_str).query)
+                sig = (
+                    f"path={urlparse(url_str).path}"
+                    f" mime={params.get('mime', [''])[0]}"
+                    f" itag={params.get('itag', [''])[0]}"
+                    f" sabr={params.get('sabr', [''])[0]}"
+                    f" method={bytes(info.requestMethod()).decode('ascii', 'replace')}"
+                )
+                if sig not in self._diag_seen:
+                    self._diag_seen.add(sig)
+                    logger.info(
+                        "googlevideo request NOT classified as audio: %s", sig
+                    )
             return
 
         # Strip range params to get a full-file download URL
@@ -183,11 +201,19 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         signal, so there is no race with subsequent interceptor calls.
         """
         if video_id and stream:
+            is_new = video_id not in self._streams
             self._streams[video_id] = stream
-            logger.debug(
-                "Assigned stream to video %s (itag=%d)",
-                video_id, stream.itag,
-            )
+            if is_new:
+                logger.info(
+                    "First audio stream captured for video %s "
+                    "(itag=%d, mime=%s)",
+                    video_id, stream.itag, stream.mime_type,
+                )
+            else:
+                logger.debug(
+                    "Assigned stream to video %s (itag=%d)",
+                    video_id, stream.itag,
+                )
 
     def get_stream(self, video_id: str) -> CapturedAudioStream | None:
         """Get the captured audio stream for a video ID, if available."""
