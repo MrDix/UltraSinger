@@ -18,7 +18,10 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
+from PySide6.QtWebEngineCore import (
+    QWebEngineUrlRequestInfo,
+    QWebEngineUrlRequestInterceptor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,17 @@ _AUDIO_ITAGS = {
     338,                 # webm Opus (immersive)
 }
 
+# Progressive (muxed video+audio) itags — captured as FALLBACK when no
+# separate audio stream is available.  With SABR delivery the adaptive
+# streams arrive as opaque binary POST responses (no capturable URL);
+# the player then still fetches a classic progressive stream we can use.
+# Only the audio track (AAC) is extracted downstream.
+_MUXED_ITAGS = {
+    18,                  # mp4 360p H.264 + AAC 96k
+    22,                  # mp4 720p H.264 + AAC 192k (rarely served)
+    59,                  # mp4 480p H.264 + AAC
+}
+
 
 @dataclass
 class CapturedAudioStream:
@@ -43,6 +57,8 @@ class CapturedAudioStream:
     mime_type: str = ""          # e.g. "audio/webm"
     expire_time: int = 0         # Unix timestamp from &expire= parameter
     captured_at: float = field(default_factory=time.time)
+    is_muxed: bool = False       # Progressive video+audio stream (fallback);
+                                 # only the audio track is used downstream
 
     @property
     def is_expired(self) -> bool:
@@ -103,6 +119,13 @@ def _is_audio_request(url: str) -> bool:
     return False
 
 
+def _is_muxed_request(url: str) -> bool:
+    """Check if a URL is for a progressive (muxed video+audio) stream."""
+    params = parse_qs(urlparse(url).query)
+    itag_str = params.get("itag", [""])[0]
+    return itag_str.isdigit() and int(itag_str) in _MUXED_ITAGS
+
+
 class MediaInterceptor(QWebEngineUrlRequestInterceptor):
     """Intercepts googlevideo.com media requests to capture audio URLs.
 
@@ -118,11 +141,20 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
     # Signal must be on a QObject, not directly on the interceptor
     # (QWebEngineUrlRequestInterceptor IS a QObject in PySide6)
     audio_captured = Signal(object)  # CapturedAudioStream
+    po_token_captured = Signal(str)  # GVS Proof-of-Origin token
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         # Streams keyed by YouTube video ID (set externally by BrowserTab)
         self._streams: dict[str, CapturedAudioStream] = {}
+        # Diagnostics: log unclassified googlevideo requests (deduplicated,
+        # capped) so a broken capture (e.g. YouTube switching the embedded
+        # player to progressive-only or SABR delivery) is visible in the log
+        self._diag_seen: set[str] = set()
+        # Latest GVS Proof-of-Origin token seen on media requests.  It is
+        # session-bound (not per-video) and lets yt-dlp fetch the full
+        # format list instead of the limited anonymous fallback.
+        self._po_token: str = ""
 
     def interceptRequest(self, info):
         """Called for every HTTP request made by QWebEngine.
@@ -132,14 +164,58 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         """
         url = info.requestUrl()
         host = url.host()
+        path = url.path()
 
-        # Fast path: skip non-googlevideo requests
-        if not host.endswith("googlevideo.com"):
+        # Media traffic can come from *.googlevideo.com (classic) or be
+        # proxied through other hosts (e.g. *.youtube.com/videoplayback).
+        # Chromium also tags <video>/<audio> element loads as Media.
+        is_media_host = host.endswith("googlevideo.com")
+        is_media_path = (
+            "videoplayback" in path
+            or "initplayback" in path
+            or path.startswith("/ump")
+        )
+        is_media_type = (
+            info.resourceType()
+            == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMedia
+        )
+
+        # Fast path: skip anything that cannot be media traffic
+        if not is_media_host and not is_media_path and not is_media_type:
             return
 
         url_str = url.toString()
 
-        if not _is_audio_request(url_str):
+        # Harvest the GVS PO token from ANY media request (including SABR
+        # POSTs, which are otherwise useless to us).  It is the key that
+        # lets yt-dlp download full-quality formats with the same session.
+        params = parse_qs(urlparse(url_str).query)
+        pot = params.get("pot", [""])[0]
+        if pot and pot != self._po_token:
+            self._po_token = pot
+            logger.info("Captured GVS PO token (%d chars)", len(pot))
+            self.po_token_captured.emit(pot)
+
+        is_audio = _is_audio_request(url_str)
+        is_muxed = not is_audio and _is_muxed_request(url_str)
+        if not is_audio and not is_muxed:
+            if len(self._diag_seen) < 20:
+                rt = info.resourceType()
+                sig = (
+                    f"host={host}"
+                    f" path={path}"
+                    f" mime={params.get('mime', [''])[0]}"
+                    f" itag={params.get('itag', [''])[0]}"
+                    f" sabr={params.get('sabr', [''])[0]}"
+                    f" pot_len={len(pot)}"
+                    f" type={getattr(rt, 'name', rt)}"
+                    f" method={bytes(info.requestMethod()).decode('ascii', 'replace')}"
+                )
+                if sig not in self._diag_seen:
+                    self._diag_seen.add(sig)
+                    logger.info(
+                        "media-ish request NOT classified as audio: %s", sig
+                    )
             return
 
         # Strip range params to get a full-file download URL
@@ -165,10 +241,12 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
             mime_type=mime,
             expire_time=expire,
             captured_at=time.time(),
+            is_muxed=is_muxed,
         )
 
         logger.debug(
-            "Captured audio stream (itag=%d, mime=%s, expires in %.0fs)",
+            "Captured %s stream (itag=%d, mime=%s, expires in %.0fs)",
+            "muxed fallback" if is_muxed else "audio",
             itag, mime, stream.seconds_until_expiry,
         )
         # Emit the exact stream object — the receiver assigns it to a
@@ -183,22 +261,58 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         signal, so there is no race with subsequent interceptor calls.
         """
         if video_id and stream:
+            existing = self._streams.get(video_id)
+            # A muxed fallback stream must never replace a pure audio
+            # stream (better quality) that is still valid
+            if (
+                stream.is_muxed
+                and existing is not None
+                and not existing.is_muxed
+                and not existing.is_expired
+            ):
+                return
+            is_new = existing is None
             self._streams[video_id] = stream
-            logger.debug(
-                "Assigned stream to video %s (itag=%d)",
-                video_id, stream.itag,
-            )
+            if is_new:
+                logger.info(
+                    "First %s stream captured for video %s "
+                    "(itag=%d, mime=%s)",
+                    "muxed fallback" if stream.is_muxed else "audio",
+                    video_id, stream.itag, stream.mime_type,
+                )
+            else:
+                logger.debug(
+                    "Assigned stream to video %s (itag=%d)",
+                    video_id, stream.itag,
+                )
 
     def get_stream(self, video_id: str) -> CapturedAudioStream | None:
         """Get the captured audio stream for a video ID, if available."""
+        stream, _ = self.get_stream_with_status(video_id)
+        return stream
+
+    def get_stream_with_status(
+        self, video_id: str
+    ) -> tuple[CapturedAudioStream | None, str]:
+        """Get the stream plus a status for user-facing diagnostics.
+
+        Returns (stream, status) where status is one of:
+        ``"ok"`` — usable stream, ``"missing"`` — nothing was ever
+        captured for this video, ``"expired"`` — a stream was captured
+        but its signed URL has expired.
+        """
         stream = self._streams.get(video_id)
         if stream is None:
-            return None
+            return None, "missing"
         if stream.is_expired:
             del self._streams[video_id]
             logger.debug("Expired stream for %s removed", video_id)
-            return None
-        return stream
+            return None, "expired"
+        return stream, "ok"
+
+    def get_po_token(self) -> str:
+        """Latest GVS PO token captured from the browser session ('' if none)."""
+        return self._po_token
 
     def get_all_streams(self) -> dict[str, CapturedAudioStream]:
         """Get all non-expired captured streams."""

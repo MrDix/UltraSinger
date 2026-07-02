@@ -9,6 +9,7 @@ from src.gui.media_interceptor import (
     MediaInterceptor,
     _extract_video_id_from_url,
     _is_audio_request,
+    _is_muxed_request,
     _strip_range_params,
 )
 
@@ -59,6 +60,26 @@ class TestIsAudioRequest:
     def test_itag_249_opus(self):
         url = "https://rr1.googlevideo.com/videoplayback?itag=249"
         assert _is_audio_request(url) is True
+
+
+class TestIsMuxedRequest:
+    """Test progressive (muxed) fallback stream detection."""
+
+    def test_itag_18_is_muxed(self):
+        url = "https://rr1.googlevideo.com/videoplayback?mime=video%2Fmp4&itag=18"
+        assert _is_muxed_request(url) is True
+
+    def test_adaptive_video_itag_not_muxed(self):
+        url = "https://rr1.googlevideo.com/videoplayback?mime=video%2Fmp4&itag=137"
+        assert _is_muxed_request(url) is False
+
+    def test_audio_itag_not_muxed(self):
+        url = "https://rr1.googlevideo.com/videoplayback?itag=251"
+        assert _is_muxed_request(url) is False
+
+    def test_no_itag_not_muxed(self):
+        url = "https://rr1.googlevideo.com/videoplayback?sabr=1"
+        assert _is_muxed_request(url) is False
 
 
 class TestStripRangeParams:
@@ -189,3 +210,45 @@ class TestMediaInterceptorStreamManagement:
         stream = CapturedAudioStream(url="http://x", video_id="s")
         interceptor.assign_to_video("", stream)
         assert len(interceptor._streams) == 0
+
+    def test_muxed_does_not_replace_pure_audio(self):
+        interceptor = MediaInterceptor()
+        audio = CapturedAudioStream(
+            url="http://audio", video_id="s",
+            expire_time=int(time.time()) + 3600,
+        )
+        muxed = CapturedAudioStream(
+            url="http://muxed", video_id="s", is_muxed=True,
+            expire_time=int(time.time()) + 3600,
+        )
+        interceptor.assign_to_video("vid", audio)
+        interceptor.assign_to_video("vid", muxed)
+        assert interceptor.get_stream("vid").url == "http://audio"
+
+    def test_pure_audio_replaces_muxed(self):
+        interceptor = MediaInterceptor()
+        muxed = CapturedAudioStream(
+            url="http://muxed", video_id="s", is_muxed=True,
+            expire_time=int(time.time()) + 3600,
+        )
+        audio = CapturedAudioStream(
+            url="http://audio", video_id="s",
+            expire_time=int(time.time()) + 3600,
+        )
+        interceptor.assign_to_video("vid", muxed)
+        interceptor.assign_to_video("vid", audio)
+        assert interceptor.get_stream("vid").url == "http://audio"
+
+    def test_muxed_replaces_expired_audio(self):
+        interceptor = MediaInterceptor()
+        stale_audio = CapturedAudioStream(
+            url="http://audio", video_id="s",
+            expire_time=int(time.time()) - 100,
+        )
+        muxed = CapturedAudioStream(
+            url="http://muxed", video_id="s", is_muxed=True,
+            expire_time=int(time.time()) + 3600,
+        )
+        interceptor.assign_to_video("vid", stale_audio)
+        interceptor.assign_to_video("vid", muxed)
+        assert interceptor.get_stream("vid").url == "http://muxed"

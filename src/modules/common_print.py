@@ -35,6 +35,10 @@ def print_help() -> None:
                             embedded browser (bypassing bot detection), so the input is a local
                             file, but the YouTube URL is still needed for artist/title/thumbnail.
                             Not needed when -i is already a YouTube URL.
+    --yt_po_token           GVS Proof-of-Origin token for yt-dlp (web.gvs). Without it YouTube
+                            limits downloads to a reduced format set or blocks them (HTTP 403).
+                            The GUI captures this token automatically from its embedded browser
+                            and passes it through; for CLI use see yt-dlp's PO token guide.
 
     [separation]
     --separator             Vocal separation backend: demucs|audio_separator >> ((default) is audio_separator)

@@ -4,6 +4,7 @@ import importlib.metadata
 import logging
 from pathlib import Path
 
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,6 +24,43 @@ from .settings_dialog import PerSongSettingsDialog, ReadOnlySettingsDialog
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
+
+
+class _PotokenWorker(QObject):
+    """Ensures the bgutil PO-token provider is available (off the GUI thread).
+
+    Starting the provider server can take several seconds, so this runs in
+    a QThread and reports the result via ``finished``.  ``result_status``
+    is also stored directly so the close handler can read it even if the
+    queued ``finished`` signal has not been delivered yet.
+    """
+
+    finished = Signal(object)  # ProviderStatus | None
+
+    def __init__(self, base_url: str, auto_start_node: bool,
+                 auto_start_docker: bool, cancel):
+        super().__init__()
+        self._base_url = base_url
+        self._auto_start_node = auto_start_node
+        self._auto_start_docker = auto_start_docker
+        self._cancel = cancel
+        self.result_status = None
+
+    def run(self):
+        try:
+            from .potoken_provider import ensure_provider
+
+            status = ensure_provider(
+                self._base_url,
+                auto_start_node=self._auto_start_node,
+                auto_start_docker=self._auto_start_docker,
+                cancel=self._cancel,
+            )
+        except Exception as e:  # noqa: BLE001 — fail open, never crash startup
+            logger.warning("PO-token provider check failed: %s", e)
+            status = None
+        self.result_status = status
+        self.finished.emit(status)
 
 
 class MainWindow(QMainWindow):
@@ -75,6 +113,7 @@ class MainWindow(QMainWindow):
 
         # Create tabs (3 tabs: Video, Console, Settings)
         self._browser_tab = BrowserTab()
+        self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
         self._queue_tab = QueueTab()
         self._settings_tab = PreferencesTab(
             self._config, self._browser_tab.cookie_manager
@@ -140,6 +179,80 @@ class MainWindow(QMainWindow):
         # Initial button state
         self._update_queue_buttons()
 
+        # Start / detect the PO-token provider in the background so YouTube
+        # downloads get full-quality formats (SABR delivery otherwise limits
+        # us to 360p / HTTP 403).
+        self._potoken_status = None
+        self._potoken_thread = None
+        self._potoken_worker = None
+        self._potoken_cancel = None
+        self._closing = False
+        self._start_potoken_provider()
+
+    # ── PO-token provider ─────────────────────────────────────────────
+
+    def _start_potoken_provider(self):
+        """Ensure the bgutil PO-token provider is running (background)."""
+        if not self._config.get("potoken_auto_start", True):
+            return
+        import threading
+
+        from .potoken_provider import DEFAULT_BASE_URL
+
+        base_url = self._config.get("potoken_base_url") or DEFAULT_BASE_URL
+        self._potoken_cancel = threading.Event()
+        self._potoken_thread = QThread(self)
+        self._potoken_worker = _PotokenWorker(
+            base_url,
+            self._config.get("potoken_auto_start_node", True),
+            self._config.get("potoken_auto_start_docker", True),
+            self._potoken_cancel,
+        )
+        self._potoken_worker.moveToThread(self._potoken_thread)
+        self._potoken_thread.started.connect(self._potoken_worker.run)
+        self._potoken_worker.finished.connect(self._on_potoken_ready)
+        self._potoken_worker.finished.connect(self._potoken_thread.quit)
+        self._potoken_thread.start()
+
+    def _on_potoken_ready(self, status):
+        """Report PO-token provider status and unlock the Queue button."""
+        self._potoken_status = status
+        if status is None or self._closing:
+            return
+        prefix = "[PO-Token] " if status.running else "[PO-Token] WARNING: "
+        self._queue_tab.append_log(prefix + status.detail)
+        if status.running:
+            # With the provider up, yt-dlp downloads any video in full
+            # quality — enable the browser Queue button globally.
+            self._browser_tab.set_provider_ready(True)
+            self._queue_mgr.set_potoken_available(True)
+
+    def _shutdown_potoken_provider(self):
+        """Cancel a pending provider start and stop one we launched."""
+        self._closing = True
+        thread = self._potoken_thread
+        if thread is not None and thread.isRunning():
+            # Signal the worker to abort its wait/start loop, then join it
+            # so the QThread is never destroyed while still running.
+            if self._potoken_cancel is not None:
+                self._potoken_cancel.set()
+            thread.quit()
+            if not thread.wait(8000):
+                logger.warning("PO-token provider thread did not stop in time")
+
+        # Prefer the status delivered via signal; fall back to the value the
+        # worker stored directly (the queued signal may not have run yet).
+        status = self._potoken_status
+        if status is None and self._potoken_worker is not None:
+            status = self._potoken_worker.result_status
+        if status is not None:
+            try:
+                from .potoken_provider import stop_provider_if_started
+
+                stop_provider_if_started(status)
+            except Exception:  # noqa: BLE001 — never block shutdown
+                logger.debug("PO-token provider cleanup failed", exc_info=True)
+
     # ── Queue operations ───────────────────────────────────────────────
 
     def _on_add_from_browser(self, url: str, title: str):
@@ -159,13 +272,31 @@ class MainWindow(QMainWindow):
 
         if video_id:
             item.video_id = video_id
-            # Check if we already have an intercepted stream
+            # Check if we already have an intercepted stream and tell the
+            # user right away — otherwise the queue will silently fall back
+            # to yt-dlp (bot-detection risk) when the item starts.
             stream = self._browser_tab.media_interceptor.get_stream(video_id)
             if stream:
                 logger.info(
                     "Intercepted audio available for %s (expires in %.0fs)",
                     video_id, stream.seconds_until_expiry,
                 )
+                self._queue_tab.append_log(
+                    f"[Queue] Added: {title} - browser audio stream captured "
+                    f"(expires in {stream.seconds_until_expiry:.0f}s)"
+                )
+            else:
+                self._queue_tab.append_log(
+                    f"[Queue] Added: {title} - WARNING: no browser audio "
+                    f"stream captured yet. Play the video for a few seconds "
+                    f"in the browser tab, otherwise the download will use "
+                    f"yt-dlp (bot-detection risk)."
+                )
+        else:
+            self._queue_tab.append_log(
+                f"[Queue] Added: {title} - no video ID found in URL, "
+                f"download will use yt-dlp"
+            )
 
         self._update_queue_buttons()
 
@@ -408,6 +539,9 @@ class MainWindow(QMainWindow):
             save_config(self._config)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
+
+        # Stop a pending provider start / the server we launched
+        self._shutdown_potoken_provider()
 
         # Shut down the browser engine so Chromium can flush cookies
         self._browser_tab.shutdown()
