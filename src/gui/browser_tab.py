@@ -411,11 +411,22 @@ class BrowserTab(QWidget):
         # without separate audio streams — which also starves the media
         # interceptor).  Strip the token so the UA matches a real Chrome
         # of the same Chromium version.
+        #
+        # Google's SIGN-IN flow however rejects a Chrome UA coming from a
+        # browser without Chrome's client hints ("This browser or app may
+        # not be secure").  Firefox has no client hints, so a Firefox UA
+        # is consistent and passes the sign-in check.  We therefore switch
+        # the UA per host: Firefox on Google account/login domains, Chrome
+        # everywhere else (see _select_ua_for, called on every navigation).
         default_ua = self._profile.httpUserAgent()
-        clean_ua = re.sub(r"\s*QtWebEngine/\S+", "", default_ua)
-        if clean_ua != default_ua:
-            self._profile.setHttpUserAgent(clean_ua)
-            logger.info("Browser UA normalized: %s", clean_ua)
+        self._chrome_ua = re.sub(r"\s*QtWebEngine/\S+", "", default_ua)
+        os_match = re.search(r"\(([^)]+)\)", default_ua)
+        os_part = os_match.group(1) if os_match else "Windows NT 10.0; Win64; x64"
+        self._login_ua = (
+            f"Mozilla/5.0 ({os_part}; rv:140.0) Gecko/20100101 Firefox/140.0"
+        )
+        self._profile.setHttpUserAgent(self._chrome_ua)
+        logger.info("Browser UA normalized: %s", self._chrome_ua)
 
         # Real browsers always send an Accept-Language header; the Qt
         # default is empty, which is another embedded-browser fingerprint.
@@ -513,8 +524,28 @@ class BrowserTab(QWidget):
 
     # ── URL bar ──────────────────────────────────────────────────────────
 
+    _LOGIN_HOSTS = ("accounts.youtube.com", "myaccount.google.com")
+
+    def _select_ua_for(self, url: QUrl):
+        """Switch the profile UA depending on the destination host.
+
+        Google's sign-in rejects a Chrome UA without Chrome client hints,
+        while YouTube degrades the player for non-Chrome/embedded UAs —
+        so login domains get a Firefox UA and everything else Chrome.
+        """
+        host = url.host()
+        is_login = host in self._LOGIN_HOSTS or host.endswith("accounts.google.com")
+        target = self._login_ua if is_login else self._chrome_ua
+        if self._profile.httpUserAgent() != target:
+            self._profile.setHttpUserAgent(target)
+            logger.info(
+                "Browser UA switched to %s profile for %s",
+                "login (Firefox)" if is_login else "web (Chrome)", host,
+            )
+
     def _on_url_changed(self, url: QUrl):
         """Sync URL bar with the browser's current location."""
+        self._select_ua_for(url)
         self._url_bar.setText(url.toString())
 
         # Track current video ID for interceptor assignment
