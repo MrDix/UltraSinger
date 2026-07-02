@@ -577,6 +577,30 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._refine_timing_threshold.setValue(
                          _DEFAULTS.get("refine_timing_threshold", 30.0)))
 
+        # ptAKF chart refit
+        self._ptakf_refit = ToggleSwitch(
+            checked=self._config.get("ptakf_refit", False)
+        )
+        card.add_toggle_row("ptAKF Chart Refit", self._ptakf_refit,
+                           "Rebuild note boundaries and pitches from the game's own pitch "
+                           "detector (score-first chart). Charts only voiced beats and splits "
+                           "notes at pitch changes. Maximizes the achievable game score but "
+                           "increases the note count.",
+                           reset_callback=lambda: self._ptakf_refit.setChecked(
+                               _DEFAULTS.get("ptakf_refit", False)))
+
+        self._ptakf_refit_min_note_ms = _NoScrollDoubleSpinBox()
+        self._ptakf_refit_min_note_ms.setRange(0.0, 500.0)
+        self._ptakf_refit_min_note_ms.setSingleStep(10.0)
+        self._ptakf_refit_min_note_ms.setSuffix(" ms")
+        self._ptakf_refit_min_note_ms.setValue(
+            self._config.get("ptakf_refit_min_note_ms", 100.0))
+        card.add_row("Refit Min Note Length", self._ptakf_refit_min_note_ms,
+                     "Refit notes shorter than this are merged back into a neighbour "
+                     "when no score is lost (playability smoothing).",
+                     reset_callback=lambda: self._ptakf_refit_min_note_ms.setValue(
+                         _DEFAULTS.get("ptakf_refit_min_note_ms", 100.0)))
+
         # Toggle sub-settings with main switch
         def _toggle_refine(on):
             self._refine_pitch.setEnabled(on)
@@ -585,6 +609,12 @@ class ConversionSettingsForm(QWidget):
             self._refine_timing_threshold.setEnabled(on)
 
         self._refine_from_vocal.toggled.connect(_toggle_refine)
+
+        def _toggle_ptakf_refit(on):
+            self._ptakf_refit_min_note_ms.setEnabled(on)
+
+        self._ptakf_refit.toggled.connect(_toggle_ptakf_refit)
+        _toggle_ptakf_refit(self._ptakf_refit.isChecked())
         _toggle_refine(self._refine_from_vocal.isChecked())
 
         self._main_layout.addWidget(card)
@@ -1042,4 +1072,6 @@ class ConversionSettingsForm(QWidget):
             "refine_timing": self._refine_timing.isChecked(),
             "refine_hit_ratio": self._refine_hit_ratio.value(),
             "refine_timing_threshold": self._refine_timing_threshold.value(),
+            "ptakf_refit": self._ptakf_refit.isChecked(),
+            "ptakf_refit_min_note_ms": self._ptakf_refit_min_note_ms.value(),
         }
