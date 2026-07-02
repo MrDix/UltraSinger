@@ -629,6 +629,16 @@ for low male voices. Accurate is the real tone specified in the txt. I had txt f
 singable by humans, but you could still reach the 10k points in the game. The accuracy is important here, because from
 this MIDI and sheet are created. And you also want to have accurate files
 
+#### Game score (ptAKF)
+
+In addition to the internal simple/accurate scores, UltraSinger reports the **game score**: the written chart scored against the extracted vocals with [ultrastar-score](https://github.com/MrDix/ultrastar-score) - the same C++ ptAKF pitch-detection and scoring algorithm the games (Vocaluxe/USDX) use - at all three difficulties (Easy +-2 / Medium +-1 / Hard 0 semitones, octave-folded):
+
+```
+[UltraSinger] Game score (ptAKF): Easy 96.7% | Medium 87.1% | Hard 66.6%
+```
+
+**This is the number to trust when comparing conversions.** The internal simple/accurate scores measure against the SwiftF0 pitch data the chart was built from; the games hear the audio through ptAKF, which disagrees with SwiftF0 on a noticeable share of beats. In particular, charts produced with `--ptakf_refit` are systematically *undervalued* by the internal score while scoring *higher* in the actual game. The game score also appears in the settings info file and in the GUI queue result line.
+
 
 ### 📟 Use GPU
 

@@ -285,7 +285,20 @@ class QueueItemWidget(QWidget):
         }
         badge_bg = _SOURCE_COLORS.get(source, "#a09888")
         source_text = _SOURCE_LABELS.get(source, source)
-        self._lyrics_label.setText(source_text)
+        # Append the real game score (ptAKF) when the pipeline reported one
+        uscore = info.get("uscore", "")
+        if uscore:
+            self._lyrics_label.setText(
+                f"{source_text}   ·   \U0001F3AF {uscore}" if source_text
+                else f"\U0001F3AF {uscore}"
+            )
+            self._lyrics_label.setToolTip(
+                "Game score: the written chart scored against the extracted "
+                "vocals with the same ptAKF algorithm the games use "
+                "(Easy ±2 / Medium ±1 / Hard 0 semitones, octave-folded)."
+            )
+        else:
+            self._lyrics_label.setText(source_text)
 
         # Language badge
         lang = info.get("language", "")

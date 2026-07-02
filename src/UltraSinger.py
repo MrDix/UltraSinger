@@ -607,6 +607,26 @@ def run() -> tuple[str, Score, Score]:
     # Create Ultrastar txt
     accurate_score, simple_score, ultrastar_file_output = CreateUltraStarTxt(process_data)
 
+    # Real game score (ptAKF via ultrastar-score) — the metric the games
+    # actually use. The internal simple/accurate score above measures
+    # against SwiftF0 data and can rank charts differently.
+    uscore_result = None
+    if settings.calculate_score and not settings.ignore_audio:
+        from modules.uscore_report import (
+            calculate_uscore_report,
+            format_uscore_report,
+        )
+
+        uscore_result = calculate_uscore_report(
+            ultrastar_file_output,
+            process_data.process_data_paths.whisper_audio_path,
+        )
+        if uscore_result:
+            print(
+                f"{ULTRASINGER_HEAD} Game score (ptAKF): "
+                f"{blue_highlighted(format_uscore_report(uscore_result))}"
+            )
+
     # Create Midi
     if settings.create_midi:
         create_midi_file(process_data.media_info.bpm, settings.output_folder_path, process_data.midi_segments,
@@ -621,6 +641,7 @@ def run() -> tuple[str, Score, Score]:
     if settings.write_settings_info:
         _write_settings_info_file(
             settings.output_folder_path, simple_score, accurate_score,
+            uscore_result=uscore_result,
             detected_language=process_data.media_info.language,
             lyrics_lookup_result=lyrics_lookup_result,
             llm_result=llm_result,
@@ -713,6 +734,7 @@ def _write_settings_info_file(
         simple_score: "Score | None",
         accurate_score: "Score | None",
         *,
+        uscore_result: "dict[str, float] | None" = None,
         detected_language: str | None = None,
         lyrics_lookup_result=None,
         llm_result: "LLMResult | None" = None,
@@ -922,9 +944,14 @@ def _write_settings_info_file(
             f.write("\n")
 
             # Score results
-            if simple_score is not None or accurate_score is not None:
+            if simple_score is not None or accurate_score is not None or uscore_result:
                 f.write("=" * 60 + "\n")
                 f.write("[Score Results]\n")
+                if uscore_result:
+                    f.write("  Game score (ptAKF vs vocals):\n")
+                    f.write(f"    Easy:                   {uscore_result.get('easy', 0):.1f}%\n")
+                    f.write(f"    Medium:                 {uscore_result.get('medium', 0):.1f}%\n")
+                    f.write(f"    Hard:                   {uscore_result.get('hard', 0):.1f}%\n")
                 if simple_score is not None:
                     pct = round(simple_score.score / 100, 2)
                     f.write("  Simple (octave-ignoring):\n")
