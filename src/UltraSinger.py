@@ -588,6 +588,18 @@ def run() -> tuple[str, Score, Score]:
             hit_ratio_threshold=settings.refine_hit_ratio,
         )
 
+    # ptAKF chart refit — rebuild note boundaries and pitches from the
+    # scorer's own detector (score-first chart)
+    if not settings.ignore_audio and settings.ptakf_refit:
+        from modules.Refinement.ptakf_refit import refit_notes_ptakf
+
+        process_data.midi_segments = refit_notes_ptakf(
+            process_data.midi_segments,
+            vocal_audio_path=process_data.process_data_paths.whisper_audio_path,
+            bpm=process_data.media_info.bpm,
+            min_note_ms=settings.ptakf_refit_min_note_ms,
+        )
+
     # Create plot
     if settings.create_plot:
         create_plots(process_data, settings.output_folder_path)
@@ -874,6 +886,9 @@ def _write_settings_info_file(
                 f.write(f"  Timing refinement:        {settings.refine_timing}\n")
                 f.write(f"  Hit ratio threshold:      {settings.refine_hit_ratio}\n")
                 f.write(f"  Timing threshold:         {settings.refine_timing_threshold} ms\n")
+            f.write(f"  ptAKF refit:              {settings.ptakf_refit}\n")
+            if settings.ptakf_refit:
+                f.write(f"  Refit min note length:    {settings.ptakf_refit_min_note_ms} ms\n")
             f.write("\n")
 
             # Lyrics Lookup
@@ -1896,6 +1911,10 @@ def init_settings(argv: list[str]) -> Settings:
             settings.refine_hit_ratio = float(arg)
         elif opt in ("--refine_timing_threshold"):
             settings.refine_timing_threshold = float(arg)
+        elif opt in ("--ptakf_refit"):
+            settings.ptakf_refit = True
+        elif opt in ("--ptakf_refit_min_note_ms"):
+            settings.ptakf_refit_min_note_ms = float(arg)
     if settings.output_folder_path == "":
         if settings.input_file_path.startswith("https:"):
             dirname = os.getcwd()
@@ -1980,6 +1999,8 @@ def arg_options():
         "disable_refine_timing",
         "refine_hit_ratio=",
         "refine_timing_threshold=",
+        "ptakf_refit",
+        "ptakf_refit_min_note_ms=",
     ]
     return long, short
 

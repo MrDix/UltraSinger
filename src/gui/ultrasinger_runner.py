@@ -425,6 +425,13 @@ class UltraSingerRunner(QObject):
             if timing_thr != 30.0:
                 args.extend(["--refine_timing_threshold", str(timing_thr)])
 
+        # ptAKF chart refit
+        if config.get("ptakf_refit", False):
+            args.append("--ptakf_refit")
+            refit_min_ms = config.get("ptakf_refit_min_note_ms", 100.0)
+            if refit_min_ms != 100.0:
+                args.extend(["--ptakf_refit_min_note_ms", str(refit_min_ms)])
+
         # YouTube metadata URL (when input is pre-downloaded audio)
         if config.get("youtube_url"):
             args.extend(["--youtube_url", config["youtube_url"]])

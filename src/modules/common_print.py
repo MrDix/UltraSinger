@@ -128,6 +128,10 @@ def print_help() -> None:
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
+    --ptakf_refit               Rebuild note boundaries and pitches from the game's ptAKF pitch detector
+                                (score-first chart): charts only voiced beats, splits notes at pitch changes.
+                                Maximizes game score but increases note count. Disabled by default
+    --ptakf_refit_min_note_ms   Merge refit notes shorter than this when score-neutral >> ((default) is 100)
 
 
     [llm lyric correction]

@@ -252,6 +252,10 @@ _Not all options working now!_
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
+    --ptakf_refit               Rebuild note boundaries and pitches from the game's ptAKF pitch detector
+                                (score-first chart): charts only voiced beats, splits notes at pitch changes.
+                                Maximizes game score but increases note count. Disabled by default
+    --ptakf_refit_min_note_ms   Merge refit notes shorter than this when score-neutral >> ((default) is 100)
 
 
     [llm lyric correction]
@@ -597,6 +601,23 @@ You can tune the detection thresholds:
 ```commandline
 -i XYZ --detect_freestyle --freestyle_harmonicity 0.35 --freestyle_energy 0.005
 ```
+
+#### ptAKF Chart Refit (`--ptakf_refit`)
+
+Rebuilds every note's boundaries and pitch from the **game's own pitch detector** (ptAKF, via [ultrastar-score](https://github.com/MrDix/ultrastar-score)) instead of SwiftF0. The USDX-style scorer samples one ptAKF frame per beat — this pass charts exactly what that detector hears: only voiced beats are charted (breaths, consonants and reverb tails stay note-free), and notes are split at sustained pitch changes. Lyrics, line structure, BPM and GAP are kept; the first sub-note keeps the syllable, continuations become `~`.
+
+This maximizes the score an exact-match singer (or the extracted vocal track itself) can achieve. Benchmark over 10 songs: Medium score 72.8% → 90.0%, Easy 81.1% → 94.2%. The trade-off is a higher note count (roughly +40%, many short `~` notes).
+
+```commandline
+-i XYZ --ptakf_refit
+```
+
+Notes shorter than `--ptakf_refit_min_note_ms` (default 100) are merged back into a neighbour whenever that loses no score:
+```commandline
+-i XYZ --ptakf_refit --ptakf_refit_min_note_ms 150
+```
+
+Requires the optional scoring dependency (`pip install "ultrastar-score"` — already included by the install scripts). Without it the pass is skipped gracefully.
 
 ### 🏆 Ultrastar Score Calculation
 

@@ -99,6 +99,9 @@ _DEFAULTS = {
     "refine_timing": True,
     "refine_hit_ratio": 0.4,
     "refine_timing_threshold": 30.0,
+    # ptAKF chart refit
+    "ptakf_refit": False,
+    "ptakf_refit_min_note_ms": 100.0,
     # bgutil PO-token provider (full-quality YouTube downloads)
     "potoken_auto_start": True,          # check/start provider on GUI launch
     "potoken_auto_start_node": True,     # allow launching the local Node.js server
