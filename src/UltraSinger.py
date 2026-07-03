@@ -1488,9 +1488,11 @@ def CreateUltraStarTxt(process_data: ProcessData):
     if settings.calculate_score:
         simple_score, accurate_score = calculate_score_points(process_data, ultrastar_file_output)
 
-    # Add calculated score to Ultrastar txt
+    # Add calculated score to Ultrastar txt (skipped with --disable_score,
+    # where simple_score is None)
     #Todo: Missing Karaoke
-    ultrastar_writer.add_score_to_ultrastar_txt(ultrastar_file_output, simple_score)
+    if simple_score is not None:
+        ultrastar_writer.add_score_to_ultrastar_txt(ultrastar_file_output, simple_score)
     return accurate_score, simple_score, ultrastar_file_output
 
 
