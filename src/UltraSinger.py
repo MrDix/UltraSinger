@@ -573,14 +573,24 @@ def run() -> tuple[str, Score, Score]:
             energy_threshold=settings.growl_energy_threshold,
         )
 
-    # Reverse-scoring refinement pass
-    if not settings.ignore_audio and settings.refine_from_vocal:
+    # Reverse-scoring refinement pass.
+    # Only meaningful against isolated vocals: without separation the
+    # processing audio is the full mix, and correcting notes toward what
+    # ptAKF hears in the full mix would damage the chart.
+    if (
+        not settings.ignore_audio
+        and settings.refine_from_vocal
+        and settings.use_separated_vocal
+    ):
         from modules.Refinement.refine_from_vocal import refine_notes
 
         process_data.midi_segments = refine_notes(
             midi_segments=process_data.midi_segments,
             pitched_data=process_data.pitched_data,
-            vocal_audio_path=process_data.process_data_paths.whisper_audio_path,
+            vocal_audio_path=(
+                process_data.process_data_paths.vocals_audio_file_path
+                or process_data.process_data_paths.whisper_audio_path
+            ),
             bpm=process_data.media_info.bpm,
             refine_pitch_enabled=settings.refine_pitch,
             refine_timing_enabled=settings.refine_timing,
@@ -589,13 +599,21 @@ def run() -> tuple[str, Score, Score]:
         )
 
     # ptAKF chart refit — rebuild note boundaries and pitches from the
-    # scorer's own detector (score-first chart)
-    if not settings.ignore_audio and settings.ptakf_refit:
+    # scorer's own detector (score-first chart). Same vocal-only rule as
+    # the refinement pass above.
+    if (
+        not settings.ignore_audio
+        and settings.ptakf_refit
+        and settings.use_separated_vocal
+    ):
         from modules.Refinement.ptakf_refit import refit_notes_ptakf
 
         process_data.midi_segments = refit_notes_ptakf(
             process_data.midi_segments,
-            vocal_audio_path=process_data.process_data_paths.whisper_audio_path,
+            vocal_audio_path=(
+                process_data.process_data_paths.vocals_audio_file_path
+                or process_data.process_data_paths.whisper_audio_path
+            ),
             bpm=process_data.media_info.bpm,
             min_note_ms=settings.ptakf_refit_min_note_ms,
             fill=settings.ptakf_refit_fill,
