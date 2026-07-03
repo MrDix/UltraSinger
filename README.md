@@ -197,7 +197,7 @@ _Not all options working now!_
                             classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
 
     [pitch detection]
-    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
+    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is fcpe)
                             swiftf0: ONNX-based, CPU-only, fast and lightweight.
                             fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
                             outlier jumps. Better for difficult vocals (metal, screamo). Best
@@ -252,13 +252,16 @@ _Not all options working now!_
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
-    --ptakf_refit               Rebuild note boundaries and pitches from the game's ptAKF pitch detector
-                                (score-first chart): charts only voiced beats, splits notes at pitch changes.
-                                Maximizes game score but increases note count. Disabled by default
+    --ptakf_refit               (legacy) Explicitly enable the ptAKF chart refit (now the default)
+    --disable_ptakf_refit       Disable the ptAKF chart refit (rebuilds note boundaries and pitches from
+                                the game's own pitch detector; enabled by default)
     --ptakf_refit_min_note_ms   Merge refit notes shorter than this when score-neutral >> ((default) is 100)
-    --ptakf_refit_fill          Also chart sung regions outside all notes (ad-libs, vocalises, melisma
-                                tails) as "~" notes. Requires --ptakf_refit. Disabled by default
+    --ptakf_refit_fill          (legacy) Explicitly enable refit fill (now the default)
+    --disable_ptakf_refit_fill  Disable charting sung regions outside all notes (ad-libs, vocalises,
+                                melisma tails; enabled by default when the refit is on)
     --ptakf_refit_fill_min_ms   Minimum uncharted voiced run length before it is filled >> ((default) is 300)
+    --disable_score             Skip the score calculation (internal + game score) at the end of the
+                                conversion. Scoring is enabled by default
 
 
     [llm lyric correction]
@@ -609,7 +612,7 @@ You can tune the detection thresholds:
 
 Rebuilds every note's boundaries and pitch from the **game's own pitch detector** (ptAKF, via [ultrastar-score](https://github.com/MrDix/ultrastar-score)) instead of SwiftF0. The USDX-style scorer samples one ptAKF frame per beat — this pass charts exactly what that detector hears: only voiced beats are charted (breaths, consonants and reverb tails stay note-free), and notes are split at sustained pitch changes. Lyrics, line structure, BPM and GAP are kept; the first sub-note keeps the syllable, continuations become `~`.
 
-This maximizes the score an exact-match singer (or the extracted vocal track itself) can achieve. Benchmark over 10 songs: Medium score 72.8% → 90.0%, Easy 81.1% → 94.2%. The trade-off is a higher note count (roughly +40%, many short `~` notes).
+This maximizes the score an exact-match singer (or the extracted vocal track itself) can achieve. Benchmark over 10 songs: Medium score 72.8% → 90.0%, Easy 81.1% → 94.2%. The trade-off is a higher note count (roughly +40%, many short `~` notes). Enabled by default (disable with `--disable_ptakf_refit`).
 
 ```commandline
 -i XYZ --ptakf_refit

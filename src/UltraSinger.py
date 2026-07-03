@@ -1960,6 +1960,12 @@ def init_settings(argv: list[str]) -> Settings:
             settings.ptakf_refit_fill = True
         elif opt in ("--ptakf_refit_fill_min_ms"):
             settings.ptakf_refit_fill_min_ms = float(arg)
+        elif opt in ("--disable_ptakf_refit"):
+            settings.ptakf_refit = False
+        elif opt in ("--disable_ptakf_refit_fill"):
+            settings.ptakf_refit_fill = False
+        elif opt in ("--disable_score"):
+            settings.calculate_score = False
     if settings.output_folder_path == "":
         if settings.input_file_path.startswith("https:"):
             dirname = os.getcwd()
@@ -2048,6 +2054,9 @@ def arg_options():
         "ptakf_refit_min_note_ms=",
         "ptakf_refit_fill",
         "ptakf_refit_fill_min_ms=",
+        "disable_ptakf_refit",
+        "disable_ptakf_refit_fill",
+        "disable_score",
     ]
     return long, short
 

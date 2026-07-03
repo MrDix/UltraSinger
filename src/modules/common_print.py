@@ -45,7 +45,7 @@ def print_help() -> None:
                             audio_separator uses BS-Roformer which is deterministic and produces higher SDR.
                             demucs uses Facebook's Hybrid Transformer Demucs (non-deterministic).
     --audio_separator_model Model for audio-separator backend. Presets: BS_ROFORMER|MEL_BAND_ROFORMER
-                            or a raw model filename for custom models >> ((default) is BS_ROFORMER)
+                            or a raw model filename for custom models >> ((default) is MEL_BAND_ROFORMER)
     --demucs              Model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
 
     [transcription]
@@ -74,7 +74,7 @@ def print_help() -> None:
                             classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
 
     [pitch detection]
-    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
+    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is fcpe)
                             swiftf0: ONNX-based, CPU-only, fast and lightweight.
                             fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
                             outlier jumps. Better for difficult vocals (metal, screamo). Best
@@ -128,13 +128,16 @@ def print_help() -> None:
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
-    --ptakf_refit               Rebuild note boundaries and pitches from the game's ptAKF pitch detector
-                                (score-first chart): charts only voiced beats, splits notes at pitch changes.
-                                Maximizes game score but increases note count. Disabled by default
+    --ptakf_refit               (legacy) Explicitly enable the ptAKF chart refit (now the default)
+    --disable_ptakf_refit       Disable the ptAKF chart refit (rebuilds note boundaries and pitches from
+                                the game's own pitch detector; enabled by default)
     --ptakf_refit_min_note_ms   Merge refit notes shorter than this when score-neutral >> ((default) is 100)
-    --ptakf_refit_fill          Also chart sung regions outside all notes (ad-libs, vocalises, melisma
-                                tails) as "~" notes. Requires --ptakf_refit. Disabled by default
+    --ptakf_refit_fill          (legacy) Explicitly enable refit fill (now the default)
+    --disable_ptakf_refit_fill  Disable charting sung regions outside all notes (ad-libs, vocalises,
+                                melisma tails; enabled by default when the refit is on)
     --ptakf_refit_fill_min_ms   Minimum uncharted voiced run length before it is filled >> ((default) is 300)
+    --disable_score             Skip the score calculation (internal + game score) at the end of the
+                                conversion. Scoring is enabled by default
 
 
     [llm lyric correction]

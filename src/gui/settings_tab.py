@@ -202,14 +202,14 @@ class ConversionSettingsForm(QWidget):
         # Pitcher backend
         self._pitcher = _NoScrollComboBox()
         self._pitcher.addItems(["swiftf0", "fcpe"])
-        self._pitcher.setCurrentText(self._config.get("pitcher", "swiftf0"))
+        self._pitcher.setCurrentText(self._config.get("pitcher", "fcpe"))
         card.add_row("Pitch Detection", self._pitcher,
-                     "Pitch detection backend. 'swiftf0' (default) is ONNX-based and CPU-only. "
-                     "'fcpe' (torchfcpe) is GPU-accelerated with more stable pitch contours "
-                     "and fewer outlier jumps. Better for difficult vocals (metal, screamo). "
-                     "Best performance on CUDA, falls back to CPU if unavailable.",
+                     "Pitch detection backend. 'fcpe' (default, torchfcpe) is GPU-accelerated "
+                     "with more stable pitch contours and fewer outlier jumps; best on CUDA, "
+                     "falls back to CPU if unavailable. 'swiftf0' is ONNX-based and CPU-only, "
+                     "fast and lightweight.",
                      reset_callback=lambda: self._pitcher.setCurrentText(
-                         _DEFAULTS.get("pitcher", "swiftf0")))
+                         _DEFAULTS.get("pitcher", "fcpe")))
 
         card.add_separator()
 
@@ -579,7 +579,7 @@ class ConversionSettingsForm(QWidget):
 
         # ptAKF chart refit
         self._ptakf_refit = ToggleSwitch(
-            checked=self._config.get("ptakf_refit", False)
+            checked=self._config.get("ptakf_refit", True)
         )
         card.add_toggle_row("ptAKF Chart Refit", self._ptakf_refit,
                            "Rebuild note boundaries and pitches from the game's own pitch "
@@ -587,7 +587,7 @@ class ConversionSettingsForm(QWidget):
                            "notes at pitch changes. Maximizes the achievable game score but "
                            "increases the note count.",
                            reset_callback=lambda: self._ptakf_refit.setChecked(
-                               _DEFAULTS.get("ptakf_refit", False)))
+                               _DEFAULTS.get("ptakf_refit", True)))
 
         self._ptakf_refit_min_note_ms = _NoScrollDoubleSpinBox()
         self._ptakf_refit_min_note_ms.setRange(0.0, 500.0)
@@ -602,14 +602,14 @@ class ConversionSettingsForm(QWidget):
                          _DEFAULTS.get("ptakf_refit_min_note_ms", 100.0)))
 
         self._ptakf_refit_fill = ToggleSwitch(
-            checked=self._config.get("ptakf_refit_fill", False)
+            checked=self._config.get("ptakf_refit_fill", True)
         )
         card.add_toggle_row("Refit Fill Uncharted Vocals", self._ptakf_refit_fill,
                            "Also chart sung regions outside all existing notes "
                            "(ad-libs, vocalises, melisma tails) as \"~\" notes. "
                            "Requires ptAKF Chart Refit.",
                            reset_callback=lambda: self._ptakf_refit_fill.setChecked(
-                               _DEFAULTS.get("ptakf_refit_fill", False)))
+                               _DEFAULTS.get("ptakf_refit_fill", True)))
 
         self._ptakf_refit_fill_min_ms = _NoScrollDoubleSpinBox()
         self._ptakf_refit_fill_min_ms.setRange(50.0, 2000.0)
@@ -719,7 +719,7 @@ class ConversionSettingsForm(QWidget):
 
         scoring_available = _is_package_available("ultrastar-score")
         self._calculate_score = ToggleSwitch(
-            checked=self._config.get("calculate_score", False)
+            checked=self._config.get("calculate_score", True)
             and scoring_available
         )
         card.add_toggle_row("Calculate Score", self._calculate_score,
