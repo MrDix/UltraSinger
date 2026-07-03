@@ -204,10 +204,10 @@ class ConversionSettingsForm(QWidget):
         self._pitcher.addItems(["swiftf0", "fcpe"])
         self._pitcher.setCurrentText(self._config.get("pitcher", "fcpe"))
         card.add_row("Pitch Detection", self._pitcher,
-                     "Pitch detection backend. 'swiftf0' (default) is ONNX-based and CPU-only. "
-                     "'fcpe' (torchfcpe) is GPU-accelerated with more stable pitch contours "
-                     "and fewer outlier jumps. Better for difficult vocals (metal, screamo). "
-                     "Best performance on CUDA, falls back to CPU if unavailable.",
+                     "Pitch detection backend. 'fcpe' (default, torchfcpe) is GPU-accelerated "
+                     "with more stable pitch contours and fewer outlier jumps; best on CUDA, "
+                     "falls back to CPU if unavailable. 'swiftf0' is ONNX-based and CPU-only, "
+                     "fast and lightweight.",
                      reset_callback=lambda: self._pitcher.setCurrentText(
                          _DEFAULTS.get("pitcher", "fcpe")))
 
