@@ -62,7 +62,7 @@ class AudioSeparatorModel(Enum):
 
 
 # Default model for audio-separator backend
-DEFAULT_AUDIO_SEPARATOR_MODEL = AudioSeparatorModel.BS_ROFORMER
+DEFAULT_AUDIO_SEPARATOR_MODEL = AudioSeparatorModel.MEL_BAND_ROFORMER
 
 
 # ---------------------------------------------------------------------------

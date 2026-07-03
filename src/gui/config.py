@@ -65,7 +65,7 @@ _DEFAULTS = {
     "llm_retry_wait": 60,
     "llm_retry_max": 3,
     # Scoring
-    "calculate_score": False,
+    "calculate_score": True,
     # Output options
     "format_version": "1.2.0",
     "create_plot": False,
@@ -83,10 +83,10 @@ _DEFAULTS = {
     "bpm_override": "",
     "octave_shift": "",
     # Pitch detection
-    "pitcher": "swiftf0",
+    "pitcher": "fcpe",
     # Vocal separation
     "separator_backend": "audio_separator",
-    "audio_separator_model": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+    "audio_separator_model": "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt",
     "demucs_model": "htdemucs",
     # Paths
     "musescore_path": "",
@@ -100,9 +100,9 @@ _DEFAULTS = {
     "refine_hit_ratio": 0.4,
     "refine_timing_threshold": 30.0,
     # ptAKF chart refit
-    "ptakf_refit": False,
+    "ptakf_refit": True,
     "ptakf_refit_min_note_ms": 100.0,
-    "ptakf_refit_fill": False,
+    "ptakf_refit_fill": True,
     "ptakf_refit_fill_min_ms": 300.0,
     # bgutil PO-token provider (full-quality YouTube downloads)
     "potoken_auto_start": True,          # check/start provider on GUI launch

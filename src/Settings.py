@@ -38,7 +38,7 @@ class Settings:
     syllable_split = False  # Preserve syllable-level note splits at pitch changes
     vocal_gap_fill = False  # Fill un-transcribed vocal gaps with placeholder notes
     pitch_change_split = True  # Split notes at pitch change boundaries (melismas, runs)
-    pitcher = "swiftf0"  # Pitch detection backend: swiftf0|fcpe
+    pitcher = "fcpe"  # Pitch detection backend: swiftf0|fcpe (fcpe default: more stable contours)
     pitch_notes = False  # Generate notes from pitch contour instead of word timing
     lyrics_lookup = True  # Look up reference lyrics from LRCLIB and correct Whisper transcription
     disable_reference_lyrics = False  # Disable reference-lyrics-first pipeline (forced alignment with LRCLIB synced lyrics)
@@ -54,9 +54,9 @@ class Settings:
     refine_timing_threshold: float = 30.0  # Milliseconds deviation before correcting
 
     # ptAKF chart refit (score-first chart: note boundaries/pitches from the game's detector)
-    ptakf_refit = False  # Rebuild note boundaries and pitches from ptAKF beat tones
+    ptakf_refit = True  # Rebuild note boundaries and pitches from ptAKF beat tones (enabled by default)
     ptakf_refit_min_note_ms: float = 100.0  # Merge refit notes shorter than this when score-neutral
-    ptakf_refit_fill = False  # Also chart sung regions outside all notes (ad-libs, vocalises) as "~" notes
+    ptakf_refit_fill = True  # Also chart sung regions outside all notes (ad-libs, vocalises) as "~" notes (enabled by default)
     ptakf_refit_fill_min_ms: float = 300.0  # Minimum uncharted voiced run length before it is filled
 
     # Process data Paths
@@ -69,7 +69,7 @@ class Settings:
     # Vocal separation
     separator_backend = SeparatorBackend.AUDIO_SEPARATOR  # audio_separator (default, deterministic) | demucs
     demucs_model = DemucsModel.HTDEMUCS  # htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q|SIG
-    audio_separator_model = AudioSeparatorModel.BS_ROFORMER  # BS-Roformer SDR 12.97 (default)
+    audio_separator_model = AudioSeparatorModel.MEL_BAND_ROFORMER  # Mel-Band-Roformer (default; better pipeline results than BS despite lower SDR)
 
     # Whisper
     transcriber = "whisper"  # whisper
