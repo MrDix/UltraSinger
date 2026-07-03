@@ -348,8 +348,10 @@ class UltraSingerRunner(QObject):
             args.append("--force_whisper_cpu")
 
         # Pitcher backend
-        pitcher = config.get("pitcher", "swiftf0")
-        if pitcher and pitcher != "swiftf0":
+        # Always pass the pitcher explicitly so the GUI selection wins
+        # regardless of the CLI default
+        pitcher = config.get("pitcher", "fcpe")
+        if pitcher:
             args.extend(["--pitcher", pitcher])
 
         # Experimental features
@@ -425,17 +427,23 @@ class UltraSingerRunner(QObject):
             if timing_thr != 30.0:
                 args.extend(["--refine_timing_threshold", str(timing_thr)])
 
-        # ptAKF chart refit
-        if config.get("ptakf_refit", False):
-            args.append("--ptakf_refit")
+        # ptAKF chart refit (enabled by default; send disables when off)
+        if config.get("ptakf_refit", True):
             refit_min_ms = config.get("ptakf_refit_min_note_ms", 100.0)
             if refit_min_ms != 100.0:
                 args.extend(["--ptakf_refit_min_note_ms", str(refit_min_ms)])
-            if config.get("ptakf_refit_fill", False):
-                args.append("--ptakf_refit_fill")
+            if config.get("ptakf_refit_fill", True):
                 fill_min_ms = config.get("ptakf_refit_fill_min_ms", 300.0)
                 if fill_min_ms != 300.0:
                     args.extend(["--ptakf_refit_fill_min_ms", str(fill_min_ms)])
+            else:
+                args.append("--disable_ptakf_refit_fill")
+        else:
+            args.append("--disable_ptakf_refit")
+
+        # Scoring (enabled by default; the toggle sends the disable)
+        if not config.get("calculate_score", True):
+            args.append("--disable_score")
 
         # YouTube metadata URL (when input is pre-downloaded audio)
         if config.get("youtube_url"):
