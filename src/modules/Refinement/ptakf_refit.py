@@ -36,7 +36,15 @@ from modules.Midi.MidiSegment import MidiSegment
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 
 _HOP_SEC = 1024 / 44100.0  # ptAKF frame hop used by ultrastar-score
-_TOL = 1.0  # optimise for Medium difficulty (octave-folded +-1 semitone)
+# Segmentation/pitch tolerance in octave-folded semitones. 0.0 = exact-tone
+# resolution: with the former 1.0 (Medium tolerance) a run of +-1-semitone
+# steps was coverable by a single note, so the DP never split it - runs and
+# ornaments stayed visually flat and Hard scores suffered. Exact segmentation
+# makes staircases explicit; measured on real material it lifted Medium from
+# ~89% to ~98% and Hard from ~70% to ~94% at unchanged Easy. It also makes
+# the score-neutral smoothing staircase-preserving (only identical tones
+# merge losslessly).
+_TOL = 0.0
 _MIN_SEG_BEATS = 2
 _SPLIT_PENALTY = 0.25
 _PTAKF_TONE_OFFSET = 36  # ptAKF tone 0 = C2 = MIDI 36
