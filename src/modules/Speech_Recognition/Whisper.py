@@ -51,7 +51,17 @@ def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
     """Detect language from audio using Whisper tiny model.
 
     Much faster than full transcription (~2-3s vs ~2min) because it only
-    loads the tiny model and processes the first 30s of audio.
+    loads the tiny model and processes a ~30s window of audio.
+
+    Songs with a long instrumental intro (e.g. "unplugged"/acoustic
+    versions) can have no singing at all in the first 30s. Without VAD
+    filtering, Whisper tiny would guess the language from near-silence /
+    instrumental-only audio, producing a low-confidence, effectively
+    random result -- observed in practice as e.g. a German song being
+    misdetected as English at ~30% confidence. ``vad_filter=True`` makes
+    faster-whisper skip non-speech regions first, so detection runs on
+    the first actual vocal segment instead of whatever happens to be at
+    the very start of the file.
 
     When confidence is below the threshold and the detected language is not
     in the well-supported set, falls back to English — the most common
@@ -70,22 +80,26 @@ def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
     model = FasterWhisperModel("tiny", device=device, compute_type=compute_type)
     audio = whisperx.load_audio(audio_path)
 
-    language, probability, _ = model.detect_language(audio)
+    language, probability, _ = model.detect_language(audio, vad_filter=True)
 
     print(
         f"{ULTRASINGER_HEAD} Language detected: "
         f"{blue_highlighted(language)} ({probability:.0%} confidence)"
     )
 
-    if (
-        probability < _LANG_CONFIDENCE_THRESHOLD
-        and language not in CORE_LANGUAGES
-    ):
-        print(
-            f"{ULTRASINGER_HEAD} {gold_highlighted('Low confidence for non-core language')} "
-            f"— falling back to {blue_highlighted('en')}"
-        )
-        language = "en"
+    if probability < _LANG_CONFIDENCE_THRESHOLD:
+        if language not in CORE_LANGUAGES:
+            print(
+                f"{ULTRASINGER_HEAD} {gold_highlighted('Low confidence for non-core language')} "
+                f"— falling back to {blue_highlighted('en')}"
+            )
+            language = "en"
+        else:
+            print(
+                f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} Low confidence "
+                f"({probability:.0%}) for detected language {blue_highlighted(language)}. "
+                f"If results are poor, set the language explicitly with --language."
+            )
 
     return language
 
@@ -230,13 +244,31 @@ def transcribe_with_whisper(
                 language_code=language, device=device, model_name=alignment_model
             )
         except ValueError as ve:
-            print(
-                f"{red_highlighted(f'{ve}')}"
-                f"\n"
-                f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Unknown language. "
-                f"Try add it with --align_model [huggingface]."
-            )
-            raise ve
+            # No built-in wav2vec2 model exists for this language and no
+            # custom model was given -- degrade gracefully to the English
+            # alignment model instead of aborting the whole run. Alignment
+            # quality will suffer for this language, but that is strictly
+            # better than crashing.
+            if alignment_model is None and language != "en":
+                print(
+                    f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
+                    f"No wav2vec2 alignment model available for language "
+                    f"{blue_highlighted(language)} -- falling back to the "
+                    f"{blue_highlighted('en')} alignment model. For better "
+                    f"results, provide a matching model with "
+                    f"--whisper_align_model [huggingface]."
+                )
+                model_a, metadata = whisperx.load_align_model(
+                    language_code="en", device=device, model_name=None
+                )
+            else:
+                print(
+                    f"{red_highlighted(f'{ve}')}"
+                    f"\n"
+                    f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Unknown language. "
+                    f"Try add it with --align_model [huggingface]."
+                )
+                raise ve
 
         #Addition for numbers to words (Using previous code from louispan in PR#135)
         if keep_numbers == False: 

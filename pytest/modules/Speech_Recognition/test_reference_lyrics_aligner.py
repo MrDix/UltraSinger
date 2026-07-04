@@ -9,6 +9,7 @@ from modules.Speech_Recognition.reference_lyrics_aligner import (
     _compute_note_for_word,
     _split_word_at_pitch_changes,
     create_midi_segments_from_reference_lyrics,
+    align_lyrics_to_audio,
 )
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Midi.MidiSegment import MidiSegment
@@ -303,4 +304,84 @@ class TestCreateMidiSegmentsFromReferenceLyrics:
         )
 
         assert len(result) == 1
-        assert result[0].word == "oooh"
+
+
+# ---------------------------------------------------------------------------
+# Language-aware alignment model selection (align_lyrics_to_audio)
+# ---------------------------------------------------------------------------
+
+
+class TestAlignLyricsToAudioLanguageModel:
+    """Tests that align_lyrics_to_audio threads the resolved language into
+    whisperx.load_align_model, and degrades gracefully (instead of crashing)
+    when WhisperX has no default wav2vec2 model for that language."""
+
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
+    @patch("whisperx.align")
+    @patch("whisperx.load_audio")
+    @patch("whisperx.load_align_model")
+    def test_language_passed_to_align_model(
+        self, mock_load_align_model, mock_load_audio, mock_align, mock_librosa
+    ):
+        mock_librosa.get_duration.return_value = 5.0
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+        mock_load_align_model.return_value = (MagicMock(), MagicMock())
+        mock_align.return_value = {
+            "segments": [{"words": [
+                {"word": "hallo", "start": 0.0, "end": 0.5},
+                {"word": "welt", "start": 0.6, "end": 1.0},
+            ]}]
+        }
+
+        segments = [{"text": "hallo welt", "start": 0.0, "end": 5.0}]
+        words = align_lyrics_to_audio(segments, "/fake/audio.wav", "de", device="cpu")
+
+        mock_load_align_model.assert_called_once_with(
+            language_code="de", device="cpu", model_name=None
+        )
+        assert len(words) == 2
+
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
+    @patch("whisperx.align")
+    @patch("whisperx.load_audio")
+    @patch("whisperx.load_align_model")
+    def test_unsupported_language_falls_back_to_english(
+        self, mock_load_align_model, mock_load_audio, mock_align, mock_librosa
+    ):
+        mock_librosa.get_duration.return_value = 5.0
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+        mock_load_align_model.side_effect = [
+            ValueError("No default align-model for language: xx"),
+            (MagicMock(), MagicMock()),
+        ]
+        mock_align.return_value = {
+            "segments": [{"words": [{"word": "hello", "start": 0.0, "end": 0.5}]}]
+        }
+
+        segments = [{"text": "hello", "start": 0.0, "end": 5.0}]
+        words = align_lyrics_to_audio(segments, "/fake/audio.wav", "xx", device="cpu")
+
+        assert mock_load_align_model.call_count == 2
+        first_call, second_call = mock_load_align_model.call_args_list
+        assert first_call.kwargs == {"language_code": "xx", "device": "cpu", "model_name": None}
+        assert second_call.kwargs == {"language_code": "en", "device": "cpu", "model_name": None}
+        assert len(words) == 1
+
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
+    @patch("whisperx.load_align_model")
+    def test_custom_align_model_error_is_not_swallowed(self, mock_load_align_model, mock_librosa):
+        """A user-supplied --whisper_align_model that fails must raise --
+        we must not silently substitute English for an explicit choice."""
+        mock_librosa.get_duration.return_value = 5.0
+        mock_load_align_model.side_effect = ValueError("bad custom model")
+
+        segments = [{"text": "hello", "start": 0.0, "end": 5.0}]
+        with pytest.raises(ValueError):
+            align_lyrics_to_audio(
+                segments, "/fake/audio.wav", "xx", device="cpu",
+                align_model_name="some/custom-model",
+            )
+
+        mock_load_align_model.assert_called_once_with(
+            language_code="xx", device="cpu", model_name="some/custom-model"
+        )
