@@ -28,7 +28,7 @@ from typing import Optional
 import librosa
 import numpy as np
 
-from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
+from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Pitcher.pitched_data_helper import get_frequencies_with_high_confidence
@@ -176,9 +176,29 @@ def align_lyrics_to_audio(
     import whisperx
 
     print(f"{ULTRASINGER_HEAD} Loading alignment model for reference lyrics")
-    align_model, align_metadata = whisperx.load_align_model(
-        language_code=language, device=device, model_name=align_model_name,
-    )
+    try:
+        align_model, align_metadata = whisperx.load_align_model(
+            language_code=language, device=device, model_name=align_model_name,
+        )
+    except ValueError:
+        # No built-in wav2vec2 model exists for this language and no custom
+        # model was given -- degrade gracefully to English instead of
+        # aborting (the caller falls back to the standard pipeline on any
+        # exception, which would otherwise hit the same crash again).
+        if align_model_name is None and language != "en":
+            print(
+                f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
+                f"No wav2vec2 alignment model available for language "
+                f"{blue_highlighted(language)} -- falling back to the "
+                f"{blue_highlighted('en')} alignment model. For better "
+                f"results, provide a matching model with "
+                f"--whisper_align_model [huggingface]."
+            )
+            align_model, align_metadata = whisperx.load_align_model(
+                language_code="en", device=device, model_name=None,
+            )
+        else:
+            raise
 
     audio = whisperx.load_audio(audio_path)
     audio_duration = librosa.get_duration(path=audio_path)
