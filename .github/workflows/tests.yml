@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # media_interceptor.py / queue_manager.py pull in PySide6 (QtWebEngineCore /
+      # QtCore QObject subclasses); there is no X server on the runner, so force
+      # the headless Qt platform plugin.
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Sync dependencies
+        # pyproject.toml already pins the "pytorch" index to whl/cpu, so this
+        # pulls CPU-only torch/torchaudio/torchvision wheels (no CUDA download).
+        # --extra scoring: ultrastar-score ships a manylinux wheel on PyPI, so
+        #   no build toolchain is needed; pulled in so pytest/modules/test_uscore_report.py
+        #   and pytest/modules/Refinement/test_refine_from_vocal.py exercise the
+        #   real code path instead of only the ImportError fail-open branch.
+        # --extra gui: pytest/gui/test_media_interceptor.py and
+        #   pytest/gui/test_queue_result_info.py import src/gui modules that
+        #   depend on PySide6.
+        run: uv sync --extra scoring --extra gui
+
+      - name: Run pytest
+        run: uv run pytest --import-mode=append -q pytest/
