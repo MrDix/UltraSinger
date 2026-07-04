@@ -281,3 +281,52 @@ class TestRefitNotesPtakf:
         result = refit_notes_ptakf(segments, "does_not_exist.wav", 120.0)
         assert result is segments
         assert result[0].note == "C4"
+
+
+# ---------------------------------------------------------------------------
+# refit_notes_ptakf — pitch_frames reuse
+# ---------------------------------------------------------------------------
+
+class TestRefitNotesPtakfPitchFrames:
+    """When pitch_frames is pre-computed, refit must reuse it instead of
+    loading/analysing the vocal audio itself."""
+
+    def test_pitch_frames_bypasses_audio_loading(self):
+        """Passing pitch_frames lets refit succeed even though the audio
+        path does not exist, proving load_audio/PitchDetector are skipped."""
+        segments = [
+            MidiSegment(note="C4", start=1.0, end=1.5, word="test "),
+        ]
+        # ptAKF tone 24 = MIDI 60 = C4 (see _PTAKF_TONE_OFFSET = 36).
+        # Enough frames (hop ~= 1024/44100s) to cover well past the note end.
+        frames = [{"tone": 24} for _ in range(200)]
+
+        result = refit_notes_ptakf(
+            segments, "does_not_exist.wav", 120.0, pitch_frames=frames,
+        )
+
+        # Fail-open would return the exact same list unchanged; a
+        # successful refit returns a new list.
+        assert result is not segments
+        assert len(result) >= 1
+
+    def test_load_audio_not_called_when_pitch_frames_given(self, monkeypatch):
+        import ultrastar_score.audio as us_audio
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("load_audio should not be called when pitch_frames is given")
+
+        monkeypatch.setattr(us_audio, "load_audio", _boom)
+
+        segments = [
+            MidiSegment(note="C4", start=1.0, end=1.5, word="test "),
+        ]
+        frames = [{"tone": 24} for _ in range(200)]
+
+        # Must not raise (would raise AssertionError -> caught as generic
+        # Exception? No — AssertionError isn't in the fail-open except
+        # list, so it would propagate and fail the test if load_audio
+        # were called).
+        refit_notes_ptakf(
+            segments, "does_not_exist.wav", 120.0, pitch_frames=frames,
+        )
