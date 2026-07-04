@@ -139,6 +139,14 @@ def print_help() -> None:
     --disable_score             Skip the score calculation (internal + game score) at the end of the
                                 conversion. Scoring is enabled by default
 
+    [golden notes]
+    --golden_notes              Mark a subset of held notes as golden "*" bonus notes, worth double score
+                                in-game (experimental). Disabled by default, since it changes the score
+                                distribution. Only real syllable notes held for at least 350ms are
+                                eligible; freestyle, rap and tilde-continuation notes are never marked.
+                                Golden notes are capped at 15% of all scorable notes and spread across
+                                the whole song rather than clustered in one section.
+
 
     [llm lyric correction]
     --llm_correct           Enable LLM-based lyric correction (requires API key)

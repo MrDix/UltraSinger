@@ -59,6 +59,9 @@ class Settings:
     ptakf_refit_fill = True  # Also chart sung regions outside all notes (ad-libs, vocalises) as "~" notes (enabled by default)
     ptakf_refit_fill_min_ms: float = 300.0  # Minimum uncharted voiced run length before it is filled
 
+    # Golden notes (bonus notes worth double score in-game)
+    golden_notes = False  # Mark a subset of held notes as golden "*" bonus notes (disabled by default: changes score distribution)
+
     # Process data Paths
     input_file_path = ""
     output_folder_path = ""
