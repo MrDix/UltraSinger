@@ -11,7 +11,7 @@ def print_help() -> None:
     [opt]
     -h      This help text.
     -i      Ultrastar.txt
-            audio/video like .mp3, .mp4, .wav, youtube link
+            audio/video like .mp3, .mp4, .wav, video link
     -o      Output folder
     
     [mode]
@@ -29,14 +29,15 @@ def print_help() -> None:
 
 
     [metadata]
-    --youtube_url           YouTube URL for metadata lookup (artist, title) when the input (-i)
+    --video_url             Video URL for metadata lookup (artist, title) when the input (-i)
                             is a local audio/video file instead of a URL. This is used by the
                             GUI's browser-based download: the audio is pre-downloaded via the
                             embedded browser (bypassing bot detection), so the input is a local
-                            file, but the YouTube URL is still needed for artist/title/thumbnail.
-                            Not needed when -i is already a YouTube URL.
-    --yt_po_token           GVS Proof-of-Origin token for yt-dlp (web.gvs). Without it YouTube
-                            limits downloads to a reduced format set or blocks them (HTTP 403).
+                            file, but the video URL is still needed for artist/title/thumbnail.
+                            Not needed when -i is already a video URL.
+                            (--youtube_url is accepted as a deprecated alias.)
+    --yt_po_token           GVS Proof-of-Origin token for yt-dlp (web.gvs). Without it the video
+                            platform limits downloads to a reduced format set or blocks them (HTTP 403).
                             The GUI captures this token automatically from its embedded browser
                             and passes it through; for CLI use see yt-dlp's PO token guide.
 
@@ -56,8 +57,8 @@ def print_help() -> None:
                             Useful for languages where the default model performs poorly.
                             Example: --whisper_align_model gigant/romanian-wav2vec2
     --language              Override language for alignment and hyphenation.
-                            Priority: --language flag > YouTube metadata > Whisper auto-detect.
-                            For YouTube URLs, yt-dlp language metadata is used automatically
+                            Priority: --language flag > video platform metadata > Whisper auto-detect.
+                            For video URLs, yt-dlp language metadata is used automatically
                             when no --language flag is set, avoiding Whisper misdetection.
                             When LRCLIB synced lyrics are found, language is detected quickly
                             via Whisper tiny (~2-3s) instead of full transcription.

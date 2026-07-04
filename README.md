@@ -130,9 +130,9 @@ Or use the platform-specific launcher scripts:
 
 > **Note:** The GUI is a native desktop application (Qt). It requires a display and cannot run inside a Docker container. Use the [CLI](#run-cli) for containerized workflows.
 
-#### Full-quality YouTube downloads (PO token)
+#### Full-quality video downloads (PO token)
 
-YouTube now delivers its player streams via **SABR**, where the media data and the required *Proof-of-Origin* (PO) token are sent in binary POST bodies that an embedded browser cannot read. Without a PO token, `yt-dlp` is limited to a reduced format set (typically 360p) or blocked with HTTP 403.
+The video platform now delivers its player streams via **SABR**, where the media data and the required *Proof-of-Origin* (PO) token are sent in binary POST bodies that an embedded browser cannot read. Without a PO token, `yt-dlp` is limited to a reduced format set (typically 360p) or blocked with HTTP 403.
 
 To restore full-quality downloads UltraSinger uses the maintained [`bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider) yt-dlp plugin (installed by the install scripts via the `potoken` extra). The plugin fetches PO tokens from a small local **provider server**.
 
@@ -142,7 +142,7 @@ To restore full-quality downloads UltraSinger uses the maintained [`bgutil-ytdlp
   docker run -d --rm -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
   ```
 
-Once a provider responds on `http://127.0.0.1:4416`, `yt-dlp` uses it transparently for every download (GUI and CLI). If no provider is available the app still works, but YouTube downloads fall back to the limited formats.
+Once a provider responds on `http://127.0.0.1:4416`, `yt-dlp` uses it transparently for every download (GUI and CLI). If no provider is available the app still works, but video downloads fall back to the limited formats.
 
 Provider behaviour can be tuned in the GUI config (`~/.ultrasinger`): `potoken_auto_start` (check on launch), `potoken_auto_start_node` / `potoken_auto_start_docker` (allow the respective auto-launch), `potoken_base_url` (custom server URL).
 
@@ -185,8 +185,8 @@ _Not all options working now!_
     --whisper_align_model   Custom wav2vec2 forced-alignment model from HuggingFace
                             (e.g. --whisper_align_model gigant/romanian-wav2vec2)
     --language              Override language for alignment and hyphenation.
-                            Priority: --language > YouTube metadata > Whisper auto-detect.
-                            For YouTube URLs, the video language is used automatically.
+                            Priority: --language > video platform metadata > Whisper auto-detect.
+                            For video URLs, the video language is used automatically.
                             WARNING: setting this for non-matching songs will degrade
                             alignment quality (e.g. --language en for German songs).
     --whisper_batch_size    Reduce if low on GPU mem >> ((default) is 16)
@@ -301,25 +301,27 @@ _Not all options working now!_
 
     [yt-dlp / metadata]
     --cookiefile            File name where cookies should be read from and dumped to.
-    --youtube_url           YouTube URL for metadata lookup when -i is a local file.
-                            When -i is a YouTube URL, UltraSinger extracts artist/title
-                            directly from YouTube. When -i is a local file, UltraSinger
-                            parses the filename ("Artist - Title.ext") and searches
-                            MusicBrainz for metadata and cover art. This works well when
-                            the filename is descriptive but fails for generic names like
-                            "video.avi".
-                            --youtube_url provides a fallback: the audio is loaded from the
+    --video_url             Video URL for metadata lookup when -i is a local file.
+                            When -i is a video URL, UltraSinger extracts artist/title
+                            directly from the video platform. When -i is a local file,
+                            UltraSinger parses the filename ("Artist - Title.ext") and
+                            searches MusicBrainz for metadata and cover art. This works
+                            well when the filename is descriptive but fails for generic
+                            names like "video.avi".
+                            --video_url provides a fallback: the audio is loaded from the
                             local file (-i), but artist/title/thumbnail are fetched from
-                            the YouTube URL instead of relying on the filename.
+                            the video URL instead of relying on the filename.
                             The GUI uses this automatically when downloading via the
-                            embedded browser (pre-downloaded audio + YouTube metadata).
-                            Not needed when -i is already a YouTube URL.
-    --yt_po_token           GVS Proof-of-Origin token for yt-dlp (web.gvs). Without it YouTube
-                            limits downloads to a reduced format set or blocks them (HTTP 403).
-                            The GUI captures this token automatically from its embedded browser
-                            while a video plays and passes it through together with the cookies,
-                            restoring full-quality downloads. For manual CLI use see yt-dlp's
-                            PO token guide (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
+                            embedded browser (pre-downloaded audio + video platform metadata).
+                            Not needed when -i is already a video URL.
+                            (--youtube_url is accepted as a deprecated alias.)
+    --yt_po_token           GVS Proof-of-Origin token for yt-dlp (web.gvs). Without it the
+                            video platform limits downloads to a reduced format set or blocks
+                            them (HTTP 403). The GUI captures this token automatically from its
+                            embedded browser while a video plays and passes it through together
+                            with the cookies, restoring full-quality downloads. For manual CLI
+                            use see yt-dlp's PO token guide
+                            (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
 
     [device]
     --force_cpu             Force all steps to be processed on CPU.
@@ -490,7 +492,7 @@ You can choose between different format versions. The default is `1.2.0`.
 When enabled, UltraSinger writes a `ultrasinger_parameter.info` file to the output directory containing all conversion settings and a detailed pipeline trace. The `[Pipeline]` section shows exactly how the song was processed:
 
 - Which pipeline was used (Reference-Lyrics-First vs Standard Whisper)
-- How the language was determined (manual / YouTube metadata / Whisper fast-detect / Whisper full)
+- How the language was determined (manual / video platform metadata / Whisper fast-detect / Whisper full)
 - Whether Whisper received an explicit language hint or used auto-detect
 - Language correction history (if fast-detect was wrong and Whisper corrected it)
 - Whether the reference pipeline was recovered after language correction
@@ -510,7 +512,7 @@ When LRCLIB provides **synced (timestamped) lyrics** for a song, UltraSinger use
 - **~2 minutes faster** — the expensive Whisper transcription step is skipped entirely
 - **Automatic language detection** — language is resolved in this order:
   1. `--language` CLI flag (highest priority, manual override)
-  2. YouTube video metadata (yt-dlp extracts the video's language automatically)
+  2. Video platform metadata (yt-dlp extracts the video's language automatically)
   3. Whisper tiny fast-detect (~2-3 seconds)
   4. Whisper full transcription (fallback)
 

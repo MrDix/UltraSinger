@@ -1,4 +1,4 @@
-"""YouTube Downloader"""
+"""Video Platform Downloader"""
 
 import logging
 import os
@@ -16,7 +16,7 @@ from modules.musicbrainz_client import search_musicbrainz
 from modules.ffmpeg_helper import separate_audio_video
 
 
-# Suffixes that YouTube Music commonly adds to track names which may not
+# Suffixes that the music service commonly adds to track names which may not
 # reflect the actual video content.  Only these are considered for removal;
 # arbitrary parenthetical metadata like "(feat. …)" or "(Part 2)" is kept.
 _STRIPPABLE_SUFFIXES = re.compile(
@@ -35,10 +35,10 @@ _STRIPPABLE_SUFFIXES = re.compile(
 
 
 def strip_unmatched_suffixes(track: str, video_title: str) -> str:
-    """Remove trailing parenthetical suffixes from the YT Music track name
+    """Remove trailing parenthetical suffixes from the music service track name
     that do not appear in the actual video title.
 
-    YouTube Music metadata sometimes adds qualifiers like '(live)' or
+    The music service metadata sometimes adds qualifiers like '(live)' or
     '(acoustic)' that do not match the uploaded video.  By cross-checking
     against the video title we can strip these misleading suffixes while
     keeping legitimate ones like '(feat. …)'.
@@ -63,7 +63,7 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
         ):
             break  # suffix is present in video title - keep it
         print(
-            f"{ULTRASINGER_HEAD} {red_highlighted(f'Stripped YT Music suffix \"({suffix_content})\" - not in video title')}"
+            f"{ULTRASINGER_HEAD} {red_highlighted(f'Stripped music service suffix \"({suffix_content})\" - not in video title')}"
         )
         track = track[: m.start()].strip()
     return track
@@ -72,9 +72,9 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
 def _apply_po_token(ydl_opts: dict, po_token: str | None) -> dict:
     """Pass a browser-captured GVS PO token to yt-dlp.
 
-    YouTube limits clients without a Proof-of-Origin token to a reduced
-    format set (e.g. only 360p progressive) and blocks downloads with
-    HTTP 403.  The GUI's embedded browser captures the token its own
+    The video platform limits clients without a Proof-of-Origin token to a
+    reduced format set (e.g. only 360p progressive) and blocks downloads
+    with HTTP 403.  The GUI's embedded browser captures the token its own
     player sends; passing it through restores the full format list.
     """
     if po_token:
@@ -84,13 +84,13 @@ def _apply_po_token(ydl_opts: dict, po_token: str | None) -> dict:
     return ydl_opts
 
 
-def get_youtube_title(url: str, cookiefile: str | None = None,
-                      po_token: str | None = None) -> tuple[str, str, str, str]:
-    """Get the title and language of the YouTube video.
+def get_video_title(url: str, cookiefile: str | None = None,
+                     po_token: str | None = None) -> tuple[str, str, str, str]:
+    """Get the title and language of the video.
 
     Returns:
         A 4-tuple of (artist, track, video_title, language).
-        *video_title* is the raw title string from the YouTube video page,
+        *video_title* is the raw title string from the video's page,
         useful for cross-checking metadata from other sources.
         *language* is the ISO 639-1 code from yt-dlp metadata (e.g. "en"),
         or empty string if unavailable.
@@ -118,9 +118,9 @@ def get_youtube_title(url: str, cookiefile: str | None = None,
     return channel, video_title, video_title, language
 
 
-def __download_youtube_video_with_audio(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
-                                        po_token: str = None) -> str:
-    """Download video with audio from YouTube and return the file extension"""
+def __download_video_with_audio(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
+                                 po_token: str = None) -> str:
+    """Download video with audio from the video platform and return the file extension"""
 
     print(f"{ULTRASINGER_HEAD} Downloading Video with Audio")
     ydl_opts = _apply_po_token({
@@ -134,9 +134,9 @@ def __download_youtube_video_with_audio(url: str, clear_filename: str, output_pa
     return "mp4"
 
 
-def __download_youtube_thumbnail(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
-                                 po_token: str = None) -> str:
-    """Download thumbnail from YouTube"""
+def __download_thumbnail(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
+                          po_token: str = None) -> str:
+    """Download thumbnail from the video platform"""
 
     print(f"{ULTRASINGER_HEAD} Downloading thumbnail")
     ydl_opts = _apply_po_token({
@@ -150,7 +150,7 @@ def __download_youtube_thumbnail(url: str, clear_filename: str, output_path: str
 
 
 def download_and_convert_thumbnail(ydl_opts, url: str, clear_filename: str, output_path: str) -> str:
-    """Download and convert thumbnail from YouTube"""
+    """Download and convert thumbnail from the video platform"""
 
     ydl_opts.setdefault("logger", _FilteredLogger())
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -206,11 +206,11 @@ def __start_download(ydl_opts, url: str) -> None:
             raise Exception("Download failed with error: " + str(errors))
 
 
-def download_from_youtube(input_url: str, output_folder_path: str, cookiefile: str = None, *,
-                          keep_audio_in_video: bool = False,
-                          po_token: str = None) -> tuple[str, str, str, MediaInfo]:
-    """Download from YouTube"""
-    (artist, title, video_title, yt_language) = get_youtube_title(input_url, cookiefile, po_token)
+def download_from_video_platform(input_url: str, output_folder_path: str, cookiefile: str = None, *,
+                                  keep_audio_in_video: bool = False,
+                                  po_token: str = None) -> tuple[str, str, str, MediaInfo]:
+    """Download from the video platform"""
+    (artist, title, video_title, yt_language) = get_video_title(input_url, cookiefile, po_token)
 
     # Get additional data for song
     song_info = search_musicbrainz(title, artist)
@@ -225,8 +225,8 @@ def download_from_youtube(input_url: str, output_folder_path: str, cookiefile: s
     song_output = get_unused_song_output_dir(song_output)
     os_helper.create_folder(song_output)
 
-    print(f"{ULTRASINGER_HEAD} Downloading from YouTube")
-    video_ext = __download_youtube_video_with_audio(
+    print(f"{ULTRASINGER_HEAD} Downloading from the video platform")
+    video_ext = __download_video_with_audio(
         input_url, basename_without_ext, song_output, cookiefile, po_token
     )
     video_with_audio_path = os.path.join(song_output, f"{basename_without_ext}.{video_ext}")
@@ -241,7 +241,7 @@ def download_from_youtube(input_url: str, output_folder_path: str, cookiefile: s
         cover_url = song_info.cover_url
         save_image(song_info.cover_image_data, basename_without_ext, song_output)
     else:
-        cover_url = __download_youtube_thumbnail(
+        cover_url = __download_thumbnail(
             input_url, basename_without_ext, song_output, cookiefile, po_token
         )
 

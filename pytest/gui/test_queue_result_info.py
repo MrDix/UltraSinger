@@ -196,12 +196,12 @@ class TestParseOutputLine:
         )
         assert item.result_info["output_folder"] == "D:\\Songs\\Test Song"
 
-    def test_language_from_youtube_metadata(self, queue_manager):
-        """'Using YouTube language metadata: xx' should set language."""
+    def test_language_from_video_platform_metadata(self, queue_manager):
+        """'Using video platform language metadata: xx' should set language."""
         item = _make_item()
         queue_manager._current_item = item
         queue_manager._parse_output_line(
-            "[UltraSinger] Using YouTube language metadata: ja"
+            "[UltraSinger] Using video platform language metadata: ja"
         )
         assert item.result_info["language"] == "ja"
 
@@ -214,12 +214,12 @@ class TestParseOutputLine:
         )
         assert item.result_info["language"] == "de"
 
-    def test_language_youtube_then_whisper_correction(self, queue_manager):
-        """YouTube metadata followed by Whisper correction should track change."""
+    def test_language_video_platform_then_whisper_correction(self, queue_manager):
+        """Video platform metadata followed by Whisper correction should track change."""
         item = _make_item()
         queue_manager._current_item = item
         queue_manager._parse_output_line(
-            "[UltraSinger] Using YouTube language metadata: nn"
+            "[UltraSinger] Using video platform language metadata: nn"
         )
         assert item.result_info["language"] == "nn"
         queue_manager._parse_output_line(

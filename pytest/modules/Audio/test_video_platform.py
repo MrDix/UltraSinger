@@ -1,16 +1,16 @@
-"""Tests for youtube.py"""
+"""Tests for video_platform.py"""
 
 import unittest
 from unittest.mock import patch
-from src.modules.Audio.youtube import get_youtube_title, strip_unmatched_suffixes
-from src.modules.Audio.youtube import download_and_convert_thumbnail
+from src.modules.Audio.video_platform import get_video_title, strip_unmatched_suffixes
+from src.modules.Audio.video_platform import download_and_convert_thumbnail
 
 
 class TestStripUnmatchedSuffixes(unittest.TestCase):
     """Tests for strip_unmatched_suffixes()."""
 
     def test_strips_live_when_not_in_video_title(self):
-        """YT Music says '(live)' but the video is an official studio MV."""
+        """The music service says '(live)' but the video is an official studio MV."""
         track = "Pump It (live)"
         video_title = "Electric Callboy - PUMP IT (OFFICIAL VIDEO)"
         self.assertEqual(strip_unmatched_suffixes(track, video_title), "Pump It")
@@ -134,12 +134,12 @@ class TestStripUnmatchedSuffixes(unittest.TestCase):
         self.assertEqual(strip_unmatched_suffixes(track, video_title), "Song (Live)")
 
 
-class TestGetYoutubeTitle(unittest.TestCase):
+class TestGetVideoTitle(unittest.TestCase):
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title(self, mock_youtube_dl):
+    def test_get_video_title(self, mock_yt_dl):
         # Arrange
         # Also test leading and trailing whitespaces
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "artist": "   Test Artist   ",
             "track": "   Test Track   ",
             "title": "   Test Artist - Test Track   ",
@@ -148,18 +148,18 @@ class TestGetYoutubeTitle(unittest.TestCase):
         url = "   https://fakeUrl   "
 
         # Act
-        artist, title, video_title, _language = get_youtube_title(url)
+        artist, title, video_title, _language = get_video_title(url)
 
         # Assert
         self.assertEqual(artist, "Test Artist")
         self.assertEqual(title, "Test Track")
         self.assertEqual(video_title, "Test Artist - Test Track")
-        mock_youtube_dl.assert_called_once()
+        mock_yt_dl.assert_called_once()
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_returns_language(self, mock_youtube_dl):
+    def test_get_video_title_returns_language(self, mock_yt_dl):
         """Language metadata from yt-dlp should be returned as 4th element."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "artist": "Artist",
             "track": "Track",
             "title": "Artist - Track",
@@ -167,134 +167,134 @@ class TestGetYoutubeTitle(unittest.TestCase):
             "language": "de",
         }
 
-        artist, title, video_title, language = get_youtube_title("https://fakeUrl")
+        artist, title, video_title, language = get_video_title("https://fakeUrl")
 
         self.assertEqual(language, "de")
         self.assertEqual(artist, "Artist")
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_empty_language_when_missing(self, mock_youtube_dl):
+    def test_get_video_title_empty_language_when_missing(self, mock_yt_dl):
         """When yt-dlp has no language field, return empty string."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "artist": "Artist",
             "track": "Track",
             "title": "Artist - Track",
             "channel": "Channel",
         }
 
-        _, _, _, language = get_youtube_title("https://fakeUrl")
+        _, _, _, language = get_video_title("https://fakeUrl")
 
         self.assertEqual(language, "")
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_strips_yt_music_suffix(self, mock_youtube_dl):
+    def test_get_video_title_strips_music_service_suffix(self, mock_yt_dl):
         """Track metadata says '(live)' but video title does not."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "artist": "Electric Callboy",
             "track": "Pump It (live)",
             "title": "Electric Callboy - PUMP IT (OFFICIAL VIDEO)",
             "channel": "Electric Callboy",
         }
 
-        artist, title, video_title, _language = get_youtube_title("https://fakeUrl")
+        artist, title, video_title, _language = get_video_title("https://fakeUrl")
 
         self.assertEqual(artist, "Electric Callboy")
         self.assertEqual(title, "Pump It")
         self.assertEqual(video_title, "Electric Callboy - PUMP IT (OFFICIAL VIDEO)")
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_keeps_matching_suffix(self, mock_youtube_dl):
+    def test_get_video_title_keeps_matching_suffix(self, mock_yt_dl):
         """If track and video title agree on the suffix, keep it."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "artist": "Artist",
             "track": "Song (Live)",
             "title": "Artist - Song (Live at Festival)",
             "channel": "ArtistChannel",
         }
 
-        artist, title, _video_title, _language = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title, _language = get_video_title("https://fakeUrl")
 
         self.assertEqual(artist, "Artist")
         self.assertEqual(title, "Song (Live)")
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_no_artist_with_dash(self, mock_youtube_dl):
+    def test_get_video_title_no_artist_with_dash(self, mock_yt_dl):
         """Fallback: no artist field, title contains dash."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "title": "  Some Artist - Some Song  ",
             "channel": "SomeChannel",
         }
 
-        artist, title, video_title, _language = get_youtube_title("https://fakeUrl")
+        artist, title, video_title, _language = get_video_title("https://fakeUrl")
 
         self.assertEqual(artist, "Some Artist")
         self.assertEqual(title, "Some Song")
         self.assertEqual(video_title, "Some Artist - Some Song")
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_multi_dash_preserves_title(self, mock_youtube_dl):
+    def test_get_video_title_multi_dash_preserves_title(self, mock_yt_dl):
         """Multiple dashes in title: only split on the first one."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "title": "Artist Name - Song - Part 2",
             "channel": "ArtistChannel",
         }
 
-        artist, title, _video_title, _language = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title, _language = get_video_title("https://fakeUrl")
 
         self.assertEqual(artist, "Artist Name")
         self.assertEqual(title, "Song - Part 2")
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_no_artist_no_dash(self, mock_youtube_dl):
+    def test_get_video_title_no_artist_no_dash(self, mock_yt_dl):
         """Fallback: no artist field, no dash in title -> use channel."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "title": "Just A Title",
             "channel": "MyChannel",
         }
 
-        artist, title, video_title, _language = get_youtube_title("https://fakeUrl")
+        artist, title, video_title, _language = get_video_title("https://fakeUrl")
 
         self.assertEqual(artist, "MyChannel")
         self.assertEqual(title, "Just A Title")
         self.assertEqual(video_title, "Just A Title")
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_artist_without_track_falls_through(self, mock_youtube_dl):
+    def test_get_video_title_artist_without_track_falls_through(self, mock_yt_dl):
         """If yt-dlp provides artist but no track, fall through to title parsing."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "artist": "Some Artist",
             "title": "Some Artist - Some Song",
             "channel": "SomeChannel",
         }
 
-        artist, title, _video_title, _language = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title, _language = get_video_title("https://fakeUrl")
 
         # Should fall through to title-split logic
         self.assertEqual(artist, "Some Artist")
         self.assertEqual(title, "Some Song")
 
     @patch("yt_dlp.YoutubeDL")
-    def test_get_youtube_title_track_none_falls_through(self, mock_youtube_dl):
+    def test_get_video_title_track_none_falls_through(self, mock_yt_dl):
         """If yt-dlp provides artist but track is None, fall through."""
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
             "artist": "Some Artist",
             "track": None,
             "title": "Some Artist - Some Song",
             "channel": "SomeChannel",
         }
 
-        artist, title, _video_title, _language = get_youtube_title("https://fakeUrl")
+        artist, title, _video_title, _language = get_video_title("https://fakeUrl")
 
         # Should fall through to title-split logic
         self.assertEqual(artist, "Some Artist")
         self.assertEqual(title, "Some Song")
 
-    @patch("src.modules.Audio.youtube.yt_dlp.YoutubeDL")
-    @patch("src.modules.Audio.youtube.save_image")
-    def test_download_and_convert_thumbnail(self, mock_save_image, mock_youtube_dl):
+    @patch("src.modules.Audio.video_platform.yt_dlp.YoutubeDL")
+    @patch("src.modules.Audio.video_platform.save_image")
+    def test_download_and_convert_thumbnail(self, mock_save_image, mock_yt_dl):
         # Arrange
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.return_value = {"thumbnail": "test_thumbnail_url"}
-        mock_youtube_dl.return_value.__enter__.return_value.urlopen.return_value.read.return_value = b"test_image_data"
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {"thumbnail": "test_thumbnail_url"}
+        mock_yt_dl.return_value.__enter__.return_value.urlopen.return_value.read.return_value = b"test_image_data"
 
         mock_save_image.return_value = None
 
@@ -307,9 +307,9 @@ class TestGetYoutubeTitle(unittest.TestCase):
         download_and_convert_thumbnail(ydl_opts, url, clear_filename, output_path)
 
         # Assert
-        mock_youtube_dl.assert_called_once_with(ydl_opts)
-        mock_youtube_dl.return_value.__enter__.return_value.extract_info.assert_called_once_with(url, download=False)
-        mock_youtube_dl.return_value.__enter__.return_value.urlopen.assert_called_once_with("test_thumbnail_url")
+        mock_yt_dl.assert_called_once_with(ydl_opts)
+        mock_yt_dl.return_value.__enter__.return_value.extract_info.assert_called_once_with(url, download=False)
+        mock_yt_dl.return_value.__enter__.return_value.urlopen.assert_called_once_with("test_thumbnail_url")
 
 if __name__ == "__main__":
     unittest.main()

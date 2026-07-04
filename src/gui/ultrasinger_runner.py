@@ -457,9 +457,9 @@ class UltraSingerRunner(QObject):
         if not config.get("calculate_score", True):
             args.append("--disable_score")
 
-        # YouTube metadata URL (when input is pre-downloaded audio)
-        if config.get("youtube_url"):
-            args.extend(["--youtube_url", config["youtube_url"]])
+        # Video platform metadata URL (when input is pre-downloaded audio)
+        if config.get("video_url"):
+            args.extend(["--video_url", config["video_url"]])
 
         # Browser-captured GVS PO token (full yt-dlp format list)
         if config.get("yt_po_token"):

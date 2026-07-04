@@ -307,8 +307,8 @@ class ConversionSettingsForm(QWidget):
         )
 
         card.add_info(
-            "Language priority: Manual selection > YouTube video metadata > "
-            "Whisper auto-detect. For YouTube URLs, the video language is used "
+            "Language priority: Manual selection > video platform metadata > "
+            "Whisper auto-detect. For video URLs, the video language is used "
             "automatically when set to Auto-detect."
         )
 

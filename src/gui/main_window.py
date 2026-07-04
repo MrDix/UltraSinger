@@ -212,7 +212,7 @@ class MainWindow(QMainWindow):
         # Initial button state
         self._update_queue_buttons()
 
-        # Start / detect the PO-token provider in the background so YouTube
+        # Start / detect the PO-token provider in the background so video
         # downloads get full-quality formats (SABR delivery otherwise limits
         # us to 360p / HTTP 403).
         self._potoken_status = None
@@ -350,7 +350,7 @@ class MainWindow(QMainWindow):
         from urllib.parse import parse_qs, urlparse
         params = parse_qs(urlparse(url).query)
         video_id = params.get("v", [""])[0]
-        # Store YouTube language metadata as pipeline hint
+        # Store video platform language metadata as pipeline hint
         yt_lang = self._browser_tab.yt_language
         if yt_lang:
             item.yt_language = yt_lang
@@ -556,12 +556,12 @@ class MainWindow(QMainWindow):
     def _check_for_bot_detection(self, line: str):
         """Detect yt-dlp bot-detection errors and trigger cookie reset.
 
-        When YouTube returns a bot challenge, the exported cookies are
-        stale.  We clear them, delete the cookie file, and ask the user
-        to re-login in the embedded browser.
+        When the video platform returns a bot challenge, the exported
+        cookies are stale.  We clear them, delete the cookie file, and
+        ask the user to re-login in the embedded browser.
 
         We match on "not a bot" which is the stable, apostrophe-free
-        tail of the YouTube error message.
+        tail of the platform's error message.
         """
         if "not a bot" not in line:
             return
@@ -591,9 +591,9 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "UltraSinger",
-            "YouTube hat eine Bot-Erkennung ausgelöst.\n\n"
+            "Die Video-Plattform hat eine Bot-Erkennung ausgelöst.\n\n"
             "Deine Cookies wurden gelöscht.\n"
-            "Bitte melde dich im Browser erneut bei YouTube an\n"
+            "Bitte melde dich im Browser erneut an\n"
             "und starte die Konvertierung danach neu.",
         )
 
