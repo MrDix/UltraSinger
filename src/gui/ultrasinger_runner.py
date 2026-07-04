@@ -326,14 +326,16 @@ class UltraSingerRunner(QObject):
             args.append("--disable_hyphenation")
         if not config.get("create_karaoke", True):
             args.append("--disable_karaoke")
+        if not config.get("create_midi", True):
+            args.append("--disable_midi")
+        if not config.get("write_metadata_tags", True):
+            args.append("--no_metadata_tags")
 
         # Boolean flags (enabled by CLI flag)
         if config.get("keep_cache"):
             args.append("--keep_cache")
         if config.get("create_plot"):
             args.append("--plot")
-        if config.get("create_midi"):
-            args.append("--midi")
         if config.get("create_audio_chunks"):
             args.append("--create_audio_chunks")
         if config.get("keep_numbers"):
@@ -424,6 +426,9 @@ class UltraSingerRunner(QObject):
                 args.extend(["--remote_stt_api_key", config["remote_stt_api_key"]])
             if config.get("remote_stt_model"):
                 args.extend(["--remote_stt_model", config["remote_stt_model"]])
+            timeout = config.get("remote_stt_timeout", 120)
+            if timeout != 120:
+                args.extend(["--remote_stt_timeout", str(timeout)])
 
         # Refinement
         if config.get("refine_from_vocal", False):

@@ -70,6 +70,7 @@ _DEFAULTS = {
     "remote_stt_api_base_url": "https://api.groq.com/openai/v1",
     "remote_stt_api_key": "",  # stored in system keyring, never written to config.json
     "remote_stt_model": "whisper-large-v3",
+    "remote_stt_timeout": 120,  # seconds
     # Scoring
     "calculate_score": True,
     # Output options
@@ -78,6 +79,7 @@ _DEFAULTS = {
     "create_midi": True,
     "create_audio_chunks": False,
     "create_karaoke": True,
+    "write_metadata_tags": True,
     "keep_audio_in_video": False,
     "write_settings_info": False,
     # Device
