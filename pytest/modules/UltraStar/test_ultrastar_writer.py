@@ -1,15 +1,19 @@
 """Tests for the ultrastar_writer.py module."""
 
+import os
+import tempfile
 import unittest
 
 from packaging import version
 from unittest.mock import patch, mock_open
 from src.modules.Ultrastar.ultrastar_writer import (
     create_ultrastar_txt, silence_threshold, calculate_silent_beat_length,
-    format_separated_string,
+    format_separated_string, add_score_to_ultrastar_txt,
+    add_game_score_to_ultrastar_txt,
 )
 from src.modules.Midi.MidiSegment import MidiSegment
 from src.modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag
+from src.modules.Ultrastar.ultrastar_score_calculator import Score
 
 
 class TestCreateUltrastarTxt(unittest.TestCase):
@@ -496,6 +500,73 @@ class TestCreateUltrastarTxt(unittest.TestCase):
         # All gaps are 0.5 except the overlap (0.0), so percentile must be >= 0
         self.assertIsNotNone(result)
         self.assertGreaterEqual(result, 0)
+
+
+class TestAddScoreHeaders(unittest.TestCase):
+    """Tests for the header-suffix helpers appended after CreateUltraStarTxt."""
+
+    def _write_temp_txt(self) -> str:
+        fd, path = tempfile.mkstemp(suffix=".txt")
+        os.close(fd)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                "#TITLE:Title\n"
+                "#ARTIST:Artist\n"
+                "#BPM:120\n"
+                "#CREATOR:UltraSinger [GitHub]\n"
+                ": 0 1 0 word \n"
+                "E"
+            )
+        return path
+
+    def test_add_game_score_to_ultrastar_txt_appends_to_creator_line(self):
+        path = self._write_temp_txt()
+        try:
+            add_game_score_to_ultrastar_txt(path, 87.1)
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn(
+                "#CREATOR:UltraSinger [GitHub] | Game score (Medium): 87.1%",
+                text,
+            )
+        finally:
+            os.remove(path)
+
+    def test_add_game_score_to_ultrastar_txt_inserts_creator_line_if_missing(self):
+        fd, path = tempfile.mkstemp(suffix=".txt")
+        os.close(fd)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("#TITLE:Title\n#BPM:120\n: 0 1 0 word \nE")
+            add_game_score_to_ultrastar_txt(path, 42.0)
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn(
+                "#CREATOR:UltraSinger [GitHub] | Game score (Medium): 42.0%",
+                text,
+            )
+        finally:
+            os.remove(path)
+
+    def test_add_score_to_ultrastar_txt_still_works(self):
+        """Regression check: the internal-score header helper is unaffected
+        by the shared-helper refactor."""
+        path = self._write_temp_txt()
+        try:
+            score = Score()
+            score.score = 8500
+            score.notes = 7500
+            score.golden = 500
+            score.line_bonus = 500
+            add_score_to_ultrastar_txt(path, score)
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn(
+                "#CREATOR:UltraSinger [GitHub] | Score: total: 8500, notes: 7500 line: 500, golden: 500",
+                text,
+            )
+        finally:
+            os.remove(path)
 
 
 if __name__ == "__main__":
