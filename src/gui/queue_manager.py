@@ -393,6 +393,9 @@ class QueueManager(QObject):
             # the original video URL so metadata (title, artist, thumbnail)
             # can still be fetched via yt-dlp extract_info(download=False).
             merged["video_url"] = item.input_source
+            # Keep the stored snapshot in sync with the config actually passed
+            # to build_args (video_url is injected only on the intercepted path).
+            item.resolved_config = dict(merged)
             args = self._runner.build_args(merged, audio_path)
             self._runner.start(args)
         else:
