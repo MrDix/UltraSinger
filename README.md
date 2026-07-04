@@ -81,7 +81,7 @@ This will help me a lot to keep this project alive and improve it.
 
 * Install Python 3.12 or 3.13. [Download](https://www.python.org/downloads/)
 * Also download or install ffmpeg with PATH. [Download](https://www.ffmpeg.org/download.html)
-* Go to folder `install` and run the install script for your OS:
+* Go to folder `install` and run `install.bat` (Windows) or `install.sh` (Linux/macOS) - it detects your hardware and picks the right build automatically. Or pick a script manually:
   * Choose `CUDA` if you have an NVIDIA CUDA GPU (Windows/Linux only).
   * Choose `CPU` if you don't have an NVIDIA GPU, want CPU-only processing, or are on macOS.
   * macOS note: Apple Silicon does not support NVIDIA CUDA. Use the CPU install.
