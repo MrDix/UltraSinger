@@ -12,6 +12,12 @@ the CLI flags and GUI config keys use the user-facing ``freestyle_*`` /
 import os
 import unittest
 
+import pytest
+
+# Skip the whole module (instead of failing collection) when PySide6 or its
+# native Qt libraries are unavailable, e.g. on a runner without the gui extra.
+pytest.importorskip("PySide6.QtWidgets")
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
