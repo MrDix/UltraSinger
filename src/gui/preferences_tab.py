@@ -227,8 +227,8 @@ class PreferencesTab(QWidget):
         ytdlp_card.add_widget(self._ytdlp_update_available_label)
 
         ytdlp_card.add_info(
-            "yt-dlp handles all video/audio downloads. YouTube changes its "
-            "internals often, so an outdated yt-dlp can start failing downloads "
+            "yt-dlp handles all video/audio downloads. Video platforms change "
+            "their internals often, so an outdated yt-dlp can start failing downloads "
             "(HTTP 403). Only update if you're having download problems — this "
             "re-runs 'uv lock' and 'uv sync' and takes 1-2 minutes."
         )
@@ -359,7 +359,7 @@ class PreferencesTab(QWidget):
             "Update yt-dlp",
             "Update yt-dlp now?\n\n"
             "This is usually only needed when downloads are failing "
-            "(e.g. YouTube HTTP 403 errors).\n"
+            "(e.g. HTTP 403 errors).\n"
             "It re-runs 'uv lock' and 'uv sync' and takes about 1-2 minutes.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,

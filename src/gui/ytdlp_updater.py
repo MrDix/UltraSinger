@@ -1,6 +1,6 @@
 """Check for newer yt-dlp releases and perform a one-click update.
 
-YouTube frequently changes its player/delivery internals; yt-dlp ships
+Video platforms frequently change their player/delivery internals; yt-dlp ships
 frequent releases to keep up, and an install left un-upgraded for more
 than a few months tends to start failing downloads with HTTP 403. This
 module only *checks* for a newer release and, on explicit user request,
