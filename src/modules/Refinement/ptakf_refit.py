@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import statistics
+from functools import lru_cache
 
 import librosa
 
@@ -185,6 +186,78 @@ def _continuation_word(word: str) -> str:
     return "~ " if word.endswith(" ") else "~"
 
 
+@lru_cache(maxsize=None)
+def _get_hyphenator(language: str):
+    """Resolve and cache a Hyphenator for ``language``.
+
+    Reuses the same language-to-dictionary resolution and error handling as
+    the transcript-level hyphenation pass (``modules.Speech_Recognition.
+    hyphenation.language_check``). Returns ``None`` (and prints the same
+    warning) when the language has no installed/downloadable dictionary.
+    """
+    from hyphen import Hyphenator
+
+    from modules.Speech_Recognition.hyphenation import language_check
+
+    lang_region = language_check(language)
+    if lang_region is None:
+        return None
+    try:
+        return Hyphenator(lang_region)
+    except Exception:
+        return None
+
+
+def _distribute_syllables(word: str, n_parts: int, language: str | None) -> list[str]:
+    """Distribute a word's syllables across ``n_parts`` split notes.
+
+    Uses the project's existing hyphenation infrastructure (same dictionary
+    lookup as transcript-level hyphenation) to spread a multi-syllable word
+    over its split sub-notes for nicer karaoke display. Purely cosmetic: the
+    returned strings only affect displayed lyrics, never the note timing or
+    pitch used for scoring.
+
+    Falls back to today's behaviour (``[word, "~", "~", ...]`` with spacing
+    matching ``_continuation_word``) when there is no language, no usable
+    hyphenator, only one syllable, or hyphenation fails for any reason.
+    """
+    trailing_space = word.endswith(" ")
+    continuation = _continuation_word(word)
+
+    if n_parts <= 1:
+        return [word]
+
+    fallback = [word] + [continuation] * (n_parts - 1)
+
+    if not language:
+        return fallback
+
+    hyphenator = _get_hyphenator(language)
+    if hyphenator is None:
+        return fallback
+
+    stripped = word[:-1] if trailing_space else word
+    try:
+        from modules.Speech_Recognition.hyphenation import hyphenation as hyphenate_word
+
+        syllables = hyphenate_word(stripped, hyphenator)
+    except Exception:
+        return fallback
+
+    if not syllables or len(syllables) <= 1:
+        return fallback
+
+    m = len(syllables)
+    if n_parts >= m:
+        parts = list(syllables) + ["~"] * (n_parts - m)
+    else:
+        parts = list(syllables[: n_parts - 1]) + ["".join(syllables[n_parts - 1:])]
+
+    if trailing_space:
+        parts[-1] = parts[-1] + " "
+    return parts
+
+
 def _plan_fill_segments(
     grid_tones: list[int],
     min_fill_beats: int,
@@ -223,6 +296,7 @@ def refit_notes_ptakf(
     min_note_ms: float = 100.0,
     fill: bool = False,
     fill_min_ms: float = 300.0,
+    language: str | None = None,
 ) -> list[MidiSegment]:
     """Refit all notes onto the ptAKF beat-tone sequence.
 
@@ -238,6 +312,10 @@ def refit_notes_ptakf(
             vocalises, melisma tails) as "~" notes.
         fill_min_ms: Minimum length of an uncharted voiced run before it
             is filled (guards against separation bleed and noise).
+        language: Optional language code used to hyphenate multi-syllable
+            words so their split sub-notes get individual syllables instead
+            of "~" filler. Purely cosmetic (score-neutral); falls back to
+            the previous behaviour when omitted or unsupported.
 
     Returns:
         New list of MidiSegments (or the original list on failure).
@@ -247,7 +325,7 @@ def refit_notes_ptakf(
 
     try:
         return _refit(midi_segments, vocal_audio_path, bpm, min_note_ms,
-                      fill, fill_min_ms)
+                      fill, fill_min_ms, language)
     except (ImportError, OSError, ValueError, RuntimeError,
             AttributeError, KeyError, TypeError, IndexError) as e:
         print(
@@ -264,6 +342,7 @@ def _refit(
     min_note_ms: float,
     fill: bool = False,
     fill_min_ms: float = 300.0,
+    language: str | None = None,
 ) -> list[MidiSegment]:
     from ultrastar_score.audio import load_audio
     from ultrastar_score.parser import parse_ultrastar
@@ -349,12 +428,13 @@ def _refit(
         parts = _smooth_segments(parts, beat_tones, min_note_beats)
 
         refit_count += 1
+        words = _distribute_syllables(orig.word, len(parts), language)
         for k, (off, length, midi) in enumerate(parts):
             planned.append((
                 note.start_beat + off,
                 length,
                 librosa.midi_to_note(midi),
-                orig.word if k == 0 else _continuation_word(orig.word),
+                words[k],
                 orig.note_type,
                 orig.line_break_after and k == len(parts) - 1,
             ))
