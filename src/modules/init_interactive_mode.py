@@ -9,7 +9,7 @@ import os
   
 def get_input_file(console, settings, header):  
     while True:  
-        input_file = console.input(f"{header} Enter the path to the input file ([green]audio file[/green], [green]Ultrastar txt[/green], or [green]YouTube URL[/green]): ").strip()  
+        input_file = console.input(f"{header} Enter the path to the input file ([green]audio file[/green], [green]Ultrastar txt[/green], or [green]video URL[/green]): ").strip()
         if input_file:  
             settings.input_file_path = input_file 
             print(settings.input_file_path) 
@@ -165,10 +165,10 @@ def configure_additional_options(console, settings, header):
         if musescore_path:  
             settings.musescore_path = musescore_path  
   
-        # Cookie File for YouTube Downloads  
-        cookie_file = console.input(  
-            f"\n{header} Enter the path to [green]cookies.txt[/green] file (if required for YouTube downloads, leave empty otherwise): "  
-        ).strip()  
+        # Cookie File for Video Downloads
+        cookie_file = console.input(
+            f"\n{header} Enter the path to [green]cookies.txt[/green] file (if required for video downloads, leave empty otherwise): "
+        ).strip()
         if cookie_file:  
             settings.cookiefile = cookie_file
 

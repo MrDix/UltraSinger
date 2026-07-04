@@ -201,7 +201,7 @@ class QueueManager(QObject):
         # Merge global config with per-song overrides
         merged = {**self._global_config, **next_item.settings_overrides}
 
-        # YouTube language as explicit --language hint: if no manual
+        # Video platform language as explicit --language hint: if no manual
         # language is set and the video has language metadata from yt-dlp,
         # pass it via --language so the subprocess uses it immediately.
         # (The core also extracts it from yt-dlp, but for the interceptor
@@ -214,11 +214,11 @@ class QueueManager(QObject):
             merged["language_mode"] = "manual"
             merged["language"] = next_item.yt_language
             self.line_output.emit(
-                f"[Queue] YouTube language hint: "
+                f"[Queue] Video platform language hint: "
                 f"--language {next_item.yt_language}"
             )
             logger.info(
-                "Using YouTube language '%s' as --language for '%s'",
+                "Using video platform language '%s' as --language for '%s'",
                 next_item.yt_language, next_item.title,
             )
 
@@ -322,7 +322,7 @@ class QueueManager(QObject):
         """Pre-download audio via ffmpeg, then run UltraSinger with local file.
 
         This bypasses yt-dlp entirely — the URL was captured from the
-        real Chromium browser, so YouTube sees it as normal playback.
+        real Chromium browser, so the video platform sees it as normal playback.
         """
         from .media_downloader import start_media_download
 
@@ -390,9 +390,12 @@ class QueueManager(QObject):
                 "[Queue] Using browser-intercepted audio (yt-dlp bypassed)"
             )
             # Run UltraSinger with the local audio file as input, but pass
-            # the original YouTube URL so metadata (title, artist, thumbnail)
+            # the original video URL so metadata (title, artist, thumbnail)
             # can still be fetched via yt-dlp extract_info(download=False).
-            merged["youtube_url"] = item.input_source
+            merged["video_url"] = item.input_source
+            # Keep the stored snapshot in sync with the config actually passed
+            # to build_args (video_url is injected only on the intercepted path).
+            item.resolved_config = dict(merged)
             args = self._runner.build_args(merged, audio_path)
             self._runner.start(args)
         else:
@@ -432,11 +435,11 @@ class QueueManager(QObject):
             info["uscore"] = m.group(1).strip()
             return
 
-        # Language detection (fast Whisper tiny, full Whisper, YouTube metadata, or --language)
+        # Language detection (fast Whisper tiny, full Whisper, video platform metadata, or --language)
         lang_pat = r"([A-Za-z0-9_-]+)"
         m = (re.search(rf"Language detected:\s*{lang_pat}", clean)
              or re.search(rf"Detected language:\s*{lang_pat}", clean)
-             or re.search(rf"Using YouTube language metadata:\s*{lang_pat}", clean)
+             or re.search(rf"Using video platform language metadata:\s*{lang_pat}", clean)
              or re.search(rf"Language set:\s*{lang_pat}", clean))
         if m:
             new_lang = m.group(1)

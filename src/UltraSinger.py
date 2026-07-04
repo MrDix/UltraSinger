@@ -44,8 +44,8 @@ from modules.Audio.vocal_chunks import (
 from modules.Audio.key_detector import detect_key_from_audio, get_allowed_notes_for_key
 from modules.Audio.silence_processing import remove_silence_from_transcription_data, mute_no_singing_parts
 from modules.Audio.convert_audio import convert_audio_to_mono_wav, convert_audio_format
-from modules.Audio.youtube import (
-    download_from_youtube,
+from modules.Audio.video_platform import (
+    download_from_video_platform,
 )
 from modules.Audio.bpm import get_bpm_from_file
 
@@ -224,7 +224,7 @@ def run() -> tuple[str, Score, Score]:
         process_data.media_info.music_key = f"{detected_key} {detected_mode}"
 
     # Audio transcription
-    # Language priority: --language CLI flag > YouTube metadata > Whisper detect
+    # Language priority: --language CLI flag > video platform metadata > Whisper detect
     if settings.language is not None:
         process_data.media_info.language = settings.language
         print(
@@ -232,9 +232,9 @@ def run() -> tuple[str, Score, Score]:
             f"{blue_highlighted(settings.language)} (--language)"
         )
     elif process_data.media_info.language:
-        # YouTube metadata language already set by download_from_youtube()
+        # Video platform metadata language already set by download_from_video_platform()
         print(
-            f"{ULTRASINGER_HEAD} Using YouTube language metadata: "
+            f"{ULTRASINGER_HEAD} Using video platform language metadata: "
             f"{blue_highlighted(process_data.media_info.language)}"
         )
     lyrics_lookup_result = None
@@ -243,7 +243,7 @@ def run() -> tuple[str, Score, Score]:
     # Track language source for info file
     _lang_source = (
         "manual" if settings.language is not None
-        else "youtube" if process_data.media_info.language
+        else "video_platform" if process_data.media_info.language
         else "pending"  # will be set to "whisper_fast" or "whisper_full" later
     )
     _initial_language = None  # tracks pre-correction language
@@ -265,7 +265,7 @@ def run() -> tuple[str, Score, Score]:
             )
             if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
                 process_data.synced_lyrics = early_lyrics_info.synced_lyrics
-                # Detect language if not explicitly set and no YouTube hint
+                # Detect language if not explicitly set and no video platform hint
                 if process_data.media_info.language is None:
                     from modules.Speech_Recognition.Whisper import detect_language_from_audio
                     process_data.media_info.language = detect_language_from_audio(
@@ -994,7 +994,7 @@ def _write_settings_info_file(
             # Language detection method
             _LANG_SOURCE_LABELS = {
                 "manual": f"manual (--language {settings.language})",
-                "youtube": f"YouTube metadata -> {detected_language}",
+                "video_platform": f"video platform metadata -> {detected_language}",
                 "whisper_fast": f"Whisper tiny (fast) -> {detected_language}",
                 "whisper_full": f"Whisper (full transcription) -> {detected_language}",
                 "pending": "unknown",
@@ -1004,7 +1004,7 @@ def _write_settings_info_file(
             f.write(f"  Language used:             {detected_language or '(none)'}\n")
 
             # Whisper language hint: did Whisper receive an explicit language?
-            whisper_had_hint = settings.language is not None or lang_source in ("youtube", "whisper_fast")
+            whisper_had_hint = settings.language is not None or lang_source in ("video_platform", "whisper_fast")
             if not whisper_skipped or reference_recovered:
                 if whisper_had_hint:
                     hint_lang = settings.language or detected_language or "?"
@@ -1483,7 +1483,7 @@ def InitProcessData():
         settings.ignore_audio = True
 
     elif settings.input_file_path.startswith("https:"):
-        # Youtube
+        # Video URL input
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Full Automatic Mode')}")
         process_data = ProcessData()
         (
@@ -1491,7 +1491,7 @@ def InitProcessData():
             settings.output_folder_path,
             process_data.process_data_paths.audio_output_file_path,
             process_data.media_info
-        ) = download_from_youtube(
+        ) = download_from_video_platform(
             settings.input_file_path, settings.output_folder_path, settings.cookiefile,
             keep_audio_in_video=settings.keep_audio_in_video,
             po_token=settings.yt_po_token,
@@ -1501,24 +1501,24 @@ def InitProcessData():
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Full Automatic Mode')}")
         process_data = ProcessData()
 
-        # If a YouTube URL was provided (e.g. from browser interceptor),
+        # If a video URL was provided (e.g. from browser interceptor),
         # fetch metadata BEFORE deriving the local song identity so that
         # the output folder and basename use the correct artist/title
         # instead of the temporary intercepted filename.
         yt_artist, yt_title, yt_language = None, None, None
-        if settings.youtube_url:
+        if settings.video_url:
             try:
-                from modules.Audio.youtube import get_youtube_title
-                yt_artist, yt_title, _video_title, yt_language = get_youtube_title(
-                    settings.youtube_url, settings.cookiefile, settings.yt_po_token
+                from modules.Audio.video_platform import get_video_title
+                yt_artist, yt_title, _video_title, yt_language = get_video_title(
+                    settings.video_url, settings.cookiefile, settings.yt_po_token
                 )
                 print(
-                    f"{ULTRASINGER_HEAD} YouTube metadata: "
+                    f"{ULTRASINGER_HEAD} Video platform metadata: "
                     f"{yt_artist} - {yt_title}"
                 )
             except Exception as e:
                 print(
-                    f"{ULTRASINGER_HEAD} Warning: YouTube metadata lookup "
+                    f"{ULTRASINGER_HEAD} Warning: video platform metadata lookup "
                     f"failed: {e}"
                 )
 
@@ -1529,7 +1529,7 @@ def InitProcessData():
             process_data.media_info,
         ) = infos_from_audio_video_input_file()
 
-        # Override with YouTube metadata if available
+        # Override with video platform metadata if available
         if yt_artist:
             process_data.media_info.artist = yt_artist
             process_data.basename = f"{yt_artist} - {yt_title}" if yt_title else yt_artist
@@ -1548,7 +1548,7 @@ def TranscribeAudio(process_data):
                                             process_data.process_data_paths.whisper_audio_path)
 
     # Full Whisper large-v2 detection is more accurate than Whisper tiny
-    # fast-detect or YouTube metadata.  Always update the language from
+    # fast-detect or video platform metadata.  Always update the language from
     # full transcription unless the user explicitly set --language.
     if transcription_result.detected_language:
         if settings.language is not None:
@@ -2140,8 +2140,15 @@ def init_settings(argv: list[str]) -> Settings:
             settings.remote_stt_api_key = arg
         elif opt in ("--remote_stt_model"):
             settings.remote_stt_model = arg
+        elif opt in ("--video_url"):
+            settings.video_url = arg
         elif opt in ("--youtube_url"):
-            settings.youtube_url = arg
+            # Deprecated alias, kept for backward compatibility.
+            print(
+                f"{ULTRASINGER_HEAD} {red_highlighted('Warning:')} "
+                "--youtube_url is deprecated, use --video_url instead"
+            )
+            settings.video_url = arg
         elif opt in ("--yt_po_token"):
             settings.yt_po_token = arg
         elif opt in ("--refine_from_vocal"):
@@ -2252,7 +2259,8 @@ def arg_options():
         "remote_stt_api_base_url=",
         "remote_stt_api_key=",
         "remote_stt_model=",
-        "youtube_url=",
+        "video_url=",
+        "youtube_url=",  # deprecated alias for --video_url, kept for backward compatibility
         "yt_po_token=",
         "refine_from_vocal",
         "disable_refine",

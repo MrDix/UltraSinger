@@ -110,7 +110,7 @@ _DEFAULTS = {
     "ptakf_refit_min_note_ms": 100.0,
     "ptakf_refit_fill": True,
     "ptakf_refit_fill_min_ms": 300.0,
-    # bgutil PO-token provider (full-quality YouTube downloads)
+    # bgutil PO-token provider (full-quality video downloads)
     "potoken_auto_start": True,          # check/start provider on GUI launch
     "potoken_auto_start_node": True,     # allow launching the local Node.js server
     "potoken_auto_start_docker": True,   # allow launching the provider via Docker
@@ -259,6 +259,10 @@ def load_config() -> dict:
     providers = config.get("llm_providers", [])
     if not providers:
         _migrate_single_llm_to_provider(config)
+
+    # Migrate legacy "youtube_url" key (pre-rename) to "video_url"
+    if "youtube_url" in config:
+        config.setdefault("video_url", config.pop("youtube_url"))
 
     # Load secrets from keyring (legacy key + per-provider keys)
     try:

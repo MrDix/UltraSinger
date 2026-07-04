@@ -1,6 +1,6 @@
 """Manage a bgutil PO-token provider for yt-dlp full-quality downloads.
 
-YouTube's SABR delivery no longer exposes a capturable media URL or PO
+The video platform's SABR delivery no longer exposes a capturable media URL or PO
 token to the embedded browser (the token lives in the binary POST body,
 which Qt's request interceptor cannot read).  The maintained solution is
 the ``bgutil-ytdlp-pot-provider`` yt-dlp plugin, which fetches GVS
@@ -214,7 +214,7 @@ def _wait_until_running(
 
 
 _SETUP_HINT = (
-    "PO-token provider not available - YouTube downloads may be limited to "
+    "PO-token provider not available - video downloads may be limited to "
     "360p / blocked (HTTP 403). Re-run the install script to set up the "
     "Node.js provider (it needs Node.js from https://nodejs.org installed), "
     "or start one manually - see "

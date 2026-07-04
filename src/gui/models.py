@@ -52,8 +52,8 @@ class QueueItem:
     status: str = "pending"  # pending | running | done | failed | cancelled
     settings_overrides: dict = field(default_factory=dict)
     resolved_config: dict = field(default_factory=dict)  # filled at run time
-    video_id: str = ""  # YouTube video ID (for interceptor lookup)
-    yt_language: str = ""  # YouTube language metadata (from yt-dlp)
+    video_id: str = ""  # Video ID (for interceptor lookup)
+    yt_language: str = ""  # Video platform language metadata (from yt-dlp)
     exit_code: int | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     result_info: dict = field(default_factory=dict)
