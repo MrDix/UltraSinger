@@ -1,0 +1,193 @@
+@echo off
+setlocal enabledelayedexpansion
+REM Hardware-aware installer entry point for Windows.
+REM
+REM Detects whether a usable NVIDIA GPU is present and runs the matching
+REM sub-script (install\CUDA\windows_cuda_gpu.bat or install\CPU\windows_cpu.bat).
+REM The sub-scripts themselves are untouched and can still be run directly.
+REM
+REM Usage:
+REM   install\install.bat              auto-detect hardware and install
+REM   install\install.bat --cpu        force the CPU build
+REM   install\install.bat --cuda       force the CUDA build
+REM   install\install.bat --help       show this help
+REM
+REM Environment variable override (same effect as the flags above):
+REM   set ULTRASINGER_BUILD=cpu|cuda  (before running install.bat)
+REM
+REM This script does not configure any API keys; it only prints information
+REM and suggested (not applied) command-line flags at the end.
+
+set "FORCE_BUILD="
+
+for %%A in (%*) do (
+    if /i "%%~A"=="--cpu" set "FORCE_BUILD=cpu"
+    if /i "%%~A"=="--cuda" set "FORCE_BUILD=cuda"
+    if /i "%%~A"=="--help" set "SHOW_HELP=1"
+    if /i "%%~A"=="-h" set "SHOW_HELP=1"
+    if /i "%%~A"=="/?" set "SHOW_HELP=1"
+)
+
+if defined SHOW_HELP (
+    echo Usage: install.bat [--cpu^|--cuda] [--help]
+    echo.
+    echo   --cpu     Force the CPU build, even if an NVIDIA GPU is detected.
+    echo   --cuda    Force the CUDA build, even if no NVIDIA GPU is detected.
+    echo   --help    Show this help and exit.
+    echo.
+    echo Without a flag, hardware is auto-detected via nvidia-smi.
+    echo ULTRASINGER_BUILD=cpu^|cuda in the environment has the same effect
+    echo as the matching flag.
+    exit /b 0
+)
+
+if not defined FORCE_BUILD (
+    if /i "%ULTRASINGER_BUILD%"=="cpu" set "FORCE_BUILD=cpu"
+    if /i "%ULTRASINGER_BUILD%"=="cuda" set "FORCE_BUILD=cuda"
+)
+
+REM --- GPU detection -----------------------------------------------------------
+REM Uses PowerShell to robustly parse the CSV line from nvidia-smi, e.g.
+REM "NVIDIA GeForce RTX 3060, 12288" -> name="NVIDIA GeForce RTX 3060" vram=12288
+set "GPU_DETECTED=0"
+set "GPU_NAME="
+set "GPU_VRAM="
+set "NVIDIA_SMI_MISSING=0"
+set "GPU_LINE="
+
+where nvidia-smi >nul 2>&1
+if !errorlevel! neq 0 (
+    set "NVIDIA_SMI_MISSING=1"
+) else (
+    for /f "usebackq delims=" %%L in (`powershell -NoProfile -Command ^
+        "$p = (nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>$null | Select-Object -First 1) -split ','; if ($p.Count -ge 2) { Write-Output ($p[0].Trim() + '|' + $p[1].Trim()) }"`) do (
+        set "GPU_LINE=%%L"
+    )
+    if defined GPU_LINE (
+        for /f "tokens=1,2 delims=|" %%A in ("!GPU_LINE!") do (
+            set "GPU_NAME=%%A"
+            set "GPU_VRAM=%%B"
+        )
+        REM Validate VRAM is a plain integer before trusting it
+        set "VRAM_CHECK=!GPU_VRAM!"
+        if defined VRAM_CHECK (
+            for /f "delims=0123456789" %%x in ("!VRAM_CHECK!") do set "VRAM_NONDIGIT=%%x"
+            if not defined VRAM_NONDIGIT (
+                set "GPU_DETECTED=1"
+            ) else (
+                set "GPU_NAME="
+                set "GPU_VRAM="
+            )
+        )
+    )
+)
+
+echo ==================================================================
+echo  UltraSinger installer - hardware detection
+echo ==================================================================
+if "!GPU_DETECTED!"=="1" (
+    echo Detected GPU: !GPU_NAME!, !GPU_VRAM! MB
+) else (
+    echo No NVIDIA GPU detected.
+    if "!NVIDIA_SMI_MISSING!"=="1" (
+        echo If you have an NVIDIA GPU, install its driver and re-run, or force with --cuda.
+    )
+)
+echo.
+
+REM --- Decide which build to install -------------------------------------------
+set "BUILD="
+if defined FORCE_BUILD (
+    set "BUILD=!FORCE_BUILD!"
+) else (
+    if "!GPU_DETECTED!"=="1" (
+        set "BUILD=cuda"
+        rem Only prompt when stdin is an interactive console, so an automated
+        rem or wrapped invocation cannot block waiting for input (mirrors the
+        rem [ -t 0 ] guard in install.sh). Non-interactive keeps the CUDA build.
+        set "IS_INTERACTIVE=1"
+        powershell -NoProfile -Command "if ([Console]::IsInputRedirected) { exit 1 } else { exit 0 }" >nul 2>&1
+        if !errorlevel! neq 0 set "IS_INTERACTIVE=0"
+        if "!IS_INTERACTIVE!"=="1" (
+            set /p "REPLY=Detected !GPU_NAME!, using CUDA build. Press C for CPU, Enter to continue: "
+            if /i "!REPLY:~0,1!"=="C" set "BUILD=cpu"
+        )
+    ) else (
+        set "BUILD=cpu"
+    )
+)
+
+REM --- Pick and run the matching sub-script ------------------------------------
+if "!BUILD!"=="cuda" (
+    set "TARGET_SCRIPT=%~dp0CUDA\windows_cuda_gpu.bat"
+) else (
+    set "TARGET_SCRIPT=%~dp0CPU\windows_cpu.bat"
+)
+
+echo Selected build: !BUILD!
+echo Running: !TARGET_SCRIPT!
+echo.
+
+call "!TARGET_SCRIPT!"
+set "SUB_RC=!errorlevel!"
+
+if not "!SUB_RC!"=="0" (
+    echo.
+    echo Installation failed ^(exit code !SUB_RC!^). See the output above for details.
+    exit /b !SUB_RC!
+)
+
+REM --- Final hardware-aware summary --------------------------------------------
+echo.
+echo ==================================================================
+echo  Hardware summary
+echo ==================================================================
+if "!GPU_DETECTED!"=="1" (
+    echo Detected GPU: !GPU_NAME!, !GPU_VRAM! MB
+) else (
+    echo No NVIDIA GPU detected.
+)
+echo.
+
+if "!BUILD!"=="cpu" (
+    echo No NVIDIA GPU is being used for this install - CPU-only transcription
+    echo can take several minutes per song.
+    echo.
+    echo Cost-saving tip: get a free API key at https://console.groq.com and run
+    echo UltraSinger with --remote_stt ^(plus --remote_stt_api_key, or the
+    echo ULTRASINGER_REMOTE_STT_API_KEY env var^) to offload the slow transcription
+    echo step to the cloud ^(a few seconds, free tier available^); everything else
+    echo still runs locally.
+) else (
+    if not defined GPU_VRAM (
+        echo GPU VRAM could not be verified ^(forced CUDA build^).
+        echo If your GPU has less than 8 GB VRAM, the default Whisper model size
+        echo ^(large-v2^) may exceed available VRAM. These flags can help ^(not set
+        echo automatically^):
+        echo   --whisper_compute_type int8
+        echo   --whisper_batch_size 8    ^(or 4 if it still runs out of memory^)
+        echo.
+        echo Alternative: a free API key at https://console.groq.com plus --remote_stt
+        echo runs transcription in the cloud instead of on your GPU.
+    ) else (
+        if !GPU_VRAM! LSS 8192 (
+            echo Your GPU has less than 8 GB VRAM.
+            echo The default Whisper model size ^(large-v2^) may exceed available VRAM.
+            echo If you run into out-of-memory errors, these flags can help ^(not set
+            echo automatically^):
+            echo   --whisper_compute_type int8
+            echo   --whisper_batch_size 8    ^(or 4 if it still runs out of memory^)
+            echo.
+            echo Alternative: a free API key at https://console.groq.com plus --remote_stt
+            echo runs transcription in the cloud instead of on your GPU ^(also saves VRAM^).
+        ) else (
+            echo All set, defaults are fine.
+        )
+    )
+)
+echo ==================================================================
+echo.
+echo No API keys were configured automatically. See the tips above and
+echo the README for how to set --remote_stt up if you want to use it.
+echo.
+pause
