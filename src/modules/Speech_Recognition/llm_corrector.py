@@ -26,6 +26,23 @@ _MAX_WORDS_PER_CHUNK = 40
 # Request timeout in seconds
 _REQUEST_TIMEOUT_S = 30
 
+# Shared User-Agent for all outbound OpenAI-compatible API calls.
+# Some providers/CDNs (e.g. Cloudflare) reject requests with no/odd
+# User-Agent headers — see PR #40 (Cloudflare UA fix).
+OPENAI_COMPATIBLE_USER_AGENT = "Mozilla/5.0 (compatible; UltraSinger/1.0)"
+
+
+def validate_url_scheme(url: str) -> None:
+    """Validate that *url* uses http/https — a minimal SSRF guard.
+
+    Raises ``ValueError`` if the scheme is anything else (e.g. ``file://``).
+    Shared by every module that calls an OpenAI-compatible HTTP API
+    (LLM lyric correction, remote speech-to-text) so the check only
+    lives in one place.
+    """
+    if not url.startswith(("https://", "http://")):
+        raise ValueError(f"Invalid URL scheme: {url} (only http/https allowed)")
+
 _SYSTEM_PROMPT = """\
 You are a lyrics correction assistant. You receive speech-to-text output \
 from a song and must fix misheard or misspelled words.
@@ -241,8 +258,7 @@ def _call_llm_api(user_prompt: str, config: LLMConfig) -> str:
     url = config.api_base_url.rstrip("/") + "/chat/completions"
 
     # Validate URL scheme to prevent SSRF
-    if not url.startswith(("https://", "http://")):
-        raise ValueError(f"Invalid URL scheme: {url} (only http/https allowed)")
+    validate_url_scheme(url)
 
     payload = {
         "model": config.model,
@@ -256,7 +272,7 @@ def _call_llm_api(user_prompt: str, config: LLMConfig) -> str:
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {config.api_key}",
-        "User-Agent": "Mozilla/5.0 (compatible; UltraSinger/1.0)",
+        "User-Agent": OPENAI_COMPATIBLE_USER_AGENT,
     }
 
     data = json.dumps(payload).encode("utf-8")

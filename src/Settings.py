@@ -111,6 +111,16 @@ class Settings:
     llm_retry_wait: int = 60  # Seconds to wait between retries
     llm_retry_max: int = 3  # Maximum retries per chunk
 
+    # Remote (cloud) speech-to-text — text-only Whisper alternative for
+    # GPU-less users. Timing always comes from the local wav2vec2 CTC
+    # forced-alignment model (never from remote timestamps); see
+    # docs/remote-stt-design.md.
+    remote_stt = False  # Enable remote STT as a lyrics-source fallback
+    remote_stt_api_base_url: str = "https://api.groq.com/openai/v1"
+    remote_stt_api_key: str | None = None  # or set ULTRASINGER_REMOTE_STT_API_KEY env var
+    remote_stt_model: str = "whisper-large-v3"
+    remote_stt_timeout: int = 120  # seconds
+
     # Freestyle detection — mark unpitchable passages as freestyle
     # Covers growls, screams, rap, spoken word, harsh vocals, and any non-melodic vocal style.
     # Detected segments become UltraStar freestyle notes (displayed but not scored).

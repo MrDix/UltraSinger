@@ -157,6 +157,22 @@ def print_help() -> None:
     --llm_retry_wait        Seconds to wait between retries >> ((default) is 60)
     --llm_retry_max         Maximum retries per text chunk >> ((default) is 3)
 
+    [remote speech-to-text]
+    --remote_stt                 Enable remote (cloud) speech-to-text as a Whisper alternative
+                                  for GPU-less machines. Sends audio to an OpenAI-compatible
+                                  "/audio/transcriptions" endpoint (requires API key) and gets
+                                  text back; timing is still always computed locally via
+                                  wav2vec2 forced alignment — remote timestamps are never used.
+                                  Tried as a fallback after LRCLIB lyrics and before local
+                                  Whisper. Falls open to local Whisper on any failure.
+                                  Privacy note: the song's audio is uploaded to a third-party
+                                  service — only enable this if you accept that.
+    --remote_stt_api_base_url    OpenAI-compatible API base URL >> ((default) is
+                                  https://api.groq.com/openai/v1)
+    --remote_stt_api_key         API key for the remote STT service (or set the
+                                  ULTRASINGER_REMOTE_STT_API_KEY env var)
+    --remote_stt_model           Remote STT model name >> ((default) is whisper-large-v3)
+
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
     --create_audio_chunks   Enable creation of audio chunks. Audio chunks are disabled by default.

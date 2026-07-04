@@ -20,6 +20,7 @@ _SERVICE_NAME = "ultrasinger"
 # Per-provider keys (llm_api_key_{id}) fall back to the same env var.
 _ENV_VAR_MAP = {
     "llm_api_key": "ULTRASINGER_LLM_API_KEY",
+    "remote_stt_api_key": "ULTRASINGER_REMOTE_STT_API_KEY",
 }
 _ENV_VAR_PREFIX_FALLBACK = {
     "llm_api_key_": "ULTRASINGER_LLM_API_KEY",

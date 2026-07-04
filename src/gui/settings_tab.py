@@ -449,6 +449,7 @@ class ConversionSettingsForm(QWidget):
         self._build_experimental_section()
         self._build_refinement_section()
         self._build_llm_section()
+        self._build_remote_stt_section()
         self._build_scoring_section()
 
     # ─── Experimental Features ────────────────────────────────────────────
@@ -720,6 +721,63 @@ class ConversionSettingsForm(QWidget):
 
         self._llm_correct.toggled_signal.connect(_toggle_llm)
         _toggle_llm(self._llm_correct.isChecked())
+
+        self._main_layout.addWidget(card)
+
+    # ─── Remote Speech-to-Text ───────────────────────────────────────────
+
+    def _build_remote_stt_section(self):
+        """Minimal toggle + fields for remote (cloud) speech-to-text.
+
+        Deliberately kept simple (flat base URL / model / key fields)
+        rather than reusing the multi-provider LLM list — remote STT is a
+        single-purpose GPU-less fallback, not a multi-provider feature.
+        """
+        card = SettingsCard("Remote Speech-to-Text")
+
+        self._remote_stt = ToggleSwitch(
+            checked=self._config.get("remote_stt", False)
+        )
+        card.add_toggle_row("Enable Remote Speech-to-Text", self._remote_stt,
+                           "Send audio to an external OpenAI-compatible speech-to-text "
+                           "API (e.g. Groq's Whisper endpoint) instead of running local "
+                           "Whisper. Useful on machines without a capable GPU. Timing is "
+                           "always computed locally — only the transcript text comes from "
+                           "the remote service. Your audio leaves this machine when enabled.",
+                           reset_callback=lambda: self._remote_stt.setChecked(
+                               _DEFAULTS["remote_stt"]))
+
+        self._remote_stt_api_base_url = QLineEdit(
+            self._config.get("remote_stt_api_base_url", _DEFAULTS["remote_stt_api_base_url"])
+        )
+        card.add_row("API Base URL", self._remote_stt_api_base_url,
+                     "OpenAI-compatible base URL of the remote speech-to-text service.",
+                     reset_callback=lambda: self._remote_stt_api_base_url.setText(
+                         _DEFAULTS["remote_stt_api_base_url"]))
+
+        self._remote_stt_api_key = QLineEdit(
+            self._config.get("remote_stt_api_key", "")
+        )
+        self._remote_stt_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        card.add_row("API Key", self._remote_stt_api_key,
+                     "API key for the remote speech-to-text service. "
+                     "Stored in the system keyring, never in config.json.")
+
+        self._remote_stt_model = QLineEdit(
+            self._config.get("remote_stt_model", _DEFAULTS["remote_stt_model"])
+        )
+        card.add_row("Model", self._remote_stt_model,
+                     "Model name to request from the remote speech-to-text service.",
+                     reset_callback=lambda: self._remote_stt_model.setText(
+                         _DEFAULTS["remote_stt_model"]))
+
+        def _toggle_remote_stt(on):
+            self._remote_stt_api_base_url.setEnabled(on)
+            self._remote_stt_api_key.setEnabled(on)
+            self._remote_stt_model.setEnabled(on)
+
+        self._remote_stt.toggled_signal.connect(_toggle_remote_stt)
+        _toggle_remote_stt(self._remote_stt.isChecked())
 
         self._main_layout.addWidget(card)
 
@@ -1094,6 +1152,10 @@ class ConversionSettingsForm(QWidget):
             "llm_retry_on_rate_limit": self._llm_retry.isChecked(),
             "llm_retry_wait": self._llm_retry_wait.value(),
             "llm_retry_max": self._llm_retry_max.value(),
+            "remote_stt": self._remote_stt.isChecked(),
+            "remote_stt_api_base_url": self._remote_stt_api_base_url.text(),
+            "remote_stt_api_key": self._remote_stt_api_key.text(),
+            "remote_stt_model": self._remote_stt_model.text(),
             "calculate_score": self._calculate_score.isChecked(),
             "format_version": self._format_version.currentText(),
             "create_plot": self._create_plot.isChecked(),

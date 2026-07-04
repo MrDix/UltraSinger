@@ -178,6 +178,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Lyrics lookup disabled')}")
     if settings.llm_correct_lyrics:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'LLM lyric correction enabled (model: {settings.llm_model})')}")
+    if settings.remote_stt:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Remote speech-to-text enabled (model: {settings.remote_stt_model}) — audio will be sent to {settings.remote_stt_api_base_url}')}")
     if settings.syllable_split:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Syllable-level note splitting enabled')}")
     if settings.vocal_gap_fill:
@@ -246,6 +248,7 @@ def run() -> tuple[str, Score, Score]:
     )
     _initial_language = None  # tracks pre-correction language
     _reference_recovered = False  # tracks recovery after language correction
+    _remote_stt_used = False  # tracks whether remote STT supplied the lyrics text
 
     # Early LRCLIB lookup: if synced lyrics are available, we can skip the
     # expensive Whisper transcription entirely (~2 min saved per song).
@@ -403,6 +406,80 @@ def run() -> tuple[str, Score, Score]:
             except Exception as e:
                 print(f"{ULTRASINGER_HEAD} Plain lyrics alignment failed: {e}")
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
+
+        # Remote STT fallback: an external OpenAI-compatible speech-to-text
+        # API supplies TEXT ONLY (never trusted timestamps, see
+        # docs/remote-stt-design.md §2) which is then aligned locally via
+        # the exact same wav2vec2 CTC path used for LRCLIB plain lyrics.
+        # This lets GPU-less users skip local Whisper entirely.
+        if not reference_first_used and settings.remote_stt and not settings.disable_reference_lyrics:
+            try:
+                remote_api_key = settings.remote_stt_api_key or os.environ.get(
+                    "ULTRASINGER_REMOTE_STT_API_KEY", ""
+                )
+
+                # Local CTC alignment needs a language code; remote STT
+                # responses aren't guaranteed to include a reliable one,
+                # so fast-detect locally first (mirrors the early-LRCLIB
+                # synced-lyrics path above).
+                if process_data.media_info.language is None:
+                    from modules.Speech_Recognition.Whisper import detect_language_from_audio
+                    process_data.media_info.language = detect_language_from_audio(
+                        process_data.process_data_paths.whisper_audio_path,
+                        device=settings.pytorch_device,
+                    )
+                    _lang_source = "whisper_fast"
+
+                from modules.Speech_Recognition.remote_stt import transcribe_remote
+                remote_text = transcribe_remote(
+                    audio_path=process_data.process_data_paths.whisper_audio_path,
+                    api_base_url=settings.remote_stt_api_base_url,
+                    api_key=remote_api_key,
+                    model=settings.remote_stt_model,
+                    language=process_data.media_info.language,
+                    timeout=settings.remote_stt_timeout,
+                )
+
+                if remote_text:
+                    from modules.Speech_Recognition.reference_lyrics_aligner import (
+                        create_midi_segments_from_plain_lyrics,
+                    )
+                    ref_language = process_data.media_info.language or "en"
+                    remote_segments = create_midi_segments_from_plain_lyrics(
+                        plain_lyrics=remote_text,
+                        audio_path=process_data.process_data_paths.whisper_audio_path,
+                        language=ref_language,
+                        pitched_data=process_data.pitched_data,
+                        device=settings.pytorch_device,
+                        allowed_notes=allowed_notes_for_key,
+                        melisma_split=settings.pitch_change_split,
+                        align_model_name=settings.whisper_align_model,
+                    )
+                    if remote_segments:
+                        process_data.midi_segments = remote_segments
+                        reference_first_used = True
+                        _remote_stt_used = True
+                        process_data.transcribed_data = [
+                            TranscribedData(
+                                word=seg.word,
+                                start=seg.start,
+                                end=seg.end,
+                                confidence=1.0,
+                                is_word_end=not seg.word.strip().startswith("~"),
+                            )
+                            for seg in process_data.midi_segments
+                        ]
+                        print(
+                            f"{ULTRASINGER_HEAD} "
+                            f"{cyan_highlighted('Remote STT transcription aligned locally')}"
+                        )
+                    else:
+                        print(f"{ULTRASINGER_HEAD} Remote STT alignment produced no segments — falling back")
+                else:
+                    print(f"{ULTRASINGER_HEAD} Remote STT unavailable — falling back to local Whisper")
+            except Exception as e:
+                print(f"{ULTRASINGER_HEAD} Remote STT failed: {e}")
+                print(f"{ULTRASINGER_HEAD} Falling back to local Whisper")
 
         if not reference_first_used:
             # If Whisper was skipped but reference-first failed, run Whisper now
@@ -747,6 +824,7 @@ def run() -> tuple[str, Score, Score]:
             lang_source=_lang_source,
             initial_language=_initial_language,
             reference_recovered=_reference_recovered,
+            remote_stt_used=_remote_stt_used,
         )
 
     # Cleanup
@@ -840,6 +918,7 @@ def _write_settings_info_file(
         lang_source: str = "pending",
         initial_language: str | None = None,
         reference_recovered: bool = False,
+        remote_stt_used: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
     from datetime import datetime, timezone
@@ -891,6 +970,10 @@ def _write_settings_info_file(
             elif reference_first_used and has_synced_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
+            elif reference_first_used and remote_stt_used:
+                f.write("  Pipeline:                 Remote STT (text) + local alignment\n")
+                f.write("  Whisper transcription:    skipped (remote STT used instead)\n")
+                f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and has_plain_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
                 f.write("  LRCLIB plain lyrics:      found (no synced available)\n")
@@ -1040,6 +1123,15 @@ def _write_settings_info_file(
                         f.write(f"  Status:                   FAILED (all {llm_result.chunks_total} chunks failed{retry_info})\n")
                     if llm_result.last_error:
                         f.write(f"  Last error:               {llm_result.last_error}\n")
+            f.write("\n")
+
+            # Remote STT
+            f.write("[Remote Speech-to-Text]\n")
+            f.write(f"  Enabled:                  {settings.remote_stt}\n")
+            if settings.remote_stt:
+                f.write(f"  API base URL:             {settings.remote_stt_api_base_url}\n")
+                f.write(f"  Model:                    {settings.remote_stt_model}\n")
+                f.write(f"  Used this run:            {remote_stt_used}\n")
             f.write("\n")
 
             # Score results
@@ -2040,6 +2132,14 @@ def init_settings(argv: list[str]) -> Settings:
             settings.llm_retry_wait = int(arg)
         elif opt in ("--llm_retry_max"):
             settings.llm_retry_max = int(arg)
+        elif opt in ("--remote_stt"):
+            settings.remote_stt = True
+        elif opt in ("--remote_stt_api_base_url"):
+            settings.remote_stt_api_base_url = arg
+        elif opt in ("--remote_stt_api_key"):
+            settings.remote_stt_api_key = arg
+        elif opt in ("--remote_stt_model"):
+            settings.remote_stt_model = arg
         elif opt in ("--youtube_url"):
             settings.youtube_url = arg
         elif opt in ("--yt_po_token"):
@@ -2148,6 +2248,10 @@ def arg_options():
         "llm_no_retry",
         "llm_retry_wait=",
         "llm_retry_max=",
+        "remote_stt",
+        "remote_stt_api_base_url=",
+        "remote_stt_api_key=",
+        "remote_stt_model=",
         "youtube_url=",
         "yt_po_token=",
         "refine_from_vocal",
