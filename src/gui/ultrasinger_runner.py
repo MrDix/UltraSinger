@@ -318,6 +318,23 @@ class UltraSingerRunner(QObject):
             args.append("--disable_reference_lyrics")
         if config.get("detect_growl"):
             args.append("--detect_freestyle")
+            harmonicity = config.get("freestyle_harmonicity", 0.40)
+            if harmonicity != 0.40:
+                args.extend(["--freestyle_harmonicity", str(harmonicity)])
+            energy = config.get("freestyle_energy", 0.01)
+            if energy != 0.01:
+                args.extend(["--freestyle_energy", str(energy)])
+            confidence = config.get("freestyle_confidence", 0.35)
+            if confidence != 0.35:
+                args.extend(["--freestyle_confidence", str(confidence)])
+            pitch_stdev = config.get("freestyle_pitch_stdev", 4.0)
+            if pitch_stdev != 4.0:
+                args.extend(["--freestyle_pitch_stdev", str(pitch_stdev)])
+            spectral_flatness = config.get("freestyle_spectral_flatness", 0.25)
+            if spectral_flatness != 0.25:
+                args.extend(["--freestyle_spectral_flatness", str(spectral_flatness)])
+            if not config.get("freestyle_use_spectral", True):
+                args.append("--no_freestyle_spectral")
         if config.get("disable_onset_correction"):
             args.append("--disable_onset_correction")
         if config.get("disable_denoise_track_noise"):
