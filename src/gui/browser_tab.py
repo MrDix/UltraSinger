@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 
 
 class _FormatProbeWorker(QObject):
-    """Probe available download formats for a YouTube video via yt-dlp.
+    """Probe available download formats for a video via yt-dlp.
 
     Runs ``yt-dlp --dump-json`` in a background thread.  This only fetches
     metadata (no download) and does NOT trigger bot detection — the API
-    calls are identical to what YouTube's own player makes.
+    calls are identical to what the platform's own player makes.
 
     **Limitation:** The probe does not pass the user's cookie file, so
     age-restricted or member-only videos may report different availability
@@ -69,7 +69,7 @@ class _FormatProbeWorker(QObject):
         ]
         # With the browser session's cookies and PO token the probe sees
         # the same formats as the authenticated download (without them
-        # YouTube reports only a limited fallback set, e.g. 360p H.264).
+        # The platform reports only a limited fallback set, e.g. 360p H.264).
         if self._cookie_file:
             cmd[1:1] = ["--cookies", self._cookie_file]
         if self._po_token:
@@ -114,7 +114,7 @@ class _FormatProbeWorker(QObject):
             dur_str = f"{duration // 60}:{duration % 60:02d}" if duration else ""
 
             # LRCLIB lyrics check — yt-dlp only has artist/track for
-            # YouTube Music; regular videos need title parsing.
+            # the music service; regular videos need title parsing.
             artist = info.get("artist") or info.get("creator") or ""
             track = info.get("track") or ""
             if not artist or not track:
@@ -134,7 +134,7 @@ class _FormatProbeWorker(QObject):
                     track = track or video_title
             lyrics_status = self._check_lrclib(artist, track)
 
-            # YouTube video language metadata
+            # Video platform language metadata
             yt_language = info.get("language") or ""
 
             codec_names = {
@@ -330,7 +330,7 @@ _CONVERT_OVERLAY_JS = r"""
             applyBtnState();
 
             /* Quality badge — below the Queue button so it doesn't
-               overlap YouTube's search suggestion dropdown. */
+               overlap the platform's search suggestion dropdown. */
             if (!document.getElementById('ultrasinger-quality-badge')) {
                 var badge = document.createElement('div');
                 badge.id = 'ultrasinger-quality-badge';
@@ -426,7 +426,7 @@ class BrowserTab(QWidget):
         )
 
         # NOTE: we intentionally keep the DEFAULT QtWebEngine user agent.
-        # Spoofing a plain Chrome UA (to coax YouTube's high-quality player)
+        # Spoofing a plain Chrome UA (to coax the platform's high-quality player)
         # breaks Google sign-in ("This browser or app may not be secure",
         # because a Chrome UA without Chrome client hints is rejected).
         # Full-quality downloads no longer depend on the embedded player at
@@ -458,7 +458,7 @@ class BrowserTab(QWidget):
         # Media interceptor — passively captures audio stream URLs
         self.media_interceptor = MediaInterceptor(self)
         self._profile.setUrlRequestInterceptor(self.media_interceptor)
-        self._probe_yt_language = ""  # YouTube language from yt-dlp metadata
+        self._probe_yt_language = ""  # Video platform language from yt-dlp metadata
 
         # Web page + view
         self._page = UltraSingerWebPage(self._profile, self)
@@ -659,7 +659,7 @@ class BrowserTab(QWidget):
         # Only update if still on the same video
         if self._probe_video_id != video_id:
             return
-        # Store the YouTube language for use as pipeline hint
+        # Store the video platform language for use as pipeline hint
         self._probe_yt_language = yt_language or ""
 
         # Escape for JS string literal (backslash, quotes, control chars)
@@ -726,7 +726,7 @@ class BrowserTab(QWidget):
 
     @property
     def yt_language(self) -> str:
-        """Return the YouTube language metadata for the current video, if available."""
+        """Return the video platform language metadata for the current video, if available."""
         return getattr(self, "_probe_yt_language", "")
 
     def _on_convert_with_title(self, url: str):
@@ -735,7 +735,7 @@ class BrowserTab(QWidget):
             # Clean up common suffixes from video platform titles
             if title and " - " in title:
                 title = title.rsplit(" - ", 1)[0].strip()
-            # Strip YouTube notification count prefix like "(1) " or "(23) "
+            # Strip the platform's notification count prefix like "(1) " or "(23) "
             if title:
                 title = re.sub(r"^\(\d+\)\s*", "", title)
             if not title:
