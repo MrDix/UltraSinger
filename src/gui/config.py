@@ -65,6 +65,11 @@ _DEFAULTS = {
     "llm_retry_on_rate_limit": True,
     "llm_retry_wait": 60,
     "llm_retry_max": 3,
+    # Remote speech-to-text (text-only Whisper alternative; timing stays local)
+    "remote_stt": False,
+    "remote_stt_api_base_url": "https://api.groq.com/openai/v1",
+    "remote_stt_api_key": "",  # stored in system keyring, never written to config.json
+    "remote_stt_model": "whisper-large-v3",
     # Scoring
     "calculate_score": True,
     # Output options
@@ -115,7 +120,11 @@ _DEFAULTS = {
 
 def _is_secret_key(key: str) -> bool:
     """Check whether a config key holds secret data (API keys)."""
-    return key == "llm_api_key" or key.startswith("llm_api_key_")
+    return (
+        key == "llm_api_key"
+        or key.startswith("llm_api_key_")
+        or key == "remote_stt_api_key"
+    )
 
 
 def _get_secret_keys(config: dict) -> set[str]:
@@ -127,7 +136,8 @@ def _get_secret_keys(config: dict) -> set[str]:
         pid = provider.get("id", "") if isinstance(provider, dict) else ""
         if pid:
             keys.add(f"llm_api_key_{pid}")
-    # Also catch any llm_api_key_* that are directly in the config dict
+    # Also catch any llm_api_key_* / remote_stt_api_key that are directly
+    # in the config dict
     for k in config:
         if _is_secret_key(k):
             keys.add(k)

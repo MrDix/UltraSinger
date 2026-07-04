@@ -58,10 +58,10 @@ class ConversionWorker(QObject):
         project_root = _find_project_root()
         cmd = _build_command(project_root) + self._args
 
-        # Redact --llm_api_key value from logged command
+        # Redact API key values from logged command
         display_cmd = list(cmd)
         for i, token in enumerate(display_cmd):
-            if token == "--llm_api_key" and i + 1 < len(display_cmd):
+            if token in ("--llm_api_key", "--remote_stt_api_key") and i + 1 < len(display_cmd):
                 display_cmd[i + 1] = "***"
         self.line_output.emit(f"[GUI] Running: {' '.join(display_cmd)}")
         self.line_output.emit("")
@@ -414,6 +414,16 @@ class UltraSingerRunner(QObject):
                 retry_max = config.get("llm_retry_max", 3)
                 if retry_max != 3:
                     args.extend(["--llm_retry_max", str(retry_max)])
+
+        # Remote speech-to-text (text-only Whisper alternative)
+        if config.get("remote_stt"):
+            args.append("--remote_stt")
+            if config.get("remote_stt_api_base_url"):
+                args.extend(["--remote_stt_api_base_url", config["remote_stt_api_base_url"]])
+            if config.get("remote_stt_api_key"):
+                args.extend(["--remote_stt_api_key", config["remote_stt_api_key"]])
+            if config.get("remote_stt_model"):
+                args.extend(["--remote_stt_model", config["remote_stt_model"]])
 
         # Refinement
         if config.get("refine_from_vocal", False):

@@ -64,6 +64,7 @@ This will help me a lot to keep this project alive and improve it.
     - [Format Version](#format-version)
     - [🧪 Experimental Features](#-experimental-features)
       - [LLM Lyric Correction](#llm-lyric-correction---llm_correct)
+      - [Remote Speech-to-Text](#remote-speech-to-text---remote_stt)
       - [Syllable-Level Note Splitting](#syllable-level-note-splitting---syllable_split)
       - [Vocal Gap Fill](#vocal-gap-fill---vocal_gap_fill)
       - [Golden Notes](#golden-notes---golden_notes)
@@ -274,6 +275,15 @@ _Not all options working now!_
     --llm_no_retry          Disable automatic retry on rate limit (HTTP 429). Retry is enabled by default.
     --llm_retry_wait        Seconds to wait between retries >> ((default) is 60)
     --llm_retry_max         Maximum retries per text chunk >> ((default) is 3)
+
+    [remote speech-to-text]
+    --remote_stt                 Enable remote (cloud) speech-to-text as a Whisper alternative
+                                  for GPU-less machines (disabled by default). Text only --
+                                  timing is always computed locally.
+    --remote_stt_api_base_url    OpenAI-compatible API base URL >> ((default) is
+                                  https://api.groq.com/openai/v1)
+    --remote_stt_api_key         API key (or set ULTRASINGER_REMOTE_STT_API_KEY env var)
+    --remote_stt_model           Remote STT model name >> ((default) is whisper-large-v3)
 
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
@@ -567,6 +577,41 @@ UltraSinger.py -i song.mp3 --llm_correct \
 # API key via environment variable
 export LLM_API_KEY=gsk_xxx
 UltraSinger.py -i song.mp3 --llm_correct --llm_api_base_url https://api.groq.com/openai/v1
+```
+
+#### Remote Speech-to-Text (`--remote_stt`)
+
+Sends the song's audio to an external OpenAI-compatible speech-to-text API (e.g. Groq's Whisper endpoint) instead of running local Whisper transcription. This is meant for machines without a capable GPU, where local Whisper large-v2 can take several minutes per song.
+
+**Text only, never timing.** The remote service only ever supplies the transcript *text*. Timing is always computed afterward by the same local wav2vec2 CTC forced-alignment model the reference-lyrics-first pipeline already uses for LRCLIB plain-text lyrics — remote timestamps are discarded and never trusted. This matters because prior testing (see the Groq API evaluation in project history) showed remote Whisper timestamps are roughly 3x worse than local wav2vec2 alignment.
+
+**Where it fits in the lyrics-source order:**
+1. LRCLIB synced lyrics (unchanged, highest priority)
+2. LRCLIB plain lyrics + local alignment (unchanged)
+3. **Remote STT text + local alignment** (new — only if enabled and no LRCLIB lyrics found)
+4. Local Whisper transcription (default fallback, and still the default when remote STT is disabled)
+
+Any remote STT failure (network error, timeout, auth error, oversized file, empty response) fails open to local Whisper — a conversion never aborts because of it.
+
+**Privacy note:** enabling this sends the song's audio to a third-party service. Only enable it if you accept your audio leaving your machine, and review the provider's data-retention policy.
+
+**Cost/size note:** most OpenAI-compatible providers cap uploads around 25 MB; UltraSinger checks the file size before uploading and falls back to local Whisper if it's too large rather than attempting to chunk it.
+
+Related flags:
+* `--remote_stt_api_base_url` -- Base URL of the API (default: `https://api.groq.com/openai/v1`)
+* `--remote_stt_api_key` -- API key (can also be set via `ULTRASINGER_REMOTE_STT_API_KEY` environment variable)
+* `--remote_stt_model` -- Model name (default: `whisper-large-v3`)
+
+```bash
+# With Groq (reference provider, whisper-large-v3)
+UltraSinger.py -i song.mp3 --remote_stt \
+  --remote_stt_api_base_url https://api.groq.com/openai/v1 \
+  --remote_stt_api_key gsk_xxx \
+  --remote_stt_model whisper-large-v3
+
+# API key via environment variable
+export ULTRASINGER_REMOTE_STT_API_KEY=gsk_xxx
+UltraSinger.py -i song.mp3 --remote_stt
 ```
 
 #### Syllable-Level Note Splitting (`--syllable_split`)
