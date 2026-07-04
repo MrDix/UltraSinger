@@ -6,12 +6,13 @@ This replaces the old separate Settings + Preferences tabs.
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -25,8 +26,37 @@ from .widgets import AnimatedButton, LLMProviderListWidget, SettingsCard
 logger = logging.getLogger(__name__)
 
 
+class _YtdlpUpdateRunWorker(QObject):
+    """Runs the yt-dlp update (``uv lock`` + ``uv sync``) off the GUI thread.
+
+    Mirrors the ``_PotokenWorker`` / ``_YtdlpUpdateCheckWorker`` pattern in
+    ``main_window.py``: the update can take a minute or two, so it must not
+    block the GUI event loop.
+    """
+
+    finished = Signal(bool, str)  # ok, combined output
+
+    def __init__(self, repo_root):
+        super().__init__()
+        self._repo_root = repo_root
+
+    def run(self):
+        from .ytdlp_updater import run_update
+
+        try:
+            ok, output = run_update(self._repo_root)
+        except Exception as e:  # noqa: BLE001 — never crash the GUI thread
+            logger.warning("yt-dlp update failed unexpectedly: %s", e, exc_info=True)
+            ok, output = False, f"Unexpected error: {e}"
+        self.finished.emit(ok, output)
+
+
 class PreferencesTab(QWidget):
     """Unified settings: output folder, conversion defaults, LLM providers, cookies."""
+
+    # Emitted so MainWindow can forward yt-dlp update messages to the
+    # Console tab (this widget has no direct reference to it).
+    log_message = Signal(str)
 
     def __init__(self, config: dict, cookie_manager=None, parent=None):
         super().__init__(parent)
@@ -174,6 +204,48 @@ class PreferencesTab(QWidget):
 
         main_layout.addWidget(cookie_card)
 
+        # ── yt-dlp Update ────────────────────────────────────────────────
+        ytdlp_header = QLabel("yt-dlp")
+        ytdlp_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(ytdlp_header)
+        ytdlp_card = SettingsCard()
+
+        from .ytdlp_updater import get_installed_version
+
+        self._ytdlp_update_thread = None
+        self._ytdlp_update_worker = None
+
+        installed_version = get_installed_version()
+        self._ytdlp_version_label = QLabel(
+            f"Installed version: {installed_version}"
+            if installed_version else "Installed version: unknown"
+        )
+        ytdlp_card.add_widget(self._ytdlp_version_label)
+
+        self._ytdlp_update_available_label = QLabel("")
+        self._ytdlp_update_available_label.setVisible(False)
+        ytdlp_card.add_widget(self._ytdlp_update_available_label)
+
+        ytdlp_card.add_info(
+            "yt-dlp handles all video/audio downloads. Video platforms change "
+            "their internals often, so an outdated yt-dlp can start failing downloads "
+            "(HTTP 403). Only update if you're having download problems — this "
+            "re-runs 'uv lock' and 'uv sync' and takes 1-2 minutes."
+        )
+
+        ytdlp_btn_row = QHBoxLayout()
+        self._ytdlp_update_btn = QPushButton("Update yt-dlp")
+        self._ytdlp_update_btn.setToolTip(
+            "Re-lock and re-sync the project's dependencies to pull in the "
+            "latest yt-dlp release. Takes 1-2 minutes."
+        )
+        self._ytdlp_update_btn.clicked.connect(self._on_update_ytdlp_clicked)
+        ytdlp_btn_row.addWidget(self._ytdlp_update_btn)
+        ytdlp_btn_row.addStretch()
+        ytdlp_card.add_layout(ytdlp_btn_row)
+
+        main_layout.addWidget(ytdlp_card)
+
         # ── Save Button ──────────────────────────────────────────────────
         main_layout.addSpacing(8)
         save_btn = AnimatedButton("Save Settings")
@@ -263,6 +335,71 @@ class PreferencesTab(QWidget):
     def _clear_cookies(self):
         if self._cookie_manager:
             self._cookie_manager.clear_all()
+
+    # ── yt-dlp Update ──────────────────────────────────────────────────
+
+    def set_ytdlp_update_info(self, installed: str, latest: str = ""):
+        """Refresh the yt-dlp version label (called after the startup check)."""
+        from .ytdlp_updater import is_outdated
+
+        if installed:
+            self._ytdlp_version_label.setText(f"Installed version: {installed}")
+        if latest and is_outdated(installed, latest):
+            self._ytdlp_update_available_label.setText(
+                f"⚠ Update available: {latest}"
+            )
+            self._ytdlp_update_available_label.setStyleSheet("color: #ffa726;")
+            self._ytdlp_update_available_label.setVisible(True)
+        else:
+            self._ytdlp_update_available_label.setVisible(False)
+
+    def _on_update_ytdlp_clicked(self):
+        reply = QMessageBox.question(
+            self,
+            "Update yt-dlp",
+            "Update yt-dlp now?\n\n"
+            "This is usually only needed when downloads are failing "
+            "(e.g. HTTP 403 errors).\n"
+            "It re-runs 'uv lock' and 'uv sync' and takes about 1-2 minutes.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._ytdlp_update_btn.setEnabled(False)
+        self._ytdlp_update_btn.setText("Updating...")
+        self.log_message.emit("[yt-dlp] Starting update ...")
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+
+        self._ytdlp_update_thread = QThread(self)
+        self._ytdlp_update_worker = _YtdlpUpdateRunWorker(repo_root)
+        self._ytdlp_update_worker.moveToThread(self._ytdlp_update_thread)
+        self._ytdlp_update_thread.started.connect(self._ytdlp_update_worker.run)
+        self._ytdlp_update_worker.finished.connect(self._on_ytdlp_update_finished)
+        self._ytdlp_update_worker.finished.connect(self._ytdlp_update_thread.quit)
+        self._ytdlp_update_thread.start()
+
+    def _on_ytdlp_update_finished(self, ok: bool, output: str):
+        self._ytdlp_update_btn.setEnabled(True)
+        self._ytdlp_update_btn.setText("Update yt-dlp")
+
+        if ok:
+            from .ytdlp_updater import get_installed_version
+
+            self._ytdlp_version_label.setText(
+                f"Installed version: {get_installed_version()}"
+            )
+            self._ytdlp_update_available_label.setVisible(False)
+            self.log_message.emit("[yt-dlp] Update completed successfully.")
+        else:
+            self.log_message.emit(f"[yt-dlp] Update failed:\n{output}")
+            QMessageBox.warning(
+                self,
+                "yt-dlp Update Failed",
+                f"The yt-dlp update failed:\n\n{output}",
+            )
 
     # ── Save / Collect ───────────────────────────────────────────────────
 

@@ -63,6 +63,38 @@ class _PotokenWorker(QObject):
         self.finished.emit(status)
 
 
+class _YtdlpUpdateCheckWorker(QObject):
+    """Checks PyPI for a newer yt-dlp release (off the GUI thread).
+
+    Mirrors ``_PotokenWorker``: the network round-trip can take a couple
+    of seconds, so this runs in a QThread and reports the result via
+    ``finished``.  ``result`` is also stored directly so the close handler
+    can read it even if the queued ``finished`` signal has not been
+    delivered yet.  Never raises — fails open with empty version strings.
+    """
+
+    finished = Signal(str, str)  # installed, latest ("" on lookup failure)
+
+    def __init__(self, cancel):
+        super().__init__()
+        self._cancel = cancel
+        self.result = ("", "")
+
+    def run(self):
+        from .ytdlp_updater import get_installed_version, get_latest_version
+
+        installed = get_installed_version()
+        latest = ""
+        if not (self._cancel is not None and self._cancel.is_set()):
+            try:
+                latest = get_latest_version()
+            except Exception as e:  # noqa: BLE001 — fail open, never crash startup
+                logger.debug("yt-dlp update check failed: %s", e)
+                latest = ""
+        self.result = (installed, latest)
+        self.finished.emit(installed, latest)
+
+
 class MainWindow(QMainWindow):
     """Main UltraSinger GUI window with sidebar navigation.
 
@@ -118,6 +150,7 @@ class MainWindow(QMainWindow):
         self._settings_tab = PreferencesTab(
             self._config, self._browser_tab.cookie_manager
         )
+        self._settings_tab.log_message.connect(self._queue_tab.append_log)
 
         self._stack.addWidget(self._browser_tab)
         self._stack.addWidget(self._queue_tab)
@@ -189,6 +222,14 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._start_potoken_provider()
 
+        # Check PyPI for a newer yt-dlp release in the background. This is
+        # a check only — never an automatic update — the user updates via
+        # the "Update yt-dlp" button in the Settings tab.
+        self._ytdlp_check_thread = None
+        self._ytdlp_check_worker = None
+        self._ytdlp_check_cancel = None
+        self._start_ytdlp_update_check()
+
     # ── PO-token provider ─────────────────────────────────────────────
 
     def _start_potoken_provider(self):
@@ -252,6 +293,50 @@ class MainWindow(QMainWindow):
                 stop_provider_if_started(status)
             except Exception:  # noqa: BLE001 — never block shutdown
                 logger.debug("PO-token provider cleanup failed", exc_info=True)
+
+    # ── yt-dlp update check ───────────────────────────────────────────
+
+    def _start_ytdlp_update_check(self):
+        """Check PyPI for a newer yt-dlp release (background, non-blocking)."""
+        import threading
+
+        self._ytdlp_check_cancel = threading.Event()
+        self._ytdlp_check_thread = QThread(self)
+        self._ytdlp_check_worker = _YtdlpUpdateCheckWorker(self._ytdlp_check_cancel)
+        self._ytdlp_check_worker.moveToThread(self._ytdlp_check_thread)
+        self._ytdlp_check_thread.started.connect(self._ytdlp_check_worker.run)
+        self._ytdlp_check_worker.finished.connect(self._on_ytdlp_update_checked)
+        self._ytdlp_check_worker.finished.connect(self._ytdlp_check_thread.quit)
+        self._ytdlp_check_thread.start()
+
+    def _on_ytdlp_update_checked(self, installed: str, latest: str):
+        """Report the yt-dlp update check result."""
+        if self._closing:
+            return
+        from .ytdlp_updater import is_outdated
+
+        if hasattr(self, "_settings_tab"):
+            self._settings_tab.set_ytdlp_update_info(installed, latest)
+
+        if is_outdated(installed, latest):
+            self._queue_tab.append_log(
+                f"[yt-dlp] Update verfügbar: {installed} -> {latest}. "
+                "Klicke 'Update yt-dlp' im Settings-Tab."
+            )
+        else:
+            logger.debug(
+                "yt-dlp is up to date (installed=%r, latest=%r)", installed, latest
+            )
+
+    def _shutdown_ytdlp_update_check(self):
+        """Cancel a pending update-check start and join its thread."""
+        thread = self._ytdlp_check_thread
+        if thread is not None and thread.isRunning():
+            if self._ytdlp_check_cancel is not None:
+                self._ytdlp_check_cancel.set()
+            thread.quit()
+            if not thread.wait(8000):
+                logger.warning("yt-dlp update-check thread did not stop in time")
 
     # ── Queue operations ───────────────────────────────────────────────
 
@@ -542,6 +627,9 @@ class MainWindow(QMainWindow):
 
         # Stop a pending provider start / the server we launched
         self._shutdown_potoken_provider()
+
+        # Stop a pending yt-dlp update check
+        self._shutdown_ytdlp_update_check()
 
         # Shut down the browser engine so Chromium can flush cookies
         self._browser_tab.shutdown()
