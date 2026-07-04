@@ -318,6 +318,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.update_baseline:
         scores = score_all(pairs)
+        if not scores:
+            # Every song failed to score (e.g. ultrastar-score not installed).
+            # Refuse to overwrite a possibly-valid baseline with an empty one.
+            print(
+                f"Error: could not score any of the {len(pairs)} song(s) — "
+                f"baseline not written (is the 'scoring' extra installed?)."
+            )
+            return 2
         baseline_path = Path(args.baseline)
         baseline_path.write_text(
             json.dumps(scores, indent=2, sort_keys=True, ensure_ascii=False),
@@ -338,6 +346,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     current = score_all(pairs)
+    if not current:
+        # Total scoring failure must not silently report "no regression".
+        print(
+            f"Error: could not score any of the {len(pairs)} song(s) — "
+            f"cannot compare against the baseline (is the 'scoring' extra "
+            f"installed?)."
+        )
+        return 2
     report = compare_scores(current, baseline, args.tolerance)
     print(format_table(report, args.tolerance))
 

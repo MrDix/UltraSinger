@@ -337,3 +337,44 @@ class TestMainCompare:
         not_a_dir.write_text("x", encoding="utf-8")
         exit_code = main([str(not_a_dir), "--baseline", str(baseline_path)])
         assert exit_code == 2
+
+
+class TestTotalScoringFailure:
+    """A run where every song fails to score must not report success."""
+
+    def _make_lib(self, tmp_path):
+        for name in ("song_x", "song_y"):
+            d = tmp_path / name
+            d.mkdir()
+            (d / f"{name}.txt").write_text("dummy", encoding="utf-8")
+            (d / f"{name} [Vocals].mp3").write_bytes(b"")
+        return tmp_path
+
+    def test_update_baseline_refuses_on_total_failure(self, tmp_path, monkeypatch):
+        lib = self._make_lib(tmp_path)
+        monkeypatch.setattr(
+            "regression_benchmark.score_song_folder", lambda txt, audio: None
+        )
+        base = tmp_path / "b.json"
+        base.write_text(
+            '{"song_x": {"easy": 9, "medium": 9, "hard": 9, "notes": 1}}',
+            encoding="utf-8",
+        )
+        rc = main([str(lib), "--baseline", str(base), "--update-baseline"])
+        assert rc == 2
+        # existing baseline must be untouched
+        assert "song_x" in base.read_text(encoding="utf-8")
+
+    def test_compare_fails_on_total_failure(self, tmp_path, monkeypatch):
+        lib = self._make_lib(tmp_path)
+        monkeypatch.setattr(
+            "regression_benchmark.score_song_folder", lambda txt, audio: None
+        )
+        base = tmp_path / "b.json"
+        base.write_text(
+            '{"song_x": {"easy": 9, "medium": 9, "hard": 9, "notes": 1}}',
+            encoding="utf-8",
+        )
+        rc = main([str(lib), "--baseline", str(base)])
+        assert rc == 2
+
