@@ -220,9 +220,9 @@ class ConversionSettingsForm(QWidget):
             self._config.get("separator_backend", "audio_separator"))
         card.add_row("Separation Backend", self._separator_backend,
                      "Which library to use for vocal isolation. "
-                     "'audio_separator' (default) uses BS-Roformer which is deterministic "
-                     "and produces higher quality separation. "
-                     "'demucs' uses Facebook's Hybrid Transformer Demucs (non-deterministic).",
+                     "'audio_separator' (default) runs deterministic Roformer-based models "
+                     "(same result every run), Mel-Band-Roformer by default. "
+                     "'demucs' uses Hybrid Transformer Demucs (non-deterministic).",
                      reset_callback=lambda: self._separator_backend.setCurrentText(
                          _DEFAULTS["separator_backend"]))
 
@@ -234,15 +234,17 @@ class ConversionSettingsForm(QWidget):
         self._audio_separator_model.addItems(audio_sep_models)
         self._audio_separator_model.setCurrentText(
             self._config.get("audio_separator_model",
-                             "model_bs_roformer_ep_317_sdr_12.9755.ckpt"))
+                             "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt"))
         card.add_row("Audio-Separator Model", self._audio_separator_model,
                      "The model for audio-separator backend. "
-                     "'BS-Roformer' (SDR 12.97) is the default with best quality "
-                     "and deterministic output. "
-                     "'Mel-Band Roformer' (SDR 11.44) is a lighter alternative.",
+                     "'Mel-Band Roformer' (default) gives better real-world results in "
+                     "UltraSinger's pipeline despite a slightly lower raw separation score "
+                     "(SDR — a technical separation-quality metric). "
+                     "'BS-Roformer' scores higher on that raw metric but performed worse "
+                     "in practice here — kept as an alternative.",
                      reset_callback=lambda: self._audio_separator_model.setCurrentText(
                          _DEFAULTS.get("audio_separator_model",
-                                       "model_bs_roformer_ep_317_sdr_12.9755.ckpt")))
+                                       "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt")))
 
         self._demucs_model = _NoScrollComboBox()
         demucs_models = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "hdemucs_mmi",
@@ -392,8 +394,10 @@ class ConversionSettingsForm(QWidget):
                            "Detect vocal passages that cannot be reliably pitched and mark them "
                            "as freestyle notes (displayed but not scored). Covers growls, screams, "
                            "rap, spoken word, harsh vocals, and any non-melodic vocal style. "
-                           "Uses HPSS harmonicity analysis (genre/gender-independent). "
-                           "Fallback: SwiftF0 confidence + pitch stability.",
+                           "Uses HPSS (Harmonic-Percussive Source Separation) harmonicity analysis "
+                           "(genre/gender-independent). Fallback: SwiftF0 confidence + pitch stability. "
+                           "Fine-tuning thresholds is CLI-only (--freestyle_harmonicity, "
+                           "--freestyle_energy, etc.).",
                            reset_callback=lambda: self._detect_growl.setChecked(
                                _DEFAULTS["detect_growl"]))
 
@@ -594,10 +598,11 @@ class ConversionSettingsForm(QWidget):
             checked=self._config.get("ptakf_refit", True)
         )
         card.add_toggle_row("ptAKF Chart Refit", self._ptakf_refit,
-                           "Rebuild note boundaries and pitches from the game's own pitch "
-                           "detector (score-first chart). Charts only voiced beats and splits "
-                           "notes at pitch changes. Maximizes the achievable game score but "
-                           "increases the note count.",
+                           "Rebuild note boundaries and pitches from ptAKF, the game's own "
+                           "pitch-detection algorithm (the one karaoke games themselves use to "
+                           "score singing) — a score-first chart. Charts only voiced beats and "
+                           "splits notes at pitch changes. Maximizes the achievable game score "
+                           "but increases the note count.",
                            reset_callback=lambda: self._ptakf_refit.setChecked(
                                _DEFAULTS.get("ptakf_refit", True)))
 
@@ -771,10 +776,22 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._remote_stt_model.setText(
                          _DEFAULTS["remote_stt_model"]))
 
+        self._remote_stt_timeout = _NoScrollSpinBox()
+        self._remote_stt_timeout.setRange(1, 3600)
+        self._remote_stt_timeout.setSuffix(" s")
+        self._remote_stt_timeout.setValue(
+            self._config.get("remote_stt_timeout", _DEFAULTS["remote_stt_timeout"]))
+        card.add_row("Timeout", self._remote_stt_timeout,
+                     "How long to wait for the remote speech-to-text response before "
+                     "falling back to local Whisper.",
+                     reset_callback=lambda: self._remote_stt_timeout.setValue(
+                         _DEFAULTS["remote_stt_timeout"]))
+
         def _toggle_remote_stt(on):
             self._remote_stt_api_base_url.setEnabled(on)
             self._remote_stt_api_key.setEnabled(on)
             self._remote_stt_model.setEnabled(on)
+            self._remote_stt_timeout.setEnabled(on)
 
         self._remote_stt.toggled_signal.connect(_toggle_remote_stt)
         _toggle_remote_stt(self._remote_stt.isChecked())
@@ -868,6 +885,16 @@ class ConversionSettingsForm(QWidget):
                            "Used as background music during karaoke playback.",
                            reset_callback=lambda: self._create_karaoke.setChecked(
                                _DEFAULTS["create_karaoke"]))
+
+        self._write_metadata_tags = ToggleSwitch(
+            checked=self._config.get("write_metadata_tags", True)
+        )
+        card.add_toggle_row("Write Metadata Tags", self._write_metadata_tags,
+                           "Write ID3/Vorbis tags (title, artist, year, genre, cover art) "
+                           "to the output audio file. Disable if your karaoke player is "
+                           "sensitive to embedded tags.",
+                           reset_callback=lambda: self._write_metadata_tags.setChecked(
+                               _DEFAULTS["write_metadata_tags"]))
 
         self._keep_audio_in_video = ToggleSwitch(
             checked=self._config.get("keep_audio_in_video", False)
@@ -1156,12 +1183,14 @@ class ConversionSettingsForm(QWidget):
             "remote_stt_api_base_url": self._remote_stt_api_base_url.text(),
             "remote_stt_api_key": self._remote_stt_api_key.text(),
             "remote_stt_model": self._remote_stt_model.text(),
+            "remote_stt_timeout": self._remote_stt_timeout.value(),
             "calculate_score": self._calculate_score.isChecked(),
             "format_version": self._format_version.currentText(),
             "create_plot": self._create_plot.isChecked(),
             "create_midi": self._create_midi.isChecked(),
             "create_audio_chunks": self._create_chunks.isChecked(),
             "create_karaoke": self._create_karaoke.isChecked(),
+            "write_metadata_tags": self._write_metadata_tags.isChecked(),
             "keep_audio_in_video": self._keep_audio_in_video.isChecked(),
             "write_settings_info": self._write_settings_info.isChecked(),
             "keep_cache": self._keep_cache.isChecked(),

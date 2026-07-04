@@ -1055,6 +1055,7 @@ def _write_settings_info_file(
             f.write(f"  Create plots:             {settings.create_plot}\n")
             f.write(f"  Create audio chunks:      {settings.create_audio_chunks}\n")
             f.write(f"  Create karaoke:           {settings.create_karaoke}\n")
+            f.write(f"  Write metadata tags:      {settings.write_metadata_tags}\n")
             f.write(f"  Keep audio in video:      {settings.keep_audio_in_video}\n")
             f.write(f"  Keep cache:               {settings.keep_cache}\n")
             f.write("\n")
@@ -1131,6 +1132,7 @@ def _write_settings_info_file(
             if settings.remote_stt:
                 f.write(f"  API base URL:             {settings.remote_stt_api_base_url}\n")
                 f.write(f"  Model:                    {settings.remote_stt_model}\n")
+                f.write(f"  Timeout:                  {settings.remote_stt_timeout}s\n")
                 f.write(f"  Used this run:            {remote_stt_used}\n")
             f.write("\n")
 
@@ -1980,6 +1982,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.create_plot = True
         elif opt in ("--midi"):
             settings.create_midi = True
+        elif opt in ("--disable_midi"):
+            settings.create_midi = False
         elif opt in ("--disable_hyphenation"):
             settings.hyphenation = False
         elif opt in ("--disable_separation"):
@@ -1987,7 +1991,7 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--disable_karaoke"):
             settings.create_karaoke = False
         elif opt in ("--create_audio_chunks"):
-            settings.create_audio_chunks = arg
+            settings.create_audio_chunks = True
         elif opt in ("--ignore_audio"):
             settings.ignore_audio = True
         elif opt in ("--force_cpu"):
@@ -2140,6 +2144,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.remote_stt_api_key = arg
         elif opt in ("--remote_stt_model"):
             settings.remote_stt_model = arg
+        elif opt in ("--remote_stt_timeout"):
+            settings.remote_stt_timeout = int(float(arg))
         elif opt in ("--video_url"):
             settings.video_url = arg
         elif opt in ("--youtube_url"):
@@ -2213,6 +2219,7 @@ def arg_options():
         "disable_hyphenation",
         "disable_separation",
         "disable_karaoke",
+        "disable_midi",
         "create_audio_chunks",
         "ignore_audio",
         "force_cpu",
@@ -2259,6 +2266,7 @@ def arg_options():
         "remote_stt_api_base_url=",
         "remote_stt_api_key=",
         "remote_stt_model=",
+        "remote_stt_timeout=",
         "video_url=",
         "youtube_url=",  # deprecated alias for --video_url, kept for backward compatibility
         "yt_po_token=",
