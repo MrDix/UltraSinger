@@ -43,7 +43,8 @@ def print_help() -> None:
 
     [separation]
     --separator             Vocal separation backend: demucs|audio_separator >> ((default) is audio_separator)
-                            audio_separator uses BS-Roformer which is deterministic and produces higher SDR.
+                            audio_separator runs deterministic Roformer-based models (same result every
+                            run), Mel-Band-Roformer by default.
                             demucs uses Facebook's Hybrid Transformer Demucs (non-deterministic).
     --audio_separator_model Model for audio-separator backend. Presets: BS_ROFORMER|MEL_BAND_ROFORMER
                             or a raw model filename for custom models >> ((default) is MEL_BAND_ROFORMER)
@@ -67,12 +68,16 @@ def print_help() -> None:
     --whisper_batch_size    Reduce if low on GPU mem >> ((default) is 16)
     --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words >> True|False >> ((default) is False)
-    --vad_onset             VAD speech activation threshold (0.0-1.0). Lower values capture more vocal
-                            segments including soft/breathy singing. >> ((default) is 0.35, WhisperX default: 0.5)
+    --vad_onset             VAD (Voice Activity Detection) speech activation threshold (0.0-1.0). Lower
+                            values capture more vocal segments including soft/breathy singing.
+                            >> ((default) is 0.35, WhisperX default: 0.5)
     --vad_offset            VAD speech deactivation threshold (0.0-1.0). Lower values keep segments active
                             longer during vocal dips. >> ((default) is 0.20, WhisperX default: 0.363)
     --no_speech_threshold   No-speech probability threshold (0.0-1.0). Lower values prevent Whisper from
                             classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
+    --ignore_audio          Skip transcription for audio/video input and only recompute pitch (advanced;
+                            e.g. reuse existing lyrics/timing). Automatically enabled when the input (-i)
+                            is an ultrastar.txt file (re-pitch mode).
 
     [pitch detection]
     --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is fcpe)
@@ -111,9 +116,10 @@ def print_help() -> None:
     --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
                                     notes (displayed but not scored). Covers growls, screams, rap, spoken word,
                                     harsh vocals, and any non-melodic vocal style.
-                                    Primary: HPSS harmonicity analysis (genre/gender-independent, measures harmonic
-                                    vs. percussive energy). Fallback (when HPSS is unavailable): SwiftF0
-                                    confidence + pitch stability.
+                                    Primary: HPSS (Harmonic-Percussive Source Separation) harmonicity
+                                    analysis (genre/gender-independent, measures harmonic vs. percussive
+                                    energy). Fallback (when HPSS is unavailable): SwiftF0 confidence +
+                                    pitch stability.
     --freestyle_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
     --freestyle_energy              RMS energy threshold — segments below this are treated as silence >> ((default) is 0.01)
     --freestyle_confidence          SwiftF0 median confidence threshold (fallback) >> ((default) is 0.35)
@@ -123,7 +129,8 @@ def print_help() -> None:
 
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
-                                and uses the game's C++ ptAKF pitch detector to find and fix poorly-scoring notes.
+                                and uses the game's C++ ptAKF (the pitch-detection algorithm the karaoke
+                                games themselves use to score singing) to find and fix poorly-scoring notes.
     --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
@@ -173,10 +180,15 @@ def print_help() -> None:
     --remote_stt_api_key         API key for the remote STT service (or set the
                                   ULTRASINGER_REMOTE_STT_API_KEY env var)
     --remote_stt_model           Remote STT model name >> ((default) is whisper-large-v3)
+    --remote_stt_timeout         Seconds to wait for the remote STT response before falling back to
+                                  local Whisper >> ((default) is 120)
 
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
     --create_audio_chunks   Enable creation of audio chunks. Audio chunks are disabled by default.
+    --disable_midi          Disable MIDI file creation. MIDI is created by default.
+    --no_metadata_tags      Skip writing ID3/Vorbis tags (title/artist/year/genre/cover) to output
+                            audio. Tags are written by default.
     --keep_cache            Keep cache folder after creation. Cache folder is removed by default.
     --keep_audio_in_video   Keep full audio (vocals+instrumental) in the output video. Disabled by default.
     --write_settings_info   Write ultrasinger_parameter.info with all settings and scores to output dir. Disabled by default.

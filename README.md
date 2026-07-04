@@ -173,9 +173,10 @@ _Not all options working now!_
 
     [separation]
     --separator           Vocal separation backend: demucs|audio_separator >> ((default) is audio_separator)
-                          audio_separator uses BS-Roformer models with higher vocal isolation quality.
+                          audio_separator runs deterministic Roformer-based models (same result every
+                          run), Mel-Band-Roformer by default.
     --audio_separator_model  Model for audio-separator. Preset names or filenames from
-                          https://github.com/nomadkaraoke/python-audio-separator >> ((default) is model_bs_roformer_ep_317_sdr_12.9755.ckpt)
+                          https://github.com/nomadkaraoke/python-audio-separator >> ((default) is model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt)
     --demucs              Demucs model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
 
     [transcription]
@@ -192,12 +193,16 @@ _Not all options working now!_
     --whisper_batch_size    Reduce if low on GPU mem >> ((default) is 16)
     --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words
-    --vad_onset             VAD speech activation threshold (0.0-1.0). Lower values capture more vocal
-                            segments including soft/breathy singing. >> ((default) is 0.35, WhisperX default: 0.5)
+    --vad_onset             VAD (Voice Activity Detection) speech activation threshold (0.0-1.0). Lower
+                            values capture more vocal segments including soft/breathy singing.
+                            >> ((default) is 0.35, WhisperX default: 0.5)
     --vad_offset            VAD speech deactivation threshold (0.0-1.0). Lower values keep segments active
                             longer during vocal dips. >> ((default) is 0.20, WhisperX default: 0.363)
     --no_speech_threshold   No-speech probability threshold (0.0-1.0). Lower values prevent Whisper from
                             classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
+    --ignore_audio          Skip transcription for audio/video input and only recompute pitch (advanced;
+                            e.g. reuse existing lyrics/timing). Automatically enabled when the input (-i)
+                            is an ultrastar.txt file (re-pitch mode).
 
     [pitch detection]
     --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is fcpe)
@@ -237,9 +242,10 @@ _Not all options working now!_
     --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
                                     notes (displayed but not scored). Covers growls, screams, rap, spoken word,
                                     harsh vocals, and any non-melodic vocal style.
-                                    Primary: HPSS harmonicity analysis (genre/gender-independent, measures harmonic
-                                    vs. percussive energy). Fallback (when HPSS is unavailable): SwiftF0
-                                    confidence + pitch stability.
+                                    Primary: HPSS (Harmonic-Percussive Source Separation) harmonicity
+                                    analysis (genre/gender-independent, measures harmonic vs. percussive
+                                    energy). Fallback (when HPSS is unavailable): SwiftF0 confidence +
+                                    pitch stability.
     --freestyle_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
     --freestyle_energy              RMS energy threshold — segments below this are treated as silence >> ((default) is 0.01)
     --freestyle_confidence          SwiftF0 median confidence threshold (fallback) >> ((default) is 0.35)
@@ -249,7 +255,8 @@ _Not all options working now!_
 
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
-                                and uses the game's C++ ptAKF pitch detector to find and fix poorly-scoring notes.
+                                and uses the game's C++ ptAKF (the pitch-detection algorithm the karaoke
+                                games themselves use to score singing) to find and fix poorly-scoring notes.
     --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
@@ -265,6 +272,14 @@ _Not all options working now!_
     --ptakf_refit_fill_min_ms   Minimum uncharted voiced run length before it is filled >> ((default) is 300)
     --disable_score             Skip the score calculation (internal + game score) at the end of the
                                 conversion. Scoring is enabled by default
+
+    [golden notes]
+    --golden_notes              Mark a subset of held notes as golden "*" bonus notes, worth double score
+                                in-game (experimental). Disabled by default, since it changes the score
+                                distribution. Only real syllable notes held for at least 350ms are
+                                eligible; freestyle, rap and tilde-continuation notes are never marked.
+                                Golden notes are capped at 15% of all scorable notes and spread across
+                                the whole song rather than clustered in one section.
 
 
     [llm lyric correction]
@@ -284,11 +299,16 @@ _Not all options working now!_
                                   https://api.groq.com/openai/v1)
     --remote_stt_api_key         API key (or set ULTRASINGER_REMOTE_STT_API_KEY env var)
     --remote_stt_model           Remote STT model name >> ((default) is whisper-large-v3)
+    --remote_stt_timeout         Seconds to wait for the remote STT response before falling back to
+                                  local Whisper >> ((default) is 120)
 
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
     --disable_karaoke       Disable creation of karaoke txt file. Karaoke is enabled by default.
     --create_audio_chunks   Enable creation of audio chunks. Disabled by default.
+    --disable_midi          Disable MIDI file creation. MIDI is created by default.
+    --no_metadata_tags      Skip writing ID3/Vorbis tags (title/artist/year/genre/cover) to output
+                            audio. Tags are written by default.
     --keep_audio_in_video   Keep full audio (vocals+instrumental) in the output video. Disabled by default.
     --write_settings_info   Write ultrasinger_parameter.info with all settings and scores to output dir.
     --plot                  Enable creation of plots. Disabled by default.
@@ -407,17 +427,17 @@ starts at the place or is heard. To disable:
 
 UltraSinger supports two pitch detection backends:
 
-- **SwiftF0** (default): ONNX-based, CPU-only, fast and lightweight.
-  Detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
-  UltraSinger uses 60 Hz and 400 Hz as detection range.
-
-- **FCPE** (`--pitcher fcpe`): GPU-accelerated via [torchfcpe](https://github.com/CNChTu/FCPE).
+- **FCPE** (default): GPU-accelerated via [torchfcpe](https://github.com/CNChTu/FCPE).
   Produces more stable pitch contours with fewer outlier jumps (40-50% fewer pitch jumps >5 ST in benchmarks).
   Better for difficult vocals (metal, screamo, harsh vocals).
   Best performance on CUDA, falls back to CPU if unavailable.
 
+- **SwiftF0** (`--pitcher swiftf0`): ONNX-based, CPU-only, fast and lightweight.
+  Detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
+  UltraSinger uses 60 Hz and 400 Hz as detection range.
+
 ```commandline
--i XYZ --pitcher fcpe
+-i XYZ --pitcher swiftf0
 ```
 
 ### 👄 Separation
