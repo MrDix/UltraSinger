@@ -26,11 +26,25 @@ _DIFFICULTY_ORDER = ("easy", "medium", "hard")
 
 def calculate_uscore_report(
     txt_path: str, vocal_audio_path: str
-) -> dict[str, float] | None:
+) -> dict[str, dict] | None:
     """Score the final TXT against the vocal audio at Easy/Medium/Hard.
 
-    Returns ``{"easy": pct, "medium": pct, "hard": pct}`` (percentages of
-    the 10000-point USDX scale) or ``None`` when scoring is unavailable.
+    Returns a dict per difficulty with the detailed USDX score breakdown::
+
+        {
+            "easy": {
+                "total_pct": 96.7,       # percentage of the 10000-point scale
+                "notes_points": 8532,    # rounded normal-note points
+                "golden_points": 120,    # rounded golden-note points
+                "line_bonus": 850,       # rounded line bonus points
+                "beats_hit": 543,        # beats matched within tolerance
+                "beats_total": 600,      # total scoreable beats
+            },
+            "medium": {...},
+            "hard": {...},
+        }
+
+    or ``None`` when scoring is unavailable.
     """
     try:
         from ultrastar_score import Difficulty, score_song
@@ -42,10 +56,18 @@ def calculate_uscore_report(
             "medium": Difficulty.MEDIUM,
             "hard": Difficulty.HARD,
         }
-        return {
-            name: round(score_song(song, vocal_audio_path, difficulty=diff).percentage, 1)
-            for name, diff in difficulties.items()
-        }
+        report = {}
+        for name, diff in difficulties.items():
+            result = score_song(song, vocal_audio_path, difficulty=diff)
+            report[name] = {
+                "total_pct": round(result.percentage, 1),
+                "notes_points": round(result.score_notes),
+                "golden_points": round(result.score_golden),
+                "line_bonus": round(result.score_line_bonus),
+                "beats_hit": result.notes_hit,
+                "beats_total": result.notes_total,
+            }
+        return report
     except (ImportError, OSError, ValueError, RuntimeError,
             AttributeError, KeyError, TypeError) as e:
         print(
@@ -54,10 +76,10 @@ def calculate_uscore_report(
         return None
 
 
-def format_uscore_report(scores: dict[str, float]) -> str:
+def format_uscore_report(scores: dict[str, dict]) -> str:
     """Human-readable one-liner, stable for log parsing by the GUI."""
     return " | ".join(
-        f"{name.capitalize()} {scores[name]:.1f}%"
+        f"{name.capitalize()} {scores[name]['total_pct']:.1f}%"
         for name in _DIFFICULTY_ORDER
         if name in scores
     )

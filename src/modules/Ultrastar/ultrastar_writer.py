@@ -263,16 +263,19 @@ def create_repitched_txt_from_ultrastar_data(
                 file.write(line)
 
 
-def add_score_to_ultrastar_txt(ultrastar_file_output: str, score: Score) -> None:
-    """Adds the score to the ultrastar txt file"""
+def _append_creator_header_suffix(ultrastar_file_output: str, suffix: str) -> None:
+    """Appends ``suffix`` to the #CREATOR header line of the ultrastar txt.
+
+    If no #CREATOR tag exists yet, inserts one right before the first note
+    line instead.
+    """
     with open(ultrastar_file_output, "r", encoding=FILE_ENCODING) as file:
         text = file.read()
     text = text.split("\n")
 
-    score_suffix = f" | Score: total: {score.score}, notes: {score.notes} line: {score.line_bonus}, golden: {score.golden}"
     for i, line in enumerate(text):
         if line.startswith(f"#{UltrastarTxtTag.CREATOR.value}:"):
-            text[i] = f"{line}{score_suffix}"
+            text[i] = f"{line}{suffix}"
             break
 
         if line.startswith((
@@ -283,7 +286,7 @@ def add_score_to_ultrastar_txt(ultrastar_file_output: str, score: Score) -> None
                 f"{UltrastarTxtNoteTypeTag.RAP_GOLDEN.value} ")):
             text.insert(
                 i,
-                f"#{UltrastarTxtTag.CREATOR.value}:UltraSinger [GitHub]{score_suffix}",
+                f"#{UltrastarTxtTag.CREATOR.value}:UltraSinger [GitHub]{suffix}",
             )
             break
 
@@ -291,6 +294,23 @@ def add_score_to_ultrastar_txt(ultrastar_file_output: str, score: Score) -> None
 
     with open(ultrastar_file_output, "w", encoding=FILE_ENCODING) as file:
         file.write(text)
+
+
+def add_score_to_ultrastar_txt(ultrastar_file_output: str, score: Score) -> None:
+    """Adds the internal (fallback) score estimate to the ultrastar txt file"""
+    score_suffix = f" | Score: total: {score.score}, notes: {score.notes} line: {score.line_bonus}, golden: {score.golden}"
+    _append_creator_header_suffix(ultrastar_file_output, score_suffix)
+
+
+def add_game_score_to_ultrastar_txt(ultrastar_file_output: str, medium_pct: float) -> None:
+    """Adds the real game (ptAKF) score at Medium difficulty to the ultrastar txt file.
+
+    This is the score computed by ``modules.uscore_report`` against the
+    actual vocal audio with the same detector the games use, as opposed to
+    the internal fallback estimate written by ``add_score_to_ultrastar_txt``.
+    """
+    score_suffix = f" | Game score (Medium): {medium_pct:.1f}%"
+    _append_creator_header_suffix(ultrastar_file_output, score_suffix)
 
 
 class UltraStarWriter:
