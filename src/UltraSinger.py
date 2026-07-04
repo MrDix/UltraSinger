@@ -2,6 +2,7 @@
 
 import copy
 import getopt
+import importlib.util
 import os
 import sys
 import warnings
@@ -629,8 +630,9 @@ def run() -> tuple[str, Score, Score]:
     accurate_score, simple_score, ultrastar_file_output = CreateUltraStarTxt(process_data)
 
     # Real game score (ptAKF via ultrastar-score) — the metric the games
-    # actually use. The internal simple/accurate score above measures
-    # against SwiftF0 data and can rank charts differently.
+    # actually use. The internal simple/accurate score (fallback only, see
+    # CreateUltraStarTxt) measures against SwiftF0 data and can rank charts
+    # differently.
     # Only meaningful against isolated vocals: without separation the
     # processing audio is the full mix, so the report is skipped then.
     uscore_result = None
@@ -655,6 +657,12 @@ def run() -> tuple[str, Score, Score]:
             print(
                 f"{ULTRASINGER_HEAD} Game score (ptAKF): "
                 f"{blue_highlighted(format_uscore_report(uscore_result))}"
+            )
+            # The game score can only be computed after the TXT is written,
+            # so the header suffix is appended here instead of inside
+            # CreateUltraStarTxt (which only knows the internal fallback score).
+            ultrastar_writer.add_game_score_to_ultrastar_txt(
+                ultrastar_file_output, uscore_result["medium"]["total_pct"]
             )
 
     # Create Midi
@@ -764,7 +772,7 @@ def _write_settings_info_file(
         simple_score: "Score | None",
         accurate_score: "Score | None",
         *,
-        uscore_result: "dict[str, float] | None" = None,
+        uscore_result: "dict[str, dict] | None" = None,
         detected_language: str | None = None,
         lyrics_lookup_result=None,
         llm_result: "LLMResult | None" = None,
@@ -977,14 +985,26 @@ def _write_settings_info_file(
             f.write("\n")
 
             # Score results
-            if simple_score is not None or accurate_score is not None or uscore_result:
+            if uscore_result:
                 f.write("=" * 60 + "\n")
                 f.write("[Score Results]\n")
-                if uscore_result:
-                    f.write("  Game score (ptAKF vs vocals):\n")
-                    f.write(f"    Easy:                   {uscore_result.get('easy', 0):.1f}%\n")
-                    f.write(f"    Medium:                 {uscore_result.get('medium', 0):.1f}%\n")
-                    f.write(f"    Hard:                   {uscore_result.get('hard', 0):.1f}%\n")
+                f.write("  Game score (ptAKF vs vocals):\n")
+                for name in ("easy", "medium", "hard"):
+                    diff_result = uscore_result.get(name)
+                    if diff_result is None:
+                        continue
+                    f.write(f"  {name.capitalize()}:\n")
+                    f.write(f"    Total:                  {diff_result['total_pct']:.1f}%\n")
+                    f.write(f"    Notes points:           {diff_result['notes_points']}\n")
+                    f.write(f"    Line bonus:             {diff_result['line_bonus']}\n")
+                    f.write(f"    Golden points:          {diff_result['golden_points']}\n")
+                    f.write(f"    Beats hit/total:        {diff_result['beats_hit']}/{diff_result['beats_total']}\n")
+            elif simple_score is not None or accurate_score is not None:
+                # Fallback: no ultrastar-score package available, only the
+                # internal simple/accurate estimate (measured against
+                # SwiftF0 data, not the actual game scoring algorithm).
+                f.write("=" * 60 + "\n")
+                f.write("[Score Results]\n")
                 if simple_score is not None:
                     pct = round(simple_score.score / 100, 2)
                     f.write("  Simple (octave-ignoring):\n")
@@ -1484,13 +1504,18 @@ def CreateUltraStarTxt(process_data: ProcessData):
         )
 
     # Calc Points
+    # The internal simple/accurate estimator only runs as a fallback when the
+    # optional ultrastar-score package (real game/ptAKF scoring, see
+    # modules/uscore_report.py) is not installed — otherwise the game-score
+    # report computed later in run() is the authoritative result.
     simple_score = None
     accurate_score = None
-    if settings.calculate_score:
+    if settings.calculate_score and importlib.util.find_spec("ultrastar_score") is None:
         simple_score, accurate_score = calculate_score_points(process_data, ultrastar_file_output)
 
-    # Add calculated score to Ultrastar txt (skipped with --disable_score,
-    # where simple_score is None)
+    # Add calculated score to Ultrastar txt header (fallback only; when
+    # ultrastar-score is available, add_game_score_to_ultrastar_txt is used
+    # instead, after the game score has been computed in run())
     #Todo: Missing Karaoke
     if simple_score is not None:
         ultrastar_writer.add_score_to_ultrastar_txt(ultrastar_file_output, simple_score)

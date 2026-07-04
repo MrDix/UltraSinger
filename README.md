@@ -633,22 +633,20 @@ Requires the optional scoring dependency (`pip install "ultrastar-score"` — al
 ### 🏆 Ultrastar Score Calculation
 
 The score that the singer in the audio would receive will be measured.
-You get 2 scores, simple and accurate. You wonder where the difference is?
-Ultrastar is not interested in pitch hights. As long as it is in the pitch range A-G you get one point.
-This makes sense for the game, because otherwise men don't get points for high female voices and women don't get points
-for low male voices. Accurate is the real tone specified in the txt. I had txt files where the pitch was in a range not
-singable by humans, but you could still reach the 10k points in the game. The accuracy is important here, because from
-this MIDI and sheet are created. And you also want to have accurate files
 
 #### Game score (ptAKF)
 
-In addition to the internal simple/accurate scores, UltraSinger reports the **game score**: the written chart scored against the extracted vocals with [ultrastar-score](https://github.com/MrDix/ultrastar-score) - the same C++ ptAKF pitch-detection and scoring algorithm the games (Vocaluxe/USDX) use - at all three difficulties (Easy +-2 / Medium +-1 / Hard 0 semitones, octave-folded):
+UltraSinger reports the **game score**: the written chart scored against the extracted vocals with [ultrastar-score](https://github.com/MrDix/ultrastar-score) - the same C++ ptAKF pitch-detection and scoring algorithm the games (Vocaluxe/USDX) use - at all three difficulties (Easy +-2 / Medium +-1 / Hard 0 semitones, octave-folded):
 
 ```text
 [UltraSinger] Game score (ptAKF): Easy 96.7% | Medium 87.1% | Hard 66.6%
 ```
 
-**This is the number to trust when comparing conversions.** The internal simple/accurate scores measure against the SwiftF0 pitch data the chart was built from; the games hear the audio through ptAKF, which disagrees with SwiftF0 on a noticeable share of beats. In particular, charts produced with `--ptakf_refit` are systematically *undervalued* by the internal score while scoring *higher* in the actual game. The game score also appears in the settings info file and in the GUI queue result line.
+**This is the number to trust when comparing conversions**, and it is UltraSinger's primary score output. It also appears with a per-difficulty breakdown (total %, notes/golden/line-bonus points, beats hit/total) in the settings info file, and the Medium score is appended to the chart's `#CREATOR` header line. It shows up in the GUI queue result line as well.
+
+#### Simple / accurate score (fallback only)
+
+Without the optional `ultrastar-score` package installed, UltraSinger falls back to an internal simple/accurate estimate instead. Ultrastar is not interested in pitch heights: as long as a note is in the pitch range A-G you get one point (simple), while accurate requires the exact octave. This fallback measures against the SwiftF0 pitch data the chart was built from rather than the actual in-game ptAKF detector, so it can rank charts differently — prefer the game score above whenever it is available.
 
 
 ### 📟 Use GPU
