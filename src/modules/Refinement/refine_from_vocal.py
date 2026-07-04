@@ -114,6 +114,7 @@ def refine_pitch_with_uscore(
     vocal_audio_path: str,
     bpm: float,
     hit_ratio_threshold: float = 0.4,
+    pitch_frames: list[dict] | None = None,
 ) -> tuple[list[MidiSegment], int]:
     """Refine note pitches using ultrastar-score's C++ ptAKF detector.
 
@@ -130,6 +131,9 @@ def refine_pitch_with_uscore(
         vocal_audio_path: Path to vocal-only audio file.
         bpm: Song BPM for beat/time conversion.
         hit_ratio_threshold: Notes below this hit ratio are corrected.
+        pitch_frames: Optional pre-computed ptAKF pitch frames (from
+            ``ultrastar_score.detect_pitch_frames``) to reuse instead of
+            re-analysing ``vocal_audio_path`` from scratch.
 
     Returns:
         Tuple of (midi_segments, number of corrections made).
@@ -141,7 +145,18 @@ def refine_pitch_with_uscore(
     tmp_txt = _write_temp_ultrastar_txt(midi_segments, bpm)
     try:
         song = parse_ultrastar(tmp_txt)
-        result = score_song(song, vocal_audio_path, difficulty=Difficulty.HARD)
+        if pitch_frames is not None:
+            try:
+                result = score_song(
+                    song, vocal_audio_path, difficulty=Difficulty.HARD,
+                    pitch_frames=pitch_frames,
+                )
+            except TypeError:
+                # Installed ultrastar-score predates the pitch_frames
+                # parameter — fall back to per-call analysis.
+                result = score_song(song, vocal_audio_path, difficulty=Difficulty.HARD)
+        else:
+            result = score_song(song, vocal_audio_path, difficulty=Difficulty.HARD)
     finally:
         try:
             os.unlink(tmp_txt)
@@ -301,13 +316,29 @@ def _score_with_gap_offset(
     score_song,
     parse_ultrastar,
     difficulty,
+    pitch_frames: list[dict] | None = None,
 ) -> float:
-    """Score a single GAP offset.  Returns total score or -1 on failure."""
+    """Score a single GAP offset.  Returns total score or -1 on failure.
+
+    ``pitch_frames`` (when given) are pre-computed ptAKF pitch frames for
+    ``vocal_audio_path``.  The GAP sweep only shifts note *times* — the
+    audio itself never changes between offsets — so the same frames are
+    valid to reuse for every offset scored here.
+    """
     gap_ms = base_gap_ms + offset_ms
     tmp_txt = _write_temp_ultrastar_txt(midi_segments, bpm, gap_ms=gap_ms)
     try:
         song = parse_ultrastar(tmp_txt)
-        result = score_song(song, vocal_audio_path, difficulty=difficulty)
+        if pitch_frames is not None:
+            try:
+                result = score_song(
+                    song, vocal_audio_path, difficulty=difficulty,
+                    pitch_frames=pitch_frames,
+                )
+            except TypeError:
+                result = score_song(song, vocal_audio_path, difficulty=difficulty)
+        else:
+            result = score_song(song, vocal_audio_path, difficulty=difficulty)
         return result.total
     except Exception:  # noqa: BLE001 — fail-open
         return -1.0
@@ -326,6 +357,7 @@ def refine_gap_with_uscore(
     coarse_step_ms: float = 10.0,
     fine_range_ms: float = 10.0,
     fine_step_ms: float = 1.0,
+    pitch_frames: list[dict] | None = None,
 ) -> tuple[list[MidiSegment], float]:
     """Find the optimal GAP offset that maximises the game score.
 
@@ -347,6 +379,11 @@ def refine_gap_with_uscore(
         coarse_step_ms: Coarse step size.
         fine_range_ms: Fine search ±this many ms around coarse best.
         fine_step_ms: Fine step size.
+        pitch_frames: Optional pre-computed ptAKF pitch frames (from
+            ``ultrastar_score.detect_pitch_frames``). The sweep only
+            shifts note *times* between runs — the vocal audio never
+            changes — so the same frames are reused for every one of the
+            ~34 scoring calls instead of each re-analysing the audio.
 
     Returns:
         Tuple of (midi_segments, best offset in ms).  Offset is negative
@@ -372,6 +409,7 @@ def refine_gap_with_uscore(
             total = _score_with_gap_offset(
                 midi_segments, vocal_audio_path, bpm, base_gap_ms,
                 float(off), score_song, parse_ultrastar, Difficulty.HARD,
+                pitch_frames=pitch_frames,
             )
             if total > best_score:
                 best_score = total
@@ -403,8 +441,10 @@ def refine_notes(
     *,
     refine_pitch_enabled: bool = True,
     refine_timing_enabled: bool = True,
+    refine_gap_enabled: bool | None = None,
     timing_threshold_ms: float = 30.0,
     hit_ratio_threshold: float = 0.4,
+    pitch_frames: list[dict] | None = None,
 ) -> list[MidiSegment]:
     """Orchestrate all refinement passes on the note list.
 
@@ -423,14 +463,26 @@ def refine_notes(
         bpm: Song BPM for beat/time conversion.
         refine_pitch_enabled: Whether to run pitch refinement.
         refine_timing_enabled: Whether to run timing refinement.
-        timing_threshold_ms: Millisecond threshold for timing correction.
+        refine_gap_enabled: Whether to run the GAP sweep (Phase 3). Also
+            uses ultrastar-score, but is independent of pitch refinement —
+            e.g. callers that skip Phase 1 because a later pass (ptAKF
+            refit) will overwrite pitches anyway still want the GAP sweep
+            to run. Defaults to ``refine_pitch_enabled`` when omitted,
+            preserving the historical coupling for existing callers.
         hit_ratio_threshold: Notes below this hit ratio are pitch-corrected.
+        pitch_frames: Optional pre-computed ptAKF pitch frames (from
+            ``ultrastar_score.detect_pitch_frames``) for ``vocal_audio_path``.
+            Reused across every ``score_song`` call in Phase 1 and Phase 3
+            instead of each re-analysing the audio from scratch.
 
     Returns:
         The refined midi_segments list.
     """
     if not midi_segments:
         return midi_segments
+
+    if refine_gap_enabled is None:
+        refine_gap_enabled = refine_pitch_enabled
 
     print(
         f"{ULTRASINGER_HEAD} Refining notes using game scoring engine "
@@ -449,6 +501,7 @@ def refine_notes(
                 vocal_audio_path,
                 bpm=bpm,
                 hit_ratio_threshold=hit_ratio_threshold,
+                pitch_frames=pitch_frames,
             )
         except (ImportError, OSError, ValueError, RuntimeError,
                 AttributeError, KeyError, TypeError) as e:
@@ -478,12 +531,13 @@ def refine_notes(
 
     # Phase 3: GAP optimisation via uscore sweep
     gap_offset_ms = 0.0
-    if refine_pitch_enabled:  # Re-uses uscore, so gate on same flag
+    if refine_gap_enabled:
         try:
             midi_segments, gap_offset_ms = refine_gap_with_uscore(
                 midi_segments,
                 vocal_audio_path,
                 bpm=bpm,
+                pitch_frames=pitch_frames,
             )
         except (ImportError, OSError, ValueError, RuntimeError,
                 AttributeError, KeyError, TypeError) as e:

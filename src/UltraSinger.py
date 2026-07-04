@@ -574,6 +574,42 @@ def run() -> tuple[str, Score, Score]:
             energy_threshold=settings.growl_energy_threshold,
         )
 
+    # Pre-compute ptAKF pitch frames once, up front, for reuse across every
+    # scoring/refinement pass below. Without this, the reverse-scoring
+    # refinement (~34 score_song calls for the GAP sweep alone), the ptAKF
+    # refit, and the final game-score report each re-run load_audio +
+    # ptAKF pitch detection on the exact same vocal audio from scratch.
+    # Same vocal-path fallback and use_separated_vocal gate as the passes
+    # below — only meaningful against isolated vocals.
+    # Fails open: on any error (including an older ultrastar-score without
+    # this API) pitch_frames stays None and every call site below falls
+    # back to its own per-call audio analysis.
+    pitch_frames = None
+    if (
+        not settings.ignore_audio
+        and settings.use_separated_vocal
+        and (
+            settings.refine_from_vocal
+            or settings.ptakf_refit
+            or settings.calculate_score
+        )
+    ):
+        try:
+            from ultrastar_score import detect_pitch_frames
+
+            pitch_frames_vocal_path = (
+                process_data.process_data_paths.vocals_audio_file_path
+                or process_data.process_data_paths.whisper_audio_path
+            )
+            pitch_frames = detect_pitch_frames(pitch_frames_vocal_path)
+        except (ImportError, OSError, ValueError, RuntimeError,
+                AttributeError, KeyError, TypeError) as e:
+            print(
+                f"{ULTRASINGER_HEAD} Warning: could not pre-compute ptAKF "
+                f"pitch frames ({e}); falling back to per-call analysis."
+            )
+            pitch_frames = None
+
     # Reverse-scoring refinement pass.
     # Only meaningful against isolated vocals: without separation the
     # processing audio is the full mix, and correcting notes toward what
@@ -585,6 +621,11 @@ def run() -> tuple[str, Score, Score]:
     ):
         from modules.Refinement.refine_from_vocal import refine_notes
 
+        # NOTE: skipping this phase's pitch correction when ptakf_refit is
+        # enabled (since refit overwrites all pitches anyway) was measured
+        # and rejected — see refine_gap_enabled docstring in
+        # refine_from_vocal.refine_notes for why the two phases are kept
+        # independently controllable regardless.
         process_data.midi_segments = refine_notes(
             midi_segments=process_data.midi_segments,
             pitched_data=process_data.pitched_data,
@@ -597,6 +638,7 @@ def run() -> tuple[str, Score, Score]:
             refine_timing_enabled=settings.refine_timing,
             timing_threshold_ms=settings.refine_timing_threshold,
             hit_ratio_threshold=settings.refine_hit_ratio,
+            pitch_frames=pitch_frames,
         )
 
     # ptAKF chart refit — rebuild note boundaries and pitches from the
@@ -620,6 +662,7 @@ def run() -> tuple[str, Score, Score]:
             fill=settings.ptakf_refit_fill,
             fill_min_ms=settings.ptakf_refit_fill_min_ms,
             language=process_data.media_info.language,
+            pitch_frames=pitch_frames,
         )
 
     # Create plot
@@ -651,7 +694,7 @@ def run() -> tuple[str, Score, Score]:
             or process_data.process_data_paths.whisper_audio_path
         )
         uscore_result = calculate_uscore_report(
-            ultrastar_file_output, vocal_path
+            ultrastar_file_output, vocal_path, pitch_frames=pitch_frames
         )
         if uscore_result:
             print(

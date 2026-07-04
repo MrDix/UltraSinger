@@ -297,6 +297,7 @@ def refit_notes_ptakf(
     fill: bool = False,
     fill_min_ms: float = 300.0,
     language: str | None = None,
+    pitch_frames: list[dict] | None = None,
 ) -> list[MidiSegment]:
     """Refit all notes onto the ptAKF beat-tone sequence.
 
@@ -316,6 +317,11 @@ def refit_notes_ptakf(
             words so their split sub-notes get individual syllables instead
             of "~" filler. Purely cosmetic (score-neutral); falls back to
             the previous behaviour when omitted or unsupported.
+        pitch_frames: Optional pre-computed ptAKF pitch frames (from
+            ``ultrastar_score.detect_pitch_frames``, same detector settings
+            as used here: 44.1kHz, volume_threshold=0.01) for
+            ``vocal_audio_path``. When given, the internal
+            ``load_audio`` + ``PitchDetector.detect_all`` pass is skipped.
 
     Returns:
         New list of MidiSegments (or the original list on failure).
@@ -325,7 +331,7 @@ def refit_notes_ptakf(
 
     try:
         return _refit(midi_segments, vocal_audio_path, bpm, min_note_ms,
-                      fill, fill_min_ms, language)
+                      fill, fill_min_ms, language, pitch_frames)
     except (ImportError, OSError, ValueError, RuntimeError,
             AttributeError, KeyError, TypeError, IndexError) as e:
         print(
@@ -343,10 +349,9 @@ def _refit(
     fill: bool = False,
     fill_min_ms: float = 300.0,
     language: str | None = None,
+    pitch_frames: list[dict] | None = None,
 ) -> list[MidiSegment]:
-    from ultrastar_score.audio import load_audio
     from ultrastar_score.parser import parse_ultrastar
-    from ultrastar_score.pitch import PitchDetector
 
     from modules.Refinement.refine_from_vocal import _write_temp_ultrastar_txt
 
@@ -370,9 +375,15 @@ def _refit(
         return midi_segments
 
     # ptAKF tones for the whole track (same detector settings as the scorer)
-    audio = load_audio(vocal_audio_path)
-    detector = PitchDetector(sample_rate=44100, volume_threshold=0.01)
-    frames = detector.detect_all(audio)
+    if pitch_frames is not None:
+        frames = pitch_frames
+    else:
+        from ultrastar_score.audio import load_audio
+        from ultrastar_score.pitch import PitchDetector
+
+        audio = load_audio(vocal_audio_path)
+        detector = PitchDetector(sample_rate=44100, volume_threshold=0.01)
+        frames = detector.detect_all(audio)
     tones = [f["tone"] for f in frames]
 
     def beat_tone(beat: int) -> int:

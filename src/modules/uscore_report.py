@@ -25,9 +25,19 @@ _DIFFICULTY_ORDER = ("easy", "medium", "hard")
 
 
 def calculate_uscore_report(
-    txt_path: str, vocal_audio_path: str
+    txt_path: str, vocal_audio_path: str, pitch_frames: list[dict] | None = None
 ) -> dict[str, dict] | None:
     """Score the final TXT against the vocal audio at Easy/Medium/Hard.
+
+    Args:
+        txt_path: Path to the written UltraStar TXT.
+        vocal_audio_path: Path to the vocal-only audio.
+        pitch_frames: Optional pre-computed ptAKF pitch frames (from
+            ``ultrastar_score.detect_pitch_frames``). When given, all three
+            ``score_song`` calls reuse them instead of each re-loading and
+            re-analysing ``vocal_audio_path`` from scratch. Ignored on older
+            ``ultrastar-score`` versions that don't accept the parameter
+            (falls back to per-call analysis).
 
     Returns a dict per difficulty with the detailed USDX score breakdown::
 
@@ -58,7 +68,18 @@ def calculate_uscore_report(
         }
         report = {}
         for name, diff in difficulties.items():
-            result = score_song(song, vocal_audio_path, difficulty=diff)
+            if pitch_frames is not None:
+                try:
+                    result = score_song(
+                        song, vocal_audio_path, difficulty=diff,
+                        pitch_frames=pitch_frames,
+                    )
+                except TypeError:
+                    # Installed ultrastar-score predates the pitch_frames
+                    # parameter — fall back to per-call analysis.
+                    result = score_song(song, vocal_audio_path, difficulty=diff)
+            else:
+                result = score_song(song, vocal_audio_path, difficulty=diff)
             report[name] = {
                 "total_pct": round(result.percentage, 1),
                 "notes_points": round(result.score_notes),

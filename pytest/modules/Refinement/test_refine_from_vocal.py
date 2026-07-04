@@ -14,6 +14,7 @@ from modules.Pitcher.pitched_data import PitchedData
 from modules.Refinement.refine_from_vocal import (
     _ptakf_tone_to_midi,
     refine_gap_with_uscore,
+    refine_notes,
     refine_pitch_with_uscore,
     refine_timing,
 )
@@ -254,6 +255,79 @@ class TestRefinePitchWithUscore:
 
 
 # ---------------------------------------------------------------------------
+# refine_pitch_with_uscore — pitch_frames reuse
+# ---------------------------------------------------------------------------
+
+class TestRefinePitchWithUscorePitchFrames:
+    """Verify pre-computed pitch_frames are threaded into score_song."""
+
+    def _run(self, score_song_fn, pitch_frames=None):
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="test")]
+
+        mock_uscore = MagicMock()
+        mock_uscore.score_song = score_song_fn
+        mock_uscore.Difficulty.HARD = "hard"
+
+        mock_parser = MagicMock()
+        mock_parser.parse_ultrastar = MagicMock(return_value=MagicMock())
+
+        import sys
+        with patch.dict(sys.modules, {
+            "ultrastar_score": mock_uscore,
+            "ultrastar_score.parser": mock_parser,
+        }), \
+             patch("modules.Refinement.refine_from_vocal._write_temp_ultrastar_txt", return_value="fake.txt"), \
+             patch("os.unlink"):
+            return refine_pitch_with_uscore(
+                segments,
+                vocal_audio_path="fake_vocal.wav",
+                bpm=120.0,
+                pitch_frames=pitch_frames,
+            )
+
+    def test_pitch_frames_forwarded(self):
+        received = []
+        note_scores = [FakeNoteScore(beats_hit=8, beats_total=10, detected_tones=[24] * 10)]
+
+        def _score_song(song, audio_path, difficulty=None, pitch_frames=None):
+            received.append(pitch_frames)
+            return FakeSongScore(line_scores=[FakeLineScore(note_scores=note_scores)])
+
+        frames = [{"tone": 24, "time": 0.0}]
+        self._run(_score_song, pitch_frames=frames)
+        assert received == [frames]
+
+    def test_no_pitch_frames_calls_without_kwarg(self):
+        received = []
+        note_scores = [FakeNoteScore(beats_hit=8, beats_total=10, detected_tones=[24] * 10)]
+
+        def _score_song(song, audio_path, difficulty=None, pitch_frames=None):
+            received.append(pitch_frames)
+            return FakeSongScore(line_scores=[FakeLineScore(note_scores=note_scores)])
+
+        self._run(_score_song, pitch_frames=None)
+        assert received == [None]
+
+    def test_falls_back_when_score_song_rejects_pitch_frames(self):
+        """Fail-open: an older score_song without the kwarg should be
+        retried without pitch_frames rather than raising."""
+        calls = []
+        note_scores = [FakeNoteScore(beats_hit=8, beats_total=10, detected_tones=[24] * 10)]
+
+        def _score_song(song, audio_path, difficulty=None, **kwargs):
+            calls.append(kwargs)
+            if "pitch_frames" in kwargs:
+                raise TypeError("unexpected keyword argument 'pitch_frames'")
+            return FakeSongScore(line_scores=[FakeLineScore(note_scores=note_scores)])
+
+        frames = [{"tone": 24, "time": 0.0}]
+        result, corrections = self._run(_score_song, pitch_frames=frames)
+        assert len(calls) == 2
+        assert corrections == 0
+        assert result[0].note == "C4"
+
+
+# ---------------------------------------------------------------------------
 # refine_timing
 # ---------------------------------------------------------------------------
 
@@ -462,4 +536,197 @@ class TestRefineGapWithUscore:
 
         new_duration = result[0].end - result[0].start
         assert new_duration == pytest.approx(original_duration, abs=0.001)
+
+
+# ---------------------------------------------------------------------------
+# refine_gap_with_uscore — pitch_frames reuse
+# ---------------------------------------------------------------------------
+
+class TestRefineGapWithUscorePitchFrames:
+    """The GAP sweep only shifts note times — the vocal audio, and thus the
+    valid pitch_frames, never change across the ~34 scoring calls."""
+
+    def _run(self, score_song_fn, pitch_frames=None):
+        segments = [
+            MidiSegment(note="C4", start=1.0, end=1.5, word="one"),
+        ]
+
+        mock_uscore = MagicMock()
+        mock_uscore.score_song = score_song_fn
+        mock_uscore.Difficulty.HARD = "hard"
+
+        mock_parser = MagicMock()
+        mock_parser.parse_ultrastar = MagicMock(return_value=MagicMock())
+
+        import sys
+        with patch.dict(sys.modules, {
+            "ultrastar_score": mock_uscore,
+            "ultrastar_score.parser": mock_parser,
+        }):
+            return refine_gap_with_uscore(
+                segments,
+                vocal_audio_path="fake_vocal.wav",
+                bpm=120.0,
+                coarse_range_ms=20.0,
+                coarse_step_ms=10.0,
+                fine_range_ms=5.0,
+                fine_step_ms=5.0,
+                pitch_frames=pitch_frames,
+            )
+
+    def test_pitch_frames_forwarded_to_every_call(self):
+        received = []
+
+        class FakeResult:
+            def __init__(self, total):
+                self.total = total
+
+        def _score_song(song, audio_path, difficulty=None, pitch_frames=None):
+            received.append(pitch_frames)
+            return FakeResult(total=1.0)
+
+        frames = [{"tone": 24, "time": 0.0}]
+        self._run(_score_song, pitch_frames=frames)
+
+        assert len(received) > 1  # coarse + fine sweep both ran
+        assert all(r is frames for r in received)
+
+    def test_no_pitch_frames_calls_without_kwarg(self):
+        received = []
+
+        class FakeResult:
+            def __init__(self, total):
+                self.total = total
+
+        def _score_song(song, audio_path, difficulty=None, pitch_frames=None):
+            received.append(pitch_frames)
+            return FakeResult(total=1.0)
+
+        self._run(_score_song, pitch_frames=None)
+        assert all(r is None for r in received)
+
+    def test_falls_back_when_score_song_rejects_pitch_frames(self):
+        """Fail-open per offset: TypeError from an older score_song should
+        not abort the sweep (each offset falls back independently via
+        _score_with_gap_offset's fail-open Exception handling)."""
+
+        class FakeResult:
+            def __init__(self, total):
+                self.total = total
+
+        def _score_song(song, audio_path, difficulty=None, **kwargs):
+            if "pitch_frames" in kwargs:
+                raise TypeError("unexpected keyword argument 'pitch_frames'")
+            return FakeResult(total=1.0)
+
+        frames = [{"tone": 24, "time": 0.0}]
+        result, offset = self._run(_score_song, pitch_frames=frames)
+        # Every offset still returns a viable score in the end (via retry
+        # inside _score_with_gap_offset), so refinement completes normally.
+        assert result[0].note == "C4"
+
+
+# ---------------------------------------------------------------------------
+# refine_notes — Phase 3 (GAP sweep) decoupled from Phase 1 (pitch)
+# ---------------------------------------------------------------------------
+
+class TestRefineNotesGapDecoupling:
+    """P5: when the caller forces refine_pitch_enabled=False (e.g. because
+    ptAKF refit will overwrite pitches anyway), the GAP sweep must still be
+    controllable independently via refine_gap_enabled."""
+
+    def _pitched_data_for_timing(self):
+        return _pitched_data("C4", duration=1.0, n_frames=5)
+
+    def test_gap_sweep_runs_when_pitch_disabled_but_gap_enabled(self):
+        segments = [MidiSegment(note="C4", start=1.0, end=1.5, word="one")]
+
+        with patch(
+            "modules.Refinement.refine_from_vocal.refine_pitch_with_uscore"
+        ) as mock_pitch, patch(
+            "modules.Refinement.refine_from_vocal.refine_gap_with_uscore"
+        ) as mock_gap:
+            mock_gap.return_value = (segments, -5.0)
+            refine_notes(
+                segments,
+                self._pitched_data_for_timing(),
+                vocal_audio_path="fake_vocal.wav",
+                bpm=120.0,
+                refine_pitch_enabled=False,
+                refine_timing_enabled=False,
+                refine_gap_enabled=True,
+            )
+
+        mock_pitch.assert_not_called()
+        mock_gap.assert_called_once()
+
+    def test_gap_sweep_receives_pitch_frames(self):
+        segments = [MidiSegment(note="C4", start=1.0, end=1.5, word="one")]
+        frames = [{"tone": 24, "time": 0.0}]
+
+        with patch(
+            "modules.Refinement.refine_from_vocal.refine_pitch_with_uscore"
+        ) as mock_pitch, patch(
+            "modules.Refinement.refine_from_vocal.refine_gap_with_uscore"
+        ) as mock_gap:
+            mock_gap.return_value = (segments, 0.0)
+            refine_notes(
+                segments,
+                self._pitched_data_for_timing(),
+                vocal_audio_path="fake_vocal.wav",
+                bpm=120.0,
+                refine_pitch_enabled=False,
+                refine_timing_enabled=False,
+                refine_gap_enabled=True,
+                pitch_frames=frames,
+            )
+
+        mock_pitch.assert_not_called()
+        assert mock_gap.call_args.kwargs["pitch_frames"] is frames
+
+    def test_default_gap_enabled_follows_pitch_enabled(self):
+        """When refine_gap_enabled is omitted, it mirrors refine_pitch_enabled
+        (historical coupling preserved for existing callers)."""
+        segments = [MidiSegment(note="C4", start=1.0, end=1.5, word="one")]
+
+        with patch(
+            "modules.Refinement.refine_from_vocal.refine_pitch_with_uscore"
+        ) as mock_pitch, patch(
+            "modules.Refinement.refine_from_vocal.refine_gap_with_uscore"
+        ) as mock_gap:
+            mock_pitch.return_value = (segments, 0)
+            refine_notes(
+                segments,
+                self._pitched_data_for_timing(),
+                vocal_audio_path="fake_vocal.wav",
+                bpm=120.0,
+                refine_pitch_enabled=False,
+                refine_timing_enabled=False,
+            )
+
+        mock_gap.assert_not_called()
+
+    def test_pitch_refinement_receives_pitch_frames(self):
+        segments = [MidiSegment(note="C4", start=1.0, end=1.5, word="one")]
+        frames = [{"tone": 24, "time": 0.0}]
+
+        with patch(
+            "modules.Refinement.refine_from_vocal.refine_pitch_with_uscore"
+        ) as mock_pitch, patch(
+            "modules.Refinement.refine_from_vocal.refine_gap_with_uscore"
+        ) as mock_gap:
+            mock_pitch.return_value = (segments, 0)
+            mock_gap.return_value = (segments, 0.0)
+            refine_notes(
+                segments,
+                self._pitched_data_for_timing(),
+                vocal_audio_path="fake_vocal.wav",
+                bpm=120.0,
+                refine_pitch_enabled=True,
+                refine_timing_enabled=False,
+                pitch_frames=frames,
+            )
+
+        assert mock_pitch.call_args.kwargs["pitch_frames"] is frames
+        assert mock_gap.call_args.kwargs["pitch_frames"] is frames
 
