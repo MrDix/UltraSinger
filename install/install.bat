@@ -102,8 +102,16 @@ if defined FORCE_BUILD (
 ) else (
     if "!GPU_DETECTED!"=="1" (
         set "BUILD=cuda"
-        set /p "REPLY=Detected !GPU_NAME!, using CUDA build. Press C for CPU, Enter to continue: "
-        if /i "!REPLY:~0,1!"=="C" set "BUILD=cpu"
+        rem Only prompt when stdin is an interactive console, so an automated
+        rem or wrapped invocation cannot block waiting for input (mirrors the
+        rem [ -t 0 ] guard in install.sh). Non-interactive keeps the CUDA build.
+        set "IS_INTERACTIVE=1"
+        powershell -NoProfile -Command "if ([Console]::IsInputRedirected) { exit 1 } else { exit 0 }" >nul 2>&1
+        if !errorlevel! neq 0 set "IS_INTERACTIVE=0"
+        if "!IS_INTERACTIVE!"=="1" (
+            set /p "REPLY=Detected !GPU_NAME!, using CUDA build. Press C for CPU, Enter to continue: "
+            if /i "!REPLY:~0,1!"=="C" set "BUILD=cpu"
+        )
     ) else (
         set "BUILD=cpu"
     )
