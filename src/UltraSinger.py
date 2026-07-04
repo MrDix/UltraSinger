@@ -618,6 +618,7 @@ def run() -> tuple[str, Score, Score]:
             min_note_ms=settings.ptakf_refit_min_note_ms,
             fill=settings.ptakf_refit_fill,
             fill_min_ms=settings.ptakf_refit_fill_min_ms,
+            language=process_data.media_info.language,
         )
 
     # Create plot

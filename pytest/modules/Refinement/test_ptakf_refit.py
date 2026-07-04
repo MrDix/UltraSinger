@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from modules.Midi.MidiSegment import MidiSegment
+from modules.Refinement import ptakf_refit
 from modules.Refinement.ptakf_refit import (
     _best_class,
     _continuation_word,
+    _distribute_syllables,
     _fold,
     _hits_for_class,
     _plan_fill_segments,
@@ -181,6 +183,86 @@ class TestContinuationWord:
 
     def test_no_space_style(self):
         assert _continuation_word("hello") == "~"
+
+
+# ---------------------------------------------------------------------------
+# _distribute_syllables
+# ---------------------------------------------------------------------------
+
+class _FakeHyphenator:
+    """Stand-in for hyphen.Hyphenator with a scripted syllables() result."""
+
+    def __init__(self, result=None, raises=False):
+        self._result = result
+        self._raises = raises
+
+    def syllables(self, word):  # noqa: ARG002 - signature parity with Hyphenator
+        if self._raises:
+            raise RuntimeError("boom")
+        return self._result
+
+
+class TestDistributeSyllables:
+    def test_single_part_returns_word_unchanged(self):
+        # n_parts <= 1 short-circuits before any hyphenator lookup.
+        assert _distribute_syllables("hello ", 1, "en") == ["hello "]
+
+    def test_no_language_skips_hyphenator_lookup(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            ptakf_refit, "_get_hyphenator",
+            lambda language: calls.append(language) or None,
+        )
+        assert _distribute_syllables("hello ", 3, None) == ["hello ", "~ ", "~ "]
+        assert calls == []
+
+    def test_no_hyphenator_available_falls_back(self, monkeypatch):
+        monkeypatch.setattr(ptakf_refit, "_get_hyphenator", lambda language: None)
+        assert _distribute_syllables("hello", 2, "en") == ["hello", "~"]
+
+    def test_single_syllable_falls_back(self, monkeypatch):
+        # hyphen's own convention: a one-syllable word yields no split.
+        monkeypatch.setattr(
+            ptakf_refit, "_get_hyphenator",
+            lambda language: _FakeHyphenator(["hi"]),
+        )
+        assert _distribute_syllables("hi ", 3, "en") == ["hi ", "~ ", "~ "]
+
+    def test_hyphenator_error_falls_back(self, monkeypatch):
+        monkeypatch.setattr(
+            ptakf_refit, "_get_hyphenator",
+            lambda language: _FakeHyphenator(raises=True),
+        )
+        assert _distribute_syllables("hello ", 2, "en") == ["hello ", "~ "]
+
+    def test_syllable_count_matches_parts(self, monkeypatch):
+        monkeypatch.setattr(
+            ptakf_refit, "_get_hyphenator",
+            lambda language: _FakeHyphenator(["al", "pha", "bet"]),
+        )
+        assert _distribute_syllables("alphabet ", 3, "en") == ["al", "pha", "bet "]
+
+    def test_more_syllables_than_parts_concatenates_tail(self, monkeypatch):
+        monkeypatch.setattr(
+            ptakf_refit, "_get_hyphenator",
+            lambda language: _FakeHyphenator(["al", "pha", "be", "tic"]),
+        )
+        assert _distribute_syllables("alphabetic ", 2, "en") == ["al", "phabetic "]
+
+    def test_more_parts_than_syllables_pads_continuation(self, monkeypatch):
+        monkeypatch.setattr(
+            ptakf_refit, "_get_hyphenator",
+            lambda language: _FakeHyphenator(["al", "pha"]),
+        )
+        assert _distribute_syllables("alpha ", 4, "en") == ["al", "pha", "~", "~ "]
+
+    def test_no_trailing_space_when_word_has_none(self, monkeypatch):
+        # Last word of a line has no trailing space; no part should gain one.
+        monkeypatch.setattr(
+            ptakf_refit, "_get_hyphenator",
+            lambda language: _FakeHyphenator(["al", "pha"]),
+        )
+        assert _distribute_syllables("alpha", 2, "en") == ["al", "pha"]
 
 
 # ---------------------------------------------------------------------------
