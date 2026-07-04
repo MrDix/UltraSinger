@@ -331,6 +331,7 @@ def _refit(
     planned: list[tuple[int, int, str, str, str, bool]] = []
     covered: set[int] = set()
     refit_count = 0
+    freestyled_count = 0
 
     for orig, note in zip(midi_segments, parsed_notes, strict=True):
         covered.update(range(note.start_beat, note.start_beat + note.duration))
@@ -343,8 +344,14 @@ def _refit(
         beat_tones = [beat_tone(note.start_beat + off) for off in range(note.duration)]
         parts = _segment_beat_tones(beat_tones)
         if not parts:
+            # No voiced ptAKF beat anywhere in this note: it is unhittable
+            # for the scorer (guaranteed misses only). Mark it freestyle so
+            # it stays visible with its lyric but is excluded from scoring —
+            # honest for the player too, since there is nothing singable
+            # underneath.
             planned.append((note.start_beat, note.duration, orig.note,
-                            orig.word, orig.note_type, orig.line_break_after))
+                            orig.word, "F", orig.line_break_after))
+            freestyled_count += 1
             continue
         parts = _smooth_segments(parts, beat_tones, min_note_beats)
 
@@ -388,10 +395,14 @@ def _refit(
         ))
 
     fill_info = f", {blue_highlighted(str(fill_count))} fill notes" if fill else ""
+    freestyle_info = (
+        f", {blue_highlighted(str(freestyled_count))} unhittable -> freestyle"
+        if freestyled_count else ""
+    )
     print(
         f"{ULTRASINGER_HEAD} ptAKF refit: "
         f"{blue_highlighted(str(refit_count))} notes refitted, "
         f"{blue_highlighted(str(len(midi_segments)))} -> "
-        f"{blue_highlighted(str(len(new_segments)))} notes{fill_info}"
+        f"{blue_highlighted(str(len(new_segments)))} notes{fill_info}{freestyle_info}"
     )
     return new_segments
