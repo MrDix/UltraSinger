@@ -506,6 +506,17 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._vocal_gap_fill.setChecked(
                                _DEFAULTS["vocal_gap_fill"]))
 
+        self._golden_notes = ToggleSwitch(
+            checked=self._config.get("golden_notes", False)
+        )
+        card.add_toggle_row("Golden Notes", self._golden_notes,
+                           "Mark a subset of held notes as golden bonus notes, worth "
+                           "double score in-game. Only long, real syllable notes are "
+                           "eligible, capped at 15% of all notes and spread across the "
+                           "whole song. Changes the in-game score distribution.",
+                           reset_callback=lambda: self._golden_notes.setChecked(
+                               _DEFAULTS["golden_notes"]))
+
         self._keep_numbers = ToggleSwitch(
             checked=self._config.get("keep_numbers", False)
         )
@@ -1071,6 +1082,7 @@ class ConversionSettingsForm(QWidget):
             "denoise_nf": self._denoise_nf.value(),
             "syllable_split": self._syllable_split.isChecked(),
             "vocal_gap_fill": self._vocal_gap_fill.isChecked(),
+            "golden_notes": self._golden_notes.isChecked(),
             "pitch_change_split": self._pitch_change_split.isChecked(),
             "pitch_notes": self._pitch_notes.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),

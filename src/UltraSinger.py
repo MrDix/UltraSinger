@@ -188,6 +188,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Reference-lyrics-first pipeline disabled')}")
     if settings.pitch_notes:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-based note generation enabled (notes from pitch contour)')}")
+    if settings.golden_notes:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Golden note generation enabled')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -665,6 +667,18 @@ def run() -> tuple[str, Score, Score]:
             pitch_frames=pitch_frames,
         )
 
+    # Golden notes — mark a bounded, evenly-spread subset of held notes as
+    # golden ("*") bonus notes. Runs last, on the final note boundaries/
+    # pitches (after refinement and ptAKF refit), so it never gets
+    # overwritten by a later pass.
+    if settings.golden_notes:
+        from modules.Ultrastar.golden_notes import mark_golden_notes
+
+        process_data.midi_segments = mark_golden_notes(
+            process_data.midi_segments,
+            bpm=process_data.media_info.bpm,
+        )
+
     # Create plot
     if settings.create_plot:
         create_plots(process_data, settings.output_folder_path)
@@ -995,6 +1009,7 @@ def _write_settings_info_file(
                 f.write(f"  Refit fill:               {settings.ptakf_refit_fill}\n")
                 if settings.ptakf_refit_fill:
                     f.write(f"  Refit fill min run:       {settings.ptakf_refit_fill_min_ms} ms\n")
+            f.write(f"  Golden notes:             {settings.golden_notes}\n")
             f.write("\n")
 
             # Lyrics Lookup
@@ -2053,6 +2068,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.ptakf_refit = False
         elif opt in ("--disable_ptakf_refit_fill"):
             settings.ptakf_refit_fill = False
+        elif opt in ("--golden_notes"):
+            settings.golden_notes = True
         elif opt in ("--disable_score"):
             settings.calculate_score = False
     if settings.output_folder_path == "":
@@ -2145,6 +2162,7 @@ def arg_options():
         "ptakf_refit_fill_min_ms=",
         "disable_ptakf_refit",
         "disable_ptakf_refit_fill",
+        "golden_notes",
         "disable_score",
     ]
     return long, short

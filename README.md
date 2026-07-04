@@ -66,6 +66,7 @@ This will help me a lot to keep this project alive and improve it.
       - [LLM Lyric Correction](#llm-lyric-correction---llm_correct)
       - [Syllable-Level Note Splitting](#syllable-level-note-splitting---syllable_split)
       - [Vocal Gap Fill](#vocal-gap-fill---vocal_gap_fill)
+      - [Golden Notes](#golden-notes---golden_notes)
     - [🏆 Ultrastar Score Calculation](#-ultrastar-score-calculation)
     - [📟 Use GPU](#-use-gpu)
       - [Considerations for Windows users](#considerations-for-windows-users)
@@ -630,6 +631,18 @@ With `--ptakf_refit_fill`, sung passages that no note covers (ad-libs, vocalises
 ```
 
 Requires the optional scoring dependency (`pip install "ultrastar-score"` — already included by the install scripts). Without it the pass is skipped gracefully.
+
+#### Golden Notes (`--golden_notes`)
+
+Marks a subset of held notes as **golden** (`*`) bonus notes, which are worth double score in-game. UltraSinger's charts otherwise never contain any golden notes.
+
+Only real syllable notes are eligible: `note_type == ":"`, not a `~` tilde-continuation, and held for at least 350ms — short notes rarely stay on-pitch long enough to be reliably hit. The number of golden notes is capped at 15% of all scorable notes, and eligible candidates are spread across the whole song (split into as many chunks as golden slots, picking the longest note per chunk) instead of clustering in one section. Runs last, after refinement and the ptAKF chart refit, so it always marks the final note boundaries.
+
+```commandline
+-i XYZ --golden_notes
+```
+
+Disabled by default, since it changes the in-game score distribution.
 
 ### 🏆 Ultrastar Score Calculation
 
