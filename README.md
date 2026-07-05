@@ -81,30 +81,55 @@ This will help me a lot to keep this project alive and improve it.
 
 ### Installation
 
-* Python 3.12 or 3.13 ([Download](https://www.python.org/downloads/)) — *optional:* if neither is installed (e.g. you only have a newer version), the Windows install scripts automatically download a portable, self-contained Python 3.12 via uv into its per-user directory; your system Python is never touched. On Linux/macOS uv resolves a suitable interpreter automatically as well.
-* Also download or install ffmpeg with PATH. [Download](https://www.ffmpeg.org/download.html)
-* Go to folder `install` and run `install.bat` (Windows) or `install.sh` (Linux/macOS) - it detects your hardware and picks the right build automatically. Or pick a script manually:
-  * Choose `CUDA` if you have an NVIDIA CUDA GPU (Windows/Linux only).
-  * Choose `CPU` if you don't have an NVIDIA GPU, want CPU-only processing, or are on macOS.
-  * macOS note: Apple Silicon does not support NVIDIA CUDA. Use the CPU install.
+**Prerequisites**
+
+* [git](https://git-scm.com/downloads) — to get and update the source code.
+* [ffmpeg](https://www.ffmpeg.org/download.html) — must be on your `PATH`.
+* [Node.js](https://nodejs.org) — *recommended:* needed for full-quality video downloads (the install script builds the local PO-token provider with it; without Node.js, downloads fall back to reduced quality — you can install it later and re-run the install script).
+* Python 3.12 or 3.13 ([Download](https://www.python.org/downloads/)) — *optional:* if neither is installed (e.g. you only have a newer version), the install scripts automatically download a portable, self-contained Python 3.12 via uv into its per-user directory; your system Python is never touched.
+* Behind a corporate proxy? See [Corporate proxy / firewall](#-corporate-proxy--firewall) — the installer detects `HTTP(S)_PROXY` automatically.
+
+**Install**
+
+1. Get the source code:
+   ```bash
+   git clone https://github.com/rakuri255/UltraSinger.git
+   cd UltraSinger
+   ```
+2. Run the installer — `install\install.bat` (Windows) or `install/install.sh` (Linux/macOS). It takes care of everything:
+   * detects your NVIDIA GPU via `nvidia-smi` and picks the CUDA or CPU build automatically (force with `--cuda` / `--cpu`),
+   * installs all dependencies including the GUI, scoring engine and PO-token plugin,
+   * builds the local PO-token provider when Node.js is available,
+   * detects proxy environment variables and enables OS-store TLS for uv automatically,
+   * and prints tailored advice when your GPU has little VRAM (< 8 GB) or none was found — including how a free cloud key can replace the slowest local step (`--remote_stt`).
+
+   You can also run a specific sub-script directly: `install/CUDA/…` (NVIDIA GPU, Windows/Linux) or `install/CPU/…` (no NVIDIA GPU, or macOS — Apple Silicon has no CUDA).
+
+**Update an existing installation**
+
+```bash
+git pull
+```
+Re-run the install script afterwards when dependencies changed (CUDA users should always use the install script, as it protects the CUDA configuration from git resets).
 
 ### Run (CLI)
 
 * In root folder just run `run_on_windows.bat`, `run_on_linux.sh` or `run_on_mac.command` to start the app.
-* Now you can use the UltraSinger source code with `py UltraSinger.py [opt] [mode] [transcription] [pitcher] [extra]`. See [How to use](#-how-to-use-the-app) for more information.
+* Or invoke it directly: `uv run python src/UltraSinger.py [opt] [mode] [transcription] [pitcher] [extra]`. See [How to use](#-how-to-use-the-app) for more information.
 
 ### 🖥️ Run (GUI)
 
 UltraSinger includes an optional graphical interface with an embedded video browser,
 full settings panel, and real-time conversion log.
 
-#### Install GUI dependencies
+#### GUI dependencies
 
-```bash
-uv sync --extra gui
-```
+The install scripts already set up everything the GUI needs ([PySide6](https://doc.qt.io/qtforpython-6/) / Qt 6 including WebEngine for the embedded browser) — no extra step required.
 
-> This installs [PySide6](https://doc.qt.io/qtforpython-6/) (Qt 6 for Python) including WebEngine for the embedded browser.
+> Only if you installed manually and need to (re-)sync yourself, always include **all** extras — `uv sync` is exact and would *remove* extras you leave out (breaking scoring and full-quality downloads):
+> ```bash
+> uv sync --extra gui --extra scoring --extra potoken
+> ```
 
 #### Start the GUI
 
