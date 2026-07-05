@@ -42,7 +42,7 @@ uv lock
 echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
 uv sync --extra gui --extra scoring --extra potoken
 
-# Set up the PO-token provider (Node.js) for full-quality YouTube downloads
+# Set up the PO-token provider (Node.js) for full-quality video downloads
 POT_RC=0
 bash install/helpers/setup_potoken_provider.sh "install/CUDA/linux_cuda_gpu.sh" || POT_RC=$?
 
@@ -57,9 +57,9 @@ fi
 echo ""
 echo "Installation completed."
 if [ "$POT_RC" = "0" ]; then
-    echo "Full-quality YouTube downloads are enabled."
+    echo "Full-quality video downloads are enabled."
 else
-    echo "NOTE: full-quality YouTube downloads are NOT enabled yet -"
+    echo "NOTE: full-quality video downloads are NOT enabled yet -"
     echo "see the PO-token provider section above for what to do."
 fi
 echo ""

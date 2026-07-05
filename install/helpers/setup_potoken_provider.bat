@@ -1,5 +1,5 @@
 @echo off
-REM Set up the bgutil PO-token provider (Node.js server) so YouTube downloads
+REM Set up the bgutil PO-token provider (Node.js server) so video downloads
 REM get full-quality formats. Non-fatal: the parent install script keeps going
 REM regardless. Exit codes: 0 = provider ready, 2 = Node.js/git missing,
 REM 3 = build failed. Arg %1 = the install script to name in the re-run hint.
@@ -14,7 +14,7 @@ set "SERVER_ENTRY=%PROVIDER_DIR%\server\build\main.js"
 
 echo.
 echo ============================================================
-echo  PO-token provider setup (full-quality YouTube downloads)
+echo  PO-token provider setup (full-quality video downloads)
 echo ============================================================
 
 REM --- Ensure Node.js is available (auto-install via winget if missing) ---
@@ -34,7 +34,7 @@ if !errorlevel! neq 0 (
         echo.
         echo ------------------------------------------------------------
         echo  ACTION REQUIRED - Node.js is needed for full-quality
-        echo  YouTube downloads. UltraSinger still works, but YouTube
+        echo  video downloads. UltraSinger still works, but video
         echo  downloads stay limited to 360p until this is done:
         echo.
         echo    1. Install Node.js LTS from https://nodejs.org
@@ -89,11 +89,11 @@ popd
 
 if exist "%SERVER_ENTRY%" (
     echo Done. The GUI starts the provider automatically on launch -
-    echo full-quality YouTube downloads are enabled.
+    echo full-quality video downloads are enabled.
     exit /b 0
 ) else (
     echo The provider build did not complete. Run %RERUN% again;
-    echo if it keeps failing, YouTube downloads stay limited to 360p.
+    echo if it keeps failing, video downloads stay limited to 360p.
     echo If you are behind a corporate proxy: git and npm honor the same
     echo HTTP_PROXY/HTTPS_PROXY/NO_PROXY variables as the rest of this installer
     echo - set them ^(and UV_SYSTEM_CERTS=1 for TLS-inspecting proxies^) and re-run.
