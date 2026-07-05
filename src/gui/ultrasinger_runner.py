@@ -369,7 +369,7 @@ class UltraSingerRunner(QObject):
         # Pitcher backend
         # Always pass the pitcher explicitly so the GUI selection wins
         # regardless of the CLI default
-        pitcher = config.get("pitcher", "fcpe")
+        pitcher = config.get("pitcher", "swiftf0")
         if pitcher:
             args.extend(["--pitcher", pitcher])
 
@@ -446,6 +446,17 @@ class UltraSingerRunner(QObject):
             timeout = config.get("remote_stt_timeout", 120)
             if timeout != 120:
                 args.extend(["--remote_stt_timeout", str(timeout)])
+
+            # Retry settings
+            if not config.get("remote_stt_retry_on_rate_limit", True):
+                args.append("--remote_stt_no_retry")
+            else:
+                remote_retry_wait = config.get("remote_stt_retry_wait", 60)
+                if remote_retry_wait != 60:
+                    args.extend(["--remote_stt_retry_wait", str(remote_retry_wait)])
+                remote_retry_max = config.get("remote_stt_retry_max", 3)
+                if remote_retry_max != 3:
+                    args.extend(["--remote_stt_retry_max", str(remote_retry_max)])
 
         # Refinement
         if config.get("refine_from_vocal", False):

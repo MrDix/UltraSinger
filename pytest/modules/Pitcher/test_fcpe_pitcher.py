@@ -124,11 +124,11 @@ class TestFcpePitcherOutput(unittest.TestCase):
 class TestPitcherSetting(unittest.TestCase):
     """Test that the pitcher setting controls which backend is used."""
 
-    def test_default_pitcher_is_fcpe(self):
-        """Default pitcher should be fcpe."""
+    def test_default_pitcher_is_swiftf0(self):
+        """Default pitcher should be swiftf0 (fcpe stays available as an option)."""
         from src.Settings import Settings
         s = Settings()
-        self.assertEqual(s.pitcher, "fcpe")
+        self.assertEqual(s.pitcher, "swiftf0")
 
     def test_pitcher_setting_accepts_fcpe(self):
         """Pitcher setting should accept 'fcpe'."""

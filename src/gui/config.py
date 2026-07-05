@@ -77,6 +77,9 @@ _DEFAULTS = {
     "remote_stt_api_key": "",  # stored in system keyring, never written to config.json
     "remote_stt_model": "whisper-large-v3",
     "remote_stt_timeout": 120,  # seconds
+    "remote_stt_retry_on_rate_limit": True,
+    "remote_stt_retry_wait": 60,
+    "remote_stt_retry_max": 3,
     # Scoring
     "calculate_score": True,
     # Output options
@@ -97,7 +100,7 @@ _DEFAULTS = {
     "bpm_override": "",
     "octave_shift": "",
     # Pitch detection
-    "pitcher": "fcpe",
+    "pitcher": "swiftf0",
     # Vocal separation
     "separator_backend": "audio_separator",
     "audio_separator_model": "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt",

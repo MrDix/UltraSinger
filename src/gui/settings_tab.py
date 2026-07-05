@@ -7,7 +7,9 @@ is replaced by this form.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import logging
+
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -30,6 +32,9 @@ from pathlib import Path
 from .config import _DEFAULTS
 from .models import LLMProvider
 from .widgets import SettingsCard, ToggleSwitch
+from .widgets.llm_provider_list import _ModelFetcher, filter_stt_models
+
+logger = logging.getLogger(__name__)
 
 
 def _is_package_available(name: str) -> bool:
@@ -206,14 +211,14 @@ class ConversionSettingsForm(QWidget):
         # Pitcher backend
         self._pitcher = _NoScrollComboBox()
         self._pitcher.addItems(["swiftf0", "fcpe"])
-        self._pitcher.setCurrentText(self._config.get("pitcher", "fcpe"))
+        self._pitcher.setCurrentText(self._config.get("pitcher", "swiftf0"))
         card.add_row("Pitch Detection", self._pitcher,
-                     "Pitch detection backend. 'fcpe' (default, torchfcpe) is GPU-accelerated "
-                     "with more stable pitch contours and fewer outlier jumps; best on CUDA, "
-                     "falls back to CPU if unavailable. 'swiftf0' is ONNX-based and CPU-only, "
-                     "fast and lightweight.",
+                     "Pitch detection backend. 'swiftf0' (default) is ONNX-based and CPU-only, "
+                     "fast and lightweight. 'fcpe' (torchfcpe) is GPU-accelerated with "
+                     "more stable pitch contours and fewer outlier jumps; best on CUDA, "
+                     "falls back to CPU if unavailable.",
                      reset_callback=lambda: self._pitcher.setCurrentText(
-                         _DEFAULTS.get("pitcher", "fcpe")))
+                         _DEFAULTS.get("pitcher", "swiftf0")))
 
         card.add_separator()
 
@@ -852,9 +857,13 @@ class ConversionSettingsForm(QWidget):
     def _build_remote_stt_section(self):
         """Minimal toggle + fields for remote (cloud) speech-to-text.
 
-        Deliberately kept simple (flat base URL / model / key fields)
+        Deliberately kept simple (a single flat base URL / model / key set)
         rather than reusing the multi-provider LLM list — remote STT is a
-        single-purpose GPU-less fallback, not a multi-provider feature.
+        single-purpose GPU-less fallback, not a multi-provider feature. The
+        Model field is an editable combobox with a Fetch button that reuses
+        the LLM provider list's ``_ModelFetcher`` to query the provider's
+        ``/models`` endpoint, filtered down to speech-to-text models via
+        ``filter_stt_models``.
         """
         card = SettingsCard("Remote Speech-to-Text")
 
@@ -886,12 +895,40 @@ class ConversionSettingsForm(QWidget):
                      "API key for the remote speech-to-text service. "
                      "Stored in the system keyring, never in config.json.")
 
-        self._remote_stt_model = QLineEdit(
-            self._config.get("remote_stt_model", _DEFAULTS["remote_stt_model"])
+        self._remote_stt_model = _NoScrollComboBox()
+        self._remote_stt_model.setEditable(True)
+        self._remote_stt_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._remote_stt_model.lineEdit().setPlaceholderText(
+            _DEFAULTS["remote_stt_model"])
+        initial_model = self._config.get(
+            "remote_stt_model", _DEFAULTS["remote_stt_model"])
+        if initial_model:
+            self._remote_stt_model.addItem(initial_model)
+            self._remote_stt_model.setCurrentText(initial_model)
+
+        model_container = QWidget()
+        model_row = QHBoxLayout(model_container)
+        model_row.setContentsMargins(0, 0, 0, 0)
+        model_row.setSpacing(8)
+        model_row.addWidget(self._remote_stt_model, 1)
+
+        self._remote_stt_model_fetch_btn = QPushButton("Fetch")
+        self._remote_stt_model_fetch_btn.setToolTip(
+            "Fetch available speech-to-text models from the API Base URL above."
         )
-        card.add_row("Model", self._remote_stt_model,
-                     "Model name to request from the remote speech-to-text service.",
-                     reset_callback=lambda: self._remote_stt_model.setText(
+        self._remote_stt_model_fetch_btn.clicked.connect(
+            self._fetch_remote_stt_models)
+        model_row.addWidget(self._remote_stt_model_fetch_btn)
+
+        self._remote_stt_model_fetch_thread: QThread | None = None
+        self._remote_stt_model_fetcher = None
+
+        card.add_row("Model", model_container,
+                     "Model name to request from the remote speech-to-text "
+                     "service. Use Fetch to list available speech-to-text "
+                     "models from the provider (filtered from its full "
+                     "model catalog).",
+                     reset_callback=lambda: self._remote_stt_model.setCurrentText(
                          _DEFAULTS["remote_stt_model"]))
 
         self._remote_stt_timeout = _NoScrollSpinBox()
@@ -905,16 +942,109 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._remote_stt_timeout.setValue(
                          _DEFAULTS["remote_stt_timeout"]))
 
+        # Retry settings (mirrors the LLM Lyric Correction retry card)
+        self._remote_stt_retry = ToggleSwitch(
+            checked=self._config.get("remote_stt_retry_on_rate_limit", True)
+        )
+        card.add_toggle_row("Retry on rate limit (429)", self._remote_stt_retry,
+                           "Automatically retry when the remote speech-to-text "
+                           "provider returns HTTP 429 (Too Many Requests). Common "
+                           "with free tier APIs like Groq.",
+                           reset_callback=lambda: self._remote_stt_retry.setChecked(
+                               _DEFAULTS["remote_stt_retry_on_rate_limit"]))
+
+        self._remote_stt_retry_wait = QSpinBox()
+        self._remote_stt_retry_wait.setRange(5, 300)
+        self._remote_stt_retry_wait.setSuffix(" s")
+        self._remote_stt_retry_wait.setValue(
+            self._config.get("remote_stt_retry_wait", 60))
+        card.add_row("Retry wait time", self._remote_stt_retry_wait,
+                     "How many seconds to wait before retrying after a rate limit error.",
+                     reset_callback=lambda: self._remote_stt_retry_wait.setValue(
+                         _DEFAULTS["remote_stt_retry_wait"]))
+
+        self._remote_stt_retry_max = QSpinBox()
+        self._remote_stt_retry_max.setRange(1, 10)
+        self._remote_stt_retry_max.setValue(
+            self._config.get("remote_stt_retry_max", 3))
+        card.add_row("Max retries", self._remote_stt_retry_max,
+                     "Maximum number of retries before giving up.",
+                     reset_callback=lambda: self._remote_stt_retry_max.setValue(
+                         _DEFAULTS["remote_stt_retry_max"]))
+
         def _toggle_remote_stt(on):
             self._remote_stt_api_base_url.setEnabled(on)
             self._remote_stt_api_key.setEnabled(on)
             self._remote_stt_model.setEnabled(on)
+            self._remote_stt_model_fetch_btn.setEnabled(on)
             self._remote_stt_timeout.setEnabled(on)
+            self._remote_stt_retry.setEnabled(on)
+            self._remote_stt_retry_wait.setEnabled(on)
+            self._remote_stt_retry_max.setEnabled(on)
 
         self._remote_stt.toggled_signal.connect(_toggle_remote_stt)
         _toggle_remote_stt(self._remote_stt.isChecked())
 
         self._main_layout.addWidget(card)
+
+    def _fetch_remote_stt_models(self):
+        """Fetch models from the remote STT provider's API and filter them
+        down to speech-to-text-capable models (see ``filter_stt_models``)."""
+        url = self._remote_stt_api_base_url.text().strip()
+        if not url:
+            return
+
+        self._remote_stt_model_fetch_btn.setEnabled(False)
+        self._remote_stt_model_fetch_btn.setToolTip("Fetching models...")
+
+        self._remote_stt_model_fetch_thread = QThread()
+        self._remote_stt_model_fetcher = _ModelFetcher(
+            url, self._remote_stt_api_key.text())
+        self._remote_stt_model_fetcher.moveToThread(
+            self._remote_stt_model_fetch_thread)
+
+        self._remote_stt_model_fetch_thread.started.connect(
+            self._remote_stt_model_fetcher.run)
+        self._remote_stt_model_fetcher.finished_raw.connect(
+            self._on_remote_stt_models_fetched)
+        self._remote_stt_model_fetcher.error.connect(
+            self._on_remote_stt_fetch_error)
+        self._remote_stt_model_fetcher.finished_raw.connect(
+            self._cleanup_remote_stt_fetch)
+        self._remote_stt_model_fetcher.error.connect(
+            self._cleanup_remote_stt_fetch)
+
+        self._remote_stt_model_fetch_thread.start()
+
+    def _on_remote_stt_models_fetched(self, raw_models: list[dict]):
+        """Populate the model combobox with the filtered speech-to-text models."""
+        models = filter_stt_models(raw_models)
+        previous = self._remote_stt_model.currentText()
+        self._remote_stt_model.clear()
+        self._remote_stt_model.addItems(models)
+
+        idx = self._remote_stt_model.findText(previous)
+        if idx >= 0:
+            self._remote_stt_model.setCurrentIndex(idx)
+        elif previous:
+            # Keep whatever the user had typed, even if it wasn't fetched.
+            self._remote_stt_model.setEditText(previous)
+
+        self._remote_stt_model_fetch_btn.setToolTip(
+            f"Fetch available speech-to-text models from the API "
+            f"({len(models)} found)"
+        )
+
+    def _on_remote_stt_fetch_error(self, error: str):
+        logger.warning("Failed to fetch remote speech-to-text models: %s", error)
+        self._remote_stt_model_fetch_btn.setToolTip(f"Fetch failed: {error}")
+
+    def _cleanup_remote_stt_fetch(self):
+        self._remote_stt_model_fetch_btn.setEnabled(self._remote_stt.isChecked())
+        if self._remote_stt_model_fetch_thread:
+            self._remote_stt_model_fetch_thread.quit()
+            self._remote_stt_model_fetch_thread.wait(2000)
+            self._remote_stt_model_fetch_thread = None
 
     # ─── Scoring ─────────────────────────────────────────────────────────
 
@@ -1306,8 +1436,11 @@ class ConversionSettingsForm(QWidget):
             "remote_stt": self._remote_stt.isChecked(),
             "remote_stt_api_base_url": self._remote_stt_api_base_url.text(),
             "remote_stt_api_key": self._remote_stt_api_key.text(),
-            "remote_stt_model": self._remote_stt_model.text(),
+            "remote_stt_model": self._remote_stt_model.currentText(),
             "remote_stt_timeout": self._remote_stt_timeout.value(),
+            "remote_stt_retry_on_rate_limit": self._remote_stt_retry.isChecked(),
+            "remote_stt_retry_wait": self._remote_stt_retry_wait.value(),
+            "remote_stt_retry_max": self._remote_stt_retry_max.value(),
             "calculate_score": self._calculate_score.isChecked(),
             "format_version": self._format_version.currentText(),
             "create_plot": self._create_plot.isChecked(),

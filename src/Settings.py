@@ -38,7 +38,7 @@ class Settings:
     syllable_split = False  # Preserve syllable-level note splits at pitch changes
     vocal_gap_fill = False  # Fill un-transcribed vocal gaps with placeholder notes
     pitch_change_split = True  # Split notes at pitch change boundaries (melismas, runs)
-    pitcher = "fcpe"  # Pitch detection backend: swiftf0|fcpe (fcpe default: more stable contours)
+    pitcher = "swiftf0"  # Pitch detection backend: swiftf0|fcpe (swiftf0 default: ONNX, CPU-only)
     pitch_notes = False  # Generate notes from pitch contour instead of word timing
     lyrics_lookup = True  # Look up reference lyrics from LRCLIB and correct Whisper transcription
     disable_reference_lyrics = False  # Disable reference-lyrics-first pipeline (forced alignment with LRCLIB synced lyrics)
@@ -120,6 +120,9 @@ class Settings:
     remote_stt_api_key: str | None = None  # or set ULTRASINGER_REMOTE_STT_API_KEY env var
     remote_stt_model: str = "whisper-large-v3"
     remote_stt_timeout: int = 120  # seconds
+    remote_stt_retry_on_rate_limit = True  # Retry on HTTP 429 rate limit errors
+    remote_stt_retry_wait: int = 60  # Seconds to wait between retries
+    remote_stt_retry_max: int = 3  # Maximum retries
 
     # Freestyle detection — mark unpitchable passages as freestyle
     # Covers growls, screams, rap, spoken word, harsh vocals, and any non-melodic vocal style.

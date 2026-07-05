@@ -35,6 +35,7 @@ class _ModelFetcher(QObject):
     """Fetches available models from an OpenAI-compatible /v1/models endpoint."""
 
     finished = Signal(list)  # list of model ID strings
+    finished_raw = Signal(list)  # list of raw model dicts (id + optional metadata)
     error = Signal(str)
 
     def __init__(self, base_url: str, api_key: str):
@@ -51,14 +52,68 @@ class _ModelFetcher(QObject):
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            models = sorted(
-                m["id"] for m in data.get("data", []) if m.get("id")
-            )
+            raw_models = data.get("data", [])
+            models = sorted(m["id"] for m in raw_models if m.get("id"))
             self.finished.emit(models)
+            self.finished_raw.emit(raw_models)
         except (urllib.error.URLError, json.JSONDecodeError, KeyError, OSError) as e:
             self.error.emit(str(e))
         except Exception as e:
             self.error.emit(str(e))
+
+
+def filter_stt_models(raw_models: list[dict]) -> list[str]:
+    """Filter raw ``/v1/models`` entries down to speech-to-text-capable models.
+
+    Two-tier filter, verified against Groq's ``/models`` response:
+
+    1. If an entry has an ``input_modalities`` field (Groq-style metadata),
+       keep it only when ``"audio"`` is one of the input modalities. This
+       correctly excludes TTS models (``input_modalities=['text']``,
+       ``output_modalities=['speech']``) and LLMs (``in/out=['text']``).
+    2. Otherwise (no modality metadata at all, e.g. a plain OpenAI-compatible
+       ``/models`` endpoint that only returns id/object/created/owned_by),
+       fall back to a name heuristic: the id contains "whisper" or
+       "transcribe" (case-insensitive).
+
+    If the filter removes every model but some were fetched, return all
+    fetched IDs unfiltered rather than presenting an empty dropdown.
+    """
+    all_ids = sorted(m["id"] for m in raw_models if m.get("id"))
+
+    filtered = set()
+    for m in raw_models:
+        model_id = m.get("id")
+        if not model_id:
+            continue
+        capabilities = m.get("capabilities")
+        if "input_modalities" in m:
+            if "audio" in (m.get("input_modalities") or []):
+                filtered.add(model_id)
+        elif isinstance(capabilities, dict) and capabilities:
+            # Mistral-style metadata (verified live): batch transcription
+            # models carry capabilities.audio_transcription. Realtime-only
+            # models won't work with the batch /audio/transcriptions
+            # endpoint, and audio_speech marks TTS -- both excluded.
+            if capabilities.get("audio_transcription"):
+                filtered.add(model_id)
+        else:
+            lower_id = model_id.lower()
+            # "voxtral": Mistral's speech models (e.g. voxtral-mini-latest)
+            # carry neither "whisper" nor "transcribe" in every variant.
+            if ("whisper" in lower_id or "transcribe" in lower_id
+                    or "voxtral" in lower_id):
+                filtered.add(model_id)
+
+    if not filtered and all_ids:
+        logger.info(
+            "No speech-to-text models matched the filter; showing all %d "
+            "fetched models instead.",
+            len(all_ids),
+        )
+        return all_ids
+
+    return sorted(filtered)
 
 
 class LLMProviderRow(QWidget):

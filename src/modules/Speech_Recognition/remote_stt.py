@@ -17,6 +17,7 @@ aborts a conversion — callers fall through to local Whisper.
 from __future__ import annotations
 
 import os
+import time
 
 import requests
 
@@ -35,6 +36,27 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 # not instant.
 DEFAULT_TIMEOUT_S = 120
 
+# Hard upper bound on how long a single 429 wait may take, even if a
+# provider sends an absurd ``Retry-After`` value.
+MAX_RETRY_WAIT_S = 300
+
+
+def _resolve_retry_wait(response: requests.Response, fallback_wait: float) -> float:
+    """Determine how long to wait before retrying a 429 response.
+
+    Respects the ``Retry-After`` header when present and numeric,
+    otherwise falls back to *fallback_wait*. Always capped at
+    ``MAX_RETRY_WAIT_S``.
+    """
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    wait_s = fallback_wait
+    if retry_after is not None:
+        try:
+            wait_s = float(retry_after)
+        except ValueError:
+            wait_s = fallback_wait
+    return min(max(wait_s, 0), MAX_RETRY_WAIT_S)
+
 
 def transcribe_remote(
         audio_path: str,
@@ -43,6 +65,9 @@ def transcribe_remote(
         model: str,
         language: str | None = None,
         timeout: int = DEFAULT_TIMEOUT_S,
+        retry_on_rate_limit: bool = True,
+        retry_wait: float = 60.0,
+        retry_max: int = 3,
 ) -> str | None:
     """Transcribe *audio_path* via a remote OpenAI-compatible STT API.
 
@@ -50,6 +75,13 @@ def transcribe_remote(
     failure (network error, timeout, HTTP error, oversized file, empty
     response) — this function never raises for expected failure modes,
     so callers can treat it as a fail-open text source.
+
+    On an HTTP 429 (rate limited) response, and if *retry_on_rate_limit*
+    is enabled, waits and retries up to *retry_max* times before falling
+    back to fail-open ``None``. The wait honors the ``Retry-After``
+    response header when present (capped at ``MAX_RETRY_WAIT_S``),
+    otherwise uses *retry_wait* seconds. Every other HTTP error still
+    fails open immediately, unchanged.
     """
     if not api_key:
         print(f"{ULTRASINGER_HEAD} {red_highlighted('Remote STT skipped: no API key configured')}")
@@ -94,25 +126,44 @@ def transcribe_remote(
     if language:
         data["language"] = language
 
-    try:
-        with open(audio_path, "rb") as audio_file:
-            files = {"file": (os.path.basename(audio_path), audio_file)}
-            response = requests.post(
-                url,
-                headers=headers,
-                data=data,
-                files=files,
-                timeout=timeout,
+    # max(1, ...): a negative retry_max must not zero out the loop --
+    # at least one attempt always runs so failure stays fail-open.
+    max_attempts = max(1, 1 + (retry_max if retry_on_rate_limit else 0))
+    response = None
+
+    for attempt in range(max_attempts):
+        try:
+            # Re-open the file for every attempt: requests consumes the
+            # file handle on the previous POST, so a retry needs a fresh one.
+            with open(audio_path, "rb") as audio_file:
+                files = {"file": (os.path.basename(audio_path), audio_file)}
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    data=data,
+                    files=files,
+                    timeout=timeout,
+                )
+        except requests.exceptions.Timeout:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Remote STT timed out after {timeout}s')}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Remote STT network error: {e}')}")
+            return None
+        except OSError as e:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Remote STT skipped: could not read audio file: {e}')}")
+            return None
+
+        if response.status_code == 429 and attempt < max_attempts - 1:
+            wait_s = _resolve_retry_wait(response, retry_wait)
+            print(
+                f"{ULTRASINGER_HEAD} {gold_highlighted('Remote STT rate limited (429)')}, "
+                f"waiting {wait_s:.0f}s, attempt {attempt + 1}/{max_attempts - 1}..."
             )
-    except requests.exceptions.Timeout:
-        print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Remote STT timed out after {timeout}s')}")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Remote STT network error: {e}')}")
-        return None
-    except OSError as e:
-        print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Remote STT skipped: could not read audio file: {e}')}")
-        return None
+            time.sleep(wait_s)
+            continue
+
+        break
 
     if response.status_code != 200:
         print(

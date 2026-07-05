@@ -80,7 +80,7 @@ def print_help() -> None:
                             is an ultrastar.txt file (re-pitch mode).
 
     [pitch detection]
-    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is fcpe)
+    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
                             swiftf0: ONNX-based, CPU-only, fast and lightweight.
                             fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
                             outlier jumps. Better for difficult vocals (metal, screamo). Best
@@ -182,6 +182,9 @@ def print_help() -> None:
     --remote_stt_model           Remote STT model name >> ((default) is whisper-large-v3)
     --remote_stt_timeout         Seconds to wait for the remote STT response before falling back to
                                   local Whisper >> ((default) is 120)
+    --remote_stt_no_retry        Disable automatic retry on rate limit (HTTP 429). Retry is enabled by default.
+    --remote_stt_retry_wait      Seconds to wait between retries >> ((default) is 60)
+    --remote_stt_retry_max       Maximum retries >> ((default) is 3)
 
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)

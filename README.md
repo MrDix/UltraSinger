@@ -63,6 +63,7 @@ This will help me a lot to keep this project alive and improve it.
     - [Sheet Music](#sheet-music)
     - [Format Version](#format-version)
     - [🧪 Experimental Features](#-experimental-features)
+      - [Library Triage Tool](#library-triage-tool)
       - [LLM Lyric Correction](#llm-lyric-correction---llm_correct)
       - [Remote Speech-to-Text](#remote-speech-to-text---remote_stt)
       - [Syllable-Level Note Splitting](#syllable-level-note-splitting---syllable_split)
@@ -205,7 +206,7 @@ _Not all options working now!_
                             is an ultrastar.txt file (re-pitch mode).
 
     [pitch detection]
-    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is fcpe)
+    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
                             swiftf0: ONNX-based, CPU-only, fast and lightweight.
                             fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
                             outlier jumps. Better for difficult vocals (metal, screamo). Best
@@ -301,6 +302,9 @@ _Not all options working now!_
     --remote_stt_model           Remote STT model name >> ((default) is whisper-large-v3)
     --remote_stt_timeout         Seconds to wait for the remote STT response before falling back to
                                   local Whisper >> ((default) is 120)
+    --remote_stt_no_retry        Disable automatic retry on rate limit (HTTP 429). Retry is enabled by default.
+    --remote_stt_retry_wait      Seconds to wait between retries >> ((default) is 60)
+    --remote_stt_retry_max       Maximum retries >> ((default) is 3)
 
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
@@ -427,17 +431,17 @@ starts at the place or is heard. To disable:
 
 UltraSinger supports two pitch detection backends:
 
-- **FCPE** (default): GPU-accelerated via [torchfcpe](https://github.com/CNChTu/FCPE).
+- **SwiftF0** (default): ONNX-based, CPU-only, fast and lightweight.
+  Detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
+  UltraSinger uses 60 Hz and 400 Hz as detection range.
+
+- **FCPE** (`--pitcher fcpe`): GPU-accelerated via [torchfcpe](https://github.com/CNChTu/FCPE).
   Produces more stable pitch contours with fewer outlier jumps (40-50% fewer pitch jumps >5 ST in benchmarks).
   Better for difficult vocals (metal, screamo, harsh vocals).
   Best performance on CUDA, falls back to CPU if unavailable.
 
-- **SwiftF0** (`--pitcher swiftf0`): ONNX-based, CPU-only, fast and lightweight.
-  Detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
-  UltraSinger uses 60 Hz and 400 Hz as detection range.
-
 ```commandline
--i XYZ --pitcher swiftf0
+-i XYZ --pitcher fcpe
 ```
 
 ### 👄 Separation
@@ -548,6 +552,12 @@ The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / �
 
 These features are experimental and disabled by default. They may change or be removed in future versions.
 
+#### Library Triage Tool
+
+`tools/library_triage.py` scans a song library and moves broken songs (or, optionally, ones that score badly against their own extracted vocals) into a separate directory. It defaults to a safe dry run that changes nothing. Because it **moves files on disk**, read the full documentation before using it:
+
+* 📄 **[Library Triage Tool documentation](docs/library-triage.md)**
+
 #### LLM Lyric Correction (`--llm_correct`)
 
 Post-corrects WhisperX transcription using an OpenAI-compatible LLM API. The LLM sees sentence-level context and fixes misheard or misspelled words while preserving all timing data. If the API is unreachable or returns an error, the original lyrics are kept unchanged (fail-open).
@@ -623,6 +633,15 @@ Related flags:
 * `--remote_stt_api_base_url` -- Base URL of the API (default: `https://api.groq.com/openai/v1`)
 * `--remote_stt_api_key` -- API key (can also be set via `ULTRASINGER_REMOTE_STT_API_KEY` environment variable)
 * `--remote_stt_model` -- Model name (default: `whisper-large-v3`)
+* `--remote_stt_no_retry` -- Disable automatic retry on rate limit errors (retry is enabled by default)
+* `--remote_stt_retry_wait` -- Seconds to wait between retries (default: `60`)
+* `--remote_stt_retry_max` -- Maximum retries (default: `3`)
+
+When using free-tier APIs like Groq, you may encounter HTTP 429 (Too Many Requests) errors during peak usage.
+By default, UltraSinger automatically waits and retries — honoring the `Retry-After` response header when the
+provider sends one, otherwise waiting `--remote_stt_retry_wait` seconds. This is especially useful for GPU-less
+users who would otherwise want to skip a multi-minute local Whisper fallback. The retry status is logged to the
+console and recorded in the `ultrasinger_parameter.info` file (if `--write_settings_info` is enabled).
 
 ```bash
 # With Groq (reference provider, whisper-large-v3)
