@@ -107,10 +107,7 @@ This will help me a lot to keep this project alive and improve it.
 
 **Update an existing installation**
 
-```bash
-git pull
-```
-Re-run the install script afterwards when dependencies changed (CUDA users should always use the install script, as it protects the CUDA configuration from git resets).
+Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). It pulls the latest changes and syncs dependencies — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten").
 
 ### Run (CLI)
 
