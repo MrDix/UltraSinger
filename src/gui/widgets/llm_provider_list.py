@@ -86,8 +86,16 @@ def filter_stt_models(raw_models: list[dict]) -> list[str]:
         model_id = m.get("id")
         if not model_id:
             continue
+        capabilities = m.get("capabilities")
         if "input_modalities" in m:
             if "audio" in (m.get("input_modalities") or []):
+                filtered.add(model_id)
+        elif isinstance(capabilities, dict) and capabilities:
+            # Mistral-style metadata (verified live): batch transcription
+            # models carry capabilities.audio_transcription. Realtime-only
+            # models won't work with the batch /audio/transcriptions
+            # endpoint, and audio_speech marks TTS -- both excluded.
+            if capabilities.get("audio_transcription"):
                 filtered.add(model_id)
         else:
             lower_id = model_id.lower()

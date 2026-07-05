@@ -116,6 +116,23 @@ class TestFilterSttModelsOpenAiStyle(unittest.TestCase):
         ]
         self.assertEqual(filter_stt_models(raw), ["voxtral-mini-latest"])
 
+
+class TestFilterSttModelsMistralCapabilities(unittest.TestCase):
+    """Mistral-style /models entries carry a capabilities dict (verified live)."""
+
+    def test_transcription_capability_kept_tts_and_realtime_excluded(self):
+        raw = [
+            {"id": "voxtral-mini-latest",
+             "capabilities": {"audio_transcription": True}},
+            {"id": "voxtral-mini-tts-latest",
+             "capabilities": {"audio_speech": True, "function_calling": True}},
+            {"id": "voxtral-mini-realtime-latest",
+             "capabilities": {"audio_transcription_realtime": True}},
+            {"id": "mistral-large-latest",
+             "capabilities": {"completion_chat": True}},
+        ]
+        self.assertEqual(filter_stt_models(raw), ["voxtral-mini-latest"])
+
     def test_llm_excluded_via_heuristic(self):
         raw = [
             {"id": "whisper-1", "object": "model", "owned_by": "openai"},
