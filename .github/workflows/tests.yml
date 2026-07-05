@@ -20,6 +20,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Qt runtime libraries and ffmpeg
+        # PySide6 (incl. QtWebEngine) needs these native libs even with the
+        # offscreen platform plugin; without them the GUI test modules are
+        # skipped (or used to break collection) instead of actually running.
+        # ffmpeg: the metadata-writer round-trip tests invoke it for real.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg \
+            libegl1 libgl1 libopengl0 libxkbcommon0 libxkbcommon-x11-0 \
+            libnss3 libdbus-1-3 libdrm2 libgbm1 libasound2t64 \
+            libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxi6 \
+            libxcursor1 libfontconfig1
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
@@ -38,6 +51,13 @@ jobs:
         #   pytest/gui/test_queue_result_info.py import src/gui modules that
         #   depend on PySide6.
         run: uv sync --extra scoring --extra gui
+
+      - name: Verify Qt imports (GUI tests must not silently skip)
+        # The importorskip guards keep local no-gui environments green, but in
+        # CI a silent skip would hide real coverage loss (CodeRabbit finding).
+        # If these imports work here, the guards don't trigger and the GUI
+        # tests genuinely run in the pytest step below.
+        run: uv run python -c "import PySide6.QtWidgets, PySide6.QtWebEngineCore; print('Qt OK')"
 
       - name: Run pytest
         run: uv run pytest --import-mode=append -q pytest/
