@@ -206,7 +206,7 @@ _Not all options working now!_
                             is an ultrastar.txt file (re-pitch mode).
 
     [pitch detection]
-    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is fcpe)
+    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
                             swiftf0: ONNX-based, CPU-only, fast and lightweight.
                             fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
                             outlier jumps. Better for difficult vocals (metal, screamo). Best
@@ -428,17 +428,17 @@ starts at the place or is heard. To disable:
 
 UltraSinger supports two pitch detection backends:
 
-- **FCPE** (default): GPU-accelerated via [torchfcpe](https://github.com/CNChTu/FCPE).
+- **SwiftF0** (default): ONNX-based, CPU-only, fast and lightweight.
+  Detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
+  UltraSinger uses 60 Hz and 400 Hz as detection range.
+
+- **FCPE** (`--pitcher fcpe`): GPU-accelerated via [torchfcpe](https://github.com/CNChTu/FCPE).
   Produces more stable pitch contours with fewer outlier jumps (40-50% fewer pitch jumps >5 ST in benchmarks).
   Better for difficult vocals (metal, screamo, harsh vocals).
   Best performance on CUDA, falls back to CPU if unavailable.
 
-- **SwiftF0** (`--pitcher swiftf0`): ONNX-based, CPU-only, fast and lightweight.
-  Detects pitch frequencies between 46.875 Hz (G1) and 2093.75 Hz (C7).
-  UltraSinger uses 60 Hz and 400 Hz as detection range.
-
 ```commandline
--i XYZ --pitcher swiftf0
+-i XYZ --pitcher fcpe
 ```
 
 ### 👄 Separation

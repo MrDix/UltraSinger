@@ -97,7 +97,7 @@ _DEFAULTS = {
     "bpm_override": "",
     "octave_shift": "",
     # Pitch detection
-    "pitcher": "fcpe",
+    "pitcher": "swiftf0",
     # Vocal separation
     "separator_backend": "audio_separator",
     "audio_separator_model": "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt",

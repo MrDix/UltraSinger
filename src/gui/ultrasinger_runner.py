@@ -369,7 +369,7 @@ class UltraSingerRunner(QObject):
         # Pitcher backend
         # Always pass the pitcher explicitly so the GUI selection wins
         # regardless of the CLI default
-        pitcher = config.get("pitcher", "fcpe")
+        pitcher = config.get("pitcher", "swiftf0")
         if pitcher:
             args.extend(["--pitcher", pitcher])
 
