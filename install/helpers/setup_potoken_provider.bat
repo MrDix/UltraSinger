@@ -85,6 +85,8 @@ REM --- Fetch and build the provider ---
 if not exist ".potoken" mkdir ".potoken"
 if exist "%PROVIDER_DIR%\.git" (
     echo Updating provider source...
+    REM Discard our local proxy patch (re-applied below) so ff-only pulls work
+    git -C "%PROVIDER_DIR%" checkout -- . >nul 2>&1
     git -C "%PROVIDER_DIR%" pull --ff-only >nul 2>&1
 ) else (
     echo Downloading provider source...
@@ -97,6 +99,21 @@ if not exist "%PROVIDER_DIR%\server" (
     echo HTTP_PROXY/HTTPS_PROXY/NO_PROXY variables as the rest of this installer
     echo - set them ^(and UV_SYSTEM_CERTS=1 for TLS-inspecting proxies^) and re-run.
     exit /b 3
+)
+
+REM --- Proxy fix: axios needs proxy:false so the httpsAgent does CONNECT ---
+REM Upstream bug: getFetch() passes a correct proxy-agent as httpsAgent but
+REM omits axios' proxy:false. With HTTP(S)_PROXY set in the environment,
+REM axios' own env-proxy mode then wins and sends an absolute-form GET to
+REM the proxy instead of a CONNECT tunnel - enterprise proxies answer 502
+REM and token generation fails. Verified against a local sniffing proxy.
+set "SM_TS=%PROVIDER_DIR%\server\src\session_manager.ts"
+if exist "%SM_TS%" (
+    findstr /c:"proxy: false" "%SM_TS%" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo Applying proxy workaround ^(axios proxy:false^)...
+        powershell -NoProfile -Command "$p = '%SM_TS%'; $c = [IO.File]::ReadAllText($p); $c = $c.Replace('httpsAgent: proxySpec.asDispatcher(logger),', ('httpsAgent: proxySpec.asDispatcher(logger),' + [char]10 + (' ' * 24) + 'proxy: false,')); [IO.File]::WriteAllText($p, $c)"
+    )
 )
 
 echo Building provider ^(npm install + tsc, this can take a minute^)...
