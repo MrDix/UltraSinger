@@ -72,7 +72,7 @@ if [ ! -d "$PROVIDER_DIR/server" ]; then
     echo "connection and run $RERUN again."
     echo "If you are behind a corporate proxy: git and npm honor the same"
     echo "HTTP_PROXY/HTTPS_PROXY/NO_PROXY variables as the rest of this"
-    echo "installer - set them (and UV_NATIVE_TLS=1 for TLS-inspecting"
+    echo "installer - set them (and UV_SYSTEM_CERTS=1 for TLS-inspecting"
     echo "proxies) and re-run."
     exit 3
 fi
@@ -89,7 +89,7 @@ else
     echo "if it keeps failing, YouTube downloads stay limited to 360p."
     echo "If you are behind a corporate proxy: git and npm honor the same"
     echo "HTTP_PROXY/HTTPS_PROXY/NO_PROXY variables as the rest of this"
-    echo "installer - set them (and UV_NATIVE_TLS=1 for TLS-inspecting"
+    echo "installer - set them (and UV_SYSTEM_CERTS=1 for TLS-inspecting"
     echo "proxies) and re-run."
     exit 3
 fi

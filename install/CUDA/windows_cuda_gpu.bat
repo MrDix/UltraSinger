@@ -89,11 +89,19 @@ if defined USE_MANAGED_PYTHON (
     echo Downloading portable Python 3.12 via uv ...
     uv python install 3.12
     if !errorlevel! neq 0 (
-        echo Error: could not download a managed Python 3.12 via uv.
-        echo If you are behind a corporate proxy, set HTTP_PROXY/HTTPS_PROXY
-        echo and re-run. Alternatively install Python 3.12 or 3.13 manually.
-        pause
-        exit /b 1
+        echo First attempt failed - retrying with an app-local Python store
+        echo ^(.uv-python inside this folder^). This sidesteps a broken or
+        echo locked global uv Python store, e.g. from other uv-managed
+        echo Python versions on this machine.
+        set "UV_PYTHON_INSTALL_DIR=%cd%\.uv-python"
+        uv python install 3.12
+        if !errorlevel! neq 0 (
+            echo Error: could not download a managed Python 3.12 via uv.
+            echo If you are behind a corporate proxy, set HTTP_PROXY/HTTPS_PROXY
+            echo and re-run. Alternatively install Python 3.12 or 3.13 manually.
+            pause
+            exit /b 1
+        )
     )
     set "PYTHON_EXE=3.12"
 )

@@ -150,19 +150,19 @@ echo "Selected build: $BUILD"
 echo "Running: $TARGET_SCRIPT"
 echo ""
 
-# --- Auto-enable UV_NATIVE_TLS behind a detected corporate proxy ------------
+# --- Auto-enable UV_SYSTEM_CERTS behind a detected corporate proxy ------------
 # TLS-inspecting corporate proxies replace the server certificate with one
 # signed by an internal CA that uv's bundled certificate store doesn't know
 # about, so plain "uv sync"/"uv lock" fail with certificate errors. uv reads
-# UV_NATIVE_TLS to fall back to the OS certificate store instead, but most
+# UV_SYSTEM_CERTS to fall back to the OS certificate store instead, but most
 # users won't know this variable exists - so when a proxy is clearly
 # configured via the environment (and the user hasn't explicitly opted out),
 # enable it automatically for the sub-script.
-if [ -z "$UV_NATIVE_TLS" ] && { [ -n "$HTTP_PROXY" ] || [ -n "$http_proxy" ] || [ -n "$HTTPS_PROXY" ] || [ -n "$https_proxy" ]; }; then
-    export UV_NATIVE_TLS=1
-    echo "Proxy detected (HTTP(S)_PROXY set) - enabling UV_NATIVE_TLS=1 so uv"
+if [ -z "$UV_SYSTEM_CERTS" ] && { [ -n "$HTTP_PROXY" ] || [ -n "$http_proxy" ] || [ -n "$HTTPS_PROXY" ] || [ -n "$https_proxy" ]; }; then
+    export UV_SYSTEM_CERTS=1
+    echo "Proxy detected (HTTP(S)_PROXY set) - enabling UV_SYSTEM_CERTS=1 so uv"
     echo "trusts certificates from the OS store (needed behind TLS-inspecting"
-    echo "corporate proxies). Set UV_NATIVE_TLS=0 to opt out."
+    echo "corporate proxies). Set UV_SYSTEM_CERTS=0 to opt out."
     echo ""
 fi
 
@@ -177,7 +177,7 @@ if [ "$SUB_RC" -ne 0 ]; then
     echo ""
     echo "If you are behind a corporate proxy: set HTTP_PROXY/HTTPS_PROXY (and"
     echo "NO_PROXY), for TLS-inspecting proxies additionally set"
-    echo "UV_NATIVE_TLS=1, then re-run."
+    echo "UV_SYSTEM_CERTS=1 (older uv: UV_NATIVE_TLS=1), then re-run."
     exit "$SUB_RC"
 fi
 

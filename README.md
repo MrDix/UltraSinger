@@ -86,7 +86,7 @@ This will help me a lot to keep this project alive and improve it.
 * [git](https://git-scm.com/downloads) — to get and update the source code.
 * [ffmpeg](https://www.ffmpeg.org/download.html) — must be on your `PATH`.
 * [Node.js](https://nodejs.org) — *recommended:* needed for full-quality video downloads (the install script builds the local PO-token provider with it; without Node.js, downloads fall back to reduced quality — you can install it later and re-run the install script).
-* Python 3.12 or 3.13 ([Download](https://www.python.org/downloads/)) — *optional:* if neither is installed (e.g. you only have a newer version), the install scripts automatically download a portable, self-contained Python 3.12 via uv into its per-user directory; your system Python is never touched.
+* Python 3.12 or 3.13 ([Download](https://www.python.org/downloads/)) — *optional:* if neither is installed (e.g. you only have a newer version), the install scripts automatically download a portable, self-contained Python 3.12 via uv (into uv's per-user directory, or into an app-local `.uv-python/` folder if the global store is unusable); your system Python is never touched.
 * Behind a corporate proxy? See [Corporate proxy / firewall](#-corporate-proxy--firewall) — the installer detects `HTTP(S)_PROXY` automatically.
 
 **Install**
@@ -188,7 +188,7 @@ UltraSinger works behind a corporate proxy. There is nothing UltraSinger-specifi
 
 **TLS-intercepting proxies** (which re-sign HTTPS traffic with an internal CA) are supported automatically: UltraSinger uses [`truststore`](https://pypi.org/project/truststore/) to read certificates from the operating system's trust store instead of Python's bundled `certifi` bundle — no extra configuration needed, as long as your IT department has installed the CA in Windows/macOS/Linux.
 
-**Installer:** if `install.sh`/`install.bat` detects an `HTTP_PROXY`/`HTTPS_PROXY` environment variable and `UV_NATIVE_TLS` isn't already set, it automatically sets `UV_NATIVE_TLS=1` before running the CUDA/CPU sub-script, so `uv sync`/`uv lock` trust the OS certificate store too (opt out with `UV_NATIVE_TLS=0`). If the install still fails (e.g. a proxy configured only via the Windows registry, with no environment variables set), set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` and `UV_NATIVE_TLS=1` yourself and re-run. `git`/`npm` (used by the optional PO-token provider setup) honor the same variables.
+**Installer:** if `install.sh`/`install.bat` detects an `HTTP_PROXY`/`HTTPS_PROXY` environment variable and `UV_SYSTEM_CERTS` isn't already set, it automatically sets `UV_SYSTEM_CERTS=1` before running the CUDA/CPU sub-script, so `uv sync`/`uv lock` trust the OS certificate store too (opt out with `UV_SYSTEM_CERTS=0`). If the install still fails (e.g. a proxy configured only via the Windows registry, with no environment variables set), set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` and `UV_SYSTEM_CERTS=1` yourself and re-run. `git`/`npm` (used by the optional PO-token provider setup) honor the same variables.
 
 **Local PO-token provider:** the loopback connection to the local PO-token provider (`http://127.0.0.1:4416`) is automatically excluded from the proxy, so a corporate proxy never breaks full-quality downloads.
 
