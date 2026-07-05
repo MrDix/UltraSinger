@@ -63,6 +63,7 @@ This will help me a lot to keep this project alive and improve it.
     - [Sheet Music](#sheet-music)
     - [Format Version](#format-version)
     - [🧪 Experimental Features](#-experimental-features)
+      - [Library Triage Tool](#library-triage-tool)
       - [LLM Lyric Correction](#llm-lyric-correction---llm_correct)
       - [Remote Speech-to-Text](#remote-speech-to-text---remote_stt)
       - [Syllable-Level Note Splitting](#syllable-level-note-splitting---syllable_split)
@@ -547,6 +548,12 @@ The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / �
 ### 🧪 Experimental Features
 
 These features are experimental and disabled by default. They may change or be removed in future versions.
+
+#### Library Triage Tool
+
+`tools/library_triage.py` scans a song library and moves broken songs (or, optionally, ones that score badly against their own extracted vocals) into a separate directory. It defaults to a safe dry run that changes nothing. Because it **moves files on disk**, read the full documentation before using it:
+
+* 📄 **[Library Triage Tool documentation](docs/library-triage.md)**
 
 #### LLM Lyric Correction (`--llm_correct`)
 
