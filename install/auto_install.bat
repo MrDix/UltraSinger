@@ -117,6 +117,36 @@ if defined FORCE_BUILD (
     )
 )
 
+REM --- Ensure ffmpeg is available (required for all audio/video processing) ---
+where ffmpeg >nul 2>&1
+if !errorlevel! neq 0 (
+    echo ffmpeg not found. Trying to install it automatically via winget...
+    where winget >nul 2>&1
+    if !errorlevel! equ 0 (
+        winget install --id Gyan.FFmpeg -e --silent --accept-package-agreements --accept-source-agreements
+        REM Make freshly installed winget shims available in THIS session
+        set "PATH=%LOCALAPPDATA%\Microsoft\WinGet\Links;!PATH!"
+    ) else (
+        echo winget is not available on this system.
+    )
+    where ffmpeg >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo.
+        echo ------------------------------------------------------------
+        echo  ACTION REQUIRED - ffmpeg is required for all audio/video
+        echo  processing. The installation will continue, but UltraSinger
+        echo  will NOT work until this is done:
+        echo    1. Download ffmpeg from https://www.ffmpeg.org/download.html
+        echo       ^(Windows builds: gyan.dev or BtbN^)
+        echo    2. Put ffmpeg.exe on your PATH ^(or re-run this installer
+        echo       in a NEW terminal after installing via winget^)
+        echo ------------------------------------------------------------
+        echo.
+    ) else (
+        echo ffmpeg is now available.
+    )
+)
+
 REM --- Pick and run the matching sub-script ------------------------------------
 if "!BUILD!"=="cuda" (
     set "TARGET_SCRIPT=%~dp0CUDA\windows_cuda_gpu.bat"

@@ -89,7 +89,8 @@ class TestEnsureProvider:
     def test_prefers_node_when_available(self, tmp_path):
         entry = tmp_path / "main.js"
         entry.write_text("// stub", encoding="utf-8")
-        proc = object()
+        proc = MagicMock()
+        proc.poll.return_value = None  # still running
         with patch.object(pp, "is_provider_running", side_effect=[False, True]), \
              patch.object(pp, "_node_exe", return_value="/usr/bin/node"), \
              patch.object(pp, "_start_node_provider", return_value=proc), \
@@ -142,6 +143,29 @@ class TestEnsureProvider:
         assert status.running is False
         node_exe.assert_not_called()
         docker_exe.assert_not_called()
+
+    def test_node_crash_reports_log_hint(self, tmp_path):
+        entry = tmp_path / "main.js"
+        entry.write_text("// stub", encoding="utf-8")
+        proc = MagicMock()
+        proc.poll.return_value = 1  # crashed immediately
+        proc.returncode = 1
+        with patch.object(pp, "is_provider_running", return_value=False),              patch.object(pp, "_node_exe", return_value="/usr/bin/node"),              patch.object(pp, "_start_node_provider", return_value=proc),              patch.object(pp, "_provider_log_tail", return_value="boom"),              patch.object(pp, "_docker_exe", return_value=None):
+            status = pp.ensure_provider(node_entry=entry)
+        assert status.running is False
+        assert "crashed" in status.detail
+        assert "provider.log" in status.detail
+
+    def test_node_timeout_mentions_antivirus_hint(self, tmp_path):
+        entry = tmp_path / "main.js"
+        entry.write_text("// stub", encoding="utf-8")
+        proc = MagicMock()
+        proc.poll.return_value = None  # alive but never ready
+        with patch.object(pp, "is_provider_running", return_value=False),              patch.object(pp, "_node_exe", return_value="/usr/bin/node"),              patch.object(pp, "_start_node_provider", return_value=proc),              patch.object(pp, "_provider_log_tail", return_value=""),              patch.object(pp, "_docker_exe", return_value=None),              patch("time.sleep"):
+            status = pp.ensure_provider(node_entry=entry)
+        assert status.running is False
+        assert "did not become ready" in status.detail
+        assert "antivirus" in status.detail
 
 
 class TestStopProvider:

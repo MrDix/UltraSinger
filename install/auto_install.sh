@@ -133,6 +133,21 @@ else
     fi
 fi
 
+# --- Ensure ffmpeg is available (required for all audio/video processing) ---
+if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo ""
+    echo "------------------------------------------------------------"
+    echo " ACTION REQUIRED - ffmpeg is required for all audio/video"
+    echo " processing. The installation will continue, but UltraSinger"
+    echo " will NOT work until this is done:"
+    echo "     macOS:          brew install ffmpeg"
+    echo "     Debian/Ubuntu:  sudo apt install ffmpeg"
+    echo "     Fedora:         sudo dnf install ffmpeg"
+    echo "     or download from https://www.ffmpeg.org/download.html"
+    echo "------------------------------------------------------------"
+    echo ""
+fi
+
 # --- Pick and run the matching sub-script -----------------------------------
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
