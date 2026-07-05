@@ -370,11 +370,19 @@ class MainWindow(QMainWindow):
                     f"[Queue] Added: {title} - browser audio stream captured "
                     f"(expires in {stream.seconds_until_expiry:.0f}s)"
                 )
+            elif self._potoken_status is not None and self._potoken_status.running:
+                # With the PO-token provider up, yt-dlp IS the intended
+                # full-quality path — a missing browser capture is fine.
+                self._queue_tab.append_log(
+                    f"[Queue] Added: {title} - no browser stream captured; "
+                    f"will download via yt-dlp with PO token (full quality)."
+                )
             else:
                 self._queue_tab.append_log(
                     f"[Queue] Added: {title} - WARNING: no browser audio "
-                    f"stream captured yet. Play the video for a few seconds "
-                    f"in the browser tab, otherwise the download will use "
+                    f"stream captured yet and the PO-token provider is not "
+                    f"running. Play the video for a few seconds in the "
+                    f"browser tab, otherwise the download will use plain "
                     f"yt-dlp (bot-detection risk)."
                 )
         else:
