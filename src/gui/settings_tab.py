@@ -202,14 +202,14 @@ class ConversionSettingsForm(QWidget):
         # Pitcher backend
         self._pitcher = _NoScrollComboBox()
         self._pitcher.addItems(["swiftf0", "fcpe"])
-        self._pitcher.setCurrentText(self._config.get("pitcher", "fcpe"))
+        self._pitcher.setCurrentText(self._config.get("pitcher", "swiftf0"))
         card.add_row("Pitch Detection", self._pitcher,
-                     "Pitch detection backend. 'fcpe' (default, torchfcpe) is GPU-accelerated "
-                     "with more stable pitch contours and fewer outlier jumps; best on CUDA, "
-                     "falls back to CPU if unavailable. 'swiftf0' is ONNX-based and CPU-only, "
-                     "fast and lightweight.",
+                     "Pitch detection backend. 'swiftf0' (default) is ONNX-based and CPU-only, "
+                     "fast and lightweight. 'fcpe' (torchfcpe) is GPU-accelerated with "
+                     "more stable pitch contours and fewer outlier jumps; best on CUDA, "
+                     "falls back to CPU if unavailable.",
                      reset_callback=lambda: self._pitcher.setCurrentText(
-                         _DEFAULTS.get("pitcher", "fcpe")))
+                         _DEFAULTS.get("pitcher", "swiftf0")))
 
         card.add_separator()
 

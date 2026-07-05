@@ -80,7 +80,7 @@ def print_help() -> None:
                             is an ultrastar.txt file (re-pitch mode).
 
     [pitch detection]
-    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is fcpe)
+    --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
                             swiftf0: ONNX-based, CPU-only, fast and lightweight.
                             fcpe: GPU-accelerated (torchfcpe), more stable pitch contours with fewer
                             outlier jumps. Better for difficult vocals (metal, screamo). Best
