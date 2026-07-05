@@ -4,6 +4,12 @@ import time
 
 import pytest
 
+# Skip the whole module (instead of failing collection) when PySide6 or
+# its native Qt libraries are unavailable (e.g. a runner without the gui
+# extra or missing system libs like libEGL).
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+pytest.importorskip("PySide6.QtWebEngineCore", exc_type=ImportError)
+
 from src.gui.media_interceptor import (
     CapturedAudioStream,
     MediaInterceptor,

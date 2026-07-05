@@ -3,6 +3,11 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+# Skip the whole module (instead of failing collection) when PySide6 or
+# its native Qt libraries are unavailable (e.g. a runner without the gui
+# extra or missing system libs like libEGL).
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+
 from src.gui.models import QueueItem
 from src.gui.queue_manager import QueueManager
 
