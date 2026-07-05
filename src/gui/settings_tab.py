@@ -781,8 +781,17 @@ class ConversionSettingsForm(QWidget):
         # The provider *list* is managed in the "LLM Providers" section further
         # down the Settings page; that section is easy to miss below this long
         # form, so a "Manage..." button jumps straight to it.
+        provider_tooltip = (
+            "Which LLM service to use for lyric correction. "
+            "Use 'Manage...' to add or edit providers (the 'LLM "
+            "Providers' section further down this page). "
+            "Groq offers free API access with rate limits."
+        )
         self._llm_provider = _NoScrollComboBox()
         self._llm_provider.setEnabled(self._llm_correct.isChecked())
+        # Qt does not inherit tooltips from parent containers, so the combo
+        # needs its own copy — add_row() only sets it on the row container.
+        self._llm_provider.setToolTip(provider_tooltip)
         provider_row = QWidget()
         provider_layout = QHBoxLayout(provider_row)
         provider_layout.setContentsMargins(0, 0, 0, 0)
@@ -797,11 +806,7 @@ class ConversionSettingsForm(QWidget):
             self.manage_providers_requested.emit
         )
         provider_layout.addWidget(self._manage_providers_btn)
-        card.add_row("LLM Provider", provider_row,
-                     "Which LLM service to use for lyric correction. "
-                     "Use 'Manage...' to add or edit providers (the 'LLM "
-                     "Providers' section further down this page). "
-                     "Groq offers free API access with rate limits.")
+        card.add_row("LLM Provider", provider_row, provider_tooltip)
 
         # Retry settings
         self._llm_retry = ToggleSwitch(
