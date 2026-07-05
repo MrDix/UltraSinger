@@ -217,6 +217,8 @@ if "!BUILD!"=="cpu" (
     echo ULTRASINGER_REMOTE_STT_API_KEY env var^) to offload the slow transcription
     echo step to the cloud ^(a few seconds, free tier available^); everything else
     echo still runs locally.
+    echo GUI users: enable this under Settings -^> 'Remote Speech-to-Text'
+    echo ^(paste the API key there; 'Fetch' lists the available models^).
 ) else (
     if not defined GPU_VRAM (
         echo GPU VRAM could not be verified ^(forced CUDA build^).
@@ -225,9 +227,12 @@ if "!BUILD!"=="cpu" (
         echo automatically^):
         echo   --whisper_compute_type int8
         echo   --whisper_batch_size 8    ^(or 4 if it still runs out of memory^)
+        echo GUI users: Settings -^> 'Transcription ^(Whisper^)' -^> set
+        echo 'Compute Type' to int8 and lower 'Batch Size'.
         echo.
         echo Alternative: a free API key at https://console.groq.com plus --remote_stt
         echo runs transcription in the cloud instead of on your GPU.
+        echo GUI users: enable this under Settings -^> 'Remote Speech-to-Text'.
     ) else (
         if !GPU_VRAM! LSS 8192 (
             echo Your GPU has less than 8 GB VRAM.
@@ -236,9 +241,12 @@ if "!BUILD!"=="cpu" (
             echo automatically^):
             echo   --whisper_compute_type int8
             echo   --whisper_batch_size 8    ^(or 4 if it still runs out of memory^)
+            echo GUI users: Settings -^> 'Transcription ^(Whisper^)' -^> set
+            echo 'Compute Type' to int8 and lower 'Batch Size'.
             echo.
             echo Alternative: a free API key at https://console.groq.com plus --remote_stt
             echo runs transcription in the cloud instead of on your GPU ^(also saves VRAM^).
+            echo GUI users: enable this under Settings -^> 'Remote Speech-to-Text'.
         ) else (
             echo All set, defaults are fine.
         )
@@ -247,6 +255,7 @@ if "!BUILD!"=="cpu" (
 echo ==================================================================
 echo.
 echo No API keys were configured automatically. See the tips above and
-echo the README for how to set --remote_stt up if you want to use it.
+echo the README for how to set --remote_stt up if you want to use it
+echo ^(GUI: Settings -^> 'Remote Speech-to-Text'^).
 echo.
 pause
