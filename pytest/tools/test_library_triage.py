@@ -458,3 +458,34 @@ class TestCsv:
         assert "Song A" in loaded
         assert loaded["Song A"]["action"] == "kept"
         assert list(loaded["Song A"].keys()) == list(lt.CSV_FIELDS)
+
+
+class TestStage1KeptRecheckedInStage2:
+    """A song kept by a stage-1-only pass must be re-evaluated when a later
+    pass enables stage 2 (both sharing the same log)."""
+
+    def _make_song(self, root, name):
+        d = root / name
+        d.mkdir(parents=True)
+        (d / "s.txt").write_text("#TITLE:x\n#BPM:200\n#MP3:s.mp3\n: 0 4 60 la\nE\n",
+                                 encoding="utf-8")
+        (d / "s.mp3").write_bytes(b"x")
+        return d
+
+    def test_kept_without_stage2_is_rechecked(self, tmp_path, monkeypatch):
+        import tools.library_triage as lt
+        src = tmp_path / "src"; corrupt = tmp_path / "corrupt"
+        self._make_song(src, "SongA")
+        log = tmp_path / "log.csv"
+        # Simulate a prior stage-1-only run: song kept, no stage2_score.
+        log.write_text(
+            "rel_path,stage1_verdict,stage2_score,action,reason\n"
+            "SongA,ok,,kept,\n", encoding="utf-8")
+        called = {"n": 0}
+        def fake_stage2(*a, **k):
+            called["n"] += 1
+            return "ok", "", 95.0
+        monkeypatch.setattr(lt, "evaluate_stage2", fake_stage2)
+        lt.run(src, corrupt, apply=False, stage2=True, log_path=log,
+               ffprobe_path=None)
+        assert called["n"] == 1  # stage2 ran on the previously-kept song

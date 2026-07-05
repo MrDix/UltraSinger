@@ -624,8 +624,19 @@ def run(
         for i, song in enumerate(songs, 1):
             prior = existing.get(song.rel_path)
             if prior and prior.get("action") in TERMINAL_ACTIONS:
-                summary.skipped_resume += 1
-                continue
+                # A song "kept" without ever running stage 2 must be
+                # re-checked when stage 2 is now requested -- this is the
+                # stage-1-only pass followed by a separate stage-2 pass
+                # (both writing the same log). Detect it by an empty
+                # stage2_score on the prior "kept" row.
+                needs_stage2_recheck = (
+                    stage2
+                    and prior.get("action") == "kept"
+                    and not (prior.get("stage2_score") or "").strip()
+                )
+                if not needs_stage2_recheck:
+                    summary.skipped_resume += 1
+                    continue
 
             t0 = time.monotonic()
             row = _process_one(
