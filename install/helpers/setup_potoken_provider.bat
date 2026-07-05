@@ -20,14 +20,32 @@ echo ============================================================
 REM --- Ensure Node.js is available (auto-install via winget if missing) ---
 where node >nul 2>&1
 if !errorlevel! neq 0 (
-    echo Node.js not found. Trying to install it automatically via winget...
+    set "DO_NODE_INSTALL=1"
     where winget >nul 2>&1
-    if !errorlevel! equ 0 (
+    if !errorlevel! neq 0 (
+        echo winget is not available on this system.
+        set "DO_NODE_INSTALL="
+    )
+    if defined DO_NODE_INSTALL (
+        REM License transparency: the winget flags below accept the package's
+        REM license terms on the user's behalf - announce it and, when the
+        REM session is interactive, ask first.
+        echo Node.js not found. It can be installed automatically via winget
+        echo ^(package 'OpenJS.NodeJS.LTS', MIT-licensed^). Proceeding accepts
+        echo that package's license terms on your behalf.
+        powershell -NoProfile -Command "if ([Console]::IsInputRedirected) { exit 1 } else { exit 0 }" >nul 2>&1
+        if !errorlevel! equ 0 (
+            set "REPLY="
+            set /p "REPLY=Install Node.js via winget now? [Y/n]: "
+            if /i "!REPLY:~0,1!"=="n" set "DO_NODE_INSTALL="
+        ) else (
+            echo Non-interactive session - installing automatically.
+        )
+    )
+    if defined DO_NODE_INSTALL (
         winget install --id OpenJS.NodeJS.LTS -e --silent --accept-package-agreements --accept-source-agreements
         REM Make the freshly installed node available in THIS session
         set "PATH=%ProgramFiles%\nodejs;%PATH%"
-    ) else (
-        echo winget is not available on this system.
     )
     where node >nul 2>&1
     if !errorlevel! neq 0 (

@@ -21,9 +21,25 @@ echo "============================================================"
 # --- Ensure Node.js / npm are available -------------------------------------
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     # Best-effort auto-install where a package manager is clearly available.
+    # Transparency: announce the third-party install and, when interactive,
+    # ask first (mirrors the winget consent prompt on Windows).
     if command -v brew >/dev/null 2>&1; then
-        echo "Node.js not found. Installing via Homebrew..."
-        brew install node >/dev/null 2>&1
+        echo "Node.js not found. It can be installed automatically via Homebrew"
+        echo "(MIT-licensed)."
+        DO_NODE_INSTALL=1
+        if [ -t 0 ]; then
+            printf "Install Node.js via brew now? [Y/n]: "
+            read -r REPLY || REPLY=""
+            case "$REPLY" in
+                [Nn]*) DO_NODE_INSTALL="" ;;
+            esac
+        else
+            echo "Non-interactive session - installing automatically."
+        fi
+        if [ -n "$DO_NODE_INSTALL" ]; then
+            echo "Installing Node.js via Homebrew..."
+            brew install node >/dev/null 2>&1
+        fi
     fi
 fi
 
