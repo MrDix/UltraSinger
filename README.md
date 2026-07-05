@@ -96,7 +96,7 @@ This will help me a lot to keep this project alive and improve it.
    git clone https://github.com/rakuri255/UltraSinger.git
    cd UltraSinger
    ```
-2. Run the installer — `install\install.bat` (Windows) or `install/install.sh` (Linux/macOS). It takes care of everything:
+2. Run the installer — `installuto_install.bat` (Windows) or `install/auto_install.sh` (Linux/macOS). It takes care of everything:
    * detects your NVIDIA GPU via `nvidia-smi` and picks the CUDA or CPU build automatically (force with `--cuda` / `--cpu`),
    * installs all dependencies including the GUI, scoring engine and PO-token plugin,
    * builds the local PO-token provider when Node.js is available,
@@ -188,7 +188,7 @@ UltraSinger works behind a corporate proxy. There is nothing UltraSinger-specifi
 
 **TLS-intercepting proxies** (which re-sign HTTPS traffic with an internal CA) are supported automatically: UltraSinger uses [`truststore`](https://pypi.org/project/truststore/) to read certificates from the operating system's trust store instead of Python's bundled `certifi` bundle — no extra configuration needed, as long as your IT department has installed the CA in Windows/macOS/Linux.
 
-**Installer:** if `install.sh`/`install.bat` detects an `HTTP_PROXY`/`HTTPS_PROXY` environment variable and `UV_SYSTEM_CERTS` isn't already set, it automatically sets `UV_SYSTEM_CERTS=1` before running the CUDA/CPU sub-script, so `uv sync`/`uv lock` trust the OS certificate store too (opt out with `UV_SYSTEM_CERTS=0`). If the install still fails (e.g. a proxy configured only via the Windows registry, with no environment variables set), set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` and `UV_SYSTEM_CERTS=1` yourself and re-run. `git`/`npm` (used by the optional PO-token provider setup) honor the same variables.
+**Installer:** if `auto_install.sh`/`auto_install.bat` detects an `HTTP_PROXY`/`HTTPS_PROXY` environment variable and `UV_SYSTEM_CERTS` isn't already set, it automatically sets `UV_SYSTEM_CERTS=1` before running the CUDA/CPU sub-script, so `uv sync`/`uv lock` trust the OS certificate store too (opt out with `UV_SYSTEM_CERTS=0`). If the install still fails (e.g. a proxy configured only via the Windows registry, with no environment variables set), set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` and `UV_SYSTEM_CERTS=1` yourself and re-run. `git`/`npm` (used by the optional PO-token provider setup) honor the same variables.
 
 **Local PO-token provider:** the loopback connection to the local PO-token provider (`http://127.0.0.1:4416`) is automatically excluded from the proxy, so a corporate proxy never breaks full-quality downloads.
 

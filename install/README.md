@@ -4,8 +4,8 @@
 
 | Script | Platform |
 | --- | --- |
-| `install.bat` | Windows |
-| `install.sh` | Linux / macOS |
+| `auto_install.bat` | Windows |
+| `auto_install.sh` | Linux / macOS |
 
 They detect your hardware (NVIDIA GPU → CUDA build, otherwise CPU), detect a
 corporate proxy, download a portable Python if needed, and set everything up.
