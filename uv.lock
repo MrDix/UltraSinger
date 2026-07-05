@@ -3617,7 +3617,7 @@ wheels = [
 
 [[package]]
 name = "ultrasinger"
-version = "0.0.13.dev16"
+version = "0.1.0.dev1"
 source = { editable = "." }
 dependencies = [
     { name = "audio-separator" },

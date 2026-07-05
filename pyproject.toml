@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "UltraSinger"
-version = "0.0.13.dev16"
+version = "0.1.0.dev1"
 description = "A tool to create UltraStar karaoke files from audio files"
 requires-python = ">=3.12,<3.14"
 dependencies = [
