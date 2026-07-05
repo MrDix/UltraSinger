@@ -438,6 +438,9 @@ def run() -> tuple[str, Score, Score]:
                     model=settings.remote_stt_model,
                     language=process_data.media_info.language,
                     timeout=settings.remote_stt_timeout,
+                    retry_on_rate_limit=settings.remote_stt_retry_on_rate_limit,
+                    retry_wait=settings.remote_stt_retry_wait,
+                    retry_max=settings.remote_stt_retry_max,
                 )
 
                 if remote_text:
@@ -1133,6 +1136,11 @@ def _write_settings_info_file(
                 f.write(f"  API base URL:             {settings.remote_stt_api_base_url}\n")
                 f.write(f"  Model:                    {settings.remote_stt_model}\n")
                 f.write(f"  Timeout:                  {settings.remote_stt_timeout}s\n")
+                remote_retry_str = (
+                    f"yes ({settings.remote_stt_retry_max}x, {settings.remote_stt_retry_wait}s wait)"
+                    if settings.remote_stt_retry_on_rate_limit else "no"
+                )
+                f.write(f"  Retry on rate limit:      {remote_retry_str}\n")
                 f.write(f"  Used this run:            {remote_stt_used}\n")
             f.write("\n")
 
@@ -2146,6 +2154,12 @@ def init_settings(argv: list[str]) -> Settings:
             settings.remote_stt_model = arg
         elif opt in ("--remote_stt_timeout"):
             settings.remote_stt_timeout = int(float(arg))
+        elif opt in ("--remote_stt_no_retry"):
+            settings.remote_stt_retry_on_rate_limit = False
+        elif opt in ("--remote_stt_retry_wait"):
+            settings.remote_stt_retry_wait = int(arg)
+        elif opt in ("--remote_stt_retry_max"):
+            settings.remote_stt_retry_max = int(arg)
         elif opt in ("--video_url"):
             settings.video_url = arg
         elif opt in ("--youtube_url"):
@@ -2267,6 +2281,9 @@ def arg_options():
         "remote_stt_api_key=",
         "remote_stt_model=",
         "remote_stt_timeout=",
+        "remote_stt_no_retry",
+        "remote_stt_retry_wait=",
+        "remote_stt_retry_max=",
         "video_url=",
         "youtube_url=",  # deprecated alias for --video_url, kept for backward compatibility
         "yt_po_token=",

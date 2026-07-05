@@ -878,11 +878,44 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._remote_stt_timeout.setValue(
                          _DEFAULTS["remote_stt_timeout"]))
 
+        # Retry settings (mirrors the LLM Lyric Correction retry card)
+        self._remote_stt_retry = ToggleSwitch(
+            checked=self._config.get("remote_stt_retry_on_rate_limit", True)
+        )
+        card.add_toggle_row("Retry on rate limit (429)", self._remote_stt_retry,
+                           "Automatically retry when the remote speech-to-text "
+                           "provider returns HTTP 429 (Too Many Requests). Common "
+                           "with free tier APIs like Groq.",
+                           reset_callback=lambda: self._remote_stt_retry.setChecked(
+                               _DEFAULTS["remote_stt_retry_on_rate_limit"]))
+
+        self._remote_stt_retry_wait = QSpinBox()
+        self._remote_stt_retry_wait.setRange(5, 300)
+        self._remote_stt_retry_wait.setSuffix(" s")
+        self._remote_stt_retry_wait.setValue(
+            self._config.get("remote_stt_retry_wait", 60))
+        card.add_row("Retry wait time", self._remote_stt_retry_wait,
+                     "How many seconds to wait before retrying after a rate limit error.",
+                     reset_callback=lambda: self._remote_stt_retry_wait.setValue(
+                         _DEFAULTS["remote_stt_retry_wait"]))
+
+        self._remote_stt_retry_max = QSpinBox()
+        self._remote_stt_retry_max.setRange(1, 10)
+        self._remote_stt_retry_max.setValue(
+            self._config.get("remote_stt_retry_max", 3))
+        card.add_row("Max retries", self._remote_stt_retry_max,
+                     "Maximum number of retries before giving up.",
+                     reset_callback=lambda: self._remote_stt_retry_max.setValue(
+                         _DEFAULTS["remote_stt_retry_max"]))
+
         def _toggle_remote_stt(on):
             self._remote_stt_api_base_url.setEnabled(on)
             self._remote_stt_api_key.setEnabled(on)
             self._remote_stt_model.setEnabled(on)
             self._remote_stt_timeout.setEnabled(on)
+            self._remote_stt_retry.setEnabled(on)
+            self._remote_stt_retry_wait.setEnabled(on)
+            self._remote_stt_retry_max.setEnabled(on)
 
         self._remote_stt.toggled_signal.connect(_toggle_remote_stt)
         _toggle_remote_stt(self._remote_stt.isChecked())
@@ -1281,6 +1314,9 @@ class ConversionSettingsForm(QWidget):
             "remote_stt_api_key": self._remote_stt_api_key.text(),
             "remote_stt_model": self._remote_stt_model.text(),
             "remote_stt_timeout": self._remote_stt_timeout.value(),
+            "remote_stt_retry_on_rate_limit": self._remote_stt_retry.isChecked(),
+            "remote_stt_retry_wait": self._remote_stt_retry_wait.value(),
+            "remote_stt_retry_max": self._remote_stt_retry_max.value(),
             "calculate_score": self._calculate_score.isChecked(),
             "format_version": self._format_version.currentText(),
             "create_plot": self._create_plot.isChecked(),
