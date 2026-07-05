@@ -205,7 +205,8 @@ class TestMove:
         summary = lt.run(source, corrupt, apply=True, log=lambda *a: None)
 
         assert not song_dir.exists()
-        dest = corrupt / "Lib A" / "Sub" / "Broken Song"
+        # Moved songs mirror the source folder's own name too ("source" here).
+        dest = corrupt / "source" / "Lib A" / "Sub" / "Broken Song"
         assert dest.is_dir()
         assert (dest / "Broken Song.txt").exists()
         assert summary.moved == 1
@@ -226,7 +227,7 @@ class TestMove:
         corrupt = tmp_path / "corrupt"
         song_dir = _make_song(source, "Broken Song", notes=False)
 
-        dest = corrupt / "Broken Song"
+        dest = corrupt / "source" / "Broken Song"
         dest.mkdir(parents=True)
         (dest / "sentinel.txt").write_text("do not touch", encoding="utf-8")
 
@@ -299,7 +300,7 @@ class TestStage2FailSafe:
         )
 
         assert not song_dir.exists()
-        assert (corrupt / "Desynced Song").is_dir()
+        assert (corrupt / "source" / "Desynced Song").is_dir()
         assert summary.moved == 1
         assert summary.stage2_fail == 1
         assert summary.stage1_corrupt == 0

@@ -595,6 +595,13 @@ def run(
         log_path = corrupt_dir / "triage_log.csv"
     log_path = Path(log_path)
 
+    # Moved songs mirror their full path *including* the source folder's own
+    # name: source c:\Songs\Foo + song Foo\Party2\X  ->  corrupt\Foo\Party2\X.
+    # This keeps songs from different source roots separated under one trash
+    # dir and preserves where they came from. The guard/log above stay on the
+    # user-given corrupt_dir; only the move destination gets the source name.
+    move_dest_root = corrupt_dir / source_dir.name if source_dir.name else corrupt_dir
+
     resolved_ffprobe = _resolve_ffprobe() if ffprobe_path is _AUTO else ffprobe_path
 
     existing = load_existing_results(log_path)
@@ -641,7 +648,7 @@ def run(
             t0 = time.monotonic()
             row = _process_one(
                 song,
-                corrupt_dir=corrupt_dir,
+                corrupt_dir=move_dest_root,
                 apply=apply,
                 ffprobe_path=resolved_ffprobe,
                 stage2=stage2,
