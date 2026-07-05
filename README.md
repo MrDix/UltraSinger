@@ -190,6 +190,8 @@ UltraSinger works behind a corporate proxy. There is nothing UltraSinger-specifi
 
 **Installer:** if `auto_install.sh`/`auto_install.bat` detects an `HTTP_PROXY`/`HTTPS_PROXY` environment variable and `UV_SYSTEM_CERTS` isn't already set, it automatically sets `UV_SYSTEM_CERTS=1` before running the CUDA/CPU sub-script, so `uv sync`/`uv lock` trust the OS certificate store too (opt out with `UV_SYSTEM_CERTS=0`). If the install still fails (e.g. a proxy configured only via the Windows registry, with no environment variables set), set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` and `UV_SYSTEM_CERTS=1` yourself and re-run. `git`/`npm` (used by the optional PO-token provider setup) honor the same variables.
 
+**DNS filters (AdGuard Home, Pi-hole, ...):** the PO-token provider must reach `jnn-pa.googleapis.com` (BotGuard API) and `www.youtube.com` to generate tokens. Aggressive DNS filter lists sometimes block the former — the symptom is a working provider whose token requests fail with HTTP 500. Whitelist `jnn-pa.googleapis.com` in your filter, or verify reachability with `curl -x $HTTPS_PROXY https://jnn-pa.googleapis.com/` (any HTTP status, including 404, means it is reachable). The server's own log is written to `.potoken/provider.log`.
+
 **Local PO-token provider:** the loopback connection to the local PO-token provider (`http://127.0.0.1:4416`) is automatically excluded from the proxy, so a corporate proxy never breaks full-quality downloads.
 
 ## 📖 How to use the App
