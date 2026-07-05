@@ -7,13 +7,13 @@ REM sub-script (install\CUDA\windows_cuda_gpu.bat or install\CPU\windows_cpu.bat
 REM The sub-scripts themselves are untouched and can still be run directly.
 REM
 REM Usage:
-REM   install\install.bat              auto-detect hardware and install
-REM   install\install.bat --cpu        force the CPU build
-REM   install\install.bat --cuda       force the CUDA build
-REM   install\install.bat --help       show this help
+REM   install\auto_install.bat              auto-detect hardware and install
+REM   install\auto_install.bat --cpu        force the CPU build
+REM   install\auto_install.bat --cuda       force the CUDA build
+REM   install\auto_install.bat --help       show this help
 REM
 REM Environment variable override (same effect as the flags above):
-REM   set ULTRASINGER_BUILD=cpu|cuda  (before running install.bat)
+REM   set ULTRASINGER_BUILD=cpu|cuda  (before running auto_install.bat)
 REM
 REM This script does not configure any API keys; it only prints information
 REM and suggested (not applied) command-line flags at the end.
@@ -29,7 +29,7 @@ for %%A in (%*) do (
 )
 
 if defined SHOW_HELP (
-    echo Usage: install.bat [--cpu^|--cuda] [--help]
+    echo Usage: auto_install.bat [--cpu^|--cuda] [--help]
     echo.
     echo   --cpu     Force the CPU build, even if an NVIDIA GPU is detected.
     echo   --cuda    Force the CUDA build, even if no NVIDIA GPU is detected.
@@ -104,7 +104,7 @@ if defined FORCE_BUILD (
         set "BUILD=cuda"
         rem Only prompt when stdin is an interactive console, so an automated
         rem or wrapped invocation cannot block waiting for input (mirrors the
-        rem [ -t 0 ] guard in install.sh). Non-interactive keeps the CUDA build.
+        rem [ -t 0 ] guard in auto_install.sh). Non-interactive keeps the CUDA build.
         set "IS_INTERACTIVE=1"
         powershell -NoProfile -Command "if ([Console]::IsInputRedirected) { exit 1 } else { exit 0 }" >nul 2>&1
         if !errorlevel! neq 0 set "IS_INTERACTIVE=0"

@@ -44,7 +44,7 @@ uv sync --extra gui --extra scoring --extra potoken
 
 # Set up the PO-token provider (Node.js) for full-quality YouTube downloads
 POT_RC=0
-bash install/setup_potoken_provider.sh "install/CUDA/linux_cuda_gpu.sh" || POT_RC=$?
+bash install/helpers/setup_potoken_provider.sh "install/CUDA/linux_cuda_gpu.sh" || POT_RC=$?
 
 # Protect local CUDA config from being reverted by git operations
 # (branch switches, pulls, etc. would otherwise reset to CPU default)

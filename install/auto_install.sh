@@ -6,13 +6,13 @@
 # The sub-scripts themselves are untouched and can still be run directly.
 #
 # Usage:
-#   install/install.sh              auto-detect hardware and install
-#   install/install.sh --cpu        force the CPU build
-#   install/install.sh --cuda       force the CUDA build (Linux only)
-#   install/install.sh --help       show this help
+#   install/auto_install.sh              auto-detect hardware and install
+#   install/auto_install.sh --cpu        force the CPU build
+#   install/auto_install.sh --cuda       force the CUDA build (Linux only)
+#   install/auto_install.sh --help       show this help
 #
 # Environment variable override (same effect as the flags above):
-#   ULTRASINGER_BUILD=cpu|cuda install/install.sh
+#   ULTRASINGER_BUILD=cpu|cuda install/auto_install.sh
 #
 # This script does not configure any API keys; it only prints information
 # and suggested (not applied) command-line flags at the end.
@@ -20,7 +20,7 @@
 set -e
 
 print_usage() {
-    echo "Usage: install.sh [--cpu|--cuda] [--help]"
+    echo "Usage: auto_install.sh [--cpu|--cuda] [--help]"
     echo ""
     echo "  --cpu     Force the CPU build, even if an NVIDIA GPU is detected."
     echo "  --cuda    Force the CUDA build, even if no NVIDIA GPU is detected"

@@ -50,7 +50,7 @@ uv sync --extra gui --extra scoring --extra potoken
 
 # Set up the PO-token provider (Node.js) for full-quality YouTube downloads
 POT_RC=0
-bash install/setup_potoken_provider.sh "install/CPU/linux_cpu.sh" || POT_RC=$?
+bash install/helpers/setup_potoken_provider.sh "install/CPU/linux_cpu.sh" || POT_RC=$?
 
 echo ""
 echo "Installation completed."
