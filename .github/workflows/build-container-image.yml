@@ -1,6 +1,7 @@
 name: Build container image
+# Fork note: container publishing needs registry setup this fork doesn't
+# use — keep the workflow available manually, but don't run it on every push.
 on:
-  push:
   workflow_dispatch:
 
 env:

@@ -56,9 +56,7 @@ class _ModelFetcher(QObject):
             models = sorted(m["id"] for m in raw_models if m.get("id"))
             self.finished.emit(models)
             self.finished_raw.emit(raw_models)
-        except (urllib.error.URLError, json.JSONDecodeError, KeyError, OSError) as e:
-            self.error.emit(str(e))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — worker thread must never raise
             self.error.emit(str(e))
 
 
