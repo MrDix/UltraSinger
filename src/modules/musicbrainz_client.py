@@ -199,10 +199,21 @@ def __get_image(recording) -> (bytes, str):
             except Exception as e:
                 # Catch all exceptions (including CAA errors) to prevent
                 # cover art failures from crashing the entire pipeline.
-                print(f"{ULTRASINGER_HEAD} Cover art download failed: {e}")
+                # A 404 just means THIS release has no cover in the Cover
+                # Art Archive — an expected, routine case while iterating
+                # the recording's releases, so don't alarm the user; the
+                # loop simply tries the next release.
+                if "404" not in str(e):
+                    print(f"{ULTRASINGER_HEAD} Cover art download failed: {e}")
                 continue
     if image_data is not None:
         print(f"{ULTRASINGER_HEAD} Found cover image")
+    elif 'release-list' in recording:
+        # Informational only: for URL input the video thumbnail is used as
+        # the cover instead; local files simply get no MusicBrainz cover.
+        print(
+            f"{ULTRASINGER_HEAD} No cover art on MusicBrainz for this recording."
+        )
 
     return image_data, image_url
 
