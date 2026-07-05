@@ -200,6 +200,7 @@ class MainWindow(QMainWindow):
         # Wire queue manager → console tab
         self._queue_mgr.line_output.connect(self._queue_tab.append_log)
         self._queue_mgr.line_output.connect(self._check_for_bot_detection)
+        self._queue_mgr.line_output.connect(self._check_for_pot_failure)
         self._queue_mgr.stage_changed.connect(self._queue_tab.on_stage_changed)
         self._queue_mgr.queue_started.connect(self._on_queue_started)
         self._queue_mgr.queue_finished.connect(self._on_queue_finished)
@@ -542,6 +543,7 @@ class MainWindow(QMainWindow):
     def _on_queue_started(self):
         """Handle queue batch start."""
         self._bot_detection_handled = False
+        self._pot_failure_handled = False
         self._update_queue_buttons()
 
     def _on_queue_finished(self, failed_count: int, cancelled: bool):
@@ -562,6 +564,33 @@ class MainWindow(QMainWindow):
     # ── Bot detection workaround ──────────────────────────────────────
 
     _bot_detection_handled = False
+    _pot_failure_handled = False
+
+    def _check_for_pot_failure(self, line: str):
+        """Translate cryptic PO-token generation failures into actionable advice.
+
+        The provider server can be up (ping OK) while token *generation*
+        fails — e.g. a corporate proxy or DNS filter blocking one of the
+        Google endpoints the BotGuard flow needs (observed in the field:
+        www.google.com/js/th/... answered with 502 by the proxy). yt-dlp
+        then prints a warning pointing at the provider's issue tracker,
+        which sends users in the wrong direction.
+        """
+        if 'Error fetching PO Token from "bgutil' not in line:
+            return
+        if self._pot_failure_handled:
+            return
+        self._pot_failure_handled = True
+        self._queue_tab.append_log(
+            "[PO-Token] Token generation is failing even though the provider "
+            "server is running. This is usually a network filter blocking "
+            "one of the required Google endpoints (jnn-pa.googleapis.com, "
+            "www.youtube.com, www.google.com) - common behind corporate "
+            "proxies and DNS filters. Downloads fall back to reduced "
+            "quality. See the 'Corporate proxy / firewall' section in the "
+            "README for the per-host check and whitelist advice; the "
+            "server's own log is .potoken/provider.log."
+        )
 
     def _check_for_bot_detection(self, line: str):
         """Detect yt-dlp bot-detection errors and trigger cookie reset.
