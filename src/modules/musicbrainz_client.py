@@ -202,8 +202,14 @@ def __get_image(recording) -> (bytes, str):
                 # A 404 just means THIS release has no cover in the Cover
                 # Art Archive — an expected, routine case while iterating
                 # the recording's releases, so don't alarm the user; the
-                # loop simply tries the next release.
-                if "404" not in str(e):
+                # loop simply tries the next release. Detect it from the
+                # real HTTP status: musicbrainzngs wraps CAA failures in
+                # ResponseError(cause=HTTPError) exposing .cause.code, a
+                # bare HTTPError carries .code directly.
+                status = getattr(e, "code", None)
+                if status is None:
+                    status = getattr(getattr(e, "cause", None), "code", None)
+                if status != 404:
                     print(f"{ULTRASINGER_HEAD} Cover art download failed: {e}")
                 continue
     if image_data is not None:

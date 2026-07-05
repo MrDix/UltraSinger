@@ -199,3 +199,41 @@ class TestGetMusicInfos(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestCoverArt404Detection(unittest.TestCase):
+    """Routine 404s are detected via the real HTTP status, not str(e)."""
+
+    @staticmethod
+    def _get_image_fn():
+        from src.modules import musicbrainz_client as mb
+        # Module-level dunder name: fetch via __dict__ to dodge the test
+        # class's own name mangling.
+        return mb, mb.__dict__["__get_image"]
+
+    def _run(self, http_status):
+        import io as _io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        from urllib.error import HTTPError
+        import musicbrainzngs
+
+        mb, get_image = self._get_image_fn()
+        cause = HTTPError("u", http_status, "msg", None, None)
+        exc = musicbrainzngs.ResponseError(cause=cause)
+        recording = {"release-list": [{"id": "r1"}]}
+        buf = _io.StringIO()
+        with patch.object(mb.musicbrainzngs, "get_image_front",
+                          side_effect=exc), redirect_stdout(buf):
+            result = get_image(recording)
+        return result, buf.getvalue()
+
+    def test_404_cause_is_silent(self):
+        result, out = self._run(404)
+        self.assertEqual(result, (None, None))
+        self.assertNotIn("Cover art download failed", out)
+        self.assertIn("No cover art on MusicBrainz", out)
+
+    def test_other_status_is_loud(self):
+        _, out = self._run(503)
+        self.assertIn("Cover art download failed", out)
