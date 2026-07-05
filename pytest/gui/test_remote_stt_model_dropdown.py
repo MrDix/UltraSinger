@@ -108,6 +108,14 @@ class TestFilterSttModelsOpenAiStyle(unittest.TestCase):
             ["gpt-4o-transcribe", "whisper-1"],
         )
 
+    def test_voxtral_kept_via_heuristic(self):
+        """Mistral's speech models don't always carry whisper/transcribe."""
+        raw = [
+            {"id": "voxtral-mini-latest", "object": "model"},
+            {"id": "mistral-large-latest", "object": "model"},
+        ]
+        self.assertEqual(filter_stt_models(raw), ["voxtral-mini-latest"])
+
     def test_llm_excluded_via_heuristic(self):
         raw = [
             {"id": "whisper-1", "object": "model", "owned_by": "openai"},

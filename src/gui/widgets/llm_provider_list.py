@@ -91,7 +91,10 @@ def filter_stt_models(raw_models: list[dict]) -> list[str]:
                 filtered.add(model_id)
         else:
             lower_id = model_id.lower()
-            if "whisper" in lower_id or "transcribe" in lower_id:
+            # "voxtral": Mistral's speech models (e.g. voxtral-mini-latest)
+            # carry neither "whisper" nor "transcribe" in every variant.
+            if ("whisper" in lower_id or "transcribe" in lower_id
+                    or "voxtral" in lower_id):
                 filtered.add(model_id)
 
     if not filtered and all_ids:
