@@ -302,6 +302,9 @@ _Not all options working now!_
     --remote_stt_model           Remote STT model name >> ((default) is whisper-large-v3)
     --remote_stt_timeout         Seconds to wait for the remote STT response before falling back to
                                   local Whisper >> ((default) is 120)
+    --remote_stt_no_retry        Disable automatic retry on rate limit (HTTP 429). Retry is enabled by default.
+    --remote_stt_retry_wait      Seconds to wait between retries >> ((default) is 60)
+    --remote_stt_retry_max       Maximum retries >> ((default) is 3)
 
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
@@ -630,6 +633,15 @@ Related flags:
 * `--remote_stt_api_base_url` -- Base URL of the API (default: `https://api.groq.com/openai/v1`)
 * `--remote_stt_api_key` -- API key (can also be set via `ULTRASINGER_REMOTE_STT_API_KEY` environment variable)
 * `--remote_stt_model` -- Model name (default: `whisper-large-v3`)
+* `--remote_stt_no_retry` -- Disable automatic retry on rate limit errors (retry is enabled by default)
+* `--remote_stt_retry_wait` -- Seconds to wait between retries (default: `60`)
+* `--remote_stt_retry_max` -- Maximum retries (default: `3`)
+
+When using free-tier APIs like Groq, you may encounter HTTP 429 (Too Many Requests) errors during peak usage.
+By default, UltraSinger automatically waits and retries — honoring the `Retry-After` response header when the
+provider sends one, otherwise waiting `--remote_stt_retry_wait` seconds. This is especially useful for GPU-less
+users who would otherwise want to skip a multi-minute local Whisper fallback. The retry status is logged to the
+console and recorded in the `ultrasinger_parameter.info` file (if `--write_settings_info` is enabled).
 
 ```bash
 # With Groq (reference provider, whisper-large-v3)

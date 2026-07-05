@@ -120,6 +120,9 @@ class Settings:
     remote_stt_api_key: str | None = None  # or set ULTRASINGER_REMOTE_STT_API_KEY env var
     remote_stt_model: str = "whisper-large-v3"
     remote_stt_timeout: int = 120  # seconds
+    remote_stt_retry_on_rate_limit = True  # Retry on HTTP 429 rate limit errors
+    remote_stt_retry_wait: int = 60  # Seconds to wait between retries
+    remote_stt_retry_max: int = 3  # Maximum retries
 
     # Freestyle detection — mark unpitchable passages as freestyle
     # Covers growls, screams, rap, spoken word, harsh vocals, and any non-melodic vocal style.
