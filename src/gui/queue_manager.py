@@ -289,17 +289,26 @@ class QueueManager(QObject):
                     )
                     self._start_intercepted_download(next_item, merged, stream)
                     return
-                if status == "expired":
+                if self._potoken_available:
+                    # yt-dlp with a PO token is the intended full-quality
+                    # path — no browser capture needed, nothing to warn about.
+                    reason = ("expired" if status == "expired"
+                              else "not captured")
+                    self.line_output.emit(
+                        f"[Queue] Browser stream {reason} - downloading via "
+                        f"yt-dlp with PO token (full quality)."
+                    )
+                elif status == "expired":
                     self.line_output.emit(
                         "[Queue] Intercepted browser stream has EXPIRED - "
-                        "falling back to yt-dlp (bot-detection risk). "
+                        "falling back to plain yt-dlp (bot-detection risk). "
                         "Re-play the video in the browser tab shortly before "
                         "starting the queue to refresh it."
                     )
                 else:
                     self.line_output.emit(
                         "[Queue] No intercepted browser stream for this video - "
-                        "falling back to yt-dlp (bot-detection risk). "
+                        "falling back to plain yt-dlp (bot-detection risk). "
                         "Play the video for a few seconds in the browser tab "
                         "before queueing so the audio stream can be captured."
                     )
