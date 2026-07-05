@@ -16,7 +16,7 @@ import pytest
 
 # Skip the whole module (instead of failing collection) when PySide6 or its
 # native Qt libraries are unavailable, e.g. on a runner without the gui extra.
-pytest.importorskip("PySide6.QtWidgets")
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

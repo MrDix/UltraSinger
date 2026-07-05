@@ -126,7 +126,9 @@ def transcribe_remote(
     if language:
         data["language"] = language
 
-    max_attempts = 1 + (retry_max if retry_on_rate_limit else 0)
+    # max(1, ...): a negative retry_max must not zero out the loop --
+    # at least one attempt always runs so failure stays fail-open.
+    max_attempts = max(1, 1 + (retry_max if retry_on_rate_limit else 0))
     response = None
 
     for attempt in range(max_attempts):
