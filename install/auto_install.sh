@@ -133,6 +133,21 @@ else
     fi
 fi
 
+# --- Ensure ffmpeg is available (required for all audio/video processing) ---
+if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo ""
+    echo "------------------------------------------------------------"
+    echo " ACTION REQUIRED - ffmpeg is required for all audio/video"
+    echo " processing. The installation will continue, but UltraSinger"
+    echo " will NOT work until this is done:"
+    echo "     macOS:          brew install ffmpeg"
+    echo "     Debian/Ubuntu:  sudo apt install ffmpeg"
+    echo "     Fedora:         sudo dnf install ffmpeg"
+    echo "     or download from https://www.ffmpeg.org/download.html"
+    echo "------------------------------------------------------------"
+    echo ""
+fi
+
 # --- Pick and run the matching sub-script -----------------------------------
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -203,6 +218,8 @@ case "$BUILD" in
         echo "ULTRASINGER_REMOTE_STT_API_KEY env var) to offload the slow transcription"
         echo "step to the cloud (a few seconds, free tier available); everything else"
         echo "still runs locally."
+        echo "GUI users: enable this under Settings -> 'Remote Speech-to-Text'"
+        echo "(paste the API key there; 'Fetch' lists the available models)."
         ;;
     cuda)
         if [ -z "$GPU_VRAM" ]; then
@@ -212,9 +229,12 @@ case "$BUILD" in
             echo "automatically):"
             echo "  --whisper_compute_type int8"
             echo "  --whisper_batch_size 8    (or 4 if it still runs out of memory)"
+            echo "GUI users: Settings -> 'Transcription (Whisper)' -> set"
+            echo "'Compute Type' to int8 and lower 'Batch Size'."
             echo ""
             echo "Alternative: a free API key at https://console.groq.com plus --remote_stt"
             echo "runs transcription in the cloud instead of on your GPU."
+            echo "GUI users: enable this under Settings -> 'Remote Speech-to-Text'."
         elif [ "$GPU_VRAM" -lt 8192 ]; then
             echo "Your GPU has less than 8 GB VRAM."
             echo "The default Whisper model size (large-v2) may exceed available VRAM."
@@ -222,9 +242,12 @@ case "$BUILD" in
             echo "automatically):"
             echo "  --whisper_compute_type int8"
             echo "  --whisper_batch_size 8    (or 4 if it still runs out of memory)"
+            echo "GUI users: Settings -> 'Transcription (Whisper)' -> set"
+            echo "'Compute Type' to int8 and lower 'Batch Size'."
             echo ""
             echo "Alternative: a free API key at https://console.groq.com plus --remote_stt"
             echo "runs transcription in the cloud instead of on your GPU (also saves VRAM)."
+            echo "GUI users: enable this under Settings -> 'Remote Speech-to-Text'."
         else
             echo "All set, defaults are fine."
         fi
@@ -233,4 +256,5 @@ esac
 echo "=================================================================="
 echo ""
 echo "No API keys were configured automatically. See the tips above and"
-echo "the README for how to set --remote_stt up if you want to use it."
+echo "the README for how to set --remote_stt up if you want to use it"
+echo "(GUI: Settings -> 'Remote Speech-to-Text')."

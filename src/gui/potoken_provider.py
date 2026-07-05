@@ -141,20 +141,50 @@ def _node_exe() -> str | None:
     return shutil.which("node")
 
 
+def _provider_log_path() -> Path:
+    return _REPO_ROOT / ".potoken" / "provider.log"
+
+
 def _start_node_provider(node: str, entry: Path) -> subprocess.Popen | None:
-    """Launch the local Node provider server.  Returns the Popen or None."""
+    """Launch the local Node provider server.  Returns the Popen or None.
+
+    The server's output goes to ``.potoken/provider.log`` (overwritten per
+    start) so a failing launch is diagnosable instead of vanishing into
+    DEVNULL — essential on corporate machines where e.g. antivirus or
+    policy tooling can break or massively delay the first start.
+    """
+    log_path = _provider_log_path()
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
+    except OSError:
+        log_file = subprocess.DEVNULL
     try:
         proc = subprocess.Popen(
             [node, str(entry)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT if log_file is not subprocess.DEVNULL
+            else subprocess.DEVNULL,
             cwd=str(entry.parent),
             creationflags=_CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to start bgutil provider via Node: %s", e)
         return None
+    finally:
+        # Popen duplicated the handle; our Python-side object can close.
+        if log_file is not subprocess.DEVNULL:
+            log_file.close()
     return proc
+
+
+def _provider_log_tail(lines: int = 10) -> str:
+    """Last lines of the provider log, for failure diagnostics ('' if none)."""
+    try:
+        text = _provider_log_path().read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return "\n".join(text.strip().splitlines()[-lines:])
 
 
 def _docker_exe() -> str | None:
@@ -204,12 +234,26 @@ def _start_docker_provider(docker: str, port: int) -> str:
 def _wait_until_running(
     base_url: str, attempts: int = 15,
     cancel: threading.Event | None = None,
+    proc: subprocess.Popen | None = None,
 ) -> bool:
-    """Poll the provider until it responds (container needs a moment)."""
+    """Poll the provider until it responds.
+
+    When *proc* is given, a died process aborts the wait immediately
+    (crash) instead of polling into the void. The attempt budget must be
+    generous for first launches: on corporate machines, antivirus scanning
+    of the freshly built node_modules can delay server startup far beyond
+    a minute (observed in the field).
+    """
     import time
 
     for _ in range(attempts):
         if cancel is not None and cancel.is_set():
+            return False
+        if proc is not None and proc.poll() is not None:
+            logger.warning(
+                "PO-token provider process exited early (code %s)",
+                proc.returncode,
+            )
             return False
         if is_provider_running(base_url):
             return True
@@ -259,7 +303,10 @@ def ensure_provider(
     if node and entry.is_file():
         logger.info("Starting bgutil PO-token provider via Node ...")
         proc = _start_node_provider(node, entry)
-        if proc is not None and _wait_until_running(normalized, cancel=cancel):
+        # Generous budget (~2 min): first launches on corporate machines are
+        # routinely delayed by antivirus scanning of node_modules.
+        if proc is not None and _wait_until_running(
+                normalized, attempts=120, cancel=cancel, proc=proc):
             return ProviderStatus(
                 running=True, started_by_us=True, base_url=normalized,
                 process=proc,
@@ -267,7 +314,24 @@ def ensure_provider(
                        "downloads enabled",
             )
         if proc is not None:
+            crashed = proc.poll() is not None
             _terminate_process(proc)
+            tail = _provider_log_tail()
+            if tail:
+                logger.warning("PO-token provider output (tail):\n%s", tail)
+            return ProviderStatus(
+                running=False, base_url=normalized,
+                detail=(
+                    ("PO-token provider crashed on start"
+                     if crashed else
+                     "PO-token provider started but did not become ready "
+                     "within 2 minutes")
+                    + " - video downloads may be limited to 360p / blocked. "
+                    f"See {_provider_log_path()} for the server output. "
+                    "On a first launch, antivirus scanning can delay startup: "
+                    "restarting the app often succeeds."
+                ),
+            )
 
     if cancel is not None and cancel.is_set():
         return ProviderStatus(running=False, base_url=normalized, detail=_SETUP_HINT)
