@@ -21,3 +21,4 @@ output
 
 # bgutil PO-token provider (built locally by the install scripts)
 .potoken/
+.uv-python/
