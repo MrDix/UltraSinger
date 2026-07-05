@@ -126,6 +126,11 @@ _DEFAULTS = {
     "potoken_auto_start_node": True,     # allow launching the local Node.js server
     "potoken_auto_start_docker": True,   # allow launching the provider via Docker
     "potoken_base_url": "",              # empty -> default http://127.0.0.1:4416
+    # Corporate proxy: "system" (use OS/env proxy), "manual" (proxy_url below),
+    # or "none" (strip any proxy env vars, even if the OS/shell set one)
+    "proxy_mode": "system",
+    "proxy_url": "",
+    "proxy_no_proxy": "",
 }
 
 

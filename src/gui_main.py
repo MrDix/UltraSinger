@@ -58,6 +58,23 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
+    # Corporate-proxy friendliness: apply the GUI's own proxy settings first
+    # (Network Proxy card - manual proxy / no-proxy override), then the
+    # baseline loopback bypass for the local PO-token provider + OS
+    # certificate store for TLS-intercepting proxies. Must all run before the
+    # first HTTPS call (provider ping, model fetch, PyPI check), which happens
+    # in MainWindow's constructor - load the config here (once) and hand it
+    # to MainWindow so it isn't read from disk twice.
+    from gui.config import load_config
+    from modules.proxy_setup import apply_proxy_config, setup_proxy_environment
+
+    gui_config = load_config()
+    apply_proxy_config(gui_config)
+    if setup_proxy_environment():
+        logging.getLogger(__name__).info(
+            "TLS: using operating-system certificate store (truststore)"
+        )
+
     # Windows: Set explicit AppUserModelID so the taskbar shows our icon
     # instead of the generic Python icon.  Must be called BEFORE QApplication.
     if sys.platform == "win32":
@@ -151,7 +168,7 @@ def main():
 
     from gui.main_window import MainWindow
 
-    window = MainWindow()
+    window = MainWindow(gui_config)
     window.show()
 
     exit_code = app.exec()

@@ -118,7 +118,11 @@ def is_provider_running(base_url: str = DEFAULT_BASE_URL) -> bool:
         logger.warning("Invalid PO-token provider URL %r: %s", base_url, e)
         return False
     try:
-        with urllib.request.urlopen(  # noqa: S310 — validated loopback URL
+        # Proxy-free opener: this is a loopback URL, and behind a corporate
+        # proxy (http_proxy set without a no_proxy exception) the default
+        # opener would route the ping through the proxy and always fail.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(  # noqa: S310 — validated loopback URL
             f"{normalized}/ping", timeout=_PING_TIMEOUT
         ) as resp:
             if resp.status != 200:

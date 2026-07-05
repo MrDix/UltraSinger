@@ -9,6 +9,7 @@ description = "A tool to create UltraStar karaoke files from audio files"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "setuptools",
+    "truststore>=0.10",
     "scipy",
     "whisperx",
     "num2words",

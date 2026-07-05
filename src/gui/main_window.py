@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
     _TAB_CONSOLE = 1
     _TAB_SETTINGS = 2
 
-    def __init__(self):
+    def __init__(self, config: dict | None = None):
         super().__init__()
         try:
             _version = importlib.metadata.version("ultrasinger")
@@ -119,8 +119,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
 
-        # Load config
-        self._config = load_config()
+        # Load config. gui_main.py loads it earlier (to apply proxy settings
+        # before any network activity) and passes it in here so it isn't read
+        # from disk twice; standalone instantiation (e.g. tests) still works.
+        self._config = config if config is not None else load_config()
 
         # Central widget
         central = QWidget()

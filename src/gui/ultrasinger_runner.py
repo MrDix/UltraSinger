@@ -42,9 +42,10 @@ class ConversionWorker(QObject):
     finished = Signal(int)  # exit code
     stage_changed = Signal(str)  # high-level stage description
 
-    def __init__(self, args: list[str], parent=None):
+    def __init__(self, args: list[str], parent=None, proxy_config: dict | None = None):
         super().__init__(parent)
         self._args = args
+        self._proxy_config = proxy_config
         self._process: subprocess.Popen | None = None
         self._cancelled = False
         self._terminated_by_cancel = False
@@ -82,6 +83,22 @@ class ConversionWorker(QObject):
             # until the buffer fills (e.g. silence after demucs 100%).
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+            # Apply the GUI's current proxy settings to the child's env.
+            # This is deliberately re-applied here (not just relying on the
+            # app's own os.environ, set once at startup) so that proxy
+            # changes saved in the Settings tab take effect on the very
+            # next conversion without restarting the GUI. Also covers the
+            # case where no proxy_config was passed (e.g. tests): the
+            # local PO-token provider must still be reachable directly
+            # (loopback bypass) regardless.
+            try:
+                from modules.proxy_setup import apply_proxy_config, ensure_localhost_no_proxy
+                if self._proxy_config is not None:
+                    apply_proxy_config(self._proxy_config, env)
+                else:
+                    ensure_localhost_no_proxy(env)
+            except ImportError:
+                pass
 
             self._process = subprocess.Popen(
                 cmd,
@@ -207,14 +224,19 @@ class UltraSingerRunner(QObject):
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.isRunning()
 
-    def start(self, args: list[str]):
-        """Start a conversion with the given CLI arguments."""
+    def start(self, args: list[str], proxy_config: dict | None = None):
+        """Start a conversion with the given CLI arguments.
+
+        ``proxy_config`` — optional dict with the ``proxy_mode`` /
+        ``proxy_url`` / ``proxy_no_proxy`` keys from the current GUI config,
+        applied to the subprocess environment right before launch.
+        """
         if self.is_running:
             logger.warning("A conversion is already running")
             return
 
         self._thread = QThread()
-        self._worker = ConversionWorker(args)
+        self._worker = ConversionWorker(args, proxy_config=proxy_config)
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
