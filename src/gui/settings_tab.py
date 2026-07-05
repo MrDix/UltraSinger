@@ -7,7 +7,7 @@ is replaced by this form.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -88,6 +88,10 @@ class ConversionSettingsForm(QWidget):
     Used both inline in the unified Settings tab and inside the
     per-song override dialog.
     """
+
+    # Emitted when the user clicks "Manage..." next to the LLM provider
+    # selector; the host (PreferencesTab) scrolls to its provider section.
+    manage_providers_requested = Signal()
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
@@ -773,12 +777,30 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._llm_correct.setChecked(
                                _DEFAULTS["llm_correct"]))
 
-        # Provider selector (populated externally via set_llm_providers)
+        # Provider selector (populated externally via set_llm_providers).
+        # The provider *list* is managed in the "LLM Providers" section further
+        # down the Settings page; that section is easy to miss below this long
+        # form, so a "Manage..." button jumps straight to it.
         self._llm_provider = _NoScrollComboBox()
         self._llm_provider.setEnabled(self._llm_correct.isChecked())
-        card.add_row("LLM Provider", self._llm_provider,
+        provider_row = QWidget()
+        provider_layout = QHBoxLayout(provider_row)
+        provider_layout.setContentsMargins(0, 0, 0, 0)
+        provider_layout.setSpacing(8)
+        provider_layout.addWidget(self._llm_provider, 1)
+        self._manage_providers_btn = QPushButton("Manage...")
+        self._manage_providers_btn.setToolTip(
+            "Jump to the 'LLM Providers' section below to add, edit or "
+            "remove providers (URL, API key, model)."
+        )
+        self._manage_providers_btn.clicked.connect(
+            self.manage_providers_requested.emit
+        )
+        provider_layout.addWidget(self._manage_providers_btn)
+        card.add_row("LLM Provider", provider_row,
                      "Which LLM service to use for lyric correction. "
-                     "Configure providers in the Settings tab under 'LLM Providers'. "
+                     "Use 'Manage...' to add or edit providers (the 'LLM "
+                     "Providers' section further down this page). "
                      "Groq offers free API access with rate limits.")
 
         # Retry settings

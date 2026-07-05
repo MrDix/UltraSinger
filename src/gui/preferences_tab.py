@@ -110,6 +110,13 @@ class PreferencesTab(QWidget):
         llm_header.setObjectName("subsectionHeader")
         main_layout.addWidget(llm_header)
         llm_card = SettingsCard()
+        # Kept as attributes so the form's "Manage..." button can scroll here
+        # (this section is easy to miss below the long conversion form).
+        self._llm_section_header = llm_header
+        self._llm_card = llm_card
+        self._conversion_form.manage_providers_requested.connect(
+            self._scroll_to_llm_providers
+        )
 
         llm_card.add_info(
             "Configure one or more LLM API providers for lyric correction. "
@@ -258,12 +265,21 @@ class PreferencesTab(QWidget):
 
         main_layout.addStretch(1)
 
+        self._scroll = scroll
         scroll.setWidget(container)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
 
     # ── LLM Provider Management ──────────────────────────────────────────
+
+    def _scroll_to_llm_providers(self):
+        """Scroll the page to the 'LLM Providers' management section.
+
+        Triggered by the "Manage..." button next to the provider selector in
+        the conversion form, whose section sits far above this one.
+        """
+        self._scroll.ensureWidgetVisible(self._llm_section_header, ymargin=24)
 
     def _load_llm_providers(self):
         """Load providers from config and populate the list widget."""
