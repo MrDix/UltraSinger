@@ -96,7 +96,7 @@ This will help me a lot to keep this project alive and improve it.
    git clone https://github.com/rakuri255/UltraSinger.git
    cd UltraSinger
    ```
-2. Run the installer — `installuto_install.bat` (Windows) or `install/auto_install.sh` (Linux/macOS). It takes care of everything:
+2. Run the installer — `install\auto_install.bat` (Windows) or `install/auto_install.sh` (Linux/macOS). It takes care of everything:
    * detects your NVIDIA GPU via `nvidia-smi` and picks the CUDA or CPU build automatically (force with `--cuda` / `--cpu`),
    * installs all dependencies including the GUI, scoring engine and PO-token plugin,
    * builds the local PO-token provider when Node.js is available,
@@ -107,10 +107,7 @@ This will help me a lot to keep this project alive and improve it.
 
 **Update an existing installation**
 
-```bash
-git pull
-```
-Re-run the install script afterwards when dependencies changed (CUDA users should always use the install script, as it protects the CUDA configuration from git resets).
+Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). It pulls the latest changes and syncs dependencies — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten").
 
 ### Run (CLI)
 
