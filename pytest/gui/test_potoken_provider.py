@@ -7,6 +7,16 @@ from unittest.mock import MagicMock, patch
 from src.gui import potoken_provider as pp
 
 
+def _patched_opener(response=None, side_effect=None):
+    """Patch the proxy-free opener the ping now uses (build_opener().open)."""
+    opener = MagicMock()
+    if side_effect is not None:
+        opener.open.side_effect = side_effect
+    else:
+        opener.open.return_value = response
+    return patch("urllib.request.build_opener", return_value=opener)
+
+
 class TestIsProviderRunning:
     def test_returns_true_on_http_200(self):
         resp = MagicMock()
@@ -14,7 +24,7 @@ class TestIsProviderRunning:
         resp.read.return_value = b'{"version":"1.0"}'
         resp.__enter__.return_value = resp
         resp.__exit__.return_value = False
-        with patch("urllib.request.urlopen", return_value=resp):
+        with _patched_opener(response=resp):
             assert pp.is_provider_running("http://127.0.0.1:4416") is True
 
     def test_returns_false_on_non_200(self):
@@ -22,12 +32,29 @@ class TestIsProviderRunning:
         resp.status = 503
         resp.__enter__.return_value = resp
         resp.__exit__.return_value = False
-        with patch("urllib.request.urlopen", return_value=resp):
+        with _patched_opener(response=resp):
             assert pp.is_provider_running() is False
 
     def test_returns_false_on_connection_error(self):
-        with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+        with _patched_opener(side_effect=OSError("refused")):
             assert pp.is_provider_running() is False
+
+    def test_ping_uses_proxy_free_opener(self):
+        """The loopback ping must bypass any configured proxy."""
+        resp = MagicMock()
+        resp.status = 200
+        resp.read.return_value = b"{}"
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = False
+        opener = MagicMock()
+        opener.open.return_value = resp
+        with patch("urllib.request.build_opener",
+                   return_value=opener) as bo:
+            pp.is_provider_running()
+            handler = bo.call_args[0][0]
+            import urllib.request as ur
+            assert isinstance(handler, ur.ProxyHandler)
+            assert handler.proxies == {}
 
 
 class TestNormalizeBaseUrl:
