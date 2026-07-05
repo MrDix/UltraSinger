@@ -131,7 +131,7 @@ if !errorlevel! neq 0 (
 )
 
 REM Set up the PO-token provider (Node.js) for full-quality YouTube downloads
-call install\setup_potoken_provider.bat "install\CUDA\windows_cuda_gpu.bat"
+call install\helpers\setup_potoken_provider.bat "install\CUDA\windows_cuda_gpu.bat"
 set "POT_RC=!errorlevel!"
 
 :: Protect local CUDA config from being reverted by git operations
