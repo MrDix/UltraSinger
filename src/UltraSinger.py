@@ -1887,6 +1887,10 @@ def pitch_audio(
 
 def main(argv: list[str]) -> None:
     """Main function"""
+    # Corporate-proxy friendliness (loopback bypass + OS certificate store).
+    # Must run before the first HTTPS connection (MusicBrainz, downloads, ...).
+    from modules.proxy_setup import setup_proxy_environment
+    setup_proxy_environment()
     print_version(settings.APP_VERSION)
     init_settings(argv)
     check_requirements()

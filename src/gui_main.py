@@ -58,6 +58,15 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
+    # Corporate-proxy friendliness: loopback bypass for the local PO-token
+    # provider + OS certificate store for TLS-intercepting proxies. Must run
+    # before the first HTTPS call (provider ping, model fetch, PyPI check).
+    from modules.proxy_setup import setup_proxy_environment
+    if setup_proxy_environment():
+        logging.getLogger(__name__).info(
+            "TLS: using operating-system certificate store (truststore)"
+        )
+
     # Windows: Set explicit AppUserModelID so the taskbar shows our icon
     # instead of the generic Python icon.  Must be called BEFORE QApplication.
     if sys.platform == "win32":

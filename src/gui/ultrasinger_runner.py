@@ -82,6 +82,13 @@ class ConversionWorker(QObject):
             # until the buffer fills (e.g. silence after demucs 100%).
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+            # Behind a corporate proxy, the child's yt-dlp must still reach
+            # the local PO-token provider directly (loopback bypass).
+            try:
+                from modules.proxy_setup import ensure_localhost_no_proxy
+                ensure_localhost_no_proxy(env)
+            except ImportError:
+                pass
 
             self._process = subprocess.Popen(
                 cmd,
