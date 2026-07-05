@@ -18,7 +18,8 @@ Two independent concerns, both fail-open:
 
 Proxy configuration itself stays standard: set ``HTTP_PROXY`` /
 ``HTTPS_PROXY`` / ``NO_PROXY`` (any case) in the environment, or configure
-it in the GUI settings which export exactly these variables.
+it in the GUI's "Network Proxy" settings card, which applies exactly these
+variables via ``apply_proxy_config``.
 """
 
 from __future__ import annotations
@@ -80,3 +81,60 @@ def setup_proxy_environment(env=None) -> bool:
     """Convenience entry-point: loopback bypass + system certificates."""
     ensure_localhost_no_proxy(env)
     return enable_system_certificates()
+
+
+def apply_proxy_config(config, env=None):
+    """Apply the GUI's ``proxy_mode`` / ``proxy_url`` / ``proxy_no_proxy``
+    settings to *env* (defaults to ``os.environ``). Mutates and returns *env*.
+
+    Three modes (``config["proxy_mode"]``, case-insensitive; ``"system"``
+    is the default for missing/unrecognised values):
+
+    - ``"manual"`` — sets ``http_proxy`` / ``https_proxy`` (both casings)
+      from ``proxy_url`` (only when non-empty), merges ``proxy_no_proxy``
+      into ``no_proxy``, and appends the loopback bypass via
+      :func:`ensure_localhost_no_proxy` so the local PO-token provider
+      keeps working.
+    - ``"none"`` — strips every ``*_proxy`` variable (any casing) from
+      *env*, overriding whatever the OS/environment already configured.
+    - ``"system"`` — leaves proxy variables untouched; only the loopback
+      bypass is (re-)applied, matching :func:`setup_proxy_environment`.
+    """
+    if env is None:
+        env = os.environ
+
+    mode = str(config.get("proxy_mode", "system") or "system").strip().lower()
+
+    if mode == "none":
+        for key in list(env.keys()):
+            if key.lower().endswith("_proxy"):
+                del env[key]
+        return env
+
+    if mode == "manual":
+        url = str(config.get("proxy_url", "") or "").strip()
+        if url:
+            env["http_proxy"] = url
+            env["https_proxy"] = url
+            env["HTTP_PROXY"] = url
+            env["HTTPS_PROXY"] = url
+
+        no_proxy_field = str(config.get("proxy_no_proxy", "") or "").strip()
+        if no_proxy_field:
+            existing = env.get("no_proxy") or env.get("NO_PROXY") or ""
+            entries = [e.strip() for e in existing.split(",") if e.strip()]
+            lowered = {e.lower() for e in entries}
+            for entry in (e.strip() for e in no_proxy_field.split(",")):
+                if entry and entry.lower() not in lowered:
+                    entries.append(entry)
+                    lowered.add(entry.lower())
+            merged_no_proxy = ",".join(entries)
+            env["no_proxy"] = merged_no_proxy
+            env["NO_PROXY"] = merged_no_proxy
+
+        ensure_localhost_no_proxy(env)
+        return env
+
+    # "system" (default) and any unrecognised mode: leave proxy vars alone.
+    ensure_localhost_no_proxy(env)
+    return env

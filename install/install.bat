@@ -128,12 +128,41 @@ echo Selected build: !BUILD!
 echo Running: !TARGET_SCRIPT!
 echo.
 
+REM --- Auto-enable UV_NATIVE_TLS behind a detected corporate proxy -------------
+REM TLS-inspecting corporate proxies replace the server certificate with one
+REM signed by an internal CA that uv's bundled certificate store doesn't know
+REM about, so plain "uv sync"/"uv lock" fail with certificate errors. uv reads
+REM UV_NATIVE_TLS to fall back to the OS certificate store instead, but most
+REM users won't know this variable exists - so when a proxy is clearly
+REM configured via the environment (and the user hasn't explicitly opted out),
+REM enable it automatically for the sub-script. (Windows env var names are
+REM case-insensitive, so checking the lowercase forms too is just belt-and-
+REM braces for shells/tools that set them that way.)
+if not defined UV_NATIVE_TLS (
+    set "PROXY_DETECTED="
+    if defined HTTP_PROXY set "PROXY_DETECTED=1"
+    if defined http_proxy set "PROXY_DETECTED=1"
+    if defined HTTPS_PROXY set "PROXY_DETECTED=1"
+    if defined https_proxy set "PROXY_DETECTED=1"
+    if defined PROXY_DETECTED (
+        set "UV_NATIVE_TLS=1"
+        echo Proxy detected ^(HTTP^(S^)_PROXY set^) - enabling UV_NATIVE_TLS=1 so uv
+        echo trusts certificates from the OS store ^(needed behind TLS-inspecting
+        echo corporate proxies^). Set UV_NATIVE_TLS=0 to opt out.
+        echo.
+    )
+)
+
 call "!TARGET_SCRIPT!"
 set "SUB_RC=!errorlevel!"
 
 if not "!SUB_RC!"=="0" (
     echo.
     echo Installation failed ^(exit code !SUB_RC!^). See the output above for details.
+    echo.
+    echo If you are behind a corporate proxy: set HTTP_PROXY/HTTPS_PROXY ^(and
+    echo NO_PROXY^), for TLS-inspecting proxies additionally set
+    echo UV_NATIVE_TLS=1, then re-run.
     exit /b !SUB_RC!
 )
 

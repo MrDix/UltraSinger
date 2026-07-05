@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -210,6 +211,67 @@ class PreferencesTab(QWidget):
         cookie_card.add_layout(btn_row)
 
         main_layout.addWidget(cookie_card)
+
+        # ── Network Proxy ────────────────────────────────────────────────
+        proxy_header = QLabel("Network Proxy")
+        proxy_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(proxy_header)
+        proxy_card = SettingsCard()
+
+        self._proxy_mode = QComboBox()
+        self._proxy_mode.addItem("System / environment (default)", userData="system")
+        self._proxy_mode.addItem("Manual", userData="manual")
+        self._proxy_mode.addItem("No proxy", userData="none")
+        configured_mode = config.get("proxy_mode", "system") or "system"
+        mode_index = self._proxy_mode.findData(configured_mode)
+        self._proxy_mode.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+        proxy_card.add_row(
+            "Mode", self._proxy_mode,
+            "How UltraSinger reaches the network. 'System / environment' uses "
+            "your OS proxy settings or the HTTP_PROXY/HTTPS_PROXY environment "
+            "variables. 'Manual' lets you enter a proxy host below. "
+            "'No proxy' ignores any proxy configured elsewhere.",
+        )
+
+        self._proxy_url = QLineEdit()
+        self._proxy_url.setText(config.get("proxy_url", ""))
+        self._proxy_url.setPlaceholderText("http://proxy.company.com:3128")
+        proxy_card.add_row(
+            "Proxy URL", self._proxy_url,
+            "HTTP(S) proxy address, used for both http:// and https:// "
+            "traffic. Only applied in 'Manual' mode.",
+        )
+
+        self._proxy_no_proxy = QLineEdit()
+        self._proxy_no_proxy.setText(config.get("proxy_no_proxy", ""))
+        self._proxy_no_proxy.setPlaceholderText(".company.com,10.0.0.0/8")
+        proxy_card.add_row(
+            "No-proxy exceptions", self._proxy_no_proxy,
+            "Comma-separated hosts/domains that should bypass the proxy. "
+            "Only applied in 'Manual' mode. Localhost is always exempted "
+            "automatically so the local PO-token provider keeps working.",
+        )
+
+        def _update_proxy_manual_enabled():
+            is_manual = self._proxy_mode.currentData() == "manual"
+            self._proxy_url.setEnabled(is_manual)
+            self._proxy_no_proxy.setEnabled(is_manual)
+
+        _update_proxy_manual_enabled()
+        self._proxy_mode.currentIndexChanged.connect(_update_proxy_manual_enabled)
+
+        proxy_card.add_info(
+            "'System / environment' uses your Windows proxy settings or the "
+            "HTTP_PROXY/HTTPS_PROXY environment variables. Automatic proxy "
+            "configuration (PAC file) is supported by the embedded browser "
+            "tab, but NOT by the conversion pipeline (downloads, LLM calls) "
+            "- if your network uses a PAC file, switch to 'Manual' here and "
+            "enter the proxy host directly. TLS-intercepting proxies are "
+            "supported automatically via the operating system's certificate "
+            "store, no extra configuration needed."
+        )
+
+        main_layout.addWidget(proxy_card)
 
         # ── yt-dlp Update ────────────────────────────────────────────────
         ytdlp_header = QLabel("yt-dlp")
@@ -431,6 +493,9 @@ class PreferencesTab(QWidget):
         result = self._conversion_form.collect_config()
         result["output_folder"] = self._output_folder.text()
         result["cookie_file"] = self._cookie_path.text()
+        result["proxy_mode"] = self._proxy_mode.currentData()
+        result["proxy_url"] = self._proxy_url.text()
+        result["proxy_no_proxy"] = self._proxy_no_proxy.text()
 
         # Serialize providers
         providers = self._llm_provider_list.get_providers()

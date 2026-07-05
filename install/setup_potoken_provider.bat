@@ -75,6 +75,9 @@ if exist "%PROVIDER_DIR%\.git" (
 if not exist "%PROVIDER_DIR%\server" (
     echo Could not download the provider source. Check your internet connection
     echo and run %RERUN% again.
+    echo If you are behind a corporate proxy: git and npm honor the same
+    echo HTTP_PROXY/HTTPS_PROXY/NO_PROXY variables as the rest of this installer
+    echo - set them ^(and UV_NATIVE_TLS=1 for TLS-inspecting proxies^) and re-run.
     exit /b 3
 )
 
@@ -91,5 +94,8 @@ if exist "%SERVER_ENTRY%" (
 ) else (
     echo The provider build did not complete. Run %RERUN% again;
     echo if it keeps failing, YouTube downloads stay limited to 360p.
+    echo If you are behind a corporate proxy: git and npm honor the same
+    echo HTTP_PROXY/HTTPS_PROXY/NO_PROXY variables as the rest of this installer
+    echo - set them ^(and UV_NATIVE_TLS=1 for TLS-inspecting proxies^) and re-run.
     exit /b 3
 )

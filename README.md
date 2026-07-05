@@ -46,6 +46,7 @@ This will help me a lot to keep this project alive and improve it.
   - [💻 How to use this source code](#-how-to-use-this-source-code)
     - [Installation](#installation)
     - [Run](#run)
+  - [🌐 Corporate proxy / firewall](#-corporate-proxy--firewall)
   - [📖 How to use the App](#-how-to-use-the-app)
     - [🎶 Input](#-input)
       - [Audio (full automatic)](#audio-full-automatic)
@@ -146,6 +147,25 @@ To restore full-quality downloads UltraSinger uses the maintained [`bgutil-ytdlp
 Once a provider responds on `http://127.0.0.1:4416`, `yt-dlp` uses it transparently for every download (GUI and CLI). If no provider is available the app still works, but video downloads fall back to the limited formats.
 
 Provider behaviour can be tuned in the GUI config (`~/.ultrasinger`): `potoken_auto_start` (check on launch), `potoken_auto_start_node` / `potoken_auto_start_docker` (allow the respective auto-launch), `potoken_base_url` (custom server URL).
+
+## 🌐 Corporate proxy / firewall
+
+UltraSinger works behind a corporate proxy. There is nothing UltraSinger-specific to configure — it honors the same environment variables every standard tool does.
+
+**CLI:** set `HTTP_PROXY` / `HTTPS_PROXY` (and `NO_PROXY` for exceptions, e.g. internal hosts) in the environment before running UltraSinger. Any casing works (`http_proxy` / `HTTP_PROXY`).
+
+**GUI:** the Settings tab has a **Network Proxy** card with a `Mode` selector:
+- **System / environment (default)** — uses your OS proxy settings or the `HTTP_PROXY`/`HTTPS_PROXY` environment variables, unchanged.
+- **Manual** — enter a proxy URL (used for both `http://` and `https://` traffic) and optional no-proxy exceptions (comma-separated hosts/domains).
+- **No proxy** — ignores any proxy configured elsewhere, even if the OS/shell has one set.
+
+> ⚠️ **PAC files are not supported by the conversion pipeline.** Automatic proxy configuration (a `.pac` script) is only understood by the embedded browser tab (Chromium handles it natively) — yt-dlp, downloads, and LLM/remote-STT calls in the conversion pipeline cannot evaluate a PAC file. If your network uses one, switch the Network Proxy card to **Manual** and enter the proxy host directly.
+
+**TLS-intercepting proxies** (which re-sign HTTPS traffic with an internal CA) are supported automatically: UltraSinger uses [`truststore`](https://pypi.org/project/truststore/) to read certificates from the operating system's trust store instead of Python's bundled `certifi` bundle — no extra configuration needed, as long as your IT department has installed the CA in Windows/macOS/Linux.
+
+**Installer:** if `install.sh`/`install.bat` detects an `HTTP_PROXY`/`HTTPS_PROXY` environment variable and `UV_NATIVE_TLS` isn't already set, it automatically sets `UV_NATIVE_TLS=1` before running the CUDA/CPU sub-script, so `uv sync`/`uv lock` trust the OS certificate store too (opt out with `UV_NATIVE_TLS=0`). If the install still fails (e.g. a proxy configured only via the Windows registry, with no environment variables set), set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` and `UV_NATIVE_TLS=1` yourself and re-run. `git`/`npm` (used by the optional PO-token provider setup) honor the same variables.
+
+**Local PO-token provider:** the loopback connection to the local PO-token provider (`http://127.0.0.1:4416`) is automatically excluded from the proxy, so a corporate proxy never breaks full-quality downloads.
 
 ## 📖 How to use the App
 
