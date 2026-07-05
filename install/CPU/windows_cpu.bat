@@ -53,14 +53,15 @@ for %%P in (python3.13 python3.12 python3 python) do (
 
 :found_python
 if "!PYTHON_EXE!"=="" (
-    echo Error: No Python 3.12 or 3.13 installation found
-    echo Please install Python 3.12 or 3.13 from python.org
-    pause
-    exit /b 1
+    echo No system Python 3.12 or 3.13 found ^(e.g. only a newer version is installed^).
+    echo A portable Python 3.12 will be downloaded by uv into its per-user
+    echo directory instead - fully self-contained, no PATH/registry changes,
+    echo your system Python stays untouched.
+    set "USE_MANAGED_PYTHON=1"
+) else (
+    echo Using Python: !PYTHON_EXE!
+    "!PYTHON_EXE!" --version
 )
-
-echo Using Python: !PYTHON_EXE!
-"!PYTHON_EXE!" --version
 
 :: Install uv if not already installed
 where uv >nul 2>&1
@@ -82,6 +83,20 @@ if !errorlevel! neq 0 (
 
 echo uv is ready
 uv --version
+
+:: Fallback: no suitable system Python - let uv provide a managed one
+if defined USE_MANAGED_PYTHON (
+    echo Downloading portable Python 3.12 via uv ...
+    uv python install 3.12
+    if !errorlevel! neq 0 (
+        echo Error: could not download a managed Python 3.12 via uv.
+        echo If you are behind a corporate proxy, set HTTP_PROXY/HTTPS_PROXY
+        echo and re-run. Alternatively install Python 3.12 or 3.13 manually.
+        pause
+        exit /b 1
+    )
+    set "PYTHON_EXE=3.12"
+)
 
 :: Clear skip-worktree flags if previously set by CUDA install script
 :: (allows git to manage these files normally again since CPU is the default)

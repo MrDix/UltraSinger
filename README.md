@@ -81,7 +81,7 @@ This will help me a lot to keep this project alive and improve it.
 
 ### Installation
 
-* Install Python 3.12 or 3.13. [Download](https://www.python.org/downloads/)
+* Python 3.12 or 3.13 ([Download](https://www.python.org/downloads/)) — *optional:* if neither is installed (e.g. you only have a newer version), the Windows install scripts automatically download a portable, self-contained Python 3.12 via uv into its per-user directory; your system Python is never touched. On Linux/macOS uv resolves a suitable interpreter automatically as well.
 * Also download or install ffmpeg with PATH. [Download](https://www.ffmpeg.org/download.html)
 * Go to folder `install` and run `install.bat` (Windows) or `install.sh` (Linux/macOS) - it detects your hardware and picks the right build automatically. Or pick a script manually:
   * Choose `CUDA` if you have an NVIDIA CUDA GPU (Windows/Linux only).
