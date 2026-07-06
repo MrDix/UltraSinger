@@ -136,9 +136,14 @@ def print_help() -> None:
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
-    --ptakf_refit               (legacy) Explicitly enable the ptAKF chart refit (now the default)
-    --disable_ptakf_refit       Disable the ptAKF chart refit (rebuilds note boundaries and pitches from
-                                the game's own pitch detector; enabled by default)
+    --chart_style               singable|score >> ((default) is singable)
+                                singable: natural, held notes like a professional chart - best to sing.
+                                score: rebuild every note onto the game's exact per-beat tones for a
+                                higher in-game score number, at the cost of many short notes tracing
+                                vibrato/ornaments (harder to sing). Sets the ptAKF refit accordingly;
+                                the --ptakf_refit/--disable_ptakf_refit flags below still override it.
+    --ptakf_refit               (advanced) Force the ptAKF chart refit on (overrides --chart_style)
+    --disable_ptakf_refit       (advanced) Force the ptAKF chart refit off (overrides --chart_style)
     --ptakf_refit_min_note_ms   Merge refit notes shorter than this when score-neutral >> ((default) is 100)
     --ptakf_refit_fill          (legacy) Explicitly enable refit fill (now the default)
     --disable_ptakf_refit_fill  Disable charting sung regions outside all notes (ad-libs, vocalises,

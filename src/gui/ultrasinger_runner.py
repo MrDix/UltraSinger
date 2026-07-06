@@ -494,8 +494,11 @@ class UltraSingerRunner(QObject):
             if timing_thr != 30.0:
                 args.extend(["--refine_timing_threshold", str(timing_thr)])
 
-        # ptAKF chart refit (enabled by default; send disables when off)
-        if config.get("ptakf_refit", True):
+        # Chart style drives the ptAKF refit (singable = off, score = on).
+        chart_style = config.get("chart_style", "singable")
+        args.extend(["--chart_style", chart_style])
+        if chart_style == "score":
+            # Advanced refit sub-settings only apply in the score style.
             refit_min_ms = config.get("ptakf_refit_min_note_ms", 100.0)
             if refit_min_ms != 100.0:
                 args.extend(["--ptakf_refit_min_note_ms", str(refit_min_ms)])
@@ -505,8 +508,6 @@ class UltraSingerRunner(QObject):
                     args.extend(["--ptakf_refit_fill_min_ms", str(fill_min_ms)])
             else:
                 args.append("--disable_ptakf_refit_fill")
-        else:
-            args.append("--disable_ptakf_refit")
 
         # Scoring (enabled by default; the toggle sends the disable)
         if not config.get("calculate_score", True):

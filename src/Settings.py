@@ -53,8 +53,17 @@ class Settings:
     refine_hit_ratio: float = 0.4  # Notes below this hit ratio are pitch-corrected (0.0-1.0)
     refine_timing_threshold: float = 30.0  # Milliseconds deviation before correcting
 
+    # Chart style — the high-level trade-off between a singable chart and a
+    # score-maximising one. "singable" (default) keeps the natural, held notes
+    # of a professional chart; "score" rebuilds every note onto the game's
+    # exact per-beat tones (higher in-game score number, but many short notes
+    # tracing vibrato/ornaments — harder to actually sing). This drives
+    # ptakf_refit below unless that flag is set explicitly.
+    chart_style = "singable"
+
     # ptAKF chart refit (score-first chart: note boundaries/pitches from the game's detector)
-    ptakf_refit = True  # Rebuild note boundaries and pitches from ptAKF beat tones (enabled by default)
+    ptakf_refit = True  # Resolved from chart_style unless --ptakf_refit/--disable_ptakf_refit is passed
+    ptakf_refit_explicit = False  # True once an explicit refit override flag was seen
     ptakf_refit_min_note_ms: float = 100.0  # Merge refit notes shorter than this when score-neutral
     ptakf_refit_fill = True  # Also chart sung regions outside all notes (ad-libs, vocalises) as "~" notes (enabled by default)
     ptakf_refit_fill_min_ms: float = 300.0  # Minimum uncharted voiced run length before it is filled

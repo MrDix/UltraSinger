@@ -79,3 +79,36 @@ class TestIgnoreAudioFlag(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestChartStyleResolution(unittest.TestCase):
+    """--chart_style drives the ptAKF refit; explicit refit flags override it."""
+
+    def test_default_is_singable_refit_off(self):
+        self.assertEqual(Settings().chart_style, "singable")
+        settings = init_settings(["-i", "test.mp3"])
+        self.assertEqual(settings.chart_style, "singable")
+        self.assertFalse(settings.ptakf_refit)
+
+    def test_score_style_enables_refit(self):
+        settings = init_settings(["-i", "test.mp3", "--chart_style", "score"])
+        self.assertEqual(settings.chart_style, "score")
+        self.assertTrue(settings.ptakf_refit)
+
+    def test_singable_style_disables_refit(self):
+        settings = init_settings(["-i", "test.mp3", "--chart_style", "singable"])
+        self.assertFalse(settings.ptakf_refit)
+
+    def test_explicit_ptakf_refit_overrides_singable_default(self):
+        settings = init_settings(["-i", "test.mp3", "--ptakf_refit"])
+        self.assertTrue(settings.ptakf_refit)
+
+    def test_explicit_disable_overrides_score_style(self):
+        settings = init_settings(
+            ["-i", "test.mp3", "--chart_style", "score", "--disable_ptakf_refit"])
+        self.assertFalse(settings.ptakf_refit)
+
+    def test_unknown_style_falls_back_to_singable(self):
+        settings = init_settings(["-i", "test.mp3", "--chart_style", "bogus"])
+        self.assertEqual(settings.chart_style, "singable")
+        self.assertFalse(settings.ptakf_refit)

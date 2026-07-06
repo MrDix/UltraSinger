@@ -795,6 +795,15 @@ def run() -> tuple[str, Score, Score]:
                 f"{ULTRASINGER_HEAD} Game score (ptAKF): "
                 f"{blue_highlighted(format_uscore_report(uscore_result))}"
             )
+            if not settings.ptakf_refit:
+                # The scorer rewards charts that trace the vocal exactly, so a
+                # singable chart lands near the level a professional chart
+                # reaches (~77% Medium on isolated vocals) - not a defect.
+                print(
+                    f"{ULTRASINGER_HEAD} (Singable chart style - this is the "
+                    "level professional charts reach here; 'score' style "
+                    "reports higher but is harder to sing.)"
+                )
             # The game score can only be computed after the TXT is written,
             # so the header suffix is appended here instead of inside
             # CreateUltraStarTxt (which only knows the internal fallback score).
@@ -1090,6 +1099,7 @@ def _write_settings_info_file(
                 f.write(f"  Timing refinement:        {settings.refine_timing}\n")
                 f.write(f"  Hit ratio threshold:      {settings.refine_hit_ratio}\n")
                 f.write(f"  Timing threshold:         {settings.refine_timing_threshold} ms\n")
+            f.write(f"  Chart style:              {settings.chart_style}\n")
             f.write(f"  ptAKF refit:              {settings.ptakf_refit}\n")
             if settings.ptakf_refit:
                 f.write(f"  Refit min note length:    {settings.ptakf_refit_min_note_ms} ms\n")
@@ -1923,6 +1933,8 @@ def remove_cache_folder(cache_folder_path: str) -> None:
 
 def init_settings(argv: list[str]) -> Settings:
     """Init settings"""
+    # Reset per-run resolution state (settings is a reused module singleton).
+    settings.ptakf_refit_explicit = False
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2187,8 +2199,11 @@ def init_settings(argv: list[str]) -> Settings:
             settings.refine_hit_ratio = float(arg)
         elif opt in ("--refine_timing_threshold"):
             settings.refine_timing_threshold = float(arg)
+        elif opt in ("--chart_style"):
+            settings.chart_style = arg.strip().lower()
         elif opt in ("--ptakf_refit"):
             settings.ptakf_refit = True
+            settings.ptakf_refit_explicit = True
         elif opt in ("--ptakf_refit_min_note_ms"):
             settings.ptakf_refit_min_note_ms = float(arg)
         elif opt in ("--ptakf_refit_fill"):
@@ -2197,12 +2212,24 @@ def init_settings(argv: list[str]) -> Settings:
             settings.ptakf_refit_fill_min_ms = float(arg)
         elif opt in ("--disable_ptakf_refit"):
             settings.ptakf_refit = False
+            settings.ptakf_refit_explicit = True
         elif opt in ("--disable_ptakf_refit_fill"):
             settings.ptakf_refit_fill = False
         elif opt in ("--golden_notes"):
             settings.golden_notes = True
         elif opt in ("--disable_score"):
             settings.calculate_score = False
+    # Resolve the chart style into the ptAKF refit switch. An explicit
+    # --ptakf_refit/--disable_ptakf_refit always wins (advanced override).
+    if settings.chart_style not in ("singable", "score"):
+        print(
+            f"{ULTRASINGER_HEAD} Unknown --chart_style "
+            f"'{settings.chart_style}', using 'singable'."
+        )
+        settings.chart_style = "singable"
+    if not settings.ptakf_refit_explicit:
+        settings.ptakf_refit = settings.chart_style == "score"
+
     if settings.output_folder_path == "":
         if settings.input_file_path.startswith("https:"):
             dirname = os.getcwd()
@@ -2297,6 +2324,7 @@ def arg_options():
         "disable_refine_timing",
         "refine_hit_ratio=",
         "refine_timing_threshold=",
+        "chart_style=",
         "ptakf_refit",
         "ptakf_refit_min_note_ms=",
         "ptakf_refit_fill",
