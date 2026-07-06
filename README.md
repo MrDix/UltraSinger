@@ -111,15 +111,14 @@ Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). It pull
 
 **Keeping everything on one drive (e.g. all development on `D:`)**
 
-By default uv stores its package cache and downloaded Python interpreters under your user profile on `C:`. If you keep your projects on another drive — for example because `C:` is wiped when the machine is replaced — you can move uv's regenerable data there too. In a normal Command Prompt (these persist to your user environment; open a **new** terminal afterwards):
+By default uv stores its package cache and, when it needs one, a downloaded Python interpreter under your user profile on `C:`. These are the two directories UltraSinger causes to grow (the package cache is several GB). If you keep your projects on another drive — for example because `C:` is wiped when the machine is replaced — you can move them there too. In a normal Command Prompt (these persist to your user environment; open a **new** terminal afterwards):
 
 ```bat
 setx UV_CACHE_DIR "D:\dev\uv\cache"
 setx UV_PYTHON_INSTALL_DIR "D:\dev\uv\python"
-setx UV_TOOL_DIR "D:\dev\uv\tools"
 ```
 
-On Linux/macOS set the same variables in your shell profile. Nothing here is "your work" — it is cache and tooling that uv rebuilds automatically — but relocating it keeps `C:` free of development data. A side benefit: when the cache and your project are on the same drive, uv can hardlink packages into the virtual environment instead of copying them (faster syncs, no "Failed to hardlink … falling back to full copy" warning).
+On Linux/macOS set the same variables in your shell profile. Nothing here is "your work" — it is cache and a runtime that uv rebuilds automatically — but relocating it keeps `C:` free of development data. A side benefit: when the cache and your project are on the same drive, uv can hardlink packages into the virtual environment instead of copying them (faster syncs, no "Failed to hardlink … falling back to full copy" warning).
 
 ### Run (CLI)
 
