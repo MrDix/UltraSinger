@@ -138,7 +138,10 @@ class ConversionSettingsForm(QWidget):
         card.add_row("Batch Size", self._whisper_batch_size,
                      "How many audio segments Whisper processes at once. "
                      "Higher values are faster but use more GPU memory. "
-                     "Reduce to 4–8 if you get out-of-memory errors.",
+                     "Lower it (4, or 2/1) if you get out-of-memory errors: "
+                     "this only makes transcription slower — the result is "
+                     "unchanged, so it is the safe lever to try first "
+                     "(before switching Compute Type to int8).",
                      reset_callback=lambda: self._whisper_batch_size.setValue(
                          _DEFAULTS["whisper_batch_size"]))
 
@@ -150,7 +153,9 @@ class ConversionSettingsForm(QWidget):
                      "Numeric precision for Whisper inference. "
                      "'auto' picks float16 on GPU (fast) or int8 on CPU (memory-efficient). "
                      "float32 is most accurate but slowest. "
-                     "int8 uses least memory at a small accuracy trade-off.",
+                     "int8 uses least memory at a small accuracy trade-off — "
+                     "reach for it only if lowering the Batch Size alone does "
+                     "not free enough VRAM.",
                      reset_callback=lambda: self._whisper_compute.setCurrentText("auto"))
 
         self._align_model = QLineEdit()

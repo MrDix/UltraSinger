@@ -248,8 +248,8 @@ _Not all options working now!_
                             For video URLs, the video language is used automatically.
                             WARNING: setting this for non-matching songs will degrade
                             alignment quality (e.g. --language en for German songs).
-    --whisper_batch_size    Reduce if low on GPU mem >> ((default) is 16)
-    --whisper_compute_type  Change to "int8" if low on GPU mem (may reduce accuracy) >> ((default) is "float16" for cuda devices, "int8" for cpu)
+    --whisper_batch_size    Segments processed in parallel. Lower if low on GPU mem: slower, but transcription is UNCHANGED (the safe lever) >> ((default) is 16)
+    --whisper_compute_type  Change to "int8" to save more GPU mem at a small accuracy cost; use only if lowering the batch size is not enough >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words
     --vad_onset             VAD (Voice Activity Detection) speech activation threshold (0.0-1.0). Lower
                             values capture more vocal segments including soft/breathy singing.
@@ -824,10 +824,19 @@ uv pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvis
 
 #### Crashes due to low VRAM
 
-If something crashes because of low VRAM then use a smaller Whisper model.
-Whisper needs more than 8GB VRAM in the `large` model!
+The default Whisper model (`large-v2`) needs more than 8 GB VRAM. On a smaller
+GPU there are two independent ways to fit it, in order of preference:
 
-You can also force CPU usage with the extra option `--force_cpu`.
+1. **Lower the batch size** (`--whisper_batch_size 4`, or 2/1). This processes
+   fewer audio segments in parallel: it is slower, but the transcription is
+   **unchanged** — so this is the safe lever, try it first.
+2. **Switch to int8** (`--whisper_compute_type int8`). This halves the model's
+   memory at a small accuracy cost — add it only if lowering the batch size
+   alone is not enough.
+
+You can also offload transcription to the cloud with `--remote_stt` (frees the
+GPU entirely; see [Remote Speech-to-Text](#remote-speech-to-text---remote_stt)),
+use a smaller Whisper model, or force CPU with `--force_cpu`.
 
 ### 📦 Containerized (Docker or Podman)
 
