@@ -121,6 +121,33 @@ echo "Building provider (npm install + tsc, this can take a minute)..."
 ( cd "$PROVIDER_DIR/server" && npm install --no-audit --no-fund >/dev/null 2>&1 && npx --yes tsc >/dev/null 2>&1 )
 
 if [ -f "$SERVER_ENTRY" ]; then
+    # Warm up the provider now so the FIRST app launch is fast. The first time
+    # the freshly built server starts, security software scans its many
+    # node_modules files, which on corporate machines can take several minutes
+    # - during which the app would look broken. Trigger that scan here, where
+    # the user expects the installer to work, so later starts are instant.
+    echo "Warming up the provider so the first app launch is fast..."
+    echo "(On managed/corporate machines antivirus scans the new files on the"
+    echo " first start - this can take several minutes. You can leave it running.)"
+    node "$SERVER_ENTRY" >/dev/null 2>&1 &
+    WARM_PID=$!
+    warm_ready=0
+    warm_i=0
+    while [ "$warm_i" -lt 450 ]; do   # up to ~15 minutes (450 x 2s)
+        if node -e "require('http').get('http://127.0.0.1:4416/ping',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})" >/dev/null 2>&1; then
+            warm_ready=1
+            break
+        fi
+        warm_i=$((warm_i + 1))
+        sleep 2
+    done
+    kill "$WARM_PID" >/dev/null 2>&1 || true
+    if [ "$warm_ready" = 1 ]; then
+        echo "Provider warmed up - the GUI will start it quickly from now on."
+    else
+        echo "Provider warm-up did not finish in time; the first app launch may"
+        echo "still take a few minutes while security scanning completes."
+    fi
     echo "Done. The GUI starts the provider automatically on launch -"
     echo "full-quality video downloads are enabled."
     exit 0
