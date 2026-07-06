@@ -78,6 +78,8 @@ fi
 mkdir -p .potoken
 if [ -d "$PROVIDER_DIR/.git" ]; then
     echo "Updating provider source..."
+    # Discard our local proxy patch (re-applied below) so ff-only pulls work
+    git -C "$PROVIDER_DIR" checkout -- . >/dev/null 2>&1
     git -C "$PROVIDER_DIR" pull --ff-only >/dev/null 2>&1
 else
     echo "Downloading provider source..."
@@ -91,6 +93,28 @@ if [ ! -d "$PROVIDER_DIR/server" ]; then
     echo "installer - set them (and UV_SYSTEM_CERTS=1 for TLS-inspecting"
     echo "proxies) and re-run."
     exit 3
+fi
+
+# --- Proxy fix: axios needs proxy:false so the httpsAgent does CONNECT ------
+# Upstream bug: getFetch() passes a correct proxy-agent as httpsAgent but
+# omits axios' `proxy: false`. With HTTP(S)_PROXY set in the environment,
+# axios' own env-proxy mode then wins and sends an absolute-form GET to the
+# proxy instead of a CONNECT tunnel - enterprise proxies answer 502 and
+# token generation fails. Verified against a local sniffing proxy.
+SM_TS="$PROVIDER_DIR/server/src/session_manager.ts"
+if [ -f "$SM_TS" ] && ! grep -q "proxy: false" "$SM_TS"; then
+    echo "Applying proxy workaround (axios proxy:false)..."
+    # Insert on the SAME line (no newline in the replacement) so this works
+    # identically under GNU and BSD/macOS sed, which treats \n as a literal n.
+    sed -i.bak 's|httpsAgent: proxySpec.asDispatcher(logger),|httpsAgent: proxySpec.asDispatcher(logger), proxy: false,|' "$SM_TS" \
+        && rm -f "$SM_TS.bak"
+    if grep -q "proxy: false" "$SM_TS"; then
+        echo "Proxy workaround applied."
+    else
+        echo "WARNING: proxy workaround did not match (upstream may have"
+        echo "reformatted the source). Downloads behind an HTTP proxy may fail;"
+        echo "see the corporate-proxy section in the README."
+    fi
 fi
 
 echo "Building provider (npm install + tsc, this can take a minute)..."
