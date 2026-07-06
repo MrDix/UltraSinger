@@ -112,7 +112,16 @@ if exist "%SM_TS%" (
     findstr /c:"proxy: false" "%SM_TS%" >nul 2>&1
     if !errorlevel! neq 0 (
         echo Applying proxy workaround ^(axios proxy:false^)...
-        powershell -NoProfile -Command "$p = '%SM_TS%'; $c = [IO.File]::ReadAllText($p); $c = $c.Replace('httpsAgent: proxySpec.asDispatcher(logger),', ('httpsAgent: proxySpec.asDispatcher(logger),' + [char]10 + (' ' * 24) + 'proxy: false,')); [IO.File]::WriteAllText($p, $c)"
+        REM Same-line insert (no newline) - matches the sh script exactly.
+        powershell -NoProfile -Command "$p = '%SM_TS%'; $c = [IO.File]::ReadAllText($p); [IO.File]::WriteAllText($p, $c.Replace('httpsAgent: proxySpec.asDispatcher(logger),', 'httpsAgent: proxySpec.asDispatcher(logger), proxy: false,'))"
+        findstr /c:"proxy: false" "%SM_TS%" >nul 2>&1
+        if !errorlevel! equ 0 (
+            echo Proxy workaround applied.
+        ) else (
+            echo WARNING: proxy workaround did not match ^(upstream may have
+            echo reformatted the source^). Downloads behind an HTTP proxy may
+            echo fail; see the corporate-proxy section in the README.
+        )
     )
 )
 

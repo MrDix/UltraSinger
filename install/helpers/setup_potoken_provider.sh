@@ -104,8 +104,17 @@ fi
 SM_TS="$PROVIDER_DIR/server/src/session_manager.ts"
 if [ -f "$SM_TS" ] && ! grep -q "proxy: false" "$SM_TS"; then
     echo "Applying proxy workaround (axios proxy:false)..."
-    sed -i.bak 's|httpsAgent: proxySpec.asDispatcher(logger),|httpsAgent: proxySpec.asDispatcher(logger),\n                        proxy: false,|' "$SM_TS" \
+    # Insert on the SAME line (no newline in the replacement) so this works
+    # identically under GNU and BSD/macOS sed, which treats \n as a literal n.
+    sed -i.bak 's|httpsAgent: proxySpec.asDispatcher(logger),|httpsAgent: proxySpec.asDispatcher(logger), proxy: false,|' "$SM_TS" \
         && rm -f "$SM_TS.bak"
+    if grep -q "proxy: false" "$SM_TS"; then
+        echo "Proxy workaround applied."
+    else
+        echo "WARNING: proxy workaround did not match (upstream may have"
+        echo "reformatted the source). Downloads behind an HTTP proxy may fail;"
+        echo "see the corporate-proxy section in the README."
+    fi
 fi
 
 echo "Building provider (npm install + tsc, this can take a minute)..."
