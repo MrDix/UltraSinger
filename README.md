@@ -107,7 +107,7 @@ This will help me a lot to keep this project alive and improve it.
 
 **Update an existing installation**
 
-Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). It pulls the latest changes and syncs dependencies — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten").
+Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). **This is the only command you need to update** — you never have to re-run `auto_install`. It pulls the latest changes, syncs the Python packages into `.venv` (so newer dependency versions land too), refreshes the PO-token provider, and re-checks ffmpeg — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten"). `auto_install` is only for the first-time install.
 
 **Keeping everything on one drive (e.g. all development on `D:`)**
 

@@ -23,6 +23,11 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 
+REM --- Ensure ffmpeg is present (same check as the installer) ----------------
+if exist "%~dp0helpers\ensure_ffmpeg.bat" (
+    call "%~dp0helpers\ensure_ffmpeg.bat"
+)
+
 REM --- Detect whether this is a CUDA-protected install -----------------------
 set "IS_CUDA="
 git ls-files -v pyproject.toml 2>nul | findstr /b /c:"S" >nul 2>&1
@@ -85,6 +90,14 @@ if defined IS_CUDA (
     git update-index --skip-worktree pyproject.toml
     git update-index --skip-worktree uv.lock
     rmdir /s /q "!BACKUP_DIR!" 2>nul
+)
+
+REM Update the PO-token provider too, so a single "update" refreshes
+REM everything (code, Python packages AND the provider) - the user never
+REM needs to run the full installer just to pick up a provider change.
+REM Non-fatal: provider setup exits non-zero when Node.js/git are missing.
+if exist "%~dp0helpers\setup_potoken_provider.bat" (
+    call "%~dp0helpers\setup_potoken_provider.bat" "install\update.bat"
 )
 
 echo.

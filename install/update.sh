@@ -11,13 +11,21 @@
 # to CPU.
 
 set -e
-cd "$(dirname "$0")/.."
+# Capture the script directory BEFORE cd'ing away, so helper paths resolve
+# correctly regardless of the caller's working directory.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
 echo "Current directory: $(pwd)"
 export PATH="$HOME/.local/bin:$PATH"
 
 if ! command -v git >/dev/null 2>&1; then
     echo "Error: git is required to update."
     exit 1
+fi
+
+# --- Ensure ffmpeg is present (same check as the installer) ------------------
+if [ -f "$SCRIPT_DIR/helpers/ensure_ffmpeg.sh" ]; then
+    bash "$SCRIPT_DIR/helpers/ensure_ffmpeg.sh" || true
 fi
 
 # --- Detect whether this is a CUDA-protected install -------------------------
@@ -96,6 +104,14 @@ if [ -n "$IS_CUDA" ]; then
     echo "Restoring the CUDA configuration protection..."
     git update-index --skip-worktree pyproject.toml
     git update-index --skip-worktree uv.lock
+fi
+
+# Update the PO-token provider too, so a single "update" refreshes everything
+# (code, Python packages AND the provider) - the user never needs to run the
+# full installer just to pick up a provider change. Non-fatal.
+SETUP_HELPER="$SCRIPT_DIR/helpers/setup_potoken_provider.sh"
+if [ -f "$SETUP_HELPER" ]; then
+    bash "$SETUP_HELPER" "install/update.sh" || true
 fi
 
 echo ""
