@@ -201,6 +201,31 @@ if not defined UV_SYSTEM_CERTS (
     )
 )
 
+REM --- Stop a running UltraSinger instance from THIS folder --------------------
+REM A running GUI (python.exe + QtWebEngineProcess.exe under .venv) and the
+REM bgutil Node provider lock files the sub-script needs to delete/replace,
+REM causing "access denied" errors and a half-updated environment. Stop only
+REM processes belonging to THIS repo (executables under .venv, or the bgutil
+REM node), never unrelated python/node processes; the installer's own cmd and
+REM PowerShell run from System32 and are not matched.
+powershell -NoProfile -Command "$venv = Join-Path '%CD%' '.venv'; $root = '%CD%'; $procs = Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains('bgutil') -and $_.CommandLine.ToLower().Contains($root.ToLower())) }; foreach ($p in $procs) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host ('Closed running UltraSinger process (PID ' + $p.ProcessId + ').') } catch {} }"
+REM Give Windows a moment to release the file handles before the venv is wiped.
+if exist ".venv" timeout /t 2 /nobreak >nul
+
+REM --- Avoid uv hardlink warnings when cache and project differ ----------------
+REM uv hardlinks wheels from its cache into .venv; hardlinks only work within
+REM one volume/filesystem. When the cache (often on C:) and the project are on
+REM different drives, uv prints a "Failed to hardlink ... falling back to full
+REM copy" warning on every sync. Detect that case and set copy mode up front so
+REM the warning never appears; same-drive setups keep the faster hardlink path.
+if not defined UV_LINK_MODE (
+    set "UV_CACHE_PATH="
+    for /f "delims=" %%D in ('uv cache dir 2^>nul') do set "UV_CACHE_PATH=%%D"
+    if defined UV_CACHE_PATH (
+        if /i not "!UV_CACHE_PATH:~0,1!"=="!CD:~0,1!" set "UV_LINK_MODE=copy"
+    )
+)
+
 call "!TARGET_SCRIPT!"
 set "SUB_RC=!errorlevel!"
 

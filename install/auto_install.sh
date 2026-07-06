@@ -181,6 +181,40 @@ if [ -z "$UV_SYSTEM_CERTS" ] && { [ -n "$HTTP_PROXY" ] || [ -n "$http_proxy" ] |
     echo ""
 fi
 
+# --- Stop a running UltraSinger instance from THIS folder --------------------
+# A running GUI locks files under .venv that the sub-script deletes/replaces.
+# Stop only processes whose command line references this repo's .venv or the
+# bgutil provider under .potoken - never unrelated python/node processes. The
+# installer shell itself runs install/auto_install.sh (not under those dirs).
+if command -v pkill >/dev/null 2>&1; then
+    _repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+    pkill -f "$_repo_root/.venv" >/dev/null 2>&1 || true
+    pkill -f "$_repo_root/.potoken" >/dev/null 2>&1 || true
+    sleep 1
+fi
+
+# --- Avoid uv hardlink warnings when cache and project differ ----------------
+# uv hardlinks wheels from its cache into .venv; hardlinks only work within one
+# filesystem. When the cache and the project are on different filesystems, uv
+# prints a "Failed to hardlink ... falling back to full copy" warning on every
+# sync. Probe once and set copy mode up front so the warning never appears;
+# same-filesystem setups keep the faster hardlink path.
+if [ -z "${UV_LINK_MODE:-}" ]; then
+    CACHE_DIR="$(uv cache dir 2>/dev/null)"
+    if [ -n "$CACHE_DIR" ] && [ -d "$CACHE_DIR" ]; then
+        _probe_src="$CACHE_DIR/.us_linkprobe.$$"
+        _probe_dst="$(cd "$SCRIPT_DIR/.." && pwd)/.us_linkprobe.$$"
+        if : > "$_probe_src" 2>/dev/null; then
+            if ln "$_probe_src" "$_probe_dst" 2>/dev/null; then
+                rm -f "$_probe_dst"
+            else
+                export UV_LINK_MODE=copy
+            fi
+            rm -f "$_probe_src"
+        fi
+    fi
+fi
+
 set +e
 bash "$TARGET_SCRIPT"
 SUB_RC=$?

@@ -60,6 +60,19 @@ if defined IS_CUDA (
     )
 )
 
+REM Stop a running instance from this folder so uv can replace locked files.
+powershell -NoProfile -Command "$venv = Join-Path '%CD%' '.venv'; $root = '%CD%'; foreach ($p in (Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains('bgutil') -and $_.CommandLine.ToLower().Contains($root.ToLower())) })) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host ('Closed running UltraSinger process (PID ' + $p.ProcessId + ').') } catch {} }"
+if exist ".venv" timeout /t 2 /nobreak >nul
+
+REM Avoid uv hardlink warnings when the cache and project are on different drives.
+if not defined UV_LINK_MODE (
+    set "UV_CACHE_PATH="
+    for /f "delims=" %%D in ('uv cache dir 2^>nul') do set "UV_CACHE_PATH=%%D"
+    if defined UV_CACHE_PATH (
+        if /i not "!UV_CACHE_PATH:~0,1!"=="!CD:~0,1!" set "UV_LINK_MODE=copy"
+    )
+)
+
 echo Syncing dependencies...
 uv sync --extra gui --extra scoring --extra potoken
 if !errorlevel! neq 0 (

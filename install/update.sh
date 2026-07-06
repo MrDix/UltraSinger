@@ -65,6 +65,30 @@ if [ -n "$IS_CUDA" ]; then
     uv lock
 fi
 
+# Stop a running instance from this folder so uv can replace locked files.
+if command -v pkill >/dev/null 2>&1; then
+    pkill -f "$(pwd)/.venv" >/dev/null 2>&1 || true
+    pkill -f "$(pwd)/.potoken" >/dev/null 2>&1 || true
+    sleep 1
+fi
+
+# Avoid uv hardlink warnings when the cache and project are on different filesystems.
+if [ -z "${UV_LINK_MODE:-}" ]; then
+    CACHE_DIR="$(uv cache dir 2>/dev/null)"
+    if [ -n "$CACHE_DIR" ] && [ -d "$CACHE_DIR" ]; then
+        _probe_src="$CACHE_DIR/.us_linkprobe.$$"
+        _probe_dst="$(pwd)/.us_linkprobe.$$"
+        if : > "$_probe_src" 2>/dev/null; then
+            if ln "$_probe_src" "$_probe_dst" 2>/dev/null; then
+                rm -f "$_probe_dst"
+            else
+                export UV_LINK_MODE=copy
+            fi
+            rm -f "$_probe_src"
+        fi
+    fi
+fi
+
 echo "Syncing dependencies..."
 uv sync --extra gui --extra scoring --extra potoken
 
