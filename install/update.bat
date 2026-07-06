@@ -87,6 +87,14 @@ if defined IS_CUDA (
     rmdir /s /q "!BACKUP_DIR!" 2>nul
 )
 
+REM Update the PO-token provider too, so a single "update" refreshes
+REM everything (code, Python packages AND the provider) - the user never
+REM needs to run the full installer just to pick up a provider change.
+REM Non-fatal: provider setup exits non-zero when Node.js/git are missing.
+if exist "%~dp0helpers\setup_potoken_provider.bat" (
+    call "%~dp0helpers\setup_potoken_provider.bat" "install\update.bat"
+)
+
 echo.
 echo Update completed.
 echo.

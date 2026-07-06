@@ -98,5 +98,13 @@ if [ -n "$IS_CUDA" ]; then
     git update-index --skip-worktree uv.lock
 fi
 
+# Update the PO-token provider too, so a single "update" refreshes everything
+# (code, Python packages AND the provider) - the user never needs to run the
+# full installer just to pick up a provider change. Non-fatal.
+SETUP_HELPER="$(cd "$(dirname "$0")" && pwd)/helpers/setup_potoken_provider.sh"
+if [ -f "$SETUP_HELPER" ]; then
+    bash "$SETUP_HELPER" "install/update.sh" || true
+fi
+
 echo ""
 echo "Update completed."
