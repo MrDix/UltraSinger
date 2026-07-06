@@ -41,6 +41,7 @@ _DEFAULTS = {
     "disable_separation": False,
     "disable_quantization": False,
     "disable_vocal_center": False,
+    "octave_snap": False,
     "disable_onset_correction": False,
     "disable_denoise_track_noise": False,
     "denoise_nr": 20,

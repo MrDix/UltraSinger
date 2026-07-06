@@ -334,6 +334,8 @@ class UltraSingerRunner(QObject):
             args.append("--disable_quantization")
         if config.get("disable_vocal_center"):
             args.append("--disable_vocal_center")
+        if config.get("octave_snap"):
+            args.append("--octave_snap")
         if config.get("disable_lyrics_lookup"):
             args.append("--disable_lyrics_lookup")
         if config.get("disable_reference_lyrics"):

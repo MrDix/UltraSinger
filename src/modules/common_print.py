@@ -95,6 +95,10 @@ def print_help() -> None:
     --disable_onset_correction  Disable onset-based timing correction. Enabled by default.
     --disable_quantization  Disable key quantization. Key quantization is enabled by default and removes slides and out-of-key notes.
     --disable_vocal_center  Disable vocal-centre octave correction. Enabled by default.
+    --octave_snap           Fold isolated single-note octave spikes back onto the melody line
+                            (removes jarring single-note octave jumps left by pitch-tracking errors).
+                            Conservative and octave-only, so it never changes the game score; it does
+                            NOT fix whole-section octave shifts. Disabled by default.
     --syllable_split        Preserve syllable-level note splits at pitch changes (experimental). Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
     --pitch_change_split    Split notes at pitch change boundaries within a syllable. Enabled by default.
