@@ -116,8 +116,10 @@ _DEFAULTS = {
     "refine_timing": True,
     "refine_hit_ratio": 0.4,
     "refine_timing_threshold": 30.0,
-    # ptAKF chart refit
-    "ptakf_refit": True,
+    # Chart style (singable = professional-like held notes; score = maximise
+    # the in-game score by rebuilding notes onto the game's exact beat tones)
+    "chart_style": "singable",
+    # ptAKF chart refit — advanced sub-settings (on/off follows chart_style)
     "ptakf_refit_min_note_ms": 100.0,
     "ptakf_refit_fill": True,
     "ptakf_refit_fill_min_ms": 300.0,

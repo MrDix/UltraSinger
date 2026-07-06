@@ -801,6 +801,15 @@ UltraSinger reports the **game score**: the written chart scored against the ext
 
 **This is the number to trust when comparing conversions**, and it is UltraSinger's primary score output. It also appears with a per-difficulty breakdown (total %, notes/golden/line-bonus points, beats hit/total) in the settings info file, and the Medium score is appended to the chart's `#CREATOR` header line. It shows up in the GUI queue result line as well.
 
+#### Chart style: singable vs score (`--chart_style`, GUI: Settings → Post-Processing → "Chart Style")
+
+There is a real trade-off between a chart that *scores* high and one that is good to *sing*:
+
+* **`singable`** (default): natural, held notes like a professionally-made karaoke chart. This is the best result to actually sing.
+* **`score`**: rebuilds every note onto the game's exact per-beat tones (the "ptAKF refit"), which maximises the reported game score but produces many short notes that trace vibrato and ornaments — accurate to the recording, but harder to sing.
+
+A measurement against professional reference charts makes the trade-off concrete: those hand-made charts score only ~77% Medium against the isolated vocals, and the `singable` style lands at that same level — because the scorer rewards tracing the vocal exactly, a simplified singable chart *cannot* score as high as one that traces every wiggle. So a lower game score in `singable` style is expected and is not a defect; the `score` style's higher number reflects over-fitting to the recording, not a better karaoke chart. Advanced users can still force the refit on or off directly with `--ptakf_refit` / `--disable_ptakf_refit`, which override `--chart_style`.
+
 #### Simple / accurate score (fallback only)
 
 Without the optional `ultrastar-score` package installed, UltraSinger falls back to an internal simple/accurate estimate instead. Ultrastar is not interested in pitch heights: as long as a note is in the pitch range A-G you get one point (simple), while accurate requires the exact octave. This fallback measures against the SwiftF0 pitch data the chart was built from rather than the actual in-game ptAKF detector, so it can rank charts differently — prefer the game score above whenever it is available.

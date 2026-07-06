@@ -335,6 +335,23 @@ class ConversionSettingsForm(QWidget):
     def _build_postprocessing_section(self):
         card = SettingsCard("Post-Processing")
 
+        # Chart style (singable vs score-maximising)
+        self._chart_style = _NoScrollComboBox()
+        self._chart_style.addItems(["singable", "score"])
+        self._chart_style.setCurrentText(
+            self._config.get("chart_style", "singable"))
+        card.add_row("Chart Style", self._chart_style,
+                     "'singable' (recommended): natural, held notes like a "
+                     "professional karaoke chart — the best result to actually "
+                     "sing. 'score': rebuilds every note onto the game's exact "
+                     "per-beat tones for a higher in-game score number, but "
+                     "produces many short notes that trace vibrato and "
+                     "ornaments (harder to sing). Note: singable charts report "
+                     "a lower game score (~the level professional charts reach) "
+                     "— that is expected, not a defect.",
+                     reset_callback=lambda: self._chart_style.setCurrentText(
+                         _DEFAULTS.get("chart_style", "singable")))
+
         # Hyphenation
         self._hyphenation = ToggleSwitch(checked=self._config.get("hyphenation", True))
         card.add_toggle_row("Hyphenation", self._hyphenation,
@@ -698,19 +715,9 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._refine_timing_threshold.setValue(
                          _DEFAULTS.get("refine_timing_threshold", 30.0)))
 
-        # ptAKF chart refit
-        self._ptakf_refit = ToggleSwitch(
-            checked=self._config.get("ptakf_refit", True)
-        )
-        card.add_toggle_row("ptAKF Chart Refit", self._ptakf_refit,
-                           "Rebuild note boundaries and pitches from ptAKF, the game's own "
-                           "pitch-detection algorithm (the one karaoke games themselves use to "
-                           "score singing) — a score-first chart. Charts only voiced beats and "
-                           "splits notes at pitch changes. Maximizes the achievable game score "
-                           "but increases the note count.",
-                           reset_callback=lambda: self._ptakf_refit.setChecked(
-                               _DEFAULTS.get("ptakf_refit", True)))
-
+        # ptAKF chart refit — on/off is controlled by "Chart Style" above
+        # (singable = off, score = on). These are its advanced sub-settings,
+        # only meaningful in the "score" style.
         self._ptakf_refit_min_note_ms = _NoScrollDoubleSpinBox()
         self._ptakf_refit_min_note_ms.setRange(0.0, 500.0)
         self._ptakf_refit_min_note_ms.setSingleStep(10.0)
@@ -754,19 +761,20 @@ class ConversionSettingsForm(QWidget):
 
         self._refine_from_vocal.toggled.connect(_toggle_refine)
 
-        def _toggle_ptakf_refit(on):
-            self._ptakf_refit_min_note_ms.setEnabled(on)
-            self._ptakf_refit_fill.setEnabled(on)
+        def _toggle_ptakf_refit(refit_on):
+            self._ptakf_refit_min_note_ms.setEnabled(refit_on)
+            self._ptakf_refit_fill.setEnabled(refit_on)
             self._ptakf_refit_fill_min_ms.setEnabled(
-                on and self._ptakf_refit_fill.isChecked())
+                refit_on and self._ptakf_refit_fill.isChecked())
 
         def _toggle_ptakf_fill(on):
             self._ptakf_refit_fill_min_ms.setEnabled(
-                on and self._ptakf_refit.isChecked())
+                on and self._chart_style.currentText() == "score")
 
-        self._ptakf_refit.toggled.connect(_toggle_ptakf_refit)
+        self._chart_style.currentTextChanged.connect(
+            lambda t: _toggle_ptakf_refit(t == "score"))
         self._ptakf_refit_fill.toggled.connect(_toggle_ptakf_fill)
-        _toggle_ptakf_refit(self._ptakf_refit.isChecked())
+        _toggle_ptakf_refit(self._chart_style.currentText() == "score")
         _toggle_refine(self._refine_from_vocal.isChecked())
 
         self._main_layout.addWidget(card)
@@ -1410,6 +1418,7 @@ class ConversionSettingsForm(QWidget):
             "demucs_model": self._demucs_model.currentText(),
             "language_mode": "manual" if self._lang_manual.isChecked() else "auto",
             "language": self._language_combo.currentText(),
+            "chart_style": self._chart_style.currentText(),
             "hyphenation": self._hyphenation.isChecked(),
             "disable_separation": not self._separation.isChecked(),
             "disable_quantization": not self._quantize.isChecked(),
@@ -1467,7 +1476,6 @@ class ConversionSettingsForm(QWidget):
             "refine_timing": self._refine_timing.isChecked(),
             "refine_hit_ratio": self._refine_hit_ratio.value(),
             "refine_timing_threshold": self._refine_timing_threshold.value(),
-            "ptakf_refit": self._ptakf_refit.isChecked(),
             "ptakf_refit_min_note_ms": self._ptakf_refit_min_note_ms.value(),
             "ptakf_refit_fill": self._ptakf_refit_fill.isChecked(),
             "ptakf_refit_fill_min_ms": self._ptakf_refit_fill_min_ms.value(),
