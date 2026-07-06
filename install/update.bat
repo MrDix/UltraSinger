@@ -23,6 +23,11 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 
+REM --- Ensure ffmpeg is present (same check as the installer) ----------------
+if exist "%~dp0helpers\ensure_ffmpeg.bat" (
+    call "%~dp0helpers\ensure_ffmpeg.bat"
+)
+
 REM --- Detect whether this is a CUDA-protected install -----------------------
 set "IS_CUDA="
 git ls-files -v pyproject.toml 2>nul | findstr /b /c:"S" >nul 2>&1
