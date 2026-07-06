@@ -132,6 +132,14 @@ call npx --yes tsc >nul 2>&1
 popd
 
 if exist "%SERVER_ENTRY%" (
+    REM Warm up the provider now so the FIRST app launch is fast. On first
+    REM start, security software scans the freshly built node_modules, which
+    REM on corporate machines can take several minutes - during which the app
+    REM would look broken. Trigger that scan here instead.
+    echo Warming up the provider so the first app launch is fast...
+    echo ^(On managed/corporate machines antivirus scans the new files on the
+    echo  first start - this can take several minutes. You can leave it running.^)
+    powershell -NoProfile -Command "$entry = (Resolve-Path '%SERVER_ENTRY%').Path; $p = Start-Process -FilePath 'node' -ArgumentList $entry -WorkingDirectory (Split-Path $entry) -WindowStyle Hidden -PassThru; $ready = $false; for ($i = 0; $i -lt 450; $i++) { try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:4416/ping' -TimeoutSec 3; if ($r.StatusCode -eq 200) { $ready = $true; break } } catch {}; Start-Sleep -Seconds 2 }; try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}; if ($ready) { Write-Host 'Provider warmed up - the GUI will start it quickly from now on.' } else { Write-Host 'Provider warm-up did not finish in time; the first app launch may still take a few minutes while security scanning completes.' }"
     echo Done. The GUI starts the provider automatically on launch -
     echo full-quality video downloads are enabled.
     exit /b 0
