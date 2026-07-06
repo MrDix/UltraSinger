@@ -109,6 +109,18 @@ This will help me a lot to keep this project alive and improve it.
 
 Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). It pulls the latest changes and syncs dependencies — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten").
 
+**Keeping everything on one drive (e.g. all development on `D:`)**
+
+By default uv stores its package cache and downloaded Python interpreters under your user profile on `C:`. If you keep your projects on another drive — for example because `C:` is wiped when the machine is replaced — you can move uv's regenerable data there too. In a normal Command Prompt (these persist to your user environment; open a **new** terminal afterwards):
+
+```bat
+setx UV_CACHE_DIR "D:\dev\uv\cache"
+setx UV_PYTHON_INSTALL_DIR "D:\dev\uv\python"
+setx UV_TOOL_DIR "D:\dev\uv\tools"
+```
+
+On Linux/macOS set the same variables in your shell profile. Nothing here is "your work" — it is cache and tooling that uv rebuilds automatically — but relocating it keeps `C:` free of development data. A side benefit: when the cache and your project are on the same drive, uv can hardlink packages into the virtual environment instead of copying them (faster syncs, no "Failed to hardlink … falling back to full copy" warning).
+
 ### Run (CLI)
 
 * In root folder just run `run_on_windows.bat`, `run_on_linux.sh` or `run_on_mac.command` to start the app.
