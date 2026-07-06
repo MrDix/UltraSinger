@@ -112,3 +112,16 @@ class TestChartStyleResolution(unittest.TestCase):
         settings = init_settings(["-i", "test.mp3", "--chart_style", "bogus"])
         self.assertEqual(settings.chart_style, "singable")
         self.assertFalse(settings.ptakf_refit)
+
+    def test_no_leak_across_calls(self):
+        # init_settings mutates a shared singleton; a prior score run must not
+        # leak chart_style/refit state into a later default run.
+        init_settings(["-i", "test.mp3", "--chart_style", "score"])
+        settings = init_settings(["-i", "test.mp3"])
+        self.assertEqual(settings.chart_style, "singable")
+        self.assertFalse(settings.ptakf_refit)
+
+    def test_class_default_ptakf_refit_matches_singable(self):
+        # A fresh Settings() (read before init_settings resolves) must agree
+        # with the singable default (refit off).
+        self.assertFalse(Settings().ptakf_refit)

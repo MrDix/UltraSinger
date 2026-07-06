@@ -795,7 +795,7 @@ def run() -> tuple[str, Score, Score]:
                 f"{ULTRASINGER_HEAD} Game score (ptAKF): "
                 f"{blue_highlighted(format_uscore_report(uscore_result))}"
             )
-            if not settings.ptakf_refit:
+            if settings.chart_style == "singable" and not settings.ptakf_refit:
                 # The scorer rewards charts that trace the vocal exactly, so a
                 # singable chart lands near the level a professional chart
                 # reaches (~77% Medium on isolated vocals) - not a defect.
@@ -1935,6 +1935,7 @@ def init_settings(argv: list[str]) -> Settings:
     """Init settings"""
     # Reset per-run resolution state (settings is a reused module singleton).
     settings.ptakf_refit_explicit = False
+    settings.chart_style = "singable"
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:

@@ -62,7 +62,7 @@ class Settings:
     chart_style = "singable"
 
     # ptAKF chart refit (score-first chart: note boundaries/pitches from the game's detector)
-    ptakf_refit = True  # Resolved from chart_style unless --ptakf_refit/--disable_ptakf_refit is passed
+    ptakf_refit = False  # Resolved from chart_style (singable->False, score->True) unless an explicit flag is passed
     ptakf_refit_explicit = False  # True once an explicit refit override flag was seen
     ptakf_refit_min_note_ms: float = 100.0  # Merge refit notes shorter than this when score-neutral
     ptakf_refit_fill = True  # Also chart sung regions outside all notes (ad-libs, vocalises) as "~" notes (enabled by default)
