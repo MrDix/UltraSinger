@@ -483,7 +483,7 @@ def snap_isolated_octave_spikes(
     for seg in midi_segments:
         try:
             midis.append(int(librosa.note_to_midi(seg.note)))
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, librosa.ParameterError):
             midis.append(None)
 
     n = len(midis)
@@ -559,7 +559,7 @@ def enforce_octave_consistency(
     for seg in midi_segments:
         try:
             midis.append(int(librosa.note_to_midi(seg.note)))
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, librosa.ParameterError):
             midis.append(None)
     voiced = [i for i in idx if midis[i] is not None]
     if len(voiced) < 3:
@@ -656,7 +656,7 @@ def correct_octave_outliers(
         for seg in midi_segments:
             try:
                 midi_values.append(librosa.note_to_midi(seg.note))
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, librosa.ParameterError):
                 midi_values.append(None)
 
         # Compute global median once per pass as tie-breaker reference
@@ -739,7 +739,7 @@ def correct_octave_outliers(
     for seg in midi_segments:
         try:
             midi_values_ph2.append(librosa.note_to_midi(seg.note))
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, librosa.ParameterError):
             midi_values_ph2.append(None)
 
     valid_values = [v for v in midi_values_ph2 if v is not None]

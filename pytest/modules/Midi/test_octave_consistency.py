@@ -57,3 +57,13 @@ def test_pitch_class_preserved():
 def test_short_input_noop():
     out = enforce_octave_consistency(_segs([60, 72]))
     assert _midis(out) == [60, 72]
+
+
+def test_malformed_note_skipped_not_crashing():
+    # librosa raises ParameterError (NOT a ValueError subclass) for bad
+    # note strings — the pass must treat such segments as unvoiced.
+    segs = _segs([60, 60, 72, 60, 60])
+    segs[1].note = "not-a-note"
+    out = enforce_octave_consistency(segs)
+    assert out[1].note == "not-a-note"  # untouched
+    assert librosa.note_to_midi(out[2].note) == 60  # spike still folded
