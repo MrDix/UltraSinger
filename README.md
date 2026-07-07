@@ -544,6 +544,10 @@ UltraSinger includes automatic octave correction, but in rare cases the pitch de
 
 The value is an integer: positive values shift up, negative values shift down. For example, `--octave 1` shifts all notes up by one octave, `--octave -1` shifts down. The shift is applied after automatic octave correction, so it acts as a final override.
 
+#### Isolated octave-spike snap (`--octave_snap`, GUI: Settings → Post-Processing → "Octave Spike Snap")
+
+Separately from a whole-song shift, the pitch tracker occasionally lifts or drops a *single* note by an octave while its neighbours stay put — a lone note that jumps up and back down, jarring to sing and read. `--octave_snap` folds only those clear, isolated spikes back onto the melody: it acts on a note that sticks out above or below both of its immediate neighbours, sits in a stable local context, and is about an octave away. Genuine leaps, gradual movement and legitimately wide-range songs are left untouched, and because octave is scoring-irrelevant (the game folds octaves) it never changes the game score. It is a display/singability polish and does **not** fix a whole passage that is consistently an octave off (that is a separate, harder pitch-tracking problem). Disabled by default.
+
 ### Sheet Music
 
 For Sheet Music generation you need to have `MuseScore` installed on your system.

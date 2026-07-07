@@ -383,6 +383,20 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._vocal_center.setChecked(
                                not _DEFAULTS["disable_vocal_center"]))
 
+        # Isolated octave-spike snap
+        self._octave_snap = ToggleSwitch(
+            checked=self._config.get("octave_snap", False))
+        card.add_toggle_row("Octave Spike Snap", self._octave_snap,
+                           "Fold isolated single-note octave jumps back onto the "
+                           "melody — removes the occasional lone note the pitch "
+                           "tracker lifts or drops by an octave (jarring to sing). "
+                           "Conservative: it only touches clear, isolated spikes, "
+                           "never genuine leaps or wide-range songs, and never "
+                           "changes the game score. Does not fix whole passages "
+                           "that are an octave off. Off by default.",
+                           reset_callback=lambda: self._octave_snap.setChecked(
+                               _DEFAULTS.get("octave_snap", False)))
+
         # Onset correction
         self._onset_correction = ToggleSwitch(
             checked=not self._config.get("disable_onset_correction", False)
@@ -1423,6 +1437,7 @@ class ConversionSettingsForm(QWidget):
             "disable_separation": not self._separation.isChecked(),
             "disable_quantization": not self._quantize.isChecked(),
             "disable_vocal_center": not self._vocal_center.isChecked(),
+            "octave_snap": self._octave_snap.isChecked(),
             "disable_onset_correction": not self._onset_correction.isChecked(),
             "disable_denoise_track_noise": not self._denoise.isChecked(),
             "denoise_nr": self._denoise_nr.value(),
