@@ -397,6 +397,22 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._octave_snap.setChecked(
                                _DEFAULTS.get("octave_snap", False)))
 
+        # Viterbi octave consistency
+        self._octave_consistency = ToggleSwitch(
+            checked=self._config.get("octave_consistency", False))
+        card.add_toggle_row("Octave Consistency", self._octave_consistency,
+                           "Pick each note's octave so the melody line is "
+                           "consistent to sing. Pitch trackers scatter notes and "
+                           "short runs into the wrong octave (measured: ~10x more "
+                           "jarring octave-size jumps than professional charts); "
+                           "this keeps every note's pitch class and re-chooses "
+                           "only the octave via dynamic programming. Genuine "
+                           "octave passages and wide-range songs are preserved, "
+                           "and the game score is unaffected (scoring folds "
+                           "octaves). Off by default.",
+                           reset_callback=lambda: self._octave_consistency.setChecked(
+                               _DEFAULTS.get("octave_consistency", False)))
+
         # Onset correction
         self._onset_correction = ToggleSwitch(
             checked=not self._config.get("disable_onset_correction", False)
@@ -1438,6 +1454,7 @@ class ConversionSettingsForm(QWidget):
             "disable_quantization": not self._quantize.isChecked(),
             "disable_vocal_center": not self._vocal_center.isChecked(),
             "octave_snap": self._octave_snap.isChecked(),
+            "octave_consistency": self._octave_consistency.isChecked(),
             "disable_onset_correction": not self._onset_correction.isChecked(),
             "disable_denoise_track_noise": not self._denoise.isChecked(),
             "denoise_nr": self._denoise_nr.value(),

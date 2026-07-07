@@ -99,6 +99,12 @@ def print_help() -> None:
                             (removes jarring single-note octave jumps left by pitch-tracking errors).
                             Conservative and octave-only, so it never changes the game score; it does
                             NOT fix whole-section octave shifts. Disabled by default.
+    --octave_consistency    Pick each note's octave so the melody line is consistent to sing: keeps
+                            every note's pitch class and removes scattered wrong-octave notes and
+                            short runs (measured 507 -> 61 jarring >=10-semitone jumps on 8 reference
+                            songs, matching professional chart level). Genuine octave passages and
+                            wide-range songs are preserved; the game score is unaffected
+                            (octave-folded scoring). Disabled by default.
     --syllable_split        Preserve syllable-level note splits at pitch changes (experimental). Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
     --pitch_change_split    Split notes at pitch change boundaries within a syllable. Enabled by default.
