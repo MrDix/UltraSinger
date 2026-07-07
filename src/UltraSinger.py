@@ -64,6 +64,7 @@ from modules.Midi.midi_creator import (
     apply_octave_shift,
     correct_global_octave,
     correct_octave_outliers,
+    enforce_octave_consistency,
     snap_isolated_octave_spikes,
     correct_vocal_center,
     create_midi_file,
@@ -624,6 +625,10 @@ def run() -> tuple[str, Score, Score]:
     # Optional: fold isolated single-note octave spikes onto the melody
     if settings.octave_snap:
         process_data.midi_segments = snap_isolated_octave_spikes(process_data.midi_segments)
+
+    # Optional: per-note Viterbi octave assignment for a consistent melody line
+    if settings.octave_consistency:
+        process_data.midi_segments = enforce_octave_consistency(process_data.midi_segments)
 
     # Safety-net: shift notes toward vocal centre if still concentrated
     # outside the expected range (catches 100%-consistent wrong-octave)
@@ -2076,6 +2081,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.vocal_center_correction = False
         elif opt in ("--octave_snap"):
             settings.octave_snap = True
+        elif opt in ("--octave_consistency"):
+            settings.octave_consistency = True
         elif opt in ("--disable_onset_correction"):
             settings.onset_correction = False
         elif opt in ("--syllable_split"):
@@ -2284,6 +2291,7 @@ def arg_options():
         "disable_quantization",
         "disable_vocal_center",
         "octave_snap",
+        "octave_consistency",
         "disable_onset_correction",
         "syllable_split",
         "vocal_gap_fill",

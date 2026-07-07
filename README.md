@@ -548,6 +548,10 @@ The value is an integer: positive values shift up, negative values shift down. F
 
 Separately from a whole-song shift, the pitch tracker occasionally lifts or drops a *single* note by an octave while its neighbours stay put — a lone note that jumps up and back down, jarring to sing and read. `--octave_snap` folds only those clear, isolated spikes back onto the melody: it acts on a note that sticks out above or below both of its immediate neighbours, sits in a stable local context, and is about an octave away. Genuine leaps, gradual movement and legitimately wide-range songs are left untouched, and because octave is scoring-irrelevant (the game folds octaves) it never changes the game score. It is a display/singability polish and does **not** fix a whole passage that is consistently an octave off (that is a separate, harder pitch-tracking problem). Disabled by default.
 
+#### Octave consistency (`--octave_consistency`, GUI: Settings → Post-Processing → "Octave Consistency")
+
+The stronger octave repair: pitch trackers scatter individual notes *and short runs* into the wrong octave — measured against professional reference charts, generated charts contained about **10× as many jarring octave-size jumps** between adjacent notes (507 vs 47 across 8 songs), which makes passages extremely confusing to sing. `--octave_consistency` keeps every note's pitch class and re-chooses only its octave via dynamic programming over the whole song, balancing melodic smoothness against fidelity to what the tracker detected. The balance is self-limiting: short wrong-octave scatter (roughly 1–3 notes) is folded onto the melody line, while a genuine octave passage of about five notes or more is cheaper to keep — so real octave jumps and wide-range songs survive (validated on the same 8 reference songs: jumps dropped to professional-chart level while octave-sensitive pitch agreement with the references stayed within 1 percentage point). The game score is unaffected because scoring folds octaves. Disabled by default.
+
 ### Sheet Music
 
 For Sheet Music generation you need to have `MuseScore` installed on your system.
