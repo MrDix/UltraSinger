@@ -24,11 +24,20 @@ set "PYTHON_EXE="
 for %%V in (3.13 3.12) do (
     py -%%V --version >nul 2>&1
     if !errorlevel! equ 0 (
-        :: Get the full path to the Python executable
-        for /f "delims=" %%P in ('py -%%V -c "import sys; print(sys.executable)"') do (
-            set "PYTHON_EXE=%%P"
+        REM The launcher may resolve the tag to a different interpreter than
+        REM requested (e.g. a stale registry entry left behind by an upgrade
+        REM or uninstall), so verify the version before accepting it.
+        set "PY_VER="
+        for /f "delims=" %%W in ('py -%%V -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2^>nul') do (
+            set "PY_VER=%%W"
         )
-        goto :found_python
+        if "!PY_VER!"=="%%V" (
+            REM Get the full path to the Python executable
+            for /f "delims=" %%P in ('py -%%V -c "import sys; print(sys.executable)"') do (
+                set "PYTHON_EXE=%%P"
+            )
+            goto :found_python
+        )
     )
 )
 
