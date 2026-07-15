@@ -76,7 +76,12 @@ if "!PYTHON_EXE!"=="" (
 where uv >nul 2>&1
 if !errorlevel! neq 0 (
     echo Installing uv...
-    powershell -NoProfile -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    REM -ExecutionPolicy Bypass applies to this one PowerShell process only
+    REM (the system-wide policy is untouched): the uv install script refuses
+    REM to run under the Windows default "Restricted" policy, and fresh
+    REM machines would otherwise abort here with a manual
+    REM "Set-ExecutionPolicy" instruction.
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
 )
 
 :: Wait a moment for uv to be available
@@ -85,7 +90,13 @@ timeout /t 2 /nobreak >nul
 :: Verify uv is available
 where uv >nul 2>&1
 if !errorlevel! neq 0 (
-    echo Error: uv could not be found or installed
+    echo Error: uv could not be found or installed.
+    echo If the message above mentions the PowerShell execution policy, that
+    echo policy is enforced system-wide on this machine ^(common on managed
+    echo devices^) and blocks the uv install script. Install uv manually
+    echo instead, e.g. with winget:
+    echo   winget install astral-sh.uv
+    echo and then re-run this script.
     pause
     exit /b 1
 )
