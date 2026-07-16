@@ -121,6 +121,12 @@ echo "Building provider (npm install + tsc, this can take a minute)..."
 ( cd "$PROVIDER_DIR/server" && npm install --no-audit --no-fund >/dev/null 2>&1 && npx --yes tsc >/dev/null 2>&1 )
 
 if [ -f "$SERVER_ENTRY" ]; then
+    # The GUI's first-launch bootstrap starts the server itself right after
+    # this script, so the warm-up below would only double the wait.
+    if [ -n "${ULTRASINGER_POTOKEN_SKIP_WARMUP:-}" ]; then
+        echo "Provider built. Warm-up skipped (the app manages the server)."
+        exit 0
+    fi
     # Warm up the provider now so the FIRST app launch is fast. The first time
     # the freshly built server starts, security software scans its many
     # node_modules files, which on corporate machines can take several minutes

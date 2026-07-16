@@ -36,6 +36,7 @@ class _PotokenWorker(QObject):
     """
 
     finished = Signal(object)  # ProviderStatus | None
+    progress = Signal(str)     # human-readable note on long-running steps
 
     def __init__(self, base_url: str, auto_start_node: bool,
                  auto_start_docker: bool, cancel):
@@ -55,6 +56,7 @@ class _PotokenWorker(QObject):
                 auto_start_node=self._auto_start_node,
                 auto_start_docker=self._auto_start_docker,
                 cancel=self._cancel,
+                on_progress=self.progress.emit,
             )
         except Exception as e:  # noqa: BLE001 — fail open, never crash startup
             logger.warning("PO-token provider check failed: %s", e)
@@ -254,9 +256,15 @@ class MainWindow(QMainWindow):
         )
         self._potoken_worker.moveToThread(self._potoken_thread)
         self._potoken_thread.started.connect(self._potoken_worker.run)
+        self._potoken_worker.progress.connect(self._on_potoken_progress)
         self._potoken_worker.finished.connect(self._on_potoken_ready)
         self._potoken_worker.finished.connect(self._potoken_thread.quit)
         self._potoken_thread.start()
+
+    def _on_potoken_progress(self, message: str):
+        """Surface provider-setup progress (e.g. first-launch build)."""
+        if not self._closing:
+            self._queue_tab.append_log("[PO-Token] " + message)
 
     def _on_potoken_ready(self, status):
         """Report PO-token provider status and unlock the Queue button."""

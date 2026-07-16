@@ -56,6 +56,7 @@ _NODE_SERVER_ENTRY = (
     _REPO_ROOT / ".potoken" / "bgutil-ytdlp-pot-provider"
     / "server" / "build" / "main.js"
 )
+_BOOTSTRAP_TIMEOUT = 900.0  # seconds; npm install on slow disks/AV takes minutes
 
 
 @dataclass
@@ -139,6 +140,100 @@ def is_provider_running(base_url: str = DEFAULT_BASE_URL) -> bool:
 def _node_exe() -> str | None:
     """Absolute path to the node executable, or None if not on PATH."""
     return shutil.which("node")
+
+
+def _setup_script() -> Path:
+    """The install helper that fetches and builds the Node provider."""
+    name = (
+        "setup_potoken_provider.bat" if os.name == "nt"
+        else "setup_potoken_provider.sh"
+    )
+    return _REPO_ROOT / "install" / "helpers" / name
+
+
+def _setup_log_path() -> Path:
+    return _REPO_ROOT / ".potoken" / "setup.log"
+
+
+def _bootstrap_node_provider(
+    entry: Path,
+    cancel: threading.Event | None = None,
+    timeout: float = _BOOTSTRAP_TIMEOUT,
+    on_progress=None,
+) -> bool:
+    """Build the Node provider via the repo's setup script (one-time).
+
+    Covers installs where the provider setup could not finish — typically
+    because Node.js was installed during that very run and was not yet
+    visible to the same console.  Node.js is available *now* (the caller
+    checked), so build the provider here instead of asking the user to
+    re-run the installer.  The script's output goes to ``.potoken/setup.log``.
+    Returns True when the server entry exists afterwards.  Never raises.
+    """
+    import time
+
+    script = _setup_script()
+    if not script.is_file() or shutil.which("git") is None:
+        return False
+    if cancel is not None and cancel.is_set():
+        return False
+
+    logger.info(
+        "PO-token provider is not built yet - running %s (one-time, output "
+        "in %s)", script.name, _setup_log_path(),
+    )
+    if on_progress is not None:
+        on_progress(
+            "PO-token provider is not set up yet - downloading and building "
+            "it now (one-time, this can take a few minutes)..."
+        )
+    # The GUI starts (and warms up) the server itself right afterwards.
+    env = dict(os.environ, ULTRASINGER_POTOKEN_SKIP_WARMUP="1")
+    if os.name == "nt":
+        cmd = ["cmd.exe", "/d", "/c", str(script), "install\\update.bat"]
+    else:
+        cmd = ["bash", str(script), "./install/update.sh"]
+
+    log_path = _setup_log_path()
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
+    except OSError:
+        log_file = subprocess.DEVNULL
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT if log_file is not subprocess.DEVNULL
+            else subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            cwd=str(_REPO_ROOT),
+            env=env,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("Failed to run the PO-token provider setup: %s", e)
+        return False
+    finally:
+        if log_file is not subprocess.DEVNULL:
+            log_file.close()
+
+    deadline = time.monotonic() + timeout
+    while proc.poll() is None:
+        if (cancel is not None and cancel.is_set()) \
+                or time.monotonic() >= deadline:
+            _terminate_process(proc)
+            return False
+        time.sleep(1.0)
+
+    if proc.returncode == 0 and entry.is_file():
+        logger.info("PO-token provider built successfully.")
+        return True
+    logger.warning(
+        "PO-token provider setup did not complete (exit code %s) - see %s",
+        proc.returncode, log_path,
+    )
+    return False
 
 
 def _provider_log_path() -> Path:
@@ -276,12 +371,15 @@ def ensure_provider(
     auto_start_docker: bool = True,
     node_entry: Path | None = None,
     cancel: threading.Event | None = None,
+    on_progress=None,
 ) -> ProviderStatus:
     """Ensure a PO-token provider is reachable.
 
     Never raises.  Order: an already-running server → a local Node server
-    (preferred, no Docker needed) → Docker → a setup hint.  ``cancel``
-    lets the GUI abort a pending start on shutdown.
+    (preferred, no Docker needed; built on the fly when the installer could
+    not) → Docker → a setup hint.  ``cancel`` lets the GUI abort a pending
+    start on shutdown; ``on_progress`` (a ``str`` callable) receives
+    human-readable notes about long-running steps.
     """
     try:
         normalized, port = _normalize_base_url(base_url)
@@ -300,6 +398,12 @@ def ensure_provider(
     # Preferred: a local Node.js provider server (set up by the installer).
     entry = node_entry or _NODE_SERVER_ENTRY
     node = _node_exe() if auto_start_node else None
+    if node and not entry.is_file():
+        # The installer could not finish the provider setup (typically:
+        # Node.js was installed during that very run but was not yet visible
+        # to the same console).  Node.js is available now, so self-heal by
+        # building the provider here instead of asking for a reinstall.
+        _bootstrap_node_provider(entry, cancel=cancel, on_progress=on_progress)
     if node and entry.is_file():
         logger.info("Starting bgutil PO-token provider via Node ...")
         proc = _start_node_provider(node, entry)

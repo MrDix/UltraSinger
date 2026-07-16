@@ -168,6 +168,126 @@ class TestEnsureProvider:
         assert "antivirus" in status.detail
 
 
+class TestBootstrapNodeProvider:
+    """First-launch self-heal: build the provider when the installer could
+    not (e.g. Node.js only became visible after the install run)."""
+
+    def _completed_proc(self, returncode=0):
+        proc = MagicMock()
+        proc.poll.return_value = returncode
+        proc.returncode = returncode
+        return proc
+
+    def test_builds_provider_and_reports_success(self, tmp_path):
+        entry = tmp_path / "main.js"
+        script = tmp_path / "setup.bat"
+        script.write_text("rem stub", encoding="utf-8")
+        entry.write_text("// built", encoding="utf-8")
+        progress = MagicMock()
+        with patch.object(pp, "_setup_script", return_value=script), \
+             patch.object(pp, "_setup_log_path",
+                          return_value=tmp_path / "setup.log"), \
+             patch("shutil.which", return_value="/usr/bin/git"), \
+             patch("subprocess.Popen",
+                   return_value=self._completed_proc(0)) as popen:
+            ok = pp._bootstrap_node_provider(entry, on_progress=progress)
+        assert ok is True
+        progress.assert_called_once()
+        # The GUI manages the server itself - the script must skip warm-up.
+        env = popen.call_args.kwargs["env"]
+        assert env["ULTRASINGER_POTOKEN_SKIP_WARMUP"] == "1"
+
+    def test_returns_false_when_script_missing(self, tmp_path):
+        with patch.object(pp, "_setup_script",
+                          return_value=tmp_path / "missing.bat"), \
+             patch("subprocess.Popen") as popen:
+            ok = pp._bootstrap_node_provider(tmp_path / "main.js")
+        assert ok is False
+        popen.assert_not_called()
+
+    def test_returns_false_when_git_missing(self, tmp_path):
+        script = tmp_path / "setup.bat"
+        script.write_text("rem stub", encoding="utf-8")
+        with patch.object(pp, "_setup_script", return_value=script), \
+             patch("shutil.which", return_value=None), \
+             patch("subprocess.Popen") as popen:
+            ok = pp._bootstrap_node_provider(tmp_path / "main.js")
+        assert ok is False
+        popen.assert_not_called()
+
+    def test_returns_false_when_entry_still_missing(self, tmp_path):
+        script = tmp_path / "setup.bat"
+        script.write_text("rem stub", encoding="utf-8")
+        with patch.object(pp, "_setup_script", return_value=script), \
+             patch.object(pp, "_setup_log_path",
+                          return_value=tmp_path / "setup.log"), \
+             patch("shutil.which", return_value="/usr/bin/git"), \
+             patch("subprocess.Popen",
+                   return_value=self._completed_proc(0)):
+            ok = pp._bootstrap_node_provider(tmp_path / "never_built.js")
+        assert ok is False
+
+    def test_cancel_before_launch_skips(self, tmp_path):
+        import threading
+        script = tmp_path / "setup.bat"
+        script.write_text("rem stub", encoding="utf-8")
+        cancel = threading.Event()
+        cancel.set()
+        with patch.object(pp, "_setup_script", return_value=script), \
+             patch("shutil.which", return_value="/usr/bin/git"), \
+             patch("subprocess.Popen") as popen:
+            ok = pp._bootstrap_node_provider(tmp_path / "main.js",
+                                             cancel=cancel)
+        assert ok is False
+        popen.assert_not_called()
+
+    def test_ensure_provider_bootstraps_when_entry_missing(self, tmp_path):
+        """Node available but no built provider: self-heal instead of hint."""
+        entry = tmp_path / "main.js"
+
+        def fake_bootstrap(e, cancel=None, on_progress=None, **kwargs):
+            e.write_text("// built", encoding="utf-8")
+            return True
+
+        proc = MagicMock()
+        proc.poll.return_value = None
+        with patch.object(pp, "is_provider_running",
+                          side_effect=[False, True]), \
+             patch.object(pp, "_node_exe", return_value="/usr/bin/node"), \
+             patch.object(pp, "_bootstrap_node_provider",
+                          side_effect=fake_bootstrap) as bootstrap, \
+             patch.object(pp, "_start_node_provider", return_value=proc), \
+             patch.object(pp, "_docker_exe") as docker_exe:
+            status = pp.ensure_provider(node_entry=entry)
+        assert status.running is True
+        assert status.started_by_us is True
+        bootstrap.assert_called_once()
+        docker_exe.assert_not_called()
+
+    def test_ensure_provider_no_bootstrap_when_entry_exists(self, tmp_path):
+        entry = tmp_path / "main.js"
+        entry.write_text("// stub", encoding="utf-8")
+        proc = MagicMock()
+        proc.poll.return_value = None
+        with patch.object(pp, "is_provider_running",
+                          side_effect=[False, True]), \
+             patch.object(pp, "_node_exe", return_value="/usr/bin/node"), \
+             patch.object(pp, "_bootstrap_node_provider") as bootstrap, \
+             patch.object(pp, "_start_node_provider", return_value=proc):
+            status = pp.ensure_provider(node_entry=entry)
+        assert status.running is True
+        bootstrap.assert_not_called()
+
+    def test_ensure_provider_no_bootstrap_without_node(self, tmp_path):
+        with patch.object(pp, "is_provider_running", return_value=False), \
+             patch.object(pp, "_node_exe", return_value=None), \
+             patch.object(pp, "_bootstrap_node_provider") as bootstrap, \
+             patch.object(pp, "_docker_exe", return_value=None):
+            status = pp.ensure_provider(node_entry=tmp_path / "nope.js")
+        assert status.running is False
+        bootstrap.assert_not_called()
+
+
 class TestStopProvider:
     def test_terminates_node_process(self):
         proc = MagicMock()
