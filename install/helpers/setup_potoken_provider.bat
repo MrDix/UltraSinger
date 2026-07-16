@@ -44,8 +44,18 @@ if !errorlevel! neq 0 (
     )
     if defined DO_NODE_INSTALL (
         winget install --id OpenJS.NodeJS.LTS -e --silent --accept-package-agreements --accept-source-agreements
-        REM Make the freshly installed node available in THIS session
-        set "PATH=%ProgramFiles%\nodejs;%PATH%"
+        REM Make the freshly installed node available in THIS session. The
+        REM installer updates the registry PATH, but this console keeps its
+        REM old copy - probe the known install locations (machine-wide and
+        REM per-user) and refresh PATH from the registry as a fallback.
+        REM Without this, the check below fails right after a successful
+        REM install and the provider stays unbuilt until the next run.
+        if exist "%ProgramFiles%\nodejs\node.exe" set "PATH=%ProgramFiles%\nodejs;!PATH!"
+        if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" set "PATH=%LOCALAPPDATA%\Programs\nodejs;!PATH!"
+        where node >nul 2>&1
+        if !errorlevel! neq 0 (
+            for /f "delims=" %%P in ('powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"') do set "PATH=%%P;!PATH!"
+        )
     )
     where node >nul 2>&1
     if !errorlevel! neq 0 (
@@ -132,6 +142,12 @@ call npx --yes tsc >nul 2>&1
 popd
 
 if exist "%SERVER_ENTRY%" (
+    REM The GUI's first-launch bootstrap starts the server itself right
+    REM after this script, so the warm-up below would only double the wait.
+    if defined ULTRASINGER_POTOKEN_SKIP_WARMUP (
+        echo Provider built. Warm-up skipped ^(the app manages the server^).
+        exit /b 0
+    )
     REM Warm up the provider now so the FIRST app launch is fast. On first
     REM start, security software scans the freshly built node_modules, which
     REM on corporate machines can take several minutes - during which the app
