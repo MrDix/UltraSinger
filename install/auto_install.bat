@@ -266,4 +266,24 @@ echo No API keys were configured automatically. See the tips above and
 echo the README for how to set --remote_stt up if you want to use it
 echo ^(GUI: Settings -^> 'Remote Speech-to-Text'^).
 echo.
+
+REM --- Optional: Desktop / Start Menu shortcuts for the GUI ---------------
+REM Only ask when stdin is an interactive console (same guard as the
+REM CPU/CUDA prompt above); automated runs skip the prompt and just print
+REM how to create the shortcuts later.
+powershell -NoProfile -Command "if ([Console]::IsInputRedirected) { exit 1 } else { exit 0 }" >nul 2>&1
+if !errorlevel! equ 0 (
+    set "REPLY="
+    set /p "REPLY=Create Desktop and Start Menu shortcuts for the UltraSinger GUI? [Y/n]: "
+    if /i not "!REPLY:~0,1!"=="n" (
+        call "%~dp0create_desktop_shortcut.bat" nopause
+    ) else (
+        echo Skipped. You can create them any time by running
+        echo   install\create_desktop_shortcut.bat
+    )
+) else (
+    echo Tip: run install\create_desktop_shortcut.bat to create Desktop and
+    echo Start Menu shortcuts for the GUI ^(with the UltraSinger icon^).
+)
+echo.
 pause

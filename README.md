@@ -151,6 +151,19 @@ Or use the platform-specific launcher scripts:
 - **Linux:** `./run_gui_on_linux.sh`
 - **macOS:** `./run_gui_on_mac.command`
 
+#### Desktop shortcut (Windows)
+
+The installer offers to create Desktop and Start Menu shortcuts for the GUI
+(with the UltraSinger icon). You can also create them any time by running:
+
+```bat
+install\create_desktop_shortcut.bat
+```
+
+The shortcuts are taskbar-pinnable: right-click the shortcut — or the running
+UltraSinger taskbar icon — and choose *Pin to taskbar*. The running window
+groups onto the pinned icon.
+
 #### Features
 
 - **Video Browser** — Browse video platforms, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads. A **quality badge** next to the Queue button shows the best available download resolution, audio codec, duration, and LRCLIB lyrics availability — so you can evaluate video quality even when the embedded browser cannot play certain codecs.

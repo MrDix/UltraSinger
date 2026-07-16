@@ -8,7 +8,9 @@ import warnings
 from pathlib import Path
 
 # Set Windows AppUserModelID so the taskbar shows our icon instead of Python's.
-# Must be called before QApplication is created.
+# Must be called before QApplication is created. The ID must match the one
+# install\helpers\create_gui_shortcut.ps1 stamps onto the Desktop/Start Menu
+# shortcuts, so the running window groups onto a pinned shortcut.
 if sys.platform == "win32":
     import ctypes
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("UltraSinger.GUI")
@@ -73,14 +75,6 @@ def main():
     if setup_proxy_environment():
         logging.getLogger(__name__).info(
             "TLS: using operating-system certificate store (truststore)"
-        )
-
-    # Windows: Set explicit AppUserModelID so the taskbar shows our icon
-    # instead of the generic Python icon.  Must be called BEFORE QApplication.
-    if sys.platform == "win32":
-        import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "ultrasinger.gui"
         )
 
     # Suppress noisy Chromium stderr messages (cache errors, GPU warnings,
