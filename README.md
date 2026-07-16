@@ -156,7 +156,7 @@ Or use the platform-specific launcher scripts:
 The installer offers to create Desktop and Start Menu shortcuts for the GUI
 (with the UltraSinger icon). You can also create them any time by running:
 
-```
+```bat
 install\create_desktop_shortcut.bat
 ```
 
