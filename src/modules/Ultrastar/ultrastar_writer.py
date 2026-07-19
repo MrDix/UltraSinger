@@ -219,8 +219,11 @@ def _enforce_max_line_length(
         return
 
     def visible_chars(a: int, b: int) -> int:
-        return sum(len(midi_segments[k].word.strip()) + 1
-                   for k in range(a, b + 1)) - 1
+        # The rendered line is the raw concatenation of the note texts:
+        # word notes carry their own trailing space, syllable/continuation
+        # notes attach directly without one - so measure exactly that.
+        text = "".join(midi_segments[k].word for k in range(a, b + 1))
+        return len(text.rstrip())
 
     def gap_after(k: int) -> float:
         if k >= n - 1:
@@ -244,7 +247,7 @@ def _enforce_max_line_length(
         candidates = []
         left_chars = 0
         for k in range(a, b):
-            left_chars += len(midi_segments[k].word.strip()) + 1
+            left_chars += len(midi_segments[k].word)
             if not midi_segments[k].word.endswith(" "):
                 continue
             right_chars = visible_chars(k + 1, b)

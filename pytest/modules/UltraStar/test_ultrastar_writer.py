@@ -645,14 +645,29 @@ class TestEnforceMaxLineLength(unittest.TestCase):
         breaks = set()
         _enforce_max_line_length(segments, breaks, max_chars=20)
         self.assertTrue(breaks)
-        # All resulting lines must respect the limit
+        # All resulting lines must respect the limit (rendered length =
+        # raw concatenation of the note texts, trailing space stripped)
         idx = sorted(breaks) + [len(segments) - 1]
         start = 0
         for end in idx:
-            chars = sum(len(s.word.strip()) + 1
-                        for s in segments[start:end + 1]) - 1
+            chars = len("".join(s.word for s in segments[start:end + 1]).rstrip())
             self.assertLessEqual(chars, 20)
             start = end + 1
+
+    def test_syllable_notes_are_not_overcounted(self):
+        """Syllable notes without trailing spaces attach directly in the
+        rendered line - they must not be counted as separate words.
+        'Sunshine holiday' rendered is 16 chars, far under the limit."""
+        segments = [
+            _seg("Sun", 0.0, 0.3),
+            _seg("shine ", 0.4, 0.7),
+            _seg("ho", 0.8, 1.1),
+            _seg("li", 1.2, 1.5),
+            _seg("day", 1.6, 1.9),
+        ]
+        breaks = set()
+        _enforce_max_line_length(segments, breaks, max_chars=17)
+        self.assertEqual(breaks, set())
 
     def test_never_breaks_inside_melisma(self):
         """Continuation notes (no trailing space) are not split points."""
