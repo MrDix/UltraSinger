@@ -95,14 +95,14 @@ def create_ultrastar_txt(
                 file.write(f"#{UltrastarTxtTag.TAGS.value}:{ultrastar_class.tags}\n")
         file.write(f"#{UltrastarTxtTag.CREATOR.value}:{ultrastar_class.creator}\n")
 
-        # Check if any LRCLIB linebreaks are available
-        has_lrclib_linebreaks = any(
-            getattr(ms, "line_break_after", False) for ms in midi_segments
+        # Decide after which notes a linebreak is written (LRCLIB flags or
+        # silence-based fallback, plus a maximum-line-length safety net).
+        break_indices = _compute_linebreak_indices(
+            midi_segments, silence_split_duration
         )
 
         # Write the singing part
         previous_end_beat = 0
-        separated_word_silence = []  # This is a workaround for separated words that get his ends to far away
 
         for i, midi_segment in enumerate(midi_segments):
             start_time = (midi_segment.start - gap) * multiplication
@@ -119,12 +119,6 @@ def create_ultrastar_txt(
             if start_beat < previous_end_beat:
                 start_beat = previous_end_beat
             previous_end_beat = start_beat + duration
-
-            # Calculate the silence between the words
-            if i < len(midi_segments) - 1:
-                silence = (midi_segments[i + 1].start - midi_segment.end)
-            else:
-                silence = 0
 
             # Use note_type from LRCLIB metadata (: normal, F freestyle)
             note_type = getattr(midi_segment, "note_type", UltrastarTxtNoteTypeTag.NORMAL.value)
@@ -143,36 +137,137 @@ def create_ultrastar_txt(
 
             file.write(line)
 
-            # Linebreak logic: prefer LRCLIB linebreaks when available,
-            # fall back to silence-based detection otherwise
-            if has_lrclib_linebreaks:
-                # LRCLIB mode: use line_break_after flag from reference lyrics
-                if getattr(midi_segment, "line_break_after", False) and i != len(midi_segments) - 1:
-                    show_next = (
-                        second_to_beat(midi_segment.end - gap, real_bpm)
-                        * multiplication
-                    )
-                    linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
-                                f"{str(math.floor(show_next))}\n"
-                    file.write(linebreak)
-            else:
-                # Fallback: silence-based linebreak detection
-                if not midi_segment.word.endswith(" "):
-                    separated_word_silence.append(silence)
-                    continue
-
-                if silence_split_duration is not None and i != len(midi_segments) - 1 and (
-                        silence > silence_split_duration
-                        or any(s > silence_split_duration for s in separated_word_silence)):
-                    show_next = (
-                            second_to_beat(midi_segment.end - gap, real_bpm)
-                            * multiplication
-                    )
-                    linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
-                                f"{str(math.floor(show_next))}\n"
-                    file.write(linebreak)
-                separated_word_silence = []
+            if i in break_indices:
+                show_next = (
+                    second_to_beat(midi_segment.end - gap, real_bpm)
+                    * multiplication
+                )
+                linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
+                            f"{str(math.floor(show_next))}\n"
+                file.write(linebreak)
         file.write(f"{UltrastarTxtTag.FILE_END.value}")
+
+
+# Maximum visible characters per line before the safety net forces an extra
+# break. Manually-authored charts stay around 25-40 characters; beyond ~45
+# the notes get compressed to unreadable slivers (each note's width shrinks
+# with the line's total duration) and the lyric line overflows the screen.
+_MAX_LINE_CHARS = 45
+# Never create a line shorter than this via forced splits.
+_MIN_SPLIT_CHARS = 10
+
+
+def _compute_linebreak_indices(
+    midi_segments: list[MidiSegment],
+    silence_split_duration: float | None,
+) -> set[int]:
+    """Return the indices after which a linebreak is written.
+
+    Primary source: LRCLIB ``line_break_after`` flags when present,
+    otherwise silence-based detection (only the longest gaps become
+    breaks). Both are followed by a maximum-line-length safety net that
+    splits overlong lines at the largest pause on a word boundary - one
+    huge line compresses every note to an unreadable sliver and pushes
+    the lyrics off-screen.
+    """
+    n = len(midi_segments)
+    breaks: set[int] = set()
+
+    has_lrclib_linebreaks = any(
+        getattr(ms, "line_break_after", False) for ms in midi_segments
+    )
+    if has_lrclib_linebreaks:
+        breaks = {
+            i for i, ms in enumerate(midi_segments)
+            if getattr(ms, "line_break_after", False) and i != n - 1
+        }
+    elif silence_split_duration is not None:
+        # Workaround for separated words whose ends drift too far away
+        separated_word_silence: list[float] = []
+        for i, ms in enumerate(midi_segments):
+            silence = (midi_segments[i + 1].start - ms.end) if i < n - 1 else 0
+            if not ms.word.endswith(" "):
+                separated_word_silence.append(silence)
+                continue
+            if i != n - 1 and (
+                    silence > silence_split_duration
+                    or any(s > silence_split_duration
+                           for s in separated_word_silence)):
+                breaks.add(i)
+            separated_word_silence = []
+
+    _enforce_max_line_length(midi_segments, breaks)
+    return breaks
+
+
+def _enforce_max_line_length(
+    midi_segments: list[MidiSegment],
+    breaks: set[int],
+    max_chars: int = _MAX_LINE_CHARS,
+) -> None:
+    """Split lines longer than ``max_chars`` at the best word boundary.
+
+    Modifies ``breaks`` in place. The split point must end a word (its
+    text carries the trailing space that marks word boundaries) and
+    leave at least ``_MIN_SPLIT_CHARS`` visible characters on each side.
+    Among the eligible positions, the one with the longest pause to the
+    next note wins (that is where a screen change feels natural); when
+    no pause stands out, the split closest to the middle wins.
+    """
+    n = len(midi_segments)
+    if n == 0:
+        return
+
+    def visible_chars(a: int, b: int) -> int:
+        return sum(len(midi_segments[k].word.strip()) + 1
+                   for k in range(a, b + 1)) - 1
+
+    def gap_after(k: int) -> float:
+        if k >= n - 1:
+            return 0.0
+        return max(0.0, midi_segments[k + 1].start - midi_segments[k].end)
+
+    # Build the current lines and process them with a worklist; each split
+    # re-queues both halves so nested overlength lines are handled too.
+    pending: list[tuple[int, int]] = []
+    start = 0
+    for i in sorted(breaks):
+        pending.append((start, i))
+        start = i + 1
+    pending.append((start, n - 1))
+
+    while pending:
+        a, b = pending.pop()
+        if a >= b or visible_chars(a, b) <= max_chars:
+            continue
+
+        candidates = []
+        left_chars = 0
+        for k in range(a, b):
+            left_chars += len(midi_segments[k].word.strip()) + 1
+            if not midi_segments[k].word.endswith(" "):
+                continue
+            right_chars = visible_chars(k + 1, b)
+            if left_chars - 1 < _MIN_SPLIT_CHARS or right_chars < _MIN_SPLIT_CHARS:
+                continue
+            candidates.append((k, left_chars - 1))
+        if not candidates:
+            continue
+
+        max_gap = max(gap_after(k) for k, _ in candidates)
+        mid = visible_chars(a, b) / 2
+        if max_gap > 0.0:
+            # Prefer long pauses; among near-equal pauses (within 10 %)
+            # take the one closest to the middle of the line.
+            eligible = [(k, c) for k, c in candidates
+                        if gap_after(k) >= 0.9 * max_gap]
+        else:
+            eligible = candidates
+        best, _ = min(eligible, key=lambda kc: abs(kc[1] - mid))
+
+        breaks.add(best)
+        pending.append((a, best))
+        pending.append((best + 1, b))
 
 
 def silence_threshold(

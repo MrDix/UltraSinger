@@ -8,6 +8,7 @@ from modules.Speech_Recognition.reference_lyrics_aligner import (
     parse_lrc_synced_lyrics,
     _compute_note_for_word,
     _split_word_at_pitch_changes,
+    _trim_word_to_voiced,
     create_midi_segments_from_reference_lyrics,
     align_lyrics_to_audio,
 )
@@ -194,6 +195,51 @@ class TestSplitWordAtPitchChanges:
         result = _split_word_at_pitch_changes("test", 0.5, 4.5, pd)
         assert result[0].start == pytest.approx(0.5)
         assert result[-1].end == pytest.approx(4.5)
+
+
+# ---------------------------------------------------------------------------
+# Voiced-region trimming
+# ---------------------------------------------------------------------------
+
+
+class TestTrimWordToVoiced:
+    """Tests for _trim_word_to_voiced."""
+
+    def _word_with_trailing_silence(self):
+        """A word whose second half is silence, so trimming kicks in."""
+        fps = 62.5
+        n_frames = int(4.0 * fps)
+        times = [i / fps for i in range(n_frames)]
+        freqs, confs = [], []
+        for t in times:
+            if 1.0 <= t <= 2.0:
+                freqs.append(440.0)
+                confs.append(0.95)
+            else:
+                freqs.append(0.0)
+                confs.append(0.0)
+        pd = PitchedData(times=times, frequencies=freqs, confidence=confs)
+        # CTC stretched the word until 3.5s although singing ends at 2.0s
+        word = {"word": "night", "start": 1.0, "end": 3.5,
+                "backing": True, "line_end": True}
+        return word, pd
+
+    def test_trims_trailing_silence(self):
+        word, pd = self._word_with_trailing_silence()
+        trimmed = _trim_word_to_voiced(word, pd)
+        assert trimmed["end"] < word["end"]
+
+    def test_preserves_flags_when_trimming(self):
+        """Regression: trimming used to rebuild the dict and drop the
+        line_end/backing flags. CTC stretches precisely the last word of
+        each LRC line, so this silently killed nearly every LRCLIB
+        linebreak in the output file."""
+        word, pd = self._word_with_trailing_silence()
+        trimmed = _trim_word_to_voiced(word, pd)
+        assert trimmed["end"] < word["end"]  # trimming actually happened
+        assert trimmed["line_end"] is True
+        assert trimmed["backing"] is True
+        assert trimmed["word"] == "night"
 
 
 # ---------------------------------------------------------------------------

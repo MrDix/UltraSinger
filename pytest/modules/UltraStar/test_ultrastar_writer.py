@@ -10,6 +10,7 @@ from src.modules.Ultrastar.ultrastar_writer import (
     create_ultrastar_txt, silence_threshold, calculate_silent_beat_length,
     format_separated_string, add_score_to_ultrastar_txt,
     add_game_score_to_ultrastar_txt,
+    _compute_linebreak_indices, _enforce_max_line_length,
 )
 from src.modules.Midi.MidiSegment import MidiSegment
 from src.modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag
@@ -567,6 +568,120 @@ class TestAddScoreHeaders(unittest.TestCase):
             )
         finally:
             os.remove(path)
+
+
+def _seg(word, start, end, line_break_after=False):
+    return MidiSegment("A4", start, end, word,
+                       line_break_after=line_break_after)
+
+
+def _make_line(words, start=0.0, note_s=0.4, gap_s=0.05):
+    """Build consecutive word segments with a uniform small gap."""
+    segments = []
+    t = start
+    for w in words:
+        segments.append(_seg(w + " ", t, t + note_s))
+        t += note_s + gap_s
+    return segments
+
+
+class TestComputeLinebreakIndices(unittest.TestCase):
+    def test_lrclib_flags_win_over_silence(self):
+        segments = _make_line(["one", "two", "three", "four"])
+        segments[1].line_break_after = True
+        breaks = _compute_linebreak_indices(segments, silence_split_duration=0.01)
+        self.assertEqual(breaks, {1})
+
+    def test_lrclib_flag_on_last_segment_is_ignored(self):
+        segments = _make_line(["one", "two"])
+        segments[-1].line_break_after = True
+        breaks = _compute_linebreak_indices(segments, silence_split_duration=None)
+        self.assertEqual(breaks, set())
+
+    def test_silence_fallback_breaks_at_long_gaps(self):
+        segments = _make_line(["one", "two", "three"])
+        # Insert a much longer gap after "two"
+        long_gap = 2.0
+        offset = long_gap - 0.05
+        for s in segments[2:]:
+            s.start += offset
+            s.end += offset
+        breaks = _compute_linebreak_indices(segments, silence_split_duration=1.0)
+        self.assertEqual(breaks, {1})
+
+    def test_no_threshold_no_fallback_breaks(self):
+        segments = _make_line(["one", "two", "three"])
+        breaks = _compute_linebreak_indices(segments, silence_split_duration=None)
+        self.assertEqual(breaks, set())
+
+
+class TestEnforceMaxLineLength(unittest.TestCase):
+    def test_short_line_untouched(self):
+        segments = _make_line(["short", "line"])
+        breaks = set()
+        _enforce_max_line_length(segments, breaks, max_chars=45)
+        self.assertEqual(breaks, set())
+
+    def test_overlong_line_splits_at_largest_gap(self):
+        words = ["alpha", "bravo", "charlie", "delta", "echo",
+                 "foxtrot", "golf", "hotel"]
+        segments = _make_line(words)
+        # Clear pause after "delta" (index 3)
+        offset = 1.0
+        for s in segments[4:]:
+            s.start += offset
+            s.end += offset
+        breaks = set()
+        _enforce_max_line_length(segments, breaks, max_chars=30)
+        self.assertIn(3, breaks)
+
+    def test_overlong_line_without_gaps_splits_near_middle(self):
+        words = ["aaaa", "bbbb", "cccc", "dddd", "eeee", "ffff"]
+        segments = []
+        t = 0.0
+        for w in words:
+            segments.append(_seg(w + " ", t, t + 0.4))
+            t += 0.4  # zero gap between notes
+        breaks = set()
+        _enforce_max_line_length(segments, breaks, max_chars=20)
+        self.assertTrue(breaks)
+        # All resulting lines must respect the limit
+        idx = sorted(breaks) + [len(segments) - 1]
+        start = 0
+        for end in idx:
+            chars = sum(len(s.word.strip()) + 1
+                        for s in segments[start:end + 1]) - 1
+            self.assertLessEqual(chars, 20)
+            start = end + 1
+
+    def test_never_breaks_inside_melisma(self):
+        """Continuation notes (no trailing space) are not split points."""
+        segments = [
+            _seg("looooooooooooong ", 0.0, 0.4),
+            _seg("~", 0.5, 0.9),
+            _seg("~", 1.0, 1.4),
+            _seg("~", 1.5, 1.9),
+            _seg("meloooooooooody ", 2.0, 2.4),
+            _seg("here", 2.5, 2.9),
+        ]
+        breaks = set()
+        _enforce_max_line_length(segments, breaks, max_chars=15)
+        for b in breaks:
+            self.assertTrue(segments[b].word.endswith(" "))
+
+    def test_nested_split_handles_very_long_lines(self):
+        words = ["word%02d" % i for i in range(20)]
+        segments = _make_line(words)
+        breaks = set()
+        _enforce_max_line_length(segments, breaks, max_chars=25)
+        self.assertGreaterEqual(len(breaks), 3)
+
+    def test_existing_breaks_respected(self):
+        """Lines already short enough through existing breaks stay as-is."""
+        segments = _make_line(["one", "two", "three", "four"])
+        breaks = {1}
+        _enforce_max_line_length(segments, breaks, max_chars=45)
+        self.assertEqual(breaks, {1})
 
 
 if __name__ == "__main__":
