@@ -26,7 +26,7 @@ _DEFAULTS = {
     "output_folder": "",
     # Whisper
     "whisper_model": "large-v2",
-    "whisper_batch_size": 16,
+    "whisper_batch_size": 0,  # 0 = Auto: UltraSinger scales it to GPU VRAM
     "whisper_compute_type": "",
     "whisper_align_model": "",
     # VAD / ASR (tuned for singing)

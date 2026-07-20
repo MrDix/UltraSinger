@@ -220,13 +220,13 @@ if "!BUILD!"=="cpu" (
 ) else (
     if not defined GPU_VRAM (
         echo GPU VRAM could not be verified ^(forced CUDA build^).
-        echo If your GPU has less than 8 GB VRAM, the default Whisper model
-        echo ^(large-v2^) may run out of memory. Two independent ways to fit it
-        echo ^(not set automatically^):
-        echo   --whisper_batch_size 4    Fewer segments in parallel: slower,
-        echo                             but the transcription is UNCHANGED
-        echo                             ^(the safe lever; lower to 2 or 1 if it
-        echo                             still runs out^).
+        echo UltraSinger scales the Whisper batch size automatically to the
+        echo GPU memory it detects at runtime ^(16 on ~8 GB and larger, 8 on
+        echo 5-7 GB, 4 on smaller cards^), which usually makes the default
+        echo Whisper model ^(large-v2^) fit. If it still runs out of memory:
+        echo   --whisper_batch_size 2    ^(or 1^) Fewer segments in parallel:
+        echo                             slower, but the transcription is
+        echo                             UNCHANGED ^(the safe lever^).
         echo   --whisper_compute_type int8    Halves the model's memory at a
         echo                             small accuracy cost - add this only if
         echo                             lowering the batch size is not enough.
@@ -238,13 +238,15 @@ if "!BUILD!"=="cpu" (
         echo GUI users: enable this under Settings -^> 'Remote Speech-to-Text'.
     ) else (
         if !GPU_VRAM! LSS 8192 (
-            echo Your GPU has less than 8 GB VRAM. The default Whisper model
-            echo ^(large-v2^) may run out of memory. Two independent ways to fit
-            echo it ^(not set automatically^):
-            echo   --whisper_batch_size 4    Fewer segments in parallel: slower,
-            echo                             but the transcription is UNCHANGED
-            echo                             ^(the safe lever; lower to 2 or 1 if
-            echo                             it still runs out^).
+            echo Your GPU has less than 8 GB VRAM. UltraSinger scales the
+            echo Whisper batch size automatically to the GPU memory ^(16 on
+            echo ~8 GB and larger, 8 on 5-7 GB, 4 on smaller cards^), which
+            echo usually makes the default Whisper model ^(large-v2^) fit.
+            echo If it still runs out of memory:
+            echo   --whisper_batch_size 2    ^(or 1^) Fewer segments in
+            echo                             parallel: slower, but the
+            echo                             transcription is UNCHANGED
+            echo                             ^(the safe lever^).
             echo   --whisper_compute_type int8    Halves the model's memory at a
             echo                             small accuracy cost - add this only
             echo                             if lowering the batch size is not

@@ -204,3 +204,24 @@ class TestFullRoundTrip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBatchSizeAutoArgs(unittest.TestCase):
+    """Batch size 0 means Auto: the flag must be omitted so the CLI can
+    scale it to the detected GPU memory; explicit values are forwarded."""
+
+    def setUp(self):
+        self.runner = UltraSingerRunner()
+
+    def test_auto_omits_batch_size_flag(self):
+        config = dict(_DEFAULTS)
+        config["whisper_batch_size"] = 0
+        args = self.runner.build_args(config, "test.mp3")
+        self.assertNotIn("--whisper_batch_size", args)
+
+    def test_explicit_batch_size_is_forwarded(self):
+        config = dict(_DEFAULTS)
+        config["whisper_batch_size"] = 8
+        args = self.runner.build_args(config, "test.mp3")
+        self.assertIn("--whisper_batch_size", args)
+        self.assertEqual(args[args.index("--whisper_batch_size") + 1], "8")
