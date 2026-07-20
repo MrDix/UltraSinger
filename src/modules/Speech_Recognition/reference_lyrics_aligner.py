@@ -428,7 +428,12 @@ def _trim_word_to_voiced(
     if new_end - new_start < 0.05:
         return word
 
-    return {"word": word["word"], "start": new_start, "end": new_end}
+    # Preserve ALL other keys (backing, line_end, ...): CTC stretches
+    # precisely the LAST word of each LRC line into the following pause,
+    # so almost every line-end word lands here - rebuilding the dict from
+    # scratch used to silently drop the line_end flag, which killed nearly
+    # all LRCLIB linebreaks in the output file.
+    return {**word, "start": new_start, "end": new_end}
 
 
 def _split_word_at_silence_gaps(
