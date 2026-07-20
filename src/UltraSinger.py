@@ -97,7 +97,10 @@ from modules.plot import create_plots
 from modules.musicbrainz_client import search_musicbrainz
 from modules.sheet import create_sheet
 from modules.ProcessData import ProcessData, ProcessDataPaths, MediaInfo
-from modules.DeviceDetection.device_detection import check_gpu_support
+from modules.DeviceDetection.device_detection import (
+    auto_whisper_batch_size,
+    check_gpu_support,
+)
 from modules.Image.image_helper import save_image
 from modules.ffmpeg_helper import (
     is_ffmpeg_available,
@@ -1923,6 +1926,19 @@ def main(argv: list[str]) -> None:
 def check_requirements() -> None:
     if not settings.force_cpu:
         settings.pytorch_device = check_gpu_support()
+
+    # Resolve the automatic Whisper batch size now that the device (and
+    # its VRAM) is known. An explicit --whisper_batch_size wins.
+    if settings.whisper_batch_size is None:
+        whisper_device = (
+            "cpu" if settings.force_whisper_cpu else settings.pytorch_device
+        )
+        settings.whisper_batch_size = auto_whisper_batch_size(whisper_device)
+        print(
+            f"{ULTRASINGER_HEAD} Whisper batch size: "
+            f"{blue_highlighted(str(settings.whisper_batch_size))} "
+            f"(auto, scaled to GPU memory)"
+        )
     print(f"{ULTRASINGER_HEAD} ----------------------")
 
     if not is_ffmpeg_available(settings.user_ffmpeg_path):
@@ -1988,7 +2004,9 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--whisper_align_model"):
             settings.whisper_align_model = arg
         elif opt in ("--whisper_batch_size"):
-            settings.whisper_batch_size = int(arg)
+            settings.whisper_batch_size = (
+                None if arg.strip().lower() == "auto" else int(arg)
+            )
         elif opt in ("--whisper_compute_type"):
             settings.whisper_compute_type = arg
         elif opt in ("--keep_numbers"):

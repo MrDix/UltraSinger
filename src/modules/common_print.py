@@ -65,7 +65,7 @@ def print_help() -> None:
                             via Whisper tiny (~2-3s) instead of full transcription.
                             WARNING: setting this for non-matching songs will degrade
                             alignment quality (e.g. --language en for German songs).
-    --whisper_batch_size    Segments processed in parallel. Lower if low on GPU mem: slower, but transcription is UNCHANGED (the safe lever) >> ((default) is 16)
+    --whisper_batch_size    Segments processed in parallel. 'auto' (default) scales to GPU VRAM: 16 (>=8GB) / 8 (6GB) / 4 (4GB). Lower manually if still low on GPU mem: slower, but transcription is UNCHANGED (the safe lever)
     --whisper_compute_type  Change to "int8" to save more GPU mem at a small accuracy cost; use only if lowering the batch size is not enough >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words >> True|False >> ((default) is False)
     --vad_onset             VAD (Voice Activity Detection) speech activation threshold (0.0-1.0). Lower

@@ -133,15 +133,20 @@ class ConversionSettingsForm(QWidget):
                          _DEFAULTS["whisper_model"]))
 
         self._whisper_batch_size = _NoScrollSpinBox()
-        self._whisper_batch_size.setRange(1, 64)
-        self._whisper_batch_size.setValue(self._config.get("whisper_batch_size", 16))
+        self._whisper_batch_size.setRange(0, 64)
+        self._whisper_batch_size.setSpecialValueText("Auto")
+        self._whisper_batch_size.setValue(
+            self._config.get("whisper_batch_size", 0))
         card.add_row("Batch Size", self._whisper_batch_size,
                      "How many audio segments Whisper processes at once. "
+                     "'Auto' (recommended) scales to your GPU memory: "
+                     "16 on 8+ GB, 8 on 6 GB, 4 on 4 GB cards. "
                      "Higher values are faster but use more GPU memory. "
-                     "Lower it (4, or 2/1) if you get out-of-memory errors: "
-                     "this only makes transcription slower — the result is "
-                     "unchanged, so it is the safe lever to try first "
-                     "(before switching Compute Type to int8).",
+                     "Set a low value (4, or 2/1) if you still get "
+                     "out-of-memory errors: this only makes transcription "
+                     "slower — the result is unchanged, so it is the safe "
+                     "lever to try first (before switching Compute Type to "
+                     "int8).",
                      reset_callback=lambda: self._whisper_batch_size.setValue(
                          _DEFAULTS["whisper_batch_size"]))
 
