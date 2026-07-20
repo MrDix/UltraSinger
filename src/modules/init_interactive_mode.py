@@ -60,10 +60,17 @@ def configure_additional_options(console, settings, header):
         console.print(f"\n{header} [bold underline]Additional options:[/bold underline]\n")  
 
         # Whisper Batch Size
-        whipser_batch_size_response = console.input(
+        whisper_batch_size_response = console.input(
             f"{header} Enter the [green]Whisper batch size[/green] (default [cyan]auto[/cyan] - scaled to GPU memory): "
         ).strip()
-        settings.whisper_batch_size = int(whipser_batch_size_response) if whipser_batch_size_response.isdigit() else None
+        # Only a positive integer selects an explicit batch size; empty,
+        # non-numeric and zero inputs keep the automatic VRAM-based mode.
+        settings.whisper_batch_size = (
+            int(whisper_batch_size_response)
+            if whisper_batch_size_response.isdigit()
+            and int(whisper_batch_size_response) > 0
+            else None
+        )
   
         # Whisper Compute Type  
         whisper_compute_choice = console.input(

@@ -33,6 +33,20 @@ class TestAutoWhisperBatchSize:
                    return_value=_gpu_props(6.0)):
             assert auto_whisper_batch_size("cuda") == 8
 
+    def test_7gb_card_gets_8(self):
+        """7 GB is not enough for batch 16 (which needs ~8 GB)."""
+        with patch("torch.cuda.is_available", return_value=True), \
+             patch("torch.cuda.get_device_properties",
+                   return_value=_gpu_props(7.0)):
+            assert auto_whisper_batch_size("cuda") == 8
+
+    def test_8gb_card_reporting_slightly_less_gets_16(self):
+        """True 8 GB cards often report a bit less than 8.0 GB."""
+        with patch("torch.cuda.is_available", return_value=True), \
+             patch("torch.cuda.get_device_properties",
+                   return_value=_gpu_props(7.9)):
+            assert auto_whisper_batch_size("cuda") == 16
+
     def test_8gb_card_gets_16(self):
         with patch("torch.cuda.is_available", return_value=True), \
              patch("torch.cuda.get_device_properties",

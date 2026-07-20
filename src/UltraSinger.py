@@ -2004,9 +2004,16 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--whisper_align_model"):
             settings.whisper_align_model = arg
         elif opt in ("--whisper_batch_size"):
-            settings.whisper_batch_size = (
-                None if arg.strip().lower() == "auto" else int(arg)
-            )
+            if arg.strip().lower() == "auto":
+                settings.whisper_batch_size = None
+            else:
+                val = int(arg)
+                if val < 1:
+                    print(
+                        f"{ULTRASINGER_HEAD} Error: --whisper_batch_size must "
+                        f"be a positive integer or 'auto', got {val}")
+                    sys.exit(1)
+                settings.whisper_batch_size = val
         elif opt in ("--whisper_compute_type"):
             settings.whisper_compute_type = arg
         elif opt in ("--keep_numbers"):

@@ -97,9 +97,12 @@ def auto_whisper_batch_size(device: str) -> int:
 
     Field-tested scaling: the historic default of 16 needs roughly 8 GB
     of VRAM with the large-v2 model; 8 runs stable on 6 GB cards and 4
-    on 4 GB cards. A lower batch size only slows transcription down -
-    the result is unchanged. On CPU there is no VRAM cliff, so the
-    historic default is kept.
+    on 4 GB cards. Thresholds: below 5 GB -> 4, below 7.5 GB -> 8
+    (so 7 GB cards are not pushed into the 8 GB tier, while true 8 GB
+    cards that report slightly less than 8 still get 16), else 16.
+    A lower batch size only slows transcription down - the result is
+    unchanged. On CPU there is no VRAM cliff, so the historic default
+    is kept.
     """
     if device != "cuda" or not torch.cuda.is_available():
         return 16
@@ -109,7 +112,7 @@ def auto_whisper_batch_size(device: str) -> int:
         return 16
     if vram_gb < 5:
         return 4
-    if vram_gb < 7:
+    if vram_gb < 7.5:
         return 8
     return 16
 

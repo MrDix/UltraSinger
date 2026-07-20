@@ -140,7 +140,8 @@ class ConversionSettingsForm(QWidget):
         card.add_row("Batch Size", self._whisper_batch_size,
                      "How many audio segments Whisper processes at once. "
                      "'Auto' (recommended) scales to your GPU memory: "
-                     "16 on 8+ GB, 8 on 6 GB, 4 on 4 GB cards. "
+                     "16 on ~8 GB and larger, 8 on 5-7 GB, 4 on smaller "
+                     "cards. "
                      "Higher values are faster but use more GPU memory. "
                      "Set a low value (4, or 2/1) if you still get "
                      "out-of-memory errors: this only makes transcription "

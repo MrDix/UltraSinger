@@ -261,7 +261,7 @@ _Not all options working now!_
                             For video URLs, the video language is used automatically.
                             WARNING: setting this for non-matching songs will degrade
                             alignment quality (e.g. --language en for German songs).
-    --whisper_batch_size    Segments processed in parallel. 'auto' (default) scales to GPU VRAM: 16 (>=8GB) / 8 (6GB) / 4 (4GB). Lower manually if still low on GPU mem: slower, but transcription is UNCHANGED (the safe lever)
+    --whisper_batch_size    Segments processed in parallel. 'auto' (default) scales to GPU VRAM: 16 (~8GB and larger) / 8 (5-7GB) / 4 (smaller). Lower manually if still low on GPU mem: slower, but transcription is UNCHANGED (the safe lever)
     --whisper_compute_type  Change to "int8" to save more GPU mem at a small accuracy cost; use only if lowering the batch size is not enough >> ((default) is "float16" for cuda devices, "int8" for cpu)
     --keep_numbers          Numbers will be transcribed as numerics instead of as words
     --vad_onset             VAD (Voice Activity Detection) speech activation threshold (0.0-1.0). Lower
@@ -854,11 +854,11 @@ uv pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvis
 
 #### Crashes due to low VRAM
 
-At full batch size (16) the default Whisper model (`large-v2`) needs more than
-8 GB VRAM. UltraSinger scales the batch size to the detected GPU memory
-automatically (16 on 8+ GB, 8 on 6 GB, 4 on 4 GB cards), so most GPUs fit
-as-is. If it still runs out of memory, there are two independent levers, in
-order of preference:
+At full batch size (16) the default Whisper model (`large-v2`) needs roughly
+8 GB of VRAM. UltraSinger scales the batch size to the detected GPU memory
+automatically (16 on ~8 GB and larger, 8 on 5-7 GB, 4 on smaller cards), so
+most GPUs fit as-is. If it still runs out of memory, there are two independent
+levers, in order of preference:
 
 1. **Lower the batch size further** (`--whisper_batch_size 2`, or 1). This
    processes fewer audio segments in parallel: it is slower, but the
