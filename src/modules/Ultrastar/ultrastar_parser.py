@@ -108,10 +108,11 @@ def parse_ultrastar_txt(input_file_path: str, output_folder_path: str) -> tuple[
     _, audio_ext_with_dot = os.path.splitext(ultrastar_mp3_name)
     audio_ext = audio_ext_with_dot.lstrip('.')
 
-    song_output = os.path.join(
-        output_folder_path,
-        ultrastar_class.artist.strip() + " - " + ultrastar_class.title.strip(),
+    # Chart titles may contain characters that are invalid in paths (e.g. "?" or "/")
+    basename_without_ext = os_helper.sanitize_filename(
+        f"{ultrastar_class.artist.strip()} - {ultrastar_class.title.strip()}"
     )
+    song_output = os.path.join(output_folder_path, basename_without_ext)
 
     # todo: get_unused_song_output_dir should be in the runner
     song_output = get_unused_song_output_dir(str(song_output))
@@ -119,7 +120,6 @@ def parse_ultrastar_txt(input_file_path: str, output_folder_path: str) -> tuple[
 
     dirname = os.path.dirname(input_file_path)
     audio_file_path = os.path.join(dirname, ultrastar_mp3_name)
-    basename_without_ext = f"{ultrastar_class.artist.strip()} - {ultrastar_class.title.strip()}"
 
     # Copy audio file to output folder
     audio_output_path = _copy_audio_file(audio_file_path, ultrastar_mp3_name, song_output)

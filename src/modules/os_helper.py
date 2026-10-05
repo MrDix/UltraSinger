@@ -62,9 +62,9 @@ def sanitize_filename(fname: str) -> str:
     for old, new in FILENAME_REPLACEMENTS:
         for char in old:
             fname = fname.replace(char, new)
-    if fname.endswith("."):
-        fname = fname.rstrip(" .")  # Windows does not like trailing periods
-    return fname
+    # Windows silently drops trailing periods and spaces from folder names,
+    # which would make the created path differ from the one used later on
+    return fname.rstrip(" .")
 
 
 def get_unused_song_output_dir(path: str) -> str:
