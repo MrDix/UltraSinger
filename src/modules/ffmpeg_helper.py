@@ -72,23 +72,43 @@ def remove_audio_from_video(input_video_path: str, output_video_path: str) -> No
 
 
 def is_video_file(file_path: str) -> bool:
-    """Check if file contains video streams using ffprobe"""
+    """Check if file contains a real video stream using ffprobe.
+
+    Cover art embedded in audio files (e.g. an MP3 with an APIC frame) is
+    reported by ffprobe as a video stream with the ``attached_pic``
+    disposition. Such files are audio, not video, so those streams are
+    ignored.
+    """
     try:
         _, ffprobe_path = get_ffmpeg_and_ffprobe_paths()
 
         cmd = [
             ffprobe_path,
             "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=codec_type",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-select_streams", "v",
+            "-show_entries", "stream=codec_type:stream_disposition=attached_pic",
+            "-of", "csv=p=0",
             file_path
         ]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
-        return result.returncode == 0 and result.stdout.strip() == "video"
+        if result.returncode != 0:
+            return False
+        return _has_real_video_stream(result.stdout)
     except Exception:
         return False
+
+
+def _has_real_video_stream(ffprobe_csv: str) -> bool:
+    """Parse ``codec_type,attached_pic`` lines; True if any video stream is not cover art."""
+    for line in ffprobe_csv.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if not parts or parts[0] != "video":
+            continue
+        attached_pic = parts[1] if len(parts) > 1 else "0"
+        if attached_pic != "1":
+            return True
+    return False
 
 
 def get_audio_codec_and_extension(video_file_path: str) -> str:
