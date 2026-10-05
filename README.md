@@ -636,6 +636,12 @@ These features are experimental and disabled by default. They may change or be r
 
 * 📄 **[Library Triage Tool documentation](docs/library-triage.md)**
 
+#### Chart Benchmark Tool
+
+`tools/chart_benchmark.py` converts a reproducible sample of songs from your own UltraStar library and measures how close the generated charts come to the existing hand-made charts (note timing, length, pitch and which passages are charted at all), including game-like piano-roll images. Use it to check whether a pipeline change actually improves the charts — the game score alone cannot tell. All data stays in a work directory outside the repository:
+
+* 📄 **[Chart Benchmark Tool documentation](docs/chart-benchmark.md)**
+
 #### LLM Lyric Correction (`--llm_correct`)
 
 Post-corrects WhisperX transcription using an OpenAI-compatible LLM API. The LLM sees sentence-level context and fixes misheard or misspelled words while preserving all timing data. If the API is unreachable or returns an error, the original lyrics are kept unchanged (fail-open).
