@@ -294,6 +294,47 @@ class TestChooseInput:
         assert cb.has_audio_stream(Path("clip.mp4")) is True
 
 
+class TestConvertSong:
+    def _song(self, tmp_path):
+        media = tmp_path / "lib" / "Artist - Title.mp3"
+        media.parent.mkdir(exist_ok=True)
+        media.write_bytes(b"x")
+        return {"id": "song_001", "media": str(media), "audio": str(media)}
+
+    def test_timeout_recorded_as_failure(self, tmp_path, monkeypatch):
+        def hang(cmd, **kwargs):
+            assert kwargs["timeout"] == 5
+            raise cb.subprocess.TimeoutExpired(cmd, 5, output=b"partial out", stderr=None)
+        monkeypatch.setattr(cb.subprocess, "run", hang)
+        run_dir = tmp_path / "run"
+        res = cb.convert_song(self._song(tmp_path), run_dir, [], "python", timeout_s=5)
+        assert res["timed_out"] is True
+        assert res["returncode"] == -1 and res["txt"] is None
+        log = (run_dir / "log.txt").read_text(encoding="utf-8")
+        assert "partial out" in log and "TIMEOUT" in log
+        assert (run_dir / "result.json").exists()
+        assert not (run_dir / "input").exists()
+
+    def test_success_and_resume(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            out = Path(cmd[cmd.index("-o") + 1]) / "Artist - Title"
+            out.mkdir(parents=True)
+            (out / "Artist - Title.txt").write_text("x", encoding="utf-8")
+            (out / "Artist - Title.mp3").write_bytes(b"0")
+            return cb.subprocess.CompletedProcess(cmd, 0, "ok", "")
+        monkeypatch.setattr(cb.subprocess, "run", fake_run)
+        run_dir = tmp_path / "run"
+        res = cb.convert_song(self._song(tmp_path), run_dir, ["--x"], "python")
+        assert res["returncode"] == 0 and res["txt"].endswith("Artist - Title.txt")
+        assert "--keep_cache" in calls[0] and "--x" in calls[0]
+        assert not list(run_dir.rglob("*.mp3"))  # pruned
+        cb.convert_song(self._song(tmp_path), run_dir, [], "python")
+        assert len(calls) == 1  # second call resumed from result.json
+
+
 class TestPrune:
     def test_keeps_only_txt_and_json(self, tmp_path):
         song = tmp_path / "out" / "Artist - Title"
@@ -401,6 +442,20 @@ class TestCli:
         assert len(songs) == 2
         with pytest.raises(SystemExit, match="exists"):
             cb.main(["sample", str(lib), str(work)])
+
+    @pytest.mark.parametrize("argv", [
+        ["convert", "{wd}"],
+        ["evaluate", "{wd}"],
+        ["compare", "{wd}", "a", "b"],
+    ])
+    def test_all_commands_refuse_workdir_inside_repo(self, argv):
+        wd = str(cb.REPO / "bench_tmp")
+        with pytest.raises(SystemExit, match="outside the repository"):
+            cb.main([a.format(wd=wd) for a in argv])
+
+    def test_repo_root_refused(self):
+        with pytest.raises(SystemExit, match="outside the repository"):
+            cb.main(["evaluate", str(cb.REPO)])
 
     def test_invalid_label(self, tmp_path):
         with pytest.raises(SystemExit, match="invalid label"):

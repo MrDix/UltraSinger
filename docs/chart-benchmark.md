@@ -36,7 +36,10 @@ uv run python tools/chart_benchmark.py evaluate "D:\ChartBench" --label new
 uv run python tools/chart_benchmark.py compare "D:\ChartBench" baseline new
 ```
 
-`convert` is resumable: songs that already have a result are skipped. By default
+`convert` is resumable: songs that already have a result are skipped. A song that
+takes longer than `--timeout` seconds (default 3600, `0` = no limit) is recorded as
+failed and the batch continues. All commands refuse a work directory inside the
+repository. By default
 only the generated TXT and the cached pitch data are kept per song (a few hundred
 KB); pass `--keep-audio` to keep stems, audio and video as well.
 

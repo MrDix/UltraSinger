@@ -96,6 +96,7 @@ MIN_PITCHED_NOTES = 100
 OFFSET_SEARCH_MS = 1200
 OFFSET_STEP_MS = 10
 SHORT_NOTE_MS = 150
+DEFAULT_TIMEOUT_S = 3600
 
 AUDIO_EXTENSIONS = {".mp3", ".ogg", ".m4a", ".wav", ".flac", ".opus", ".aac"}
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".webm", ".mov", ".mpg", ".mpeg", ".m4v", ".divx"}
@@ -420,9 +421,21 @@ def prune_run_output(out_dir: Path) -> int:
     return freed
 
 
+def _as_text(data) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    return data
+
+
 def convert_song(song: dict, run_dir: Path, extra_args: list[str], python: str,
-                 keep_audio: bool = False) -> dict:
-    """Convert one song into ``run_dir`` (resumable via ``result.json``)."""
+                 keep_audio: bool = False, timeout_s: float | None = DEFAULT_TIMEOUT_S) -> dict:
+    """Convert one song into ``run_dir`` (resumable via ``result.json``).
+
+    A conversion that exceeds ``timeout_s`` is recorded as failed
+    (``returncode`` -1, ``timed_out``) so the batch can continue.
+    """
     marker = run_dir / "result.json"
     if marker.exists():
         return json.loads(marker.read_text(encoding="utf-8"))
@@ -435,12 +448,20 @@ def convert_song(song: dict, run_dir: Path, extra_args: list[str], python: str,
     t0 = time.time()
     cmd = [python, str(REPO / "src" / "UltraSinger.py"), "-i", str(inp), "-o", str(out), "--keep_cache",
            *extra_args]
-    proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", cwd=str(REPO))
-    log = re.sub(r"\x1b\[[0-9;]*m", "", (proc.stdout or "") + (proc.stderr or ""))
+    timed_out = False
+    try:
+        proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
+                              cwd=str(REPO), timeout=timeout_s)
+        returncode, stdout, stderr = proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        returncode, stdout = -1, _as_text(exc.stdout)
+        stderr = _as_text(exc.stderr) + f"\nTIMEOUT after {timeout_s} s\n"
+    log = re.sub(r"\x1b\[[0-9;]*m", "", _as_text(stdout) + _as_text(stderr))
     (run_dir / "log.txt").write_text(log, encoding="utf-8")
-    txt = _song_output_txt(out) if out.exists() else None
-    result = {"returncode": proc.returncode, "seconds": round(time.time() - t0),
-              "txt": str(txt) if txt else None}
+    txt = _song_output_txt(out) if out.exists() and not timed_out else None
+    result = {"returncode": returncode, "seconds": round(time.time() - t0),
+              "txt": str(txt) if txt else None, "timed_out": timed_out}
     shutil.rmtree(inp.parent, ignore_errors=True)
     if not keep_audio and out.exists():
         prune_run_output(out)
@@ -620,7 +641,17 @@ def render_piano_roll(ref: list[ChartNote], gen: list[ChartNote], sung: SungPitc
 # CLI
 # ---------------------------------------------------------------------------
 
+def _require_outside_repo(workdir: Path) -> Path:
+    """Refuse work directories inside the repository (they hold library data)."""
+    try:
+        workdir.resolve().relative_to(REPO.resolve())
+    except ValueError:
+        return workdir
+    raise SystemExit("the workdir must be outside the repository (it holds library data)")
+
+
 def _load_songs(workdir: Path) -> list[dict]:
+    _require_outside_repo(workdir)
     path = workdir / "songs.json"
     if not path.exists():
         raise SystemExit(f"{path} not found - run 'sample' first")
@@ -634,14 +665,9 @@ def _check_label(label: str) -> str:
 
 
 def cmd_sample(args) -> int:
-    library, workdir = Path(args.library), Path(args.workdir)
+    library, workdir = Path(args.library), _require_outside_repo(Path(args.workdir))
     if not library.is_dir():
         raise SystemExit(f"library folder not found: {library}")
-    try:
-        workdir.resolve().relative_to(REPO.resolve())
-        raise SystemExit("the workdir must be outside the repository (it holds library data)")
-    except ValueError:
-        pass
     target = workdir / "songs.json"
     if target.exists() and not args.force:
         raise SystemExit(f"{target} exists - use --force to resample")
@@ -662,7 +688,9 @@ def cmd_convert(args) -> int:
         if args.only and song["id"] not in args.only:
             continue
         res = convert_song(song, workdir / "runs" / label / song["id"], extra, args.python,
-                           args.keep_audio)
+                           args.keep_audio, args.timeout or None)
+        if res.get("timed_out"):
+            print(f"  {song['id']}: timed out after {args.timeout} s", flush=True)
         print(f"[{i}/{len(songs)}] {song['id']}: rc={res['returncode']} {res['seconds']}s "
               f"{'ok' if res['txt'] else 'NO OUTPUT'}", flush=True)
     return 0
@@ -695,7 +723,7 @@ def cmd_evaluate(args) -> int:
 
 
 def cmd_compare(args) -> int:
-    reports = Path(args.workdir) / "reports"
+    reports = _require_outside_repo(Path(args.workdir)) / "reports"
     a = json.loads((reports / f"{_check_label(args.label_a)}.json").read_text(encoding="utf-8"))
     b = json.loads((reports / f"{_check_label(args.label_b)}.json").read_text(encoding="utf-8"))
     print(f"{'metric':<26}{args.label_a:>14}{args.label_b:>14}{'delta':>10}")
@@ -732,6 +760,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--args", default="", help="extra UltraSinger arguments, e.g. \"--chart_style score\"")
     c.add_argument("--only", nargs="*", help="limit to these song IDs")
     c.add_argument("--python", default=sys.executable, help="Python interpreter to run UltraSinger with")
+    c.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S,
+                   help="seconds per song before a conversion is recorded as failed (0 = no limit)")
     c.add_argument("--keep-audio", action="store_true",
                    help="keep audio/video/stems of the output (default: keep only TXT and JSON)")
     c.set_defaults(func=cmd_convert)
