@@ -97,6 +97,7 @@ OFFSET_SEARCH_MS = 1200
 OFFSET_STEP_MS = 10
 SHORT_NOTE_MS = 150
 DEFAULT_TIMEOUT_S = 3600
+MAX_INPUT_STEM = 100
 
 AUDIO_EXTENSIONS = {".mp3", ".ogg", ".m4a", ".wav", ".flac", ".opus", ".aac"}
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".webm", ".mov", ".mpg", ".mpeg", ".m4v", ".divx"}
@@ -398,7 +399,10 @@ def input_name(song: dict, media: Path) -> str:
     artist = _INVALID_PATH_CHARS.sub("", headers.get("ARTIST", "")).strip(" .")
     title = _INVALID_PATH_CHARS.sub("", headers.get("TITLE", "")).strip(" .")
     if artist and title:
-        return f"{artist} - {title}{media.suffix.lower()}"
+        # Keep well below file name / path length limits (the run directory
+        # and UltraSinger's output folder add to the full path length).
+        stem = f"{artist} - {title}"[:MAX_INPUT_STEM].rstrip(" .-")
+        return f"{stem}{media.suffix.lower()}"
     return _clean_input_name(media)
 
 
@@ -808,15 +812,29 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _benchmark_options() -> set[str]:
+    """All option strings the benchmark itself understands (any subcommand)."""
+    parser = build_parser()
+    opts = set(parser._option_string_actions)
+    for action in parser._subparsers._group_actions:
+        for sub in action.choices.values():
+            opts |= set(sub._option_string_actions)
+    return opts
+
+
 def _join_args_value(argv: list[str]) -> list[str]:
     """Turn ``--args --some_flag`` into ``--args=--some_flag``.
 
     argparse would otherwise read a value that starts with ``-`` as an option
-    of its own and fail with "expected one argument".
+    of its own and fail with "expected one argument". A following option the
+    benchmark understands itself (e.g. ``--keep-audio``) is left alone; to pass
+    such a name on to UltraSinger, use ``--args=...``.
     """
+    own = _benchmark_options()
     out, i = [], 0
     while i < len(argv):
-        if argv[i] == "--args" and i + 1 < len(argv):
+        if (argv[i] == "--args" and i + 1 < len(argv)
+                and argv[i + 1].split("=", 1)[0] not in own):
             out.append(f"--args={argv[i + 1]}")
             i += 2
         else:

@@ -349,6 +349,12 @@ class TestInputName:
         song = self._song(tmp_path, ["#ARTIST:A/B", "#TITLE:Why? "])
         assert cb.input_name(song, Path("x.mp3")) == "AB - Why.mp3"
 
+    def test_long_names_truncated(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:" + "A" * 200, "#TITLE:" + "T" * 200])
+        name = cb.input_name(song, Path("x.MP4"))
+        assert name.endswith(".mp4")
+        assert len(Path(name).stem) <= cb.MAX_INPUT_STEM
+
     def test_fallback_to_media_name(self, tmp_path):
         song = self._song(tmp_path, ["#TITLE:Only Title"])
         assert cb.input_name(song, Path("Artist - Title [CO].mp3")) == "Artist - Title.mp3"
@@ -365,6 +371,16 @@ class TestJoinArgsValue:
     def test_equals_form_untouched(self):
         argv = ["convert", "w", "--args=--x 1"]
         assert cb._join_args_value(argv) == argv
+
+    @pytest.mark.parametrize("own", ["--keep-audio", "--label", "--timeout=5", "--help"])
+    def test_benchmark_options_not_consumed(self, own):
+        argv = ["convert", "w", "--args", own]
+        assert cb._join_args_value(argv) == argv
+
+    def test_keep_audio_stays_a_benchmark_option(self):
+        args = cb.build_parser().parse_args(
+            cb._join_args_value(["convert", "w", "--args=--x", "--keep-audio"]))
+        assert args.keep_audio is True and args.args == "--x"
 
     def test_parser_accepts_flag_value(self):
         args = cb.build_parser().parse_args(cb._join_args_value(["convert", "w", "--args", "--syllable_split"]))
