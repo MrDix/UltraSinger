@@ -353,7 +353,24 @@ class TestInputName:
         song = self._song(tmp_path, ["#ARTIST:" + "A" * 200, "#TITLE:" + "T" * 200])
         name = cb.input_name(song, Path("x.MP4"))
         assert name.endswith(".mp4")
-        assert len(Path(name).stem) <= cb.MAX_INPUT_STEM
+        stem = Path(name).stem
+        assert len(stem) <= cb.MAX_INPUT_STEM
+        artist, title = stem.split(" - ")
+        assert artist.startswith("A") and title.startswith("T")
+
+    @pytest.mark.parametrize("artist_len, title_len", [(200, 5), (5, 200), (60, 60), (97, 1)])
+    def test_truncation_keeps_both_fields(self, tmp_path, artist_len, title_len):
+        song = self._song(tmp_path, ["#ARTIST:" + "A" * artist_len, "#TITLE:" + "T" * title_len])
+        stem = Path(cb.input_name(song, Path("x.mp3"))).stem
+        assert len(stem) <= cb.MAX_INPUT_STEM
+        artist, title = stem.split(" - ")
+        assert artist and title
+        if artist_len + title_len + 3 <= cb.MAX_INPUT_STEM:
+            assert (len(artist), len(title)) == (artist_len, title_len)
+
+    def test_short_field_kept_whole(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:" + "A" * 200, "#TITLE:Short Title"])
+        assert Path(cb.input_name(song, Path("x.mp3"))).stem.endswith(" - Short Title")
 
     def test_fallback_to_media_name(self, tmp_path):
         song = self._song(tmp_path, ["#TITLE:Only Title"])

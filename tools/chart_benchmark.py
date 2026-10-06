@@ -401,8 +401,12 @@ def input_name(song: dict, media: Path) -> str:
     if artist and title:
         # Keep well below file name / path length limits (the run directory
         # and UltraSinger's output folder add to the full path length).
-        stem = f"{artist} - {title}"[:MAX_INPUT_STEM].rstrip(" .-")
-        return f"{stem}{media.suffix.lower()}"
+        # Both fields must survive: UltraSinger splits the name at " - ".
+        budget = MAX_INPUT_STEM - 3
+        if len(artist) + len(title) > budget:
+            artist = artist[:max(budget - len(title), budget // 2)].rstrip(" .-")
+            title = title[:budget - len(artist)].rstrip(" .-")
+        return f"{artist} - {title}{media.suffix.lower()}"
     return _clean_input_name(media)
 
 
