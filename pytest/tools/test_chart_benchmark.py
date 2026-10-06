@@ -335,6 +335,85 @@ class TestConvertSong:
         assert len(calls) == 1  # second call resumed from result.json
 
 
+class TestInputName:
+    def _song(self, tmp_path, headers):
+        txt = tmp_path / "ref.txt"
+        txt.write_text("\n".join(headers + [": 0 1 60 la", "E"]), encoding="utf-8")
+        return {"txt": str(txt)}
+
+    def test_name_from_chart_headers(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:Some Artist", "#TITLE:Some Title"])
+        assert cb.input_name(song, Path("clip [VD#0].AVI")) == "Some Artist - Some Title.avi"
+
+    def test_invalid_characters_removed(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:A/B", "#TITLE:Why? "])
+        assert cb.input_name(song, Path("x.mp3")) == "AB - Why.mp3"
+
+    def test_long_names_truncated(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:" + "A" * 200, "#TITLE:" + "T" * 200])
+        name = cb.input_name(song, Path("x.MP4"))
+        assert name.endswith(".mp4")
+        stem = Path(name).stem
+        assert len(stem) <= cb.MAX_INPUT_STEM
+        artist, title = stem.split(" - ")
+        assert artist.startswith("A") and title.startswith("T")
+
+    @pytest.mark.parametrize("artist_len, title_len", [(200, 5), (5, 200), (60, 60), (97, 1)])
+    def test_truncation_keeps_both_fields(self, tmp_path, artist_len, title_len):
+        song = self._song(tmp_path, ["#ARTIST:" + "A" * artist_len, "#TITLE:" + "T" * title_len])
+        stem = Path(cb.input_name(song, Path("x.mp3"))).stem
+        assert len(stem) <= cb.MAX_INPUT_STEM
+        artist, title = stem.split(" - ")
+        assert artist and title
+        if artist_len + title_len + 3 <= cb.MAX_INPUT_STEM:
+            assert (len(artist), len(title)) == (artist_len, title_len)
+
+    def test_leading_separators_do_not_empty_title(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:" + "A" * 200, "#TITLE:" + "-" * 80 + "Real Title"])
+        stem = Path(cb.input_name(song, Path("x.mp3"))).stem
+        artist, title = stem.split(" - ")
+        assert artist and title.startswith("Real")
+
+    def test_separator_only_field_falls_back(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:Artist", "#TITLE: - . -"])
+        assert cb.input_name(song, Path("Media Name.mp3")) == "Media Name.mp3"
+
+    def test_short_field_kept_whole(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:" + "A" * 200, "#TITLE:Short Title"])
+        assert Path(cb.input_name(song, Path("x.mp3"))).stem.endswith(" - Short Title")
+
+    def test_fallback_to_media_name(self, tmp_path):
+        song = self._song(tmp_path, ["#TITLE:Only Title"])
+        assert cb.input_name(song, Path("Artist - Title [CO].mp3")) == "Artist - Title.mp3"
+
+    def test_missing_txt_falls_back(self, tmp_path):
+        assert cb.input_name({"txt": str(tmp_path / "nope.txt")}, Path("a.mp3")) == "a.mp3"
+
+
+class TestJoinArgsValue:
+    def test_flag_value_joined(self):
+        assert cb._join_args_value(["convert", "w", "--args", "--syllable_split"]) == \
+            ["convert", "w", "--args=--syllable_split"]
+
+    def test_equals_form_untouched(self):
+        argv = ["convert", "w", "--args=--x 1"]
+        assert cb._join_args_value(argv) == argv
+
+    @pytest.mark.parametrize("own", ["--keep-audio", "--label", "--timeout=5", "--help"])
+    def test_benchmark_options_not_consumed(self, own):
+        argv = ["convert", "w", "--args", own]
+        assert cb._join_args_value(argv) == argv
+
+    def test_keep_audio_stays_a_benchmark_option(self):
+        args = cb.build_parser().parse_args(
+            cb._join_args_value(["convert", "w", "--args=--x", "--keep-audio"]))
+        assert args.keep_audio is True and args.args == "--x"
+
+    def test_parser_accepts_flag_value(self):
+        args = cb.build_parser().parse_args(cb._join_args_value(["convert", "w", "--args", "--syllable_split"]))
+        assert args.args == "--syllable_split"
+
+
 class TestPrune:
     def test_keeps_only_txt_and_json(self, tmp_path):
         song = tmp_path / "out" / "Artist - Title"
