@@ -1821,7 +1821,8 @@ def infos_from_audio_video_input_file() -> tuple[str, str, str, MediaInfo]:
         title = basename_without_ext
 
     song_info = search_musicbrainz(title, artist)
-    basename_without_ext = f"{song_info.artist} - {song_info.title}"
+    # Metadata titles may contain characters that are invalid in paths (e.g. "?" or "/")
+    basename_without_ext = os_helper.sanitize_filename(f"{song_info.artist} - {song_info.title}")
 
     song_folder_output_path = os.path.join(settings.output_folder_path, basename_without_ext)
     song_folder_output_path = get_unused_song_output_dir(song_folder_output_path)
