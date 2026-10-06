@@ -368,6 +368,16 @@ class TestInputName:
         if artist_len + title_len + 3 <= cb.MAX_INPUT_STEM:
             assert (len(artist), len(title)) == (artist_len, title_len)
 
+    def test_leading_separators_do_not_empty_title(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:" + "A" * 200, "#TITLE:" + "-" * 80 + "Real Title"])
+        stem = Path(cb.input_name(song, Path("x.mp3"))).stem
+        artist, title = stem.split(" - ")
+        assert artist and title.startswith("Real")
+
+    def test_separator_only_field_falls_back(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:Artist", "#TITLE: - . -"])
+        assert cb.input_name(song, Path("Media Name.mp3")) == "Media Name.mp3"
+
     def test_short_field_kept_whole(self, tmp_path):
         song = self._song(tmp_path, ["#ARTIST:" + "A" * 200, "#TITLE:Short Title"])
         assert Path(cb.input_name(song, Path("x.mp3"))).stem.endswith(" - Short Title")

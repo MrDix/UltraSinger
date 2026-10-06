@@ -396,8 +396,10 @@ def input_name(song: dict, media: Path) -> str:
                 headers[hm.group(1).upper()] = hm.group(2).strip()
     except (OSError, KeyError):
         headers = {}
-    artist = _INVALID_PATH_CHARS.sub("", headers.get("ARTIST", "")).strip(" .")
-    title = _INVALID_PATH_CHARS.sub("", headers.get("TITLE", "")).strip(" .")
+    # Strip separator characters at both ends first, so they can neither eat
+    # into the length budget nor leave an empty field after truncation.
+    artist = _INVALID_PATH_CHARS.sub("", headers.get("ARTIST", "")).strip(" .-")
+    title = _INVALID_PATH_CHARS.sub("", headers.get("TITLE", "")).strip(" .-")
     if artist and title:
         # Keep well below file name / path length limits (the run directory
         # and UltraSinger's output folder add to the full path length).
@@ -406,7 +408,8 @@ def input_name(song: dict, media: Path) -> str:
         if len(artist) + len(title) > budget:
             artist = artist[:max(budget - len(title), budget // 2)].rstrip(" .-")
             title = title[:budget - len(artist)].rstrip(" .-")
-        return f"{artist} - {title}{media.suffix.lower()}"
+        if artist and title:
+            return f"{artist} - {title}{media.suffix.lower()}"
     return _clean_input_name(media)
 
 
