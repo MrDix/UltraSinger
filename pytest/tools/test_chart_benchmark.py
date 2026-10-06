@@ -335,6 +335,42 @@ class TestConvertSong:
         assert len(calls) == 1  # second call resumed from result.json
 
 
+class TestInputName:
+    def _song(self, tmp_path, headers):
+        txt = tmp_path / "ref.txt"
+        txt.write_text("\n".join(headers + [": 0 1 60 la", "E"]), encoding="utf-8")
+        return {"txt": str(txt)}
+
+    def test_name_from_chart_headers(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:Some Artist", "#TITLE:Some Title"])
+        assert cb.input_name(song, Path("clip [VD#0].AVI")) == "Some Artist - Some Title.avi"
+
+    def test_invalid_characters_removed(self, tmp_path):
+        song = self._song(tmp_path, ["#ARTIST:A/B", "#TITLE:Why? "])
+        assert cb.input_name(song, Path("x.mp3")) == "AB - Why.mp3"
+
+    def test_fallback_to_media_name(self, tmp_path):
+        song = self._song(tmp_path, ["#TITLE:Only Title"])
+        assert cb.input_name(song, Path("Artist - Title [CO].mp3")) == "Artist - Title.mp3"
+
+    def test_missing_txt_falls_back(self, tmp_path):
+        assert cb.input_name({"txt": str(tmp_path / "nope.txt")}, Path("a.mp3")) == "a.mp3"
+
+
+class TestJoinArgsValue:
+    def test_flag_value_joined(self):
+        assert cb._join_args_value(["convert", "w", "--args", "--syllable_split"]) == \
+            ["convert", "w", "--args=--syllable_split"]
+
+    def test_equals_form_untouched(self):
+        argv = ["convert", "w", "--args=--x 1"]
+        assert cb._join_args_value(argv) == argv
+
+    def test_parser_accepts_flag_value(self):
+        args = cb.build_parser().parse_args(cb._join_args_value(["convert", "w", "--args", "--syllable_split"]))
+        assert args.args == "--syllable_split"
+
+
 class TestPrune:
     def test_keeps_only_txt_and_json(self, tmp_path):
         song = tmp_path / "out" / "Artist - Title"

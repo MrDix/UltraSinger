@@ -59,6 +59,12 @@ mimics converting a downloaded music video.
 
 Each input file is **copied** into the work directory before conversion, so the
 reference chart lying next to the original audio can never influence the result.
+The copy is named `Artist - Title` after the chart's `#ARTIST`/`#TITLE`, like a
+properly named download, because UltraSinger derives its metadata and lyrics
+lookup from the input file name.
+
+Extra UltraSinger arguments are passed with `--args`, e.g.
+`--args --syllable_split` or `--args "--chart_style score"`.
 
 The quality of your reference charts matters. `evaluate` aligns each reference
 chart to the sung pitch of the separated vocal (it searches a time offset of up

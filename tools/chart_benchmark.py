@@ -376,6 +376,32 @@ def _clean_input_name(media: Path) -> str:
     return stem + media.suffix.lower()
 
 
+_INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def input_name(song: dict, media: Path) -> str:
+    """File name for the conversion input: 'Artist - Title.ext' from the reference chart.
+
+    Library media files are not always named after the song, but UltraSinger
+    derives its metadata and lyrics lookup from the input file name. Using the
+    chart's #ARTIST/#TITLE mimics a properly named download; the media file
+    name is the fallback.
+    """
+    try:
+        headers = {}
+        for line in _read_text(Path(song["txt"])).splitlines():
+            hm = _HEADER_RE.match(line.strip())
+            if hm:
+                headers[hm.group(1).upper()] = hm.group(2).strip()
+    except (OSError, KeyError):
+        headers = {}
+    artist = _INVALID_PATH_CHARS.sub("", headers.get("ARTIST", "")).strip(" .")
+    title = _INVALID_PATH_CHARS.sub("", headers.get("TITLE", "")).strip(" .")
+    if artist and title:
+        return f"{artist} - {title}{media.suffix.lower()}"
+    return _clean_input_name(media)
+
+
 def has_audio_stream(path: Path) -> bool:
     """True if ffprobe finds an audio stream (or ffprobe is unavailable)."""
     try:
@@ -440,7 +466,7 @@ def convert_song(song: dict, run_dir: Path, extra_args: list[str], python: str,
     if marker.exists():
         return json.loads(marker.read_text(encoding="utf-8"))
     media = choose_input(song)
-    inp = run_dir / "input" / _clean_input_name(media)
+    inp = run_dir / "input" / input_name(song, media)
     inp.parent.mkdir(parents=True, exist_ok=True)
     if not inp.exists():
         shutil.copy2(media, inp)
@@ -782,8 +808,26 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _join_args_value(argv: list[str]) -> list[str]:
+    """Turn ``--args --some_flag`` into ``--args=--some_flag``.
+
+    argparse would otherwise read a value that starts with ``-`` as an option
+    of its own and fail with "expected one argument".
+    """
+    out, i = [], 0
+    while i < len(argv):
+        if argv[i] == "--args" and i + 1 < len(argv):
+            out.append(f"--args={argv[i + 1]}")
+            i += 2
+        else:
+            out.append(argv[i])
+            i += 1
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    argv = sys.argv[1:] if argv is None else argv
+    args = build_parser().parse_args(_join_args_value(list(argv)))
     return args.func(args)
 
 
