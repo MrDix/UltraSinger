@@ -29,9 +29,33 @@ title_filter = [
 
 MAX_RETRIES = 3
 
+# A MusicBrainz recording is only trusted when both its artist and its title
+# are at least this similar to what we searched for. Below that, the search
+# hit is a different song and must not replace the input metadata.
+MIN_MATCH_SIMILARITY = 0.8
+# Similarity assigned when all words of the shorter string occur in the
+# longer one (e.g. "Title" vs. "Title (Live 2023) Full HD"): a match, but
+# ranked below exact or near-exact matches.
+CONTAINED_SIMILARITY = 0.85
+
 
 def __clean_string(s: str) -> str:
     return s.translate(str.maketrans('', '', string.punctuation)).lower().strip()
+
+
+def _similarity(a: str, b: str) -> float:
+    """Similarity of two names in [0, 1], tolerant of punctuation, case and extra words."""
+    a, b = __clean_string(a or ""), __clean_string(b or "")
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    score = ratio(a, b)
+    words_a, words_b = a.split(), b.split()
+    shorter, longer = (words_a, words_b) if len(words_a) <= len(words_b) else (words_b, words_a)
+    if shorter and all(w in longer for w in shorter):
+        score = max(score, CONTAINED_SIMILARITY)
+    return score
 
 
 def __musicbrainz_request(func):
@@ -55,6 +79,7 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
     # remove from search_string "official video"
     # todo: do we need filter?
     origin_title = title
+    origin_artist = artist
     for filter in title_filter:
         title = title.lower().replace(filter.lower(), "").strip()
         if artist is not None:
@@ -67,6 +92,10 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
 
     if recording is None:
         print(f"{ULTRASINGER_HEAD} {red_highlighted('No match found')}")
+        # Keep what we were given: a known artist is better than "Unknown Artist"
+        # (the lyrics lookup and the output name depend on it).
+        if origin_artist:
+            return SongInfo(title=origin_title, artist=origin_artist)
         return SongInfo(title=origin_title, artist="Unknown Artist")
 
     artist = recording['artist-credit-phrase']
@@ -143,38 +172,20 @@ def __multi_line_search(artist: str, title: str):
     if result2 is None:
         result2 = {'recording-count': 0, 'recording-list': []}
 
-    # Filter result to ['artist-credit-phrase'] == artist
-    record1 = [x for x in result1['recording-list'] if
-               __clean_string(x['artist-credit-phrase']) == __clean_string(artist1)]
-    record2 = [x for x in result2['recording-list'] if
-               __clean_string(x['artist-credit-phrase']) == __clean_string(artist2)]
-
-    if len(record1) > 0 and len(record2) > 0:
-        best_match1 = max(record1, key=lambda x: ratio(__clean_string(x['title']), __clean_string(title1)))
-        best_match2 = max(record2, key=lambda x: ratio(__clean_string(x['title']), __clean_string(title2)))
-
-        is_match1 = ratio(__clean_string(title1), __clean_string(best_match1['title'])) > ratio(__clean_string(title2),
-                                                                                                __clean_string(
-                                                                                                    best_match2[
-                                                                                                        'title']))
-
-        if is_match1:
-            recording = record1[0]
-        else:
-            recording = record2[0]
-
-    elif len(record1) > 0:
-        recording = record1[0]
-    elif len(record2) > 0:
-        recording = record2[0]
-    elif result1['recording-count'] > 0:  # Artist = Title
-        recording = result1['recording-list'][0]
-    elif result2['recording-count'] > 0:  # Artist = Title
-        recording = result2['recording-list'][0]
-    else:
-        recording = None
-
-    return recording
+    # Only accept a recording whose artist AND title match what we searched
+    # for; the best-matching one wins. Previously the first search hit was
+    # taken even when neither matched, replacing a correct "Artist - Title"
+    # with an unrelated song (and the lyrics lookup then fetched that song).
+    best, best_score = None, 0.0
+    for result, wanted_artist, wanted_title in ((result1, artist1, title1), (result2, artist2, title2)):
+        for record in result.get('recording-list', []):
+            artist_sim = _similarity(record.get('artist-credit-phrase', ''), wanted_artist)
+            title_sim = _similarity(record.get('title', ''), wanted_title)
+            if artist_sim < MIN_MATCH_SIMILARITY or title_sim < MIN_MATCH_SIMILARITY:
+                continue
+            if artist_sim + title_sim > best_score:
+                best, best_score = record, artist_sim + title_sim
+    return best
 
 
 def __get_image(recording) -> (bytes, str):
@@ -227,7 +238,8 @@ def __get_image(recording) -> (bytes, str):
 def __get_year(recording):
     year = None
 
-    if 'release-list' not in recording:
+    # Recordings without any release (empty list) have no year either
+    if not recording.get('release-list'):
         return year
 
     release_group_id = recording['release-list'][0]['release-group']['id']
