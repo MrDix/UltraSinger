@@ -144,5 +144,8 @@ on the validation songs.
 * Note pitches come from a lead-vocal stem (an extra karaoke separation of the
   vocal stem, cached per song) whenever that stem kept at least 80 % of the
   singing; otherwise from the full vocal stem. This keeps harmonies and backing
-  vocals out of the chart. `--disable_lead_vocal_pitch` (GUI: Lead Vocal Pitch)
-  skips the extra separation.
+  vocals out of the chart. The later steps that compare the notes with the
+  singing (refinement, ptAKF refit, game score) then use the lead stem as well,
+  so they do not pull the pitches back to a louder backing voice.
+  `--disable_lead_vocal_pitch` (GUI: Lead Vocal Pitch) skips the extra
+  separation.

@@ -54,8 +54,9 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
     return lead_path
 
 
-def lead_vocal_analysis(vocals_path: str, cache_folder: str) -> VocalAnalysis:
-    """Pitch/feature analysis of the lead-vocal stem."""
+def lead_vocal_analysis(vocals_path: str, cache_folder: str) -> tuple[str, VocalAnalysis]:
+    """Path and pitch/feature analysis of the lead-vocal stem."""
     from modules.Segmentation.features import analyse_vocal, load_vocal
 
-    return analyse_vocal(load_vocal(separate_lead_vocal(vocals_path, cache_folder)))
+    lead_path = separate_lead_vocal(vocals_path, cache_folder)
+    return lead_path, analyse_vocal(load_vocal(lead_path))

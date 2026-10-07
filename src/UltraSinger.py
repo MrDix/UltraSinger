@@ -620,6 +620,13 @@ def run() -> tuple[str, Score, Score]:
     # separated vocal; the word segments above only provide lyrics and timing.
     # Fails open: on any problem the word-based segments are kept.
     model_segmentation_used = False
+    # Audio the note pitches come from. The steps below that compare the notes
+    # with the singing (refinement, ptAKF refit, game score) use the same audio,
+    # so they do not pull lead-vocal pitches back to a louder backing voice.
+    note_pitch_audio = (
+        process_data.process_data_paths.vocals_audio_file_path
+        or process_data.process_data_paths.whisper_audio_path
+    )
     if (
         (settings.segmentation_model or settings.segmentation_model_repo)
         and not settings.ignore_audio
@@ -634,7 +641,7 @@ def run() -> tuple[str, Score, Score]:
         if not model_path:
             from modules.Segmentation.model_source import fetch_model
             model_path = fetch_model(settings.segmentation_model_repo, settings.segmentation_model_token)
-        model_segments = segment_with_model(
+        model_result = segment_with_model(
             process_data.midi_segments,
             vocals_path=process_data.process_data_paths.vocals_audio_file_path,
             model_path=model_path,
@@ -643,8 +650,9 @@ def run() -> tuple[str, Score, Score]:
             lead_vocal_pitch=settings.lead_vocal_pitch,
             cache_folder=process_data.process_data_paths.cache_folder_path,
         ) if model_path else None
-        if model_segments:
-            process_data.midi_segments = model_segments
+        if model_result:
+            process_data.midi_segments = model_result.segments
+            note_pitch_audio = model_result.pitch_audio_path
             model_segmentation_used = True
 
     # Split notes at pitch change boundaries (melismas, runs)
@@ -730,11 +738,7 @@ def run() -> tuple[str, Score, Score]:
         try:
             from ultrastar_score import detect_pitch_frames
 
-            pitch_frames_vocal_path = (
-                process_data.process_data_paths.vocals_audio_file_path
-                or process_data.process_data_paths.whisper_audio_path
-            )
-            pitch_frames = detect_pitch_frames(pitch_frames_vocal_path)
+            pitch_frames = detect_pitch_frames(note_pitch_audio)
         except (ImportError, OSError, ValueError, RuntimeError,
                 AttributeError, KeyError, TypeError) as e:
             print(
@@ -762,10 +766,7 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = refine_notes(
             midi_segments=process_data.midi_segments,
             pitched_data=process_data.pitched_data,
-            vocal_audio_path=(
-                process_data.process_data_paths.vocals_audio_file_path
-                or process_data.process_data_paths.whisper_audio_path
-            ),
+            vocal_audio_path=note_pitch_audio,
             bpm=process_data.media_info.bpm,
             refine_pitch_enabled=settings.refine_pitch,
             refine_timing_enabled=settings.refine_timing,
@@ -786,10 +787,7 @@ def run() -> tuple[str, Score, Score]:
 
         process_data.midi_segments = refit_notes_ptakf(
             process_data.midi_segments,
-            vocal_audio_path=(
-                process_data.process_data_paths.vocals_audio_file_path
-                or process_data.process_data_paths.whisper_audio_path
-            ),
+            vocal_audio_path=note_pitch_audio,
             bpm=process_data.media_info.bpm,
             min_note_ms=settings.ptakf_refit_min_note_ms,
             fill=settings.ptakf_refit_fill,
@@ -834,12 +832,8 @@ def run() -> tuple[str, Score, Score]:
             format_uscore_report,
         )
 
-        vocal_path = (
-            process_data.process_data_paths.vocals_audio_file_path
-            or process_data.process_data_paths.whisper_audio_path
-        )
         uscore_result = calculate_uscore_report(
-            ultrastar_file_output, vocal_path, pitch_frames=pitch_frames
+            ultrastar_file_output, note_pitch_audio, pitch_frames=pitch_frames
         )
         if uscore_result:
             print(

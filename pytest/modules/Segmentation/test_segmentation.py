@@ -299,8 +299,9 @@ class TestSegmenter:
         monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(16000, np.float32))
         monkeypatch.setattr(feats, "analyse_vocal", lambda y: _analysis(200))
         monkeypatch.setattr(dec, "decode_notes", lambda *a, **k: _notes((0.0, 0.5), (0.6, 1.0)))
-        segs = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en")
-        assert [s.word for s in segs] == ["hel", "lo "]
+        result = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en")
+        assert [s.word for s in result.segments] == ["hel", "lo "]
+        assert result.pitch_audio_path == str(vocal)
 
 
 # ── lead-vocal pitch ────────────────────────────────────────────────────────
@@ -355,6 +356,13 @@ class TestLeadVocalPitch:
         p2 = lead_vocal.separate_lead_vocal(str(tmp_path / "vocals.wav"), str(tmp_path))
         assert p1 == p2 and p1.endswith("lead.wav") and calls == [lead_vocal.KARAOKE_MODEL]
 
+    def test_analysis_comes_with_the_stem_path(self, monkeypatch):
+        import modules.Segmentation.features as feats
+        monkeypatch.setattr(lead_vocal, "separate_lead_vocal", lambda v, c: "cache/lead.wav")
+        monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(160, np.float32))
+        monkeypatch.setattr(feats, "analyse_vocal", lambda y: "analysis")
+        assert lead_vocal.lead_vocal_analysis("v.wav", "cache") == ("cache/lead.wav", "analysis")
+
 
 class TestSegmenterLeadPitch:
     def _run(self, tmp_path, monkeypatch, lead_result):
@@ -373,23 +381,26 @@ class TestSegmenterLeadPitch:
             return _notes((0.0, 0.5))
         monkeypatch.setattr(dec, "decode_notes", fake_decode)
         monkeypatch.setattr(lead_vocal, "lead_vocal_analysis", lead_result)
-        segs = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en",
-                                            lead_vocal_pitch=True, cache_folder=str(tmp_path))
-        return segs, seen
+        result = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en",
+                                              lead_vocal_pitch=True, cache_folder=str(tmp_path))
+        return result, seen
 
     def test_reliable_lead_is_used(self, tmp_path, monkeypatch):
         lead = _analysis(200, midi=64)
-        segs, seen = self._run(tmp_path, monkeypatch, lambda p, c: lead)
-        assert segs and seen["pitch_analysis"] is lead
+        result, seen = self._run(tmp_path, monkeypatch, lambda p, c: ("lead.wav", lead))
+        assert result.segments and seen["pitch_analysis"] is lead
+        assert result.pitch_audio_path == "lead.wav"  # later steps compare the notes with the lead stem
 
     def test_unreliable_lead_is_ignored(self, tmp_path, monkeypatch):
         lead = _analysis(200, midi=64)
         lead.f0_conf[:150] = 0.1
-        segs, seen = self._run(tmp_path, monkeypatch, lambda p, c: lead)
-        assert segs and seen["pitch_analysis"] is None
+        result, seen = self._run(tmp_path, monkeypatch, lambda p, c: ("lead.wav", lead))
+        assert result.segments and seen["pitch_analysis"] is None
+        assert result.pitch_audio_path == str(tmp_path / "v.wav")
 
     def test_separation_error_falls_back(self, tmp_path, monkeypatch):
         def boom(p, c):
             raise RuntimeError("no model")
-        segs, seen = self._run(tmp_path, monkeypatch, boom)
-        assert segs and seen["pitch_analysis"] is None
+        result, seen = self._run(tmp_path, monkeypatch, boom)
+        assert result.segments and seen["pitch_analysis"] is None
+        assert result.pitch_audio_path == str(tmp_path / "v.wav")
