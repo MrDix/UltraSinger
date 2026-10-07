@@ -91,6 +91,27 @@ class TestWorker(unittest.TestCase):
         worker.run()
         self.assertEqual(finished, [-2])
 
+    def test_cancel_while_the_next_command_starts(self):
+        # cancel() runs between the end of one command and the start of the next
+        from unittest.mock import patch
+        import src.gui.training_tab as tt
+        cmd = [sys.executable, "-c", "import time; time.sleep(5); print('ran to the end')"]
+        worker = TrainingWorker([cmd], str(REPO))
+        finished, lines, real_popen = [], [], tt.subprocess.Popen
+
+        def popen_then_cancel(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            if args[0] == cmd:  # not for the kill command itself
+                worker.cancel()  # still sees no running process
+            return proc
+
+        worker.finished.connect(finished.append)
+        worker.line_output.connect(lines.append)
+        with patch.object(tt.subprocess, "Popen", popen_then_cancel):
+            worker.run()
+        self.assertEqual(finished, [-2])
+        self.assertNotIn("ran to the end", lines)  # the new process was stopped
+
 
 class TestTrainingTab(unittest.TestCase):
     def test_defaults(self):

@@ -114,6 +114,12 @@ class TrainingWorker(QObject):
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
                     cwd=self._cwd, encoding="utf-8", errors="replace", env=env, **kwargs,
                 )
+                if self._cancelled:
+                    # cancel() ran before the new process was stored and found nothing to stop
+                    ConversionWorker._kill_tree(self._process)
+                    self._process.wait()
+                    exit_code = -2
+                    break
                 for line in self._process.stdout:
                     line = line.rstrip("\n\r")
                     self.line_output.emit(line)
