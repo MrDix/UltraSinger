@@ -173,3 +173,43 @@ class TestExtractSongList:
         (tmp_path / "songs.json").write_text(json.dumps([{"id": "tr_00000"}, {"id": "tr_00002"}]),
                                              encoding="utf-8")
         assert sorted(i[0] for i in ts.load_dataset(tmp_path, 0.5)) == ["tr_00000", "tr_00002"]
+
+
+class TestExtractProgressOutput:
+    def test_progress_lines_for_the_gui(self, tmp_path, monkeypatch, capsys):
+        lib = tmp_path / "lib"
+        work = tmp_path / "work"
+        (work / "data").mkdir(parents=True)
+        songs = []
+        for i in range(2):
+            d = lib / f"Artist - Title {i}"
+            d.mkdir(parents=True)
+            (d / "song.mp3").write_bytes(b"x")
+            txt = d / "song.txt"
+            lines = ["#TITLE:T", "#ARTIST:A", "#MP3:song.mp3", "#BPM:300", "#GAP:0"]
+            txt.write_text("\n".join(lines + [f": {k * 4} 2 60 la" for k in range(150)] + ["E"]), encoding="utf-8")
+            songs.append({"id": f"tr_{i:05d}", "folder": str(d), "txt": str(txt), "media": str(d / "song.mp3"),
+                          "audio": str(d / "song.mp3")})
+        (work / "songs.json").write_text(json.dumps(songs), encoding="utf-8")
+        ts.save_example(work / "data" / "tr_00000.npz", _analysis(300), _notes(), 0.0, 0.9)  # already done
+
+        class FakeSeparator:
+            def __init__(self, output_dir, **kwargs):
+                self.out = Path(output_dir)
+
+            def load_model(self, model_filename):
+                pass
+
+            def separate(self, path, custom_output_names=None):
+                (self.out / "vocals.wav").write_bytes(b"wav")
+
+        import audio_separator.separator as sepmod
+        import modules.Segmentation.features as feats
+        monkeypatch.setattr(sepmod, "Separator", FakeSeparator)
+        monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(16000, np.float32))
+        monkeypatch.setattr(ts, "analyse_vocal", lambda y: _analysis(300))
+        assert ts.main(["extract", str(lib), str(work)]) == 0
+        out = capsys.readouterr().out
+        assert "2 songs, 1 already extracted" in out
+        assert "[2/2] tr_00001: ok" in out
+        assert "tr_00000: ok" not in out  # existing examples are skipped

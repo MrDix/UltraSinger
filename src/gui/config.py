@@ -56,6 +56,12 @@ _DEFAULTS = {
     "segmentation_model_repo": "",
     "segmentation_model_token": "",  # stored in system keyring, never written to config.json
     "lead_vocal_pitch": True,
+    # Training page (train a segmentation model on the own song library)
+    "training_library": "",
+    "training_workdir": "",
+    "training_exclude": "",
+    "training_model": "",
+    "training_epochs": 30,
     "keep_numbers": False,
     # Lyrics Lookup
     "disable_lyrics_lookup": False,

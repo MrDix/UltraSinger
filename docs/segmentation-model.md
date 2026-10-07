@@ -37,7 +37,19 @@ uv run python tools/train_segmentation.py train "D:\SegTrain" --out "D:\SegTrain
 uv run python src/UltraSinger.py -i "Artist - Title.mp4" --segmentation_model "D:\SegTrain\segmentation.pt"
 ```
 
+`extract` is resumable — run it again to continue after an interruption. Use
+`--limit N` for a quick test with the first N songs.
+
 In the GUI: Settings → Experimental Features → **Segmentation Model**.
+
+### Training in the GUI
+
+The **Training** page (sidebar) runs the same two steps: choose the song library, a work
+folder for the extracted data (outside the UltraSinger folder), optionally a `songs.json`
+of songs to exclude (e.g. a chart benchmark sample) and where to save the model, then
+**Start Training**. The page shows the extraction and training progress and the log;
+**Cancel** stops it, and starting again continues the extraction where it stopped. When
+the model is ready, **Use This Model** sets it as Segmentation Model in the settings.
 
 ### Using a model from a GitHub repository
 
@@ -64,9 +76,6 @@ uv run python src/UltraSinger.py -i "Artist - Title.mp4" --segmentation_model_re
 In the GUI: **Model Repository** and **Repository Token** below Segmentation
 Model. The token is kept in the system keyring, not in the settings file, and is
 passed to the conversion through its environment, not its command line.
-
-`extract` is resumable — run it again to continue after an interruption. Use
-`--limit N` for a quick test with the first N songs.
 
 ---
 

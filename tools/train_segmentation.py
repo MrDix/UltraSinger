@@ -139,8 +139,11 @@ def cmd_extract(args) -> int:
         sep = Separator(output_dir=str(tmp), output_format="WAV", sample_rate=44100,
                         normalization_threshold=0.9, log_level=40)
         sep.load_model(model_filename=DEFAULT_AUDIO_SEPARATOR_MODEL.value)
-        done, t_start = 0, time.time()
-        for s in songs:
+        done, t_start, total = 0, time.time(), len(songs)
+        already = sum(1 for s in songs if (data / f"{s['id']}.npz").exists())
+        print(f"{total} songs, {already} already extracted", flush=True)
+        # "[i/n]" prefixes are parsed by the GUI's training page for its progress bar
+        for i, s in enumerate(songs, 1):
             out = data / f"{s['id']}.npz"
             if out.exists():
                 continue
@@ -154,10 +157,10 @@ def cmd_extract(args) -> int:
                 offset, fit = cb.fit_reference_offset(ref, sung_from_analysis(analysis))
                 save_example(out, analysis, ref, offset, fit)
                 done += 1
-                print(f"{s['id']}: ok fit={fit:.2f} offset={offset:+.0f} ms "
+                print(f"[{i}/{total}] {s['id']}: ok fit={fit:.2f} offset={offset:+.0f} ms "
                       f"(avg {(time.time() - t_start) / done:.1f} s/song)", flush=True)
             except Exception as e:  # noqa: BLE001 - one broken song must not stop the run
-                print(f"{s['id']}: ERROR {e!r}", flush=True)
+                print(f"[{i}/{total}] {s['id']}: ERROR {e!r}", flush=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return 0

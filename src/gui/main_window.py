@@ -21,6 +21,7 @@ from .preferences_tab import PreferencesTab
 from .queue_manager import QueueManager
 from .queue_tab import QueueTab
 from .settings_dialog import PerSongSettingsDialog, ReadOnlySettingsDialog
+from .training_tab import TrainingTab
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,7 @@ class MainWindow(QMainWindow):
         self._sidebar.add_section("\U0001F310", "Video")
         self._sidebar.add_section("\U0001F4BB", "Console")
         self._sidebar.add_section("\u2699\uFE0F", "Settings")
+        self._sidebar.add_section("\U0001F9E0", "Training")
         self._sidebar.finalize()
         main_layout.addWidget(self._sidebar)
 
@@ -147,7 +149,7 @@ class MainWindow(QMainWindow):
         self._stack.setFrameShape(QFrame.Shape.NoFrame)
         main_layout.addWidget(self._stack, 1)
 
-        # Create tabs (3 tabs: Video, Console, Settings)
+        # Create tabs (Video, Console, Settings, Training)
         self._browser_tab = BrowserTab()
         self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
         self._queue_tab = QueueTab()
@@ -159,6 +161,9 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._browser_tab)
         self._stack.addWidget(self._queue_tab)
         self._stack.addWidget(self._settings_tab)
+        self._training_tab = TrainingTab(self._config)
+        self._training_tab.model_ready.connect(self._settings_tab.set_segmentation_model)
+        self._stack.addWidget(self._training_tab)
 
         # Queue manager (owns the runner, drives batch execution)
         self._queue_mgr = QueueManager(self)
@@ -667,6 +672,7 @@ class MainWindow(QMainWindow):
         """
         try:
             all_settings = self._settings_tab.collect_all()
+            all_settings.update(self._training_tab.values())
             self._config.update(all_settings)
             save_config(self._config)
         except (OSError, ValueError, TypeError):
@@ -677,6 +683,9 @@ class MainWindow(QMainWindow):
 
         # Stop a pending yt-dlp update check
         self._shutdown_ytdlp_update_check()
+
+        # Stop a running model training (its subprocess tree)
+        self._training_tab.shutdown()
 
         # Shut down the browser engine so Chromium can flush cookies
         self._browser_tab.shutdown()

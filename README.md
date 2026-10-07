@@ -177,6 +177,7 @@ groups onto the pinned icon.
   - **Folder button** — open the output folder in your system file manager (hover to see the path)
   - **Re-queue button** — re-queue the song with different settings (opens per-song settings dialog; useful for correcting wrong language detection)
 - **Preferences** — Default output folder, LLM/Groq API configuration, cookie management.
+- **Training** — Train a [segmentation model](#model-based-note-segmentation---segmentation_model) on your own song library: pick the library, a work folder and the model file, follow the progress, and use the finished model for your conversions with one click.
 
 > **Note:** The GUI is a native desktop application (Qt). It requires a display and cannot run inside a Docker container. Use the [CLI](#run-cli) for containerized workflows.
 
@@ -772,7 +773,7 @@ Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones 
 
 Instead of deriving notes from the word timing, a small neural network predicts directly on the separated vocal where notes start, how long they are, and which passages are charted at all (e.g. spoken parts become freestyle, background vocals are left out). The lyrics from the usual sources (synced lyrics or Whisper, with forced alignment) are then split into syllables and placed onto these notes; syllables held over several notes get `~` continuations.
 
-No model is shipped with UltraSinger. You train your own on your UltraStar song library with `tools/train_segmentation.py` — the more well-timed charts it sees, the better. Keep the model and the extracted training data private. Measure the result on songs the model was not trained on with the [Chart Benchmark Tool](#chart-benchmark-tool).
+No model is shipped with UltraSinger. You train your own on your UltraStar song library with `tools/train_segmentation.py` or on the GUI's **Training** page — the more well-timed charts it sees, the better. Keep the model and the extracted training data private. Measure the result on songs the model was not trained on with the [Chart Benchmark Tool](#chart-benchmark-tool).
 
 * 📄 **[Segmentation model documentation](docs/segmentation-model.md)**
 
