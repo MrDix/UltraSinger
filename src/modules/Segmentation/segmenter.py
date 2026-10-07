@@ -56,6 +56,10 @@ def segment_with_model(
             return None
         syllables = syllables_from_segments(midi_segments, language)
         segments = place_lyrics(notes, syllables)
+        if not segments:
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} lyrics could not be placed onto the "
+                  f"model notes - keeping word-based notes")
+            return None
         freestyle = sum(1 for s in segments if s.note_type == "F")
         print(f"{ULTRASINGER_HEAD} Model segmentation: {len(segments)} notes "
               f"({freestyle} freestyle) from {len(syllables)} syllables")

@@ -139,3 +139,37 @@ class TestExtractSongList:
             ts.main(["extract", str(lib), str(work), "--exclude", str(exclude)])
         songs = json.loads((work / "songs.json").read_text(encoding="utf-8"))
         assert sorted(Path(s["folder"]).name for s in songs) == ["Artist - A", "Artist - C"]
+
+    def test_exclude_applied_when_resuming(self, tmp_path, monkeypatch):
+        lib = tmp_path / "lib"
+        lib.mkdir()
+        work = tmp_path / "work"
+        (work / "data").mkdir(parents=True)
+        songs = [{"id": "tr_00000", "folder": "F/A", "txt": "", "media": ""},
+                 {"id": "tr_00001", "folder": "F/B", "txt": "", "media": ""}]
+        (work / "songs.json").write_text(json.dumps(songs), encoding="utf-8")
+        for s in songs:  # both already extracted in an earlier run without --exclude
+            (work / "data" / f"{s['id']}.npz").write_bytes(b"x")
+        exclude = tmp_path / "bench.json"
+        exclude.write_text(json.dumps([{"folder": "F/B"}]), encoding="utf-8")
+
+        class _Stop(Exception):
+            pass
+
+        import audio_separator.separator as sepmod
+        monkeypatch.setattr(sepmod, "Separator", lambda *a, **k: (_ for _ in ()).throw(_Stop()))
+        with pytest.raises(_Stop):
+            ts.main(["extract", str(lib), str(work), "--exclude", str(exclude)])
+        kept = json.loads((work / "songs.json").read_text(encoding="utf-8"))
+        assert [s["id"] for s in kept] == ["tr_00000"]
+        assert (work / "data" / "tr_00000.npz").exists()
+        assert not (work / "data" / "tr_00001.npz").exists()
+
+    def test_train_uses_only_listed_songs(self, tmp_path):
+        data = tmp_path / "data"
+        data.mkdir()
+        for i in range(3):
+            ts.save_example(data / f"tr_{i:05d}.npz", _analysis(300), _notes(), offset_ms=0.0, ref_fit=0.9)
+        (tmp_path / "songs.json").write_text(json.dumps([{"id": "tr_00000"}, {"id": "tr_00002"}]),
+                                             encoding="utf-8")
+        assert sorted(i[0] for i in ts.load_dataset(tmp_path, 0.5)) == ["tr_00000", "tr_00002"]

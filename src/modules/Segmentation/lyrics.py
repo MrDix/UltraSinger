@@ -104,10 +104,8 @@ def align_syllables(note_starts_ms: np.ndarray, syllables: list[Syllable]) -> li
     for j in range(min(m, MAX_SKIP + 1)):
         dp[0, j] = start_cost(0, j) + j * DROP_COST_MS
         back[0, j] = (-1, 1)
-    for i in range(1, k_notes):
-        lo = int(np.searchsorted(sa, note_starts_ms[i] - BAND_MS))
-        hi = int(np.searchsorted(sa, note_starts_ms[i] + BAND_MS))
-        for j in range(max(lo - MAX_SKIP, 0), min(hi + 1, m)):
+    def fill_row(i: int, j_from: int, j_to: int) -> None:
+        for j in range(max(j_from, 0), min(j_to, m)):
             best = dp[i - 1, j] + CONTINUE_COST_MS + max(0.0, note_starts_ms[i] - sb[j])
             arg = (j, 0)
             for skip in range(MAX_SKIP + 1):
@@ -119,7 +117,21 @@ def align_syllables(note_starts_ms: np.ndarray, syllables: list[Syllable]) -> li
                     best, arg = c, (pj, 1)
             dp[i, j] = best
             back[i, j] = arg
+
+    for i in range(1, k_notes):
+        lo = int(np.searchsorted(sa, note_starts_ms[i] - BAND_MS))
+        hi = int(np.searchsorted(sa, note_starts_ms[i] + BAND_MS))
+        fill_row(i, lo - MAX_SKIP, hi + 1)
+        if not np.isfinite(dp[i]).any():
+            # Note far from every syllable (e.g. a long untexted ad-lib): widen
+            # to all syllables reachable from the previous note so the path
+            # continues instead of becoming impossible.
+            reach = np.flatnonzero(np.isfinite(dp[i - 1]))
+            if len(reach):
+                fill_row(i, int(reach[0]), int(reach[-1]) + MAX_SKIP + 2)
     final = dp[k_notes - 1] + (m - 1 - np.arange(m)) * DROP_COST_MS
+    if not np.isfinite(final).any():
+        return []  # no valid alignment; caller keeps the word-based notes
     j = int(np.argmin(final))
     path: list[tuple[int, bool]] = [(0, True)] * k_notes
     for i in range(k_notes - 1, -1, -1):
@@ -136,8 +148,7 @@ def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[
         return []
     path = align_syllables(np.array([n.start * 1000 for n in notes]), syllables)
     if not path:
-        return [MidiSegment(librosa.midi_to_note(n.midi), n.start, n.end, "~ ", "F" if n.freestyle else ":")
-                for n in notes]
+        return []
     texts: list[str] = []
     line_starts: set[int] = set()
     prev_j = -1

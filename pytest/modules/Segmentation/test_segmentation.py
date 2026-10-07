@@ -207,9 +207,18 @@ class TestPlaceLyrics:
         segs = seg_lyrics.place_lyrics(notes, [seg_lyrics.Syllable("hey ", 0, 500)])
         assert segs[0].note_type == "F" and segs[0].note == "A4"
 
-    def test_no_syllables(self):
-        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.5)), [])
-        assert segs[0].word.strip() == "~"
+    def test_no_syllables_gives_no_segments(self):
+        assert seg_lyrics.place_lyrics(_notes((0.0, 0.5)), []) == []
+
+    def test_note_far_from_all_syllables_keeps_path(self):
+        # syllables only at the start, then a note 30 s later (outside the band)
+        syl = [seg_lyrics.Syllable("a ", 0, 300), seg_lyrics.Syllable("b ", 400, 700)]
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.3), (0.4, 0.7), (30.0, 30.5)), syl)
+        assert len(segs) == 3
+        assert segs[0].word.startswith("a")
+        assert "b" in "".join(s.word for s in segs)  # no syllable is lost
+        path = seg_lyrics.align_syllables(np.array([0.0, 400.0, 30000.0]), syl)
+        assert len(path) == 3 and [j for j, _ in path] == sorted(j for j, _ in path)
 
     def test_alignment_is_monotonic(self):
         rng = np.random.default_rng(1)
@@ -241,6 +250,19 @@ class TestSegmenter:
         import modules.Segmentation.features as feats
         monkeypatch.setattr(feats, "load_vocal", lambda p: (_ for _ in ()).throw(RuntimeError("boom")))
         assert segmenter.segment_with_model([_seg("a ", 0, 1)], str(vocal), str(model), "en") is None
+
+    def test_unplaceable_lyrics_keep_segments(self, tmp_path, monkeypatch):
+        model = tmp_path / "m.pt"
+        save_model(model, SegNet())
+        vocal = tmp_path / "v.wav"
+        vocal.write_bytes(b"x")
+        import modules.Segmentation.decode as dec
+        import modules.Segmentation.features as feats
+        monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(16000, np.float32))
+        monkeypatch.setattr(feats, "analyse_vocal", lambda y: _analysis(200))
+        monkeypatch.setattr(dec, "decode_notes", lambda *a, **k: _notes((0.0, 0.5)))
+        monkeypatch.setattr(seg_lyrics, "place_lyrics", lambda notes, syl: [])
+        assert segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en") is None
 
     def test_success_path(self, tmp_path, monkeypatch, fake_hyphen):
         model = tmp_path / "m.pt"

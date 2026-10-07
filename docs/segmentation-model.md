@@ -86,7 +86,7 @@ uv run python tools/chart_benchmark.py compare "D:\ChartBench" baseline model
 
 | Option | Meaning |
 |---|---|
-| `--exclude FILE ...` | `songs.json` files (e.g. a chart benchmark sample) whose songs are skipped |
+| `--exclude FILE ...` | `songs.json` files (e.g. a chart benchmark sample) whose songs are skipped — also when resuming; data already extracted for them is removed |
 | `--limit N` | only process the first N songs |
 
 `train WORKDIR --out MODEL.pt`

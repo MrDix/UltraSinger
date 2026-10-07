@@ -107,12 +107,22 @@ def cmd_extract(args) -> int:
     data = workdir / "data"
     data.mkdir(parents=True, exist_ok=True)
     songs_path = workdir / "songs.json"
+    excluded = set()
+    for f in args.exclude or []:
+        excluded |= {s["folder"] for s in json.loads(Path(f).read_text(encoding="utf-8"))}
     if songs_path.exists():
+        # Resuming: apply --exclude here too, and drop examples already extracted
+        # for excluded songs - otherwise a benchmark could silently be trained on.
         songs = json.loads(songs_path.read_text(encoding="utf-8"))
+        dropped = [s for s in songs if s["folder"] in excluded]
+        if dropped:
+            for s in dropped:
+                (data / f"{s['id']}.npz").unlink(missing_ok=True)
+            songs = [s for s in songs if s["folder"] not in excluded]
+            songs_path.write_text(json.dumps(songs, indent=1, ensure_ascii=False), encoding="utf-8")
+            print(f"removed {len(dropped)} excluded songs (and their extracted data) from {songs_path}",
+                  flush=True)
     else:
-        excluded = set()
-        for f in args.exclude or []:
-            excluded |= {s["folder"] for s in json.loads(Path(f).read_text(encoding="utf-8"))}
         cands = [c for c in cb.find_candidates(library) if c["folder"] not in excluded]
         songs = [{"id": f"tr_{i:05d}", **c} for i, c in enumerate(cands)]
         songs_path.write_text(json.dumps(songs, indent=1, ensure_ascii=False), encoding="utf-8")
@@ -178,8 +188,15 @@ def frame_labels(d: dict, n_frames: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 def load_dataset(workdir: Path, min_fit: float) -> list[tuple]:
+    """Usable examples; only songs still listed in songs.json (if present) are used."""
+    listed = None
+    songs_path = workdir / "songs.json"
+    if songs_path.exists():
+        listed = {s["id"] for s in json.loads(songs_path.read_text(encoding="utf-8"))}
     items = []
     for p in sorted((workdir / "data").glob("*.npz")):
+        if listed is not None and p.stem not in listed:
+            continue
         d = load_example(p)
         if float(d["ref_fit"]) < min_fit:
             continue
