@@ -10,7 +10,7 @@ from src.modules.Ultrastar.ultrastar_writer import (
     create_ultrastar_txt, silence_threshold, calculate_silent_beat_length,
     format_separated_string, add_score_to_ultrastar_txt,
     add_game_score_to_ultrastar_txt,
-    _compute_linebreak_indices, _enforce_max_line_length,
+    _compute_linebreak_indices, _enforce_max_line_length, note_beats,
 )
 from src.modules.Midi.MidiSegment import MidiSegment
 from src.modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag
@@ -697,6 +697,60 @@ class TestEnforceMaxLineLength(unittest.TestCase):
         breaks = {1}
         _enforce_max_line_length(segments, breaks, max_chars=45)
         self.assertEqual(breaks, {1})
+
+
+# 120 BPM with multiplier 14 -> 28 beats per second
+_BPM, _MULT, _BEATS_PER_S = 120, 14, 28
+
+
+class TestNoteBeats(unittest.TestCase):
+    def test_adjacent_notes_do_not_drift(self):
+        # 30 adjacent notes of 4.6 beats each: rounding the start down and the
+        # duration up used to push every note further back
+        length = 4.6 / _BEATS_PER_S
+        segments = [_seg("la ", i * length, (i + 1) * length) for i in range(30)]
+        beats = note_beats(segments, 0.0, _BPM, _MULT)
+        for i, (start, duration) in enumerate(beats):
+            self.assertEqual(start, round(i * 4.6))
+            self.assertEqual(start + duration, round((i + 1) * 4.6))
+        for (start, duration), (next_start, _) in zip(beats, beats[1:]):
+            self.assertEqual(start + duration, next_start)  # still adjacent
+
+    def test_start_rounds_to_nearest_beat(self):
+        segments = [_seg("a ", 0.0, 1 / _BEATS_PER_S), _seg("b ", 1.6 / _BEATS_PER_S, 1.0)]
+        self.assertEqual(note_beats(segments, 0.0, _BPM, _MULT)[1], (2, 26))  # not rounded down to 1
+
+    def test_overlap_and_minimum_length(self):
+        segments = [_seg("a ", 0.0, 10.4 / _BEATS_PER_S),
+                    _seg("b ", 8 / _BEATS_PER_S, 20 / _BEATS_PER_S),   # overlaps the first note
+                    _seg("c ", 20 / _BEATS_PER_S, 20.2 / _BEATS_PER_S)]  # shorter than a beat
+        self.assertEqual(note_beats(segments, 0.0, _BPM, _MULT), [(0, 10), (10, 10), (20, 1)])
+
+    def test_gap_is_the_grid_origin(self):
+        segments = [_seg("a ", 2.0, 2.5), _seg("b ", 3.0, 3.5)]
+        self.assertEqual(note_beats(segments, 2.0, _BPM, _MULT), [(0, 14), (28, 14)])
+
+    def test_linebreak_at_end_of_last_note_of_the_line(self):
+        # the note ends 56.6 beats after the gap and is written up to beat 57
+        segments = [_seg("one ", 0.5, 2.5 + 0.6 / _BEATS_PER_S, line_break_after=True),
+                    _seg("two ", 3.0, 4.5)]
+        with patch("builtins.open", mock_open()) as mock_file:
+            create_ultrastar_txt(segments, "output.txt", UltrastarTxtValue(), _BPM)
+        written = [c.args[0] for c in mock_file.return_value.__enter__.return_value.write.call_args_list]
+        self.assertIn(": 0 57 21 one \n", written)
+        self.assertEqual(written[written.index(": 0 57 21 one \n") + 1], "- 57\n")
+
+    def test_temp_chart_for_scoring_uses_the_same_grid(self):
+        from src.modules.Refinement.refine_from_vocal import _write_temp_ultrastar_txt
+        length = 4.6 / _BEATS_PER_S
+        segments = [_seg("la ", 1.0 + i * length, 1.0 + (i + 1) * length) for i in range(10)]
+        path = _write_temp_ultrastar_txt(segments, _BPM)
+        try:
+            with open(path, encoding="utf-8") as f:
+                notes = [line.split()[1:3] for line in f if line.startswith(": ")]
+        finally:
+            os.remove(path)
+        self.assertEqual([(int(s), int(d)) for s, d in notes], note_beats(segments, 1.0, _BPM, _MULT))
 
 
 if __name__ == "__main__":

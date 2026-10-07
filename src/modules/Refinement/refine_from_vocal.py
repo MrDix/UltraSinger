@@ -52,14 +52,11 @@ def _write_temp_ultrastar_txt(
 
     Returns the path to the temporary file.
     """
-    from modules.Ultrastar.coverter.ultrastar_converter import (
-        real_bpm_to_ultrastar_bpm,
-        second_to_beat,
-    )
+    from modules.Ultrastar.coverter.ultrastar_converter import real_bpm_to_ultrastar_bpm
     from modules.Ultrastar.coverter.ultrastar_midi_converter import (
         convert_midi_note_to_ultrastar_note,
     )
-    from modules.Ultrastar.ultrastar_writer import get_multiplier
+    from modules.Ultrastar.ultrastar_writer import get_multiplier, note_beats
 
     # Match the BPM conversion from ultrastar_writer.create_ultrastar_txt_from_automation:
     # 1. real_bpm → ultrastar_bpm (÷4)
@@ -82,20 +79,8 @@ def _write_temp_ultrastar_txt(
     lines.append("#VERSION:1.2.0")
     lines.append("#MP3:_refine_temp.mp3")
 
-    previous_end_beat = 0
-    for seg in midi_segments:
-        # Same logic as ultrastar_writer: subtract gap, scale by multiplier
-        start_time = (seg.start - gap_s) * multiplier
-        end_time = (seg.end - seg.start) * multiplier
-
-        start_beat = math.floor(second_to_beat(start_time, bpm))
-        duration = max(1, math.ceil(second_to_beat(end_time, bpm)))
-
-        # Prevent overlap
-        if start_beat < previous_end_beat:
-            start_beat = previous_end_beat
-        previous_end_beat = start_beat + duration
-
+    # Same beat grid as ultrastar_writer
+    for seg, (start_beat, duration) in zip(midi_segments, note_beats(midi_segments, gap_s, bpm, multiplier)):
         pitch = convert_midi_note_to_ultrastar_note(seg)
         word = seg.word if seg.word else "~"
         lines.append(f": {start_beat} {duration} {pitch} {word}")
