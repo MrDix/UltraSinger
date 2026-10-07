@@ -447,6 +447,8 @@ class UltraSingerRunner(QObject):
         elif config.get("segmentation_model_repo"):
             # The repository token goes through the environment (build_env)
             args.extend(["--segmentation_model_repo", config["segmentation_model_repo"]])
+        if not config.get("lead_vocal_pitch", True):
+            args.append("--disable_lead_vocal_pitch")
         if config.get("golden_notes"):
             args.append("--golden_notes")
 

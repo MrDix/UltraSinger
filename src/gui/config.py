@@ -55,6 +55,7 @@ _DEFAULTS = {
     "segmentation_model": "",
     "segmentation_model_repo": "",
     "segmentation_model_token": "",  # stored in system keyring, never written to config.json
+    "lead_vocal_pitch": True,
     "keep_numbers": False,
     # Lyrics Lookup
     "disable_lyrics_lookup": False,

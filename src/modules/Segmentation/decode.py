@@ -36,19 +36,28 @@ def _regions(mask: np.ndarray):
 
 def decode_notes(probs: np.ndarray, onset: np.ndarray, analysis: VocalAnalysis,
                  onset_thr: float = 0.4, act_thr: float = 0.4,
-                 min_note_frames: int = 6, min_gap_frames: int = 0) -> list[PredictedNote]:
+                 min_note_frames: int = 6, min_gap_frames: int = 0,
+                 pitch_analysis: VocalAnalysis | None = None) -> list[PredictedNote]:
     """Split active regions at onset peaks; pitch = median of confident pitch frames.
 
     Pitched regions are split at onset peaks into notes; freestyle regions become
     single freestyle notes. Notes shorter than ``min_note_frames`` are dropped and
     ``min_gap_frames`` are left between notes split inside one region.
+
+    ``pitch_analysis`` (e.g. of a lead-vocal stem) is the preferred source for
+    note pitches; where it has too few confident frames inside a note, the pitch
+    of ``analysis`` is used.
     """
     n = len(onset)
     midi, voiced = frame_pitch(analysis, n)
+    if pitch_analysis is not None:
+        p_midi, p_voiced = frame_pitch(pitch_analysis, n)
+    else:
+        p_midi, p_voiced = midi, voiced
     # Mutually exclusive: a frame is pitched only if that class is at least as
     # likely as freestyle, so the same interval never yields both kinds of note.
     pitched = (probs[:, CLASS_PITCHED] >= act_thr) & (probs[:, CLASS_PITCHED] >= probs[:, CLASS_FREESTYLE])
-    free =(probs[:, CLASS_FREESTYLE] > probs[:, CLASS_PITCHED]) & (probs[:, CLASS_FREESTYLE] >= act_thr)
+    free = (probs[:, CLASS_FREESTYLE] > probs[:, CLASS_PITCHED]) & (probs[:, CLASS_FREESTYLE] >= act_thr)
     peaks = _onset_peaks(onset, onset_thr)
     notes: list[PredictedNote] = []
 
@@ -57,9 +66,12 @@ def decode_notes(probs: np.ndarray, onset: np.ndarray, analysis: VocalAnalysis,
             return
         seg_midi = midi[a:b]
         sel = voiced[a:b]
+        p_sel = p_voiced[a:b]
         if is_free:
             # pitch is not scored for freestyle notes; keep it near the singer
             pitch = int(np.round(np.nanmedian(seg_midi))) if np.isfinite(seg_midi).any() else 60
+        elif p_sel.sum() >= 2:
+            pitch = int(np.round(np.median(p_midi[a:b][p_sel])))
         elif sel.sum() >= 2:
             pitch = int(np.round(np.median(seg_midi[sel])))
         elif notes:

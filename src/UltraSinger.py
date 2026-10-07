@@ -640,6 +640,8 @@ def run() -> tuple[str, Score, Score]:
             model_path=model_path,
             language=process_data.media_info.language,
             device=settings.pytorch_device,
+            lead_vocal_pitch=settings.lead_vocal_pitch,
+            cache_folder=process_data.process_data_paths.cache_folder_path,
         ) if model_path else None
         if model_segments:
             process_data.midi_segments = model_segments
@@ -1102,6 +1104,7 @@ def _write_settings_info_file(
                 source = (os.path.basename(settings.segmentation_model) if settings.segmentation_model
                           else f"repository {settings.segmentation_model_repo}")
                 f.write(f"  Segmentation model:       {source} ({status})\n")
+                f.write(f"  Lead-vocal pitch:         {settings.lead_vocal_pitch}\n")
             else:
                 f.write(f"  Segmentation model:       (none, word-based notes)\n")
             f.write(f"  Freestyle detection:      {settings.detect_growl}\n")
@@ -2011,6 +2014,7 @@ def init_settings(argv: list[str]) -> Settings:
     settings.segmentation_model = None
     settings.segmentation_model_repo = None
     settings.segmentation_model_token = None
+    settings.lead_vocal_pitch = True
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2175,6 +2179,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.pitcher = arg.lower()
         elif opt in ("--pitch_notes"):
             settings.pitch_notes = True
+        elif opt == "--disable_lead_vocal_pitch":
+            settings.lead_vocal_pitch = False
         elif opt == "--segmentation_model":
             # A missing file is not fatal: the segmentation step warns and keeps
             # the word-based notes (e.g. a stale path in a saved GUI config).
@@ -2384,6 +2390,7 @@ def arg_options():
         "segmentation_model=",
         "segmentation_model_repo=",
         "segmentation_model_token=",
+        "disable_lead_vocal_pitch",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",

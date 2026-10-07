@@ -141,3 +141,8 @@ on the validation songs.
   settings info file shows whether the model was applied.
 * Pitch-change splitting and syllable merging are skipped when the model is
   used, because the model already decides where notes start and end.
+* Note pitches come from a lead-vocal stem (an extra karaoke separation of the
+  vocal stem, cached per song) whenever that stem kept at least 80 % of the
+  singing; otherwise from the full vocal stem. This keeps harmonies and backing
+  vocals out of the chart. `--disable_lead_vocal_pitch` (GUI: Lead Vocal Pitch)
+  skips the extra separation.

@@ -787,6 +787,7 @@ To share one model between computers, keep it in a (private) GitHub repository a
 ```commandline
 -i XYZ --segmentation_model_repo owner/models-repo
 ```
+**Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). On a 100-song benchmark this raised the agreement with hand-made charts by about 3 points, mainly on songs with several voices.
 
 #### Freestyle Detection (`--detect_freestyle`)
 

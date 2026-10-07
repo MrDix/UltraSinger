@@ -130,3 +130,17 @@ class TestSecretRedaction(unittest.TestCase):
     def test_trailing_flag_without_value(self):
         from src.gui.ultrasinger_runner import redact_secrets
         self.assertEqual(redact_secrets(["--segmentation_model_token"]), ["--segmentation_model_token"])
+class TestLeadVocalPitchSetting(unittest.TestCase):
+    def test_default_on_and_no_flag(self):
+        self.assertTrue(_DEFAULTS["lead_vocal_pitch"])
+        form = ConversionSettingsForm({})
+        self.assertTrue(form.collect_config()["lead_vocal_pitch"])
+        args = UltraSingerRunner().build_args(form.collect_config(), "test.mp3")
+        self.assertNotIn("--disable_lead_vocal_pitch", args)
+
+    def test_off_round_trip(self):
+        form = ConversionSettingsForm({"lead_vocal_pitch": False})
+        args = UltraSingerRunner().build_args(form.collect_config(), "test.mp3")
+        self.assertIn("--disable_lead_vocal_pitch", args)
+        settings = init_settings(args[args.index("-i"):] if "-i" in args else ["-i", "test.mp3"] + args)
+        self.assertFalse(settings.lead_vocal_pitch)

@@ -301,3 +301,95 @@ class TestSegmenter:
         monkeypatch.setattr(dec, "decode_notes", lambda *a, **k: _notes((0.0, 0.5), (0.6, 1.0)))
         segs = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en")
         assert [s.word for s in segs] == ["hel", "lo "]
+
+
+# ── lead-vocal pitch ────────────────────────────────────────────────────────
+
+from modules.Segmentation import lead_vocal  # noqa: E402
+
+
+class TestLeadVocalPitch:
+    def test_decode_prefers_pitch_analysis(self):
+        n = 60
+        vocals, lead = _analysis(n, midi=60), _analysis(n, midi=64)
+        notes = decode_notes(_probs(n, pitched=[(10, 40)]), np.zeros(n, np.float32), vocals,
+                             pitch_analysis=lead, **DEFAULT_DECODE)
+        assert [x.midi for x in notes] == [64]
+
+    def test_decode_falls_back_where_lead_is_silent(self):
+        n = 80
+        vocals, lead = _analysis(n, midi=60), _analysis(n, midi=64)
+        lead.f0_conf[40:] = 0.1  # lead silent in the second note
+        onset = np.zeros(n, np.float32)
+        onset[40] = 0.9
+        notes = decode_notes(_probs(n, pitched=[(10, 70)]), onset, vocals, pitch_analysis=lead, **DEFAULT_DECODE)
+        assert [x.midi for x in notes] == [64, 60]
+
+    def test_rule(self):
+        vocals = _analysis(100)
+        good, bad = _analysis(100), _analysis(100)
+        bad.f0_conf[:30] = 0.1  # lost 30 % of the singing
+        assert lead_vocal.voiced_ratio(good, vocals) == pytest.approx(1.0)
+        assert lead_vocal.choose_pitch_source(vocals, good)[0] is good
+        chosen, ratio = lead_vocal.choose_pitch_source(vocals, bad)
+        assert chosen is None and ratio == pytest.approx(0.7)
+        assert lead_vocal.choose_pitch_source(vocals, None) == (None, 0.0)
+
+    def test_separation_is_cached(self, tmp_path, monkeypatch):
+        calls = []
+
+        class FakeSeparator:
+            def __init__(self, output_dir, **kw):
+                self.out = output_dir
+
+            def load_model(self, model_filename):
+                calls.append(model_filename)
+
+            def separate(self, path, custom_output_names=None):
+                open(os.path.join(self.out, "lead.wav"), "wb").close()
+
+        import os
+        import audio_separator.separator as sepmod
+        monkeypatch.setattr(sepmod, "Separator", FakeSeparator)
+        p1 = lead_vocal.separate_lead_vocal(str(tmp_path / "vocals.wav"), str(tmp_path))
+        p2 = lead_vocal.separate_lead_vocal(str(tmp_path / "vocals.wav"), str(tmp_path))
+        assert p1 == p2 and p1.endswith("lead.wav") and calls == [lead_vocal.KARAOKE_MODEL]
+
+
+class TestSegmenterLeadPitch:
+    def _run(self, tmp_path, monkeypatch, lead_result):
+        model = tmp_path / "m.pt"
+        save_model(model, SegNet())
+        vocal = tmp_path / "v.wav"
+        vocal.write_bytes(b"x")
+        import modules.Segmentation.decode as dec
+        import modules.Segmentation.features as feats
+        monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(16000, np.float32))
+        monkeypatch.setattr(feats, "analyse_vocal", lambda y: _analysis(200))
+        seen = {}
+
+        def fake_decode(probs, onset, analysis, pitch_analysis=None, **kw):
+            seen["pitch_analysis"] = pitch_analysis
+            return _notes((0.0, 0.5))
+        monkeypatch.setattr(dec, "decode_notes", fake_decode)
+        monkeypatch.setattr(lead_vocal, "lead_vocal_analysis", lead_result)
+        segs = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en",
+                                            lead_vocal_pitch=True, cache_folder=str(tmp_path))
+        return segs, seen
+
+    def test_reliable_lead_is_used(self, tmp_path, monkeypatch):
+        lead = _analysis(200, midi=64)
+        segs, seen = self._run(tmp_path, monkeypatch, lambda p, c: lead)
+        assert segs and seen["pitch_analysis"] is lead
+
+    def test_unreliable_lead_is_ignored(self, tmp_path, monkeypatch):
+        lead = _analysis(200, midi=64)
+        lead.f0_conf[:150] = 0.1
+        segs, seen = self._run(tmp_path, monkeypatch, lambda p, c: lead)
+        assert segs and seen["pitch_analysis"] is None
+
+    def test_separation_error_falls_back(self, tmp_path, monkeypatch):
+        def boom(p, c):
+            raise RuntimeError("no model")
+        segs, seen = self._run(tmp_path, monkeypatch, boom)
+        assert segs and seen["pitch_analysis"] is None
