@@ -785,7 +785,7 @@ GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal
 To share one model between computers, keep it in a (private) GitHub repository and let UltraSinger download it: `--segmentation_model_repo owner/repo[/path/model.pt]` (default file `segmentation.pt`) with the `ULTRASINGER_MODEL_TOKEN` environment variable (or `--segmentation_model_token <token>`) for private repositories. The model is cached locally and only downloaded again when it changed. GUI: "Model Repository" and "Repository Token" (stored in the system keyring).
 
 ```commandline
--i XYZ --segmentation_model_repo owner/models-repo --segmentation_model_token <token>
+-i XYZ --segmentation_model_repo owner/models-repo
 ```
 
 #### Freestyle Detection (`--detect_freestyle`)
