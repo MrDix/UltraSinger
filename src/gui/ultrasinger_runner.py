@@ -410,6 +410,8 @@ class UltraSingerRunner(QObject):
             args.append("--no_pitch_change_split")
         if config.get("pitch_notes"):
             args.append("--pitch_notes")
+        if config.get("segmentation_model"):
+            args.extend(["--segmentation_model", config["segmentation_model"]])
         if config.get("golden_notes"):
             args.append("--golden_notes")
 

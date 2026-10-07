@@ -125,3 +125,31 @@ class TestChartStyleResolution(unittest.TestCase):
         # A fresh Settings() (read before init_settings resolves) must agree
         # with the singable default (refit off).
         self.assertFalse(Settings().ptakf_refit)
+
+
+class TestSegmentationModelFlag(unittest.TestCase):
+    """--segmentation_model takes a model file path; missing files abort early."""
+
+    def test_existing_file_is_used(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "model.pt")
+            open(path, "wb").close()
+            settings = init_settings(["-i", "test.mp3", "--segmentation_model", path])
+            self.assertEqual(settings.segmentation_model, path)
+
+    def test_missing_file_exits(self):
+        with self.assertRaises(SystemExit):
+            init_settings(["-i", "test.mp3", "--segmentation_model", "does/not/exist.pt"])
+
+    def test_no_leak_across_calls(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "model.pt")
+            open(path, "wb").close()
+            init_settings(["-i", "test.mp3", "--segmentation_model", path])
+            settings = init_settings(["-i", "test.mp3"])
+            self.assertIsNone(settings.segmentation_model)
+
+    def test_class_default_is_none(self):
+        self.assertIsNone(Settings().segmentation_model)
