@@ -9,6 +9,7 @@ Without network access the cached copy is used.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -17,7 +18,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted
 
@@ -25,6 +26,8 @@ DEFAULT_MODEL_FILE = "segmentation.pt"
 API_ROOT = "https://api.github.com"
 TIMEOUT_S = 60
 TOKEN_ENV = "ULTRASINGER_MODEL_TOKEN"
+OBJECT_MEDIA_TYPE = "application/vnd.github.object+json"
+RAW_MEDIA_TYPE = "application/vnd.github.raw"
 
 _SPEC_RE = re.compile(r"^(?:https?://github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)?(?:/(.+))?/?$")
 
@@ -36,6 +39,8 @@ def parse_repo_spec(spec: str) -> tuple[str, str, str]:
         raise ValueError(f"not a repository reference: {spec!r} (expected owner/repo[/path])")
     owner, repo, path = m.group(1), m.group(2), (m.group(3) or DEFAULT_MODEL_FILE).strip("/")
     path = re.sub(r"^(?:blob|tree|raw)/[^/]+/", "", path)  # tolerate pasted browser URLs
+    if any(part in ("", ".", "..") for part in path.split("/")):
+        raise ValueError(f"not a file path in the repository: {path!r}")
     return owner, repo, path
 
 
@@ -48,6 +53,14 @@ def cache_dir() -> Path:
     return base / "models"
 
 
+def cache_path(cache: Path, owner: str, repo: str, path: str) -> Path:
+    """Cache location of a repository file: a folder per repository path (named
+    by a hash of it), so that distinct paths never share a cache entry. The
+    file keeps its name."""
+    key = hashlib.sha256(f"{owner}/{repo}/{path}".encode("utf-8")).hexdigest()[:16]
+    return cache / f"{owner}__{repo}" / key / PurePosixPath(path).name
+
+
 def _request(url: str, token: str | None, accept: str) -> urllib.request.Request:
     headers = {"Accept": accept, "User-Agent": "UltraSinger", "X-GitHub-Api-Version": "2022-11-28"}
     if token:
@@ -57,7 +70,10 @@ def _request(url: str, token: str | None, accept: str) -> urllib.request.Request
 
 def _remote_sha(owner: str, repo: str, path: str, token: str | None) -> str:
     url = f"{API_ROOT}/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}"
-    with urllib.request.urlopen(_request(url, token, "application/vnd.github+json"), timeout=TIMEOUT_S) as r:
+    # The object media type is documented for files up to 100 MB (the default
+    # one only up to 1 MB). Above 1 MB the content is left out, which is fine
+    # as only the SHA is needed here.
+    with urllib.request.urlopen(_request(url, token, OBJECT_MEDIA_TYPE), timeout=TIMEOUT_S) as r:
         meta = json.loads(r.read().decode("utf-8"))
     if not isinstance(meta, dict) or meta.get("type") != "file":
         raise ValueError(f"{path} is not a file in {owner}/{repo}")
@@ -70,7 +86,7 @@ def _download(owner: str, repo: str, path: str, token: str | None, target: Path)
     fd, tmp = tempfile.mkstemp(dir=str(target.parent), suffix=".part")
     try:
         with os.fdopen(fd, "wb") as out, \
-                urllib.request.urlopen(_request(url, token, "application/vnd.github.raw"), timeout=TIMEOUT_S) as r:
+                urllib.request.urlopen(_request(url, token, RAW_MEDIA_TYPE), timeout=TIMEOUT_S) as r:
             while chunk := r.read(1 << 20):
                 out.write(chunk)
         os.replace(tmp, target)  # atomic: never leave a half-written model behind
@@ -101,8 +117,7 @@ def fetch_model(spec: str, token: str | None = None, cache: Path | None = None) 
     except ValueError as e:
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} {e}")
         return None
-    folder = (cache or cache_dir()) / f"{owner}__{repo}"
-    target = folder / path.replace("/", "__")
+    target = cache_path(cache or cache_dir(), owner, repo, path)
     sha_file = target.with_name(target.name + ".sha")
     cached_sha = sha_file.read_text(encoding="utf-8").strip() if sha_file.exists() and target.exists() else None
     try:

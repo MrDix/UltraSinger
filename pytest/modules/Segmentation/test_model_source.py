@@ -6,9 +6,11 @@ file metadata (with a SHA) and raw content.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import urllib.error
+from pathlib import Path
 
 import pytest
 
@@ -32,12 +34,20 @@ class FakeGitHub:
         self.requests.append(req)
         if self.fail:
             raise self.fail
-        if req.get_header("Accept") == "application/vnd.github.raw":
+        accept = req.get_header("Accept")
+        if accept == ms.RAW_MEDIA_TYPE:
             return _Resp(self.content)
-        return _Resp(json.dumps({"type": "file", "sha": self.sha}).encode())
+        large = len(self.content) > 1 << 20
+        if large and accept != ms.OBJECT_MEDIA_TYPE:
+            # documented: files over 1 MB only through the raw or object media type
+            raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+        meta = {"type": "file", "sha": self.sha, "size": len(self.content),
+                "encoding": "none" if large else "base64",
+                "content": "" if large else base64.b64encode(self.content).decode()}
+        return _Resp(json.dumps(meta).encode())
 
     def downloads(self):
-        return sum(1 for r in self.requests if r.get_header("Accept") == "application/vnd.github.raw")
+        return sum(1 for r in self.requests if r.get_header("Accept") == ms.RAW_MEDIA_TYPE)
 
 
 @pytest.fixture
@@ -59,7 +69,8 @@ class TestParseSpec:
     def test_valid(self, spec, expected):
         assert ms.parse_repo_spec(spec) == expected
 
-    @pytest.mark.parametrize("spec", ["", "noslash", "a b/c"])
+    @pytest.mark.parametrize("spec", ["", "noslash", "a b/c", "owner/repo/../x.pt",
+                                      "owner/repo/models/..", "owner/repo/a//b.pt"])
     def test_invalid(self, spec):
         with pytest.raises(ValueError):
             ms.parse_repo_spec(spec)
@@ -105,9 +116,29 @@ class TestFetch:
         ms.fetch_model("owner/repo", cache=tmp_path)
         assert github.requests[0].get_header("Authorization") is None
 
+    def test_model_over_1mb(self, github, tmp_path):
+        github.content = bytes(range(256)) * 6000  # 1.5 MB
+        path = ms.fetch_model("owner/repo", cache=tmp_path)
+        assert Path(path).read_bytes() == github.content
+        assert github.requests[0].get_header("Accept") == ms.OBJECT_MEDIA_TYPE
+
+    def test_distinct_paths_have_distinct_cache_entries(self, github, tmp_path):
+        first = ms.fetch_model("owner/repo/models/a__b.pt", cache=tmp_path)
+        github.sha, github.content = "sha2", b"MODEL-2"
+        second = ms.fetch_model("owner/repo/models__a/b.pt", cache=tmp_path)
+        assert first != second
+        github.fail = urllib.error.URLError("no network")
+        assert Path(ms.fetch_model("owner/repo/models/a__b.pt", cache=tmp_path)).read_bytes() == b"MODEL-1"
+        assert Path(ms.fetch_model("owner/repo/models__a/b.pt", cache=tmp_path)).read_bytes() == b"MODEL-2"
+
+    def test_cached_file_keeps_its_name(self, github, tmp_path):
+        path = Path(ms.fetch_model("owner/repo/models/v2.pt", cache=tmp_path))
+        assert path.name == "v2.pt"
+        assert path.is_relative_to(tmp_path)
+
     def test_failed_download_leaves_no_partial_file(self, github, tmp_path, monkeypatch):
         def broken(req, timeout=None):
-            if req.get_header("Accept") == "application/vnd.github.raw":
+            if req.get_header("Accept") == ms.RAW_MEDIA_TYPE:
                 raise urllib.error.URLError("connection reset")
             return _Resp(json.dumps({"type": "file", "sha": "s"}).encode())
         monkeypatch.setattr(ms.urllib.request, "urlopen", broken)

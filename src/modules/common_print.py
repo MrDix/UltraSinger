@@ -125,7 +125,8 @@ def print_help() -> None:
                             and only downloaded again when it changed; without network access the cached copy is
                             used. Ignored when --segmentation_model is set.
     --segmentation_model_token  Access token for a private model repository (read access to its contents).
-                            Can also be given as ULTRASINGER_MODEL_TOKEN environment variable.
+                            Can also be given as ULTRASINGER_MODEL_TOKEN environment variable, which keeps
+                            it out of the process list.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication
 
 from src.gui.config import _DEFAULTS
 from src.gui.settings_tab import ConversionSettingsForm
-from src.gui.ultrasinger_runner import UltraSingerRunner
+from src.gui.ultrasinger_runner import MODEL_TOKEN_ENV, UltraSingerRunner
 from src.UltraSinger import init_settings
 
 _app = QApplication.instance() or QApplication([])
@@ -66,19 +66,43 @@ class TestSegmentationModelRepoSetting(unittest.TestCase):
     def test_repo_and_token_round_trip(self):
         form = ConversionSettingsForm({"segmentation_model_repo": "owner/repo",
                                        "segmentation_model_token": "tok"})
-        args = UltraSingerRunner().build_args(form.collect_config(), "test.mp3")
+        config = form.collect_config()
+        runner = UltraSingerRunner()
+        args = runner.build_args(config, "test.mp3")
         self.assertEqual(args[args.index("--segmentation_model_repo") + 1], "owner/repo")
-        self.assertEqual(args[args.index("--segmentation_model_token") + 1], "tok")
         settings = init_settings(args[args.index("-i"):] if "-i" in args else ["-i", "test.mp3"] + args)
         self.assertEqual(settings.segmentation_model_repo, "owner/repo")
+        # The token is handed over through the environment, never as an argument
+        self.assertNotIn("--segmentation_model_token", args)
+        self.assertNotIn("tok", args)
+        self.assertEqual(runner.build_env(config), {MODEL_TOKEN_ENV: "tok"})
+
+    def test_token_env_name_matches_cli(self):
+        from modules.Segmentation.model_source import TOKEN_ENV
+        self.assertEqual(MODEL_TOKEN_ENV, TOKEN_ENV)
+
+    def test_no_token_no_env(self):
+        self.assertEqual(UltraSingerRunner().build_env({"segmentation_model_repo": "owner/repo"}), {})
 
     def test_local_file_wins_over_repo(self):
-        args = UltraSingerRunner().build_args({"segmentation_model": "m.pt",
-                                               "segmentation_model_repo": "owner/repo",
-                                               "segmentation_model_token": "tok"}, "test.mp3")
+        config = {"segmentation_model": "m.pt", "segmentation_model_repo": "owner/repo",
+                  "segmentation_model_token": "tok"}
+        runner = UltraSingerRunner()
+        args = runner.build_args(config, "test.mp3")
         self.assertIn("--segmentation_model", args)
         self.assertNotIn("--segmentation_model_repo", args)
         self.assertNotIn("--segmentation_model_token", args)
+        self.assertEqual(runner.build_env(config), {})
+
+    def test_worker_passes_extra_env_to_child(self):
+        from unittest.mock import MagicMock, patch
+        from src.gui.ultrasinger_runner import ConversionWorker
+        proc = MagicMock(stdout=iter([]), returncode=0)
+        with patch("src.gui.ultrasinger_runner.subprocess.Popen", return_value=proc) as popen:
+            ConversionWorker(["-i", "x.mp3"], extra_env={MODEL_TOKEN_ENV: "tok"}).run()
+        cmd = popen.call_args.args[0]
+        self.assertNotIn("tok", cmd)
+        self.assertEqual(popen.call_args.kwargs["env"][MODEL_TOKEN_ENV], "tok")
 
     def test_token_field_is_masked(self):
         from PySide6.QtWidgets import QLineEdit

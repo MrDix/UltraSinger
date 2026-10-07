@@ -28,6 +28,12 @@ def _find_project_root() -> Path:
 
 SECRET_OPTIONS = ("--llm_api_key", "--remote_stt_api_key", "--segmentation_model_token")
 
+# The CLI reads a model repository token from this environment variable
+# (modules.Segmentation.model_source.TOKEN_ENV). The GUI passes the token this
+# way so that it never appears in the child's command line, which other local
+# processes can read.
+MODEL_TOKEN_ENV = "ULTRASINGER_MODEL_TOKEN"
+
 
 def redact_secrets(cmd: list[str]) -> list[str]:
     """Copy of ``cmd`` with the values of secret options replaced by ``***`` (for logs)."""
@@ -54,10 +60,12 @@ class ConversionWorker(QObject):
     finished = Signal(int)  # exit code
     stage_changed = Signal(str)  # high-level stage description
 
-    def __init__(self, args: list[str], parent=None, proxy_config: dict | None = None):
+    def __init__(self, args: list[str], parent=None, proxy_config: dict | None = None,
+                 extra_env: dict[str, str] | None = None):
         super().__init__(parent)
         self._args = args
         self._proxy_config = proxy_config
+        self._extra_env = extra_env
         self._process: subprocess.Popen | None = None
         self._cancelled = False
         self._terminated_by_cancel = False
@@ -106,6 +114,8 @@ class ConversionWorker(QObject):
                     ensure_localhost_no_proxy(env)
             except ImportError:
                 pass
+            if self._extra_env:
+                env.update(self._extra_env)
 
             self._process = subprocess.Popen(
                 cmd,
@@ -231,19 +241,22 @@ class UltraSingerRunner(QObject):
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.isRunning()
 
-    def start(self, args: list[str], proxy_config: dict | None = None):
+    def start(self, args: list[str], proxy_config: dict | None = None,
+              extra_env: dict[str, str] | None = None):
         """Start a conversion with the given CLI arguments.
 
         ``proxy_config`` — optional dict with the ``proxy_mode`` /
         ``proxy_url`` / ``proxy_no_proxy`` keys from the current GUI config,
         applied to the subprocess environment right before launch.
+        ``extra_env`` — optional variables added to the subprocess
+        environment (see ``build_env``).
         """
         if self.is_running:
             logger.warning("A conversion is already running")
             return
 
         self._thread = QThread()
-        self._worker = ConversionWorker(args, proxy_config=proxy_config)
+        self._worker = ConversionWorker(args, proxy_config=proxy_config, extra_env=extra_env)
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
@@ -268,6 +281,18 @@ class UltraSingerRunner(QObject):
             self._thread = None
         self._worker = None
         self.finished.emit(exit_code)
+
+    def build_env(self, config: dict) -> dict[str, str]:
+        """Environment variables for the CLI subprocess, built from the configuration.
+
+        Holds secrets the CLI can read from its environment, so that they are
+        not passed as command-line arguments.
+        """
+        env = {}
+        if (not config.get("segmentation_model") and config.get("segmentation_model_repo")
+                and config.get("segmentation_model_token")):
+            env[MODEL_TOKEN_ENV] = config["segmentation_model_token"]
+        return env
 
     def build_args(self, config: dict, input_source: str) -> list[str]:
         """Build CLI argument list from configuration dictionary."""
@@ -420,9 +445,8 @@ class UltraSingerRunner(QObject):
         if config.get("segmentation_model"):
             args.extend(["--segmentation_model", config["segmentation_model"]])
         elif config.get("segmentation_model_repo"):
+            # The repository token goes through the environment (build_env)
             args.extend(["--segmentation_model_repo", config["segmentation_model_repo"]])
-            if config.get("segmentation_model_token"):
-                args.extend(["--segmentation_model_token", config["segmentation_model_token"]])
         if config.get("golden_notes"):
             args.append("--golden_notes")
 
