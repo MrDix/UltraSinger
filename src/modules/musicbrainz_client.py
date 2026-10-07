@@ -73,8 +73,15 @@ def _similarity(a: str, b: str, artist: bool = False) -> float:
         return 0.0
     if a == b:
         return 1.0
-    score = ratio(a, b)
     words_a, words_b = a.split(), b.split()
+    # Different numbers on both sides mean different songs ("Part 1" vs.
+    # "Part 2"), however similar the rest; a number on one side only (e.g. a
+    # year) is fine and handled below.
+    numbers_a = sorted(w for w in words_a if w.isdigit())
+    numbers_b = sorted(w for w in words_b if w.isdigit())
+    if numbers_a and numbers_b and numbers_a != numbers_b:
+        return 0.0
+    score = ratio(a, b)
     shorter, longer = (words_a, words_b) if len(words_a) <= len(words_b) else (words_b, words_a)
     extra = list(longer)
     for w in shorter:

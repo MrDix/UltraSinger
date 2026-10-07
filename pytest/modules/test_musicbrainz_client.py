@@ -325,3 +325,19 @@ class TestDistinctNamesSharingAWord(unittest.TestCase):
         self.assertEqual(_similarity('Title', 'Title (Some Other Words)'), 1.0)          # brackets ignored
         self.assertEqual(_similarity('Nova feat. Guest', 'Nova', artist=True), 1.0)      # featured guest ignored
         self.assertLess(_similarity('Nova & Friends', 'Nova', artist=True), 0.8)         # a band name is not a feature
+
+
+class TestNumberedTitles(unittest.TestCase):
+    def test_different_numbers_are_different_songs(self):
+        from src.modules.musicbrainz_client import _similarity
+        self.assertEqual(_similarity('Song 2', 'Song 3'), 0.0)
+        self.assertEqual(_similarity('Part 1', 'Part 10'), 0.0)
+        self.assertGreaterEqual(_similarity('Title', 'Title 3'), 0.8)   # one-sided number still a match
+        self.assertEqual(_similarity('Song 2', 'Song 2'), 1.0)
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_wrong_numbered_title_rejected(self, mock_search):
+        mock_search.return_value = {'recording-count': 1,
+                                    'recording-list': [_recording('Wanted Part 3', 'Wanted Artist')]}
+        info = search_musicbrainz('Wanted Part 2', 'Wanted Artist')
+        self.assertEqual(info.title, 'Wanted Part 2')
