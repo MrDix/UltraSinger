@@ -68,6 +68,17 @@ class TestExamples:
         assert float(d["ref_fit"]) == pytest.approx(0.8)
         a = ts.example_analysis(d)
         assert a.logmel.shape == (300, N_MELS)
+        assert [p.name for p in tmp_path.iterdir()] == ["x.npz"]
+
+    def test_interrupted_write_leaves_no_example(self, tmp_path, monkeypatch):
+        def broken(f, **arrays):
+            f.write(b"PK\x03\x04 truncated")
+            raise KeyboardInterrupt
+        monkeypatch.setattr(ts.np, "savez_compressed", broken)
+        path = tmp_path / "x.npz"
+        with pytest.raises(KeyboardInterrupt):
+            ts.save_example(path, _analysis(300), _notes(), offset_ms=0.0, ref_fit=0.9)
+        assert not list(tmp_path.iterdir())
 
 
 class TestGuards:

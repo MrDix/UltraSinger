@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import random
 import shutil
 import statistics
@@ -69,13 +70,23 @@ def require_outside_repo(path: Path, what: str) -> Path:
 # ---------------------------------------------------------------------------
 
 def save_example(path: Path, analysis: VocalAnalysis, notes: list, offset_ms: float, ref_fit: float) -> None:
-    """One training example: vocal analysis + time-aligned reference notes."""
+    """One training example: vocal analysis + time-aligned reference notes.
+
+    Written to a temporary file first: a resumed extraction skips existing
+    examples, so an interrupted write must never leave a truncated one behind.
+    """
     arr = np.array([[n.start_ms + offset_ms, n.end_ms + offset_ms, n.midi, KIND_CODES.get(n.kind, 0)]
                     for n in notes], dtype=np.float32).reshape(-1, 4)
-    np.savez_compressed(path, f0_t=analysis.f0_t, f0_hz=analysis.f0_hz, f0_conf=analysis.f0_conf,
-                        logmel=analysis.logmel, rms=analysis.rms, notes=arr,
-                        words=np.array([n.word for n in notes], dtype=object),
-                        offset_ms=offset_ms, ref_fit=ref_fit, duration=analysis.duration)
+    tmp = path.with_name(path.name + ".part")
+    try:
+        with open(tmp, "wb") as f:  # a file object, so numpy does not append ".npz" to the name
+            np.savez_compressed(f, f0_t=analysis.f0_t, f0_hz=analysis.f0_hz, f0_conf=analysis.f0_conf,
+                                logmel=analysis.logmel, rms=analysis.rms, notes=arr,
+                                words=np.array([n.word for n in notes], dtype=object),
+                                offset_ms=offset_ms, ref_fit=ref_fit, duration=analysis.duration)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def load_example(path: Path) -> dict:
