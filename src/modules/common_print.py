@@ -120,6 +120,13 @@ def print_help() -> None:
                             the lyrics are then placed onto these notes. Train your own model on your UltraStar
                             library with tools/train_segmentation.py (see docs/segmentation-model.md). No model is
                             shipped. Not set by default (notes follow the word timing). Requires vocal separation.
+    --segmentation_model_repo  GitHub repository to download the segmentation model from, as owner/repo or
+                            owner/repo/path/to/model.pt (default file: segmentation.pt). The file is cached locally
+                            and only downloaded again when it changed; without network access the cached copy is
+                            used. Ignored when --segmentation_model is set.
+    --segmentation_model_token  Access token for a private model repository (read access to its contents).
+                            Can also be given as ULTRASINGER_MODEL_TOKEN environment variable, which keeps
+                            it out of the process list.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced

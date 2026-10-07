@@ -323,7 +323,9 @@ class QueueManager(QObject):
                 f"[Queue] Cookie file: {cookie_file}"
             )
 
-        self._runner.start(args, proxy_config=merged)
+        self._runner.start(
+            args, proxy_config=merged, extra_env=self._runner.build_env(merged)
+        )
 
     def _start_intercepted_download(
         self, item: QueueItem, merged: dict, stream,
@@ -406,7 +408,9 @@ class QueueManager(QObject):
             # to build_args (video_url is injected only on the intercepted path).
             item.resolved_config = dict(merged)
             args = self._runner.build_args(merged, audio_path)
-            self._runner.start(args, proxy_config=merged)
+            self._runner.start(
+                args, proxy_config=merged, extra_env=self._runner.build_env(merged)
+            )
         else:
             # Fallback to yt-dlp
             self.line_output.emit(
@@ -425,7 +429,9 @@ class QueueManager(QObject):
             cookie_file = merged.get("cookie_file", "")
             if cookie_file and item.input_type == "url":
                 self.line_output.emit(f"[Queue] Cookie file: {cookie_file}")
-            self._runner.start(args, proxy_config=merged)
+            self._runner.start(
+                args, proxy_config=merged, extra_env=self._runner.build_env(merged)
+            )
 
     def _parse_output_line(self, line: str):
         """Extract pipeline metadata from UltraSinger stdout lines."""

@@ -782,6 +782,12 @@ No model is shipped with UltraSinger. You train your own on your UltraStar song 
 
 GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal separation; if the model file is missing or the step fails, the word-based notes are kept.
 
+To share one model between computers, keep it in a (private) GitHub repository and let UltraSinger download it: `--segmentation_model_repo owner/repo[/path/model.pt]` (default file `segmentation.pt`) with the `ULTRASINGER_MODEL_TOKEN` environment variable (or `--segmentation_model_token <token>`) for private repositories. The model is cached locally and only downloaded again when it changed. GUI: "Model Repository" and "Repository Token" (stored in the system keyring).
+
+```commandline
+-i XYZ --segmentation_model_repo owner/models-repo
+```
+
 #### Freestyle Detection (`--detect_freestyle`)
 
 Detects vocal passages that cannot be reliably pitched and marks them as freestyle notes (displayed but not scored). This covers growls, screams, harsh vocals, rap, spoken word, and any non-melodic vocal style — useful for any song where parts of the vocal performance fall outside traditional singing.
