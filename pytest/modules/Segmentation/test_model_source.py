@@ -64,7 +64,11 @@ class TestParseSpec:
         ("owner/repo/models/v2.pt", ("owner", "repo", "models/v2.pt")),
         ("https://github.com/owner/repo", ("owner", "repo", "segmentation.pt")),
         ("https://github.com/owner/repo/blob/main/models/v2.pt", ("owner", "repo", "models/v2.pt")),
+        ("https://github.com/owner/repo/tree/main", ("owner", "repo", "segmentation.pt")),
         (" owner/repo.git ", ("owner", "repo", "segmentation.pt")),
+        # literal repository paths keep folders named like browser URL parts
+        ("owner/repo/raw/v1/model.pt", ("owner", "repo", "raw/v1/model.pt")),
+        ("owner/repo/blob/model.pt", ("owner", "repo", "blob/model.pt")),
     ])
     def test_valid(self, spec, expected):
         assert ms.parse_repo_spec(spec) == expected

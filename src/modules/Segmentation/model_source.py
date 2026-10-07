@@ -33,12 +33,19 @@ _SPEC_RE = re.compile(r"^(?:https?://github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)
 
 
 def parse_repo_spec(spec: str) -> tuple[str, str, str]:
-    """``owner/repo[/path]`` (or a github.com URL) -> ``(owner, repo, path)``."""
-    m = _SPEC_RE.match((spec or "").strip())
+    """``owner/repo[/path]`` (or a github.com URL) -> ``(owner, repo, path)``.
+
+    In a pasted browser URL the ``blob/<branch>/`` part (also ``tree``/``raw``)
+    is dropped; the file is always taken from the default branch.
+    """
+    spec = (spec or "").strip()
+    m = _SPEC_RE.match(spec)
     if not m:
         raise ValueError(f"not a repository reference: {spec!r} (expected owner/repo[/path])")
-    owner, repo, path = m.group(1), m.group(2), (m.group(3) or DEFAULT_MODEL_FILE).strip("/")
-    path = re.sub(r"^(?:blob|tree|raw)/[^/]+/", "", path)  # tolerate pasted browser URLs
+    owner, repo, path = m.group(1), m.group(2), (m.group(3) or "").strip("/")
+    if re.match(r"https?://", spec):
+        path = re.sub(r"^(?:blob|tree|raw)/[^/]+(?:/|$)", "", path)
+    path = path or DEFAULT_MODEL_FILE
     if any(part in ("", ".", "..") for part in path.split("/")):
         raise ValueError(f"not a file path in the repository: {path!r}")
     return owner, repo, path
