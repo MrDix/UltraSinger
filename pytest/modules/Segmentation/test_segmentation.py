@@ -94,6 +94,14 @@ class TestDecode:
                              onset_thr=0.4, act_thr=0.4, min_note_frames=6)
         assert round(notes[0].end / FRAME_S) == 28 and round(notes[1].start / FRAME_S) == 30
 
+    def test_pitched_and_freestyle_never_overlap(self):
+        n = 60
+        probs = np.zeros((n, 3), np.float32)
+        probs[:] = [1.0, 0.0, 0.0]
+        probs[10:50] = [0.17, 0.41, 0.42]  # both classes above act_thr, freestyle slightly ahead
+        notes = decode_notes(probs, np.zeros(n, np.float32), _analysis(n), **DEFAULT_DECODE)
+        assert len(notes) == 1 and notes[0].freestyle
+
     def test_freestyle_region(self):
         n = 80
         notes = decode_notes(_probs(n, free=[(20, 60)]), np.zeros(n, np.float32), _analysis(n), **DEFAULT_DECODE)

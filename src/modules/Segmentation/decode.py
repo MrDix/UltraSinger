@@ -45,8 +45,10 @@ def decode_notes(probs: np.ndarray, onset: np.ndarray, analysis: VocalAnalysis,
     """
     n = len(onset)
     midi, voiced = frame_pitch(analysis, n)
-    pitched = probs[:, CLASS_PITCHED] >= act_thr
-    free = (probs[:, CLASS_FREESTYLE] > probs[:, CLASS_PITCHED]) & (probs[:, CLASS_FREESTYLE] >= act_thr)
+    # Mutually exclusive: a frame is pitched only if that class is at least as
+    # likely as freestyle, so the same interval never yields both kinds of note.
+    pitched = (probs[:, CLASS_PITCHED] >= act_thr) & (probs[:, CLASS_PITCHED] >= probs[:, CLASS_FREESTYLE])
+    free =(probs[:, CLASS_FREESTYLE] > probs[:, CLASS_PITCHED]) & (probs[:, CLASS_FREESTYLE] >= act_thr)
     peaks = _onset_peaks(onset, onset_thr)
     notes: list[PredictedNote] = []
 

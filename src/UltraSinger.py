@@ -2164,9 +2164,8 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--pitch_notes"):
             settings.pitch_notes = True
         elif opt in ("--segmentation_model"):
-            if not os.path.isfile(arg):
-                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Segmentation model not found: {blue_highlighted(arg)}")
-                sys.exit(1)
+            # A missing file is not fatal: the segmentation step warns and keeps
+            # the word-based notes (e.g. a stale path in a saved GUI config).
             settings.segmentation_model = arg
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False

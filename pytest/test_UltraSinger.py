@@ -138,9 +138,10 @@ class TestSegmentationModelFlag(unittest.TestCase):
             settings = init_settings(["-i", "test.mp3", "--segmentation_model", path])
             self.assertEqual(settings.segmentation_model, path)
 
-    def test_missing_file_exits(self):
-        with self.assertRaises(SystemExit):
-            init_settings(["-i", "test.mp3", "--segmentation_model", "does/not/exist.pt"])
+    def test_missing_file_is_accepted_for_fallback(self):
+        # No early exit: the pipeline step warns and keeps the word-based notes.
+        settings = init_settings(["-i", "test.mp3", "--segmentation_model", "does/not/exist.pt"])
+        self.assertEqual(settings.segmentation_model, "does/not/exist.pt")
 
     def test_no_leak_across_calls(self):
         import tempfile, os
