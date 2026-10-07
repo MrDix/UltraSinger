@@ -195,6 +195,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Reference-lyrics-first pipeline disabled')}")
     if settings.pitch_notes:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-based note generation enabled (notes from pitch contour)')}")
+    if settings.segmentation_model:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Model-based note segmentation: {os.path.basename(settings.segmentation_model)}')}")
     if settings.golden_notes:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Golden note generation enabled')}")
     if settings.write_settings_info:
@@ -612,9 +614,34 @@ def run() -> tuple[str, Score, Score]:
     if settings.create_audio_chunks:
         create_audio_chunks(process_data)
 
+    # Model-based note segmentation: a trained model predicts the notes on the
+    # separated vocal; the word segments above only provide lyrics and timing.
+    # Fails open: on any problem the word-based segments are kept.
+    model_segmentation_used = False
+    if (
+        settings.segmentation_model
+        and not settings.ignore_audio
+        and settings.use_separated_vocal
+        and process_data.midi_segments
+    ):
+        from modules.Segmentation.segmenter import segment_with_model
+
+        model_segments = segment_with_model(
+            process_data.midi_segments,
+            vocals_path=process_data.process_data_paths.vocals_audio_file_path,
+            model_path=settings.segmentation_model,
+            language=process_data.media_info.language,
+            device=settings.pytorch_device,
+        )
+        if model_segments:
+            process_data.midi_segments = model_segments
+            model_segmentation_used = True
+
     # Split notes at pitch change boundaries (melismas, runs)
-    # (Skip when reference_first or pitch_notes is active — they already handle pitch segmentation)
-    if not settings.ignore_audio and settings.pitch_change_split and not reference_first_used and not settings.pitch_notes:
+    # (Skip when reference_first, pitch_notes or the segmentation model is active —
+    # they already handle pitch segmentation)
+    if (not settings.ignore_audio and settings.pitch_change_split and not reference_first_used
+            and not settings.pitch_notes and not model_segmentation_used):
         process_data.midi_segments = split_notes_at_pitch_changes(
             process_data.midi_segments, process_data.pitched_data
         )
@@ -643,9 +670,10 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = apply_octave_shift(process_data.midi_segments, settings.octave_shift)
 
     # Merge syllable segments
-    # (Skip when reference_first or pitch_notes is active — notes are already correctly
-    # segmented; merging would undo that)
-    if not settings.ignore_audio and not reference_first_used and not settings.pitch_notes:
+    # (Skip when reference_first, pitch_notes or the segmentation model is active —
+    # notes are already correctly segmented; merging would undo that)
+    if (not settings.ignore_audio and not reference_first_used and not settings.pitch_notes
+            and not model_segmentation_used):
         process_data.midi_segments, process_data.transcribed_data = merge_syllable_segments(
             process_data.midi_segments,
             process_data.transcribed_data,
@@ -850,6 +878,7 @@ def run() -> tuple[str, Score, Score]:
             initial_language=_initial_language,
             reference_recovered=_reference_recovered,
             remote_stt_used=_remote_stt_used,
+            model_segmentation_used=model_segmentation_used,
         )
 
     # Cleanup
@@ -944,6 +973,7 @@ def _write_settings_info_file(
         initial_language: str | None = None,
         reference_recovered: bool = False,
         remote_stt_used: bool = False,
+        model_segmentation_used: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
     from datetime import datetime, timezone
@@ -1059,6 +1089,11 @@ def _write_settings_info_file(
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Pitcher backend:          {settings.pitcher}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
+            if settings.segmentation_model:
+                status = "applied" if model_segmentation_used else "not applied (word-based notes kept)"
+                f.write(f"  Segmentation model:       {os.path.basename(settings.segmentation_model)} ({status})\n")
+            else:
+                f.write(f"  Segmentation model:       (none, word-based notes)\n")
             f.write(f"  Freestyle detection:      {settings.detect_growl}\n")
             if settings.detect_growl:
                 f.write(f"  Freestyle harmonicity:    {settings.growl_harmonicity_threshold}\n")
@@ -1963,6 +1998,7 @@ def init_settings(argv: list[str]) -> Settings:
     # Reset per-run resolution state (settings is a reused module singleton).
     settings.ptakf_refit_explicit = False
     settings.chart_style = "singable"
+    settings.segmentation_model = None
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2127,6 +2163,10 @@ def init_settings(argv: list[str]) -> Settings:
             settings.pitcher = arg.lower()
         elif opt in ("--pitch_notes"):
             settings.pitch_notes = True
+        elif opt in ("--segmentation_model"):
+            # A missing file is not fatal: the segmentation step warns and keeps
+            # the word-based notes (e.g. a stale path in a saved GUI config).
+            settings.segmentation_model = arg
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
         elif opt in ("--disable_reference_lyrics"):
@@ -2325,6 +2365,7 @@ def arg_options():
         "no_pitch_change_split",
         "pitcher=",
         "pitch_notes",
+        "segmentation_model=",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",

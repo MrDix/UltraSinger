@@ -659,6 +659,31 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._pitch_notes.setChecked(
                                _DEFAULTS["pitch_notes"]))
 
+        seg_tooltip = (
+            "Trained note segmentation model (.pt). When set, the model predicts "
+            "where notes start, how long they are and which passages are charted "
+            "at all, directly from the separated vocal; the lyrics are then placed "
+            "onto these notes. Train your own model on your UltraStar song library "
+            "with tools/train_segmentation.py (see docs/segmentation-model.md). "
+            "Leave empty to keep notes that follow the word timing."
+        )
+        self._segmentation_model = QLineEdit()
+        self._segmentation_model.setPlaceholderText("Optional: trained model file (.pt)")
+        self._segmentation_model.setText(self._config.get("segmentation_model", ""))
+        seg_row = QHBoxLayout()
+        seg_row.setContentsMargins(0, 0, 0, 0)
+        seg_row.addWidget(self._segmentation_model, 1)
+        seg_browse = QPushButton("Browse")
+        seg_browse.clicked.connect(
+            lambda: self._browse_file(self._segmentation_model, "Segmentation model (*.pt)")
+        )
+        seg_row.addWidget(seg_browse)
+        seg_container = QWidget()
+        seg_container.setLayout(seg_row)
+        card.add_row("Segmentation Model", seg_container, seg_tooltip,
+                     reset_callback=lambda: self._segmentation_model.setText(
+                         _DEFAULTS["segmentation_model"]))
+
         self._vocal_gap_fill = ToggleSwitch(
             checked=self._config.get("vocal_gap_fill", False)
         )
@@ -1470,6 +1495,7 @@ class ConversionSettingsForm(QWidget):
             "golden_notes": self._golden_notes.isChecked(),
             "pitch_change_split": self._pitch_change_split.isChecked(),
             "pitch_notes": self._pitch_notes.isChecked(),
+            "segmentation_model": self._segmentation_model.text().strip(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),

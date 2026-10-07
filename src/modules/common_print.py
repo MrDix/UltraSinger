@@ -115,6 +115,11 @@ def print_help() -> None:
                             timing produces flat, unusable notes. Notes are segmented by pitch stability, then
                             split at word boundaries. When lyrics lookup is active, reference lyrics fill remaining
                             placeholder notes. Whisper lyrics are overlaid by time alignment.
+    --segmentation_model    Path to a trained note segmentation model (.pt). The model predicts note starts,
+                            note lengths and which passages are charted at all directly from the separated vocal;
+                            the lyrics are then placed onto these notes. Train your own model on your UltraStar
+                            library with tools/train_segmentation.py (see docs/segmentation-model.md). No model is
+                            shipped. Not set by default (notes follow the word timing). Requires vocal separation.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced

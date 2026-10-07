@@ -52,6 +52,7 @@ _DEFAULTS = {
     "golden_notes": False,
     "pitch_change_split": True,
     "pitch_notes": False,
+    "segmentation_model": "",
     "keep_numbers": False,
     # Lyrics Lookup
     "disable_lyrics_lookup": False,

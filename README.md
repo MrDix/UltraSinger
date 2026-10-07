@@ -65,6 +65,8 @@ This will help me a lot to keep this project alive and improve it.
     - [Format Version](#format-version)
     - [🧪 Experimental Features](#-experimental-features)
       - [Library Triage Tool](#library-triage-tool)
+      - [Chart Benchmark Tool](#chart-benchmark-tool)
+      - [Model-Based Note Segmentation](#model-based-note-segmentation---segmentation_model)
       - [LLM Lyric Correction](#llm-lyric-correction---llm_correct)
       - [Remote Speech-to-Text](#remote-speech-to-text---remote_stt)
       - [Syllable-Level Note Splitting](#syllable-level-note-splitting---syllable_split)
@@ -600,6 +602,7 @@ When enabled, UltraSinger writes a `ultrasinger_parameter.info` file to the outp
 - Whether the reference pipeline was recovered after language correction
 - LRCLIB lyrics availability (synced / plain / none)
 - LLM correction results and score breakdown
+- Whether a segmentation model was set and actually applied (`--segmentation_model`)
 
 ```commandline
 -i XYZ --write_settings_info
@@ -741,7 +744,7 @@ UltraSinger.py -i song.mp3 --remote_stt
 
 #### Syllable-Level Note Splitting (`--syllable_split`)
 
-Splits word-level notes into syllable-level notes using hyphenation (pyhyphen). This produces output closer to how commercial karaoke games like SingStar format their songs, where each syllable gets its own note instead of one note per word.
+Splits word-level notes into syllable-level notes using hyphenation (pyhyphen). This produces output closer to how hand-made karaoke charts are usually formatted, where each syllable gets its own note instead of one note per word.
 
 ```commandline
 -i XYZ --syllable_split
@@ -764,6 +767,20 @@ Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones 
 ```commandline
 -i XYZ --pitch_notes
 ```
+
+#### Model-Based Note Segmentation (`--segmentation_model`)
+
+Instead of deriving notes from the word timing, a small neural network predicts directly on the separated vocal where notes start, how long they are, and which passages are charted at all (e.g. spoken parts become freestyle, background vocals are left out). The lyrics from the usual sources (synced lyrics or Whisper, with forced alignment) are then split into syllables and placed onto these notes; syllables held over several notes get `~` continuations.
+
+No model is shipped with UltraSinger. You train your own on your UltraStar song library with `tools/train_segmentation.py` — the more well-timed charts it sees, the better. Keep the model and the extracted training data private. Measure the result on songs the model was not trained on with the [Chart Benchmark Tool](#chart-benchmark-tool).
+
+* 📄 **[Segmentation model documentation](docs/segmentation-model.md)**
+
+```commandline
+-i XYZ --segmentation_model D:\Models\segmentation.pt
+```
+
+GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal separation; if the model file is missing or the step fails, the word-based notes are kept.
 
 #### Freestyle Detection (`--detect_freestyle`)
 
