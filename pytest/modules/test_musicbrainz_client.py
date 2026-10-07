@@ -305,3 +305,23 @@ class TestSimilarity(unittest.TestCase):
         self.assertGreaterEqual(_similarity('Title', 'Title (Live) Full HD'), 0.8)
         self.assertLess(_similarity('Long Artist Name', 'Short'), 0.8)
         self.assertEqual(_similarity('', 'x'), 0.0)
+
+
+class TestDistinctNamesSharingAWord(unittest.TestCase):
+    """A shared word does not make two different artists or titles the same."""
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_artist_with_extra_name_word_rejected(self, mock_search):
+        mock_search.return_value = {'recording-count': 1,
+                                    'recording-list': [_recording('Wanted Title', 'Nova Lights')]}
+        info = search_musicbrainz('Wanted Title', 'Nova')
+        self.assertEqual((info.artist, info.title), ('Nova', 'Wanted Title'))
+
+    def test_similarity_rules(self):
+        from src.modules.musicbrainz_client import _similarity
+        self.assertLess(_similarity('Nova Lights', 'Nova', artist=True), 0.8)
+        self.assertLess(_similarity('Love', 'Love Me Tender'), 0.8)
+        self.assertGreaterEqual(_similarity('Title', 'Title Full HD 2023'), 0.8)        # qualifiers only
+        self.assertEqual(_similarity('Title', 'Title (Some Other Words)'), 1.0)          # brackets ignored
+        self.assertEqual(_similarity('Nova feat. Guest', 'Nova', artist=True), 1.0)      # featured guest ignored
+        self.assertLess(_similarity('Nova & Friends', 'Nova', artist=True), 0.8)         # a band name is not a feature

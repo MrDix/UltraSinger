@@ -1,4 +1,5 @@
 import musicbrainzngs
+import re
 import string
 import time
 from urllib.error import URLError
@@ -33,19 +34,41 @@ MAX_RETRIES = 3
 # are at least this similar to what we searched for. Below that, the search
 # hit is a different song and must not replace the input metadata.
 MIN_MATCH_SIMILARITY = 0.8
-# Similarity assigned when all words of the shorter string occur in the
-# longer one (e.g. "Title" vs. "Title (Live 2023) Full HD"): a match, but
-# ranked below exact or near-exact matches.
+# Similarity assigned when one name is the other plus only qualifier words
+# (e.g. "Title" vs. "Title Full HD"): a match, but ranked below exact or
+# near-exact matches.
 CONTAINED_SIMILARITY = 0.85
+# Words that only describe a release/upload and never distinguish songs or
+# artists. Extra words outside this set (e.g. a second name) prevent a match.
+QUALIFIER_WORDS = frozenset(
+    "official video music audio lyric lyrics visualizer hd hq 4k full live version edit radio single "
+    "album remaster remastered mix remix explicit clean acoustic original extended mono stereo".split()
+)
+_BRACKETS_RE = re.compile(r"[(\[{][^)\]}]*[)\]}]")
+_FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
 
 
 def __clean_string(s: str) -> str:
     return s.translate(str.maketrans('', '', string.punctuation)).lower().strip()
 
 
-def _similarity(a: str, b: str) -> float:
-    """Similarity of two names in [0, 1], tolerant of punctuation, case and extra words."""
-    a, b = __clean_string(a or ""), __clean_string(b or "")
+def _normalize_name(s: str, artist: bool) -> str:
+    """Drop bracketed additions and, for artists, a featured-guest suffix."""
+    s = _BRACKETS_RE.sub(" ", s or "")
+    if artist:
+        s = _FEATURING_RE.sub("", s)
+    return " ".join(__clean_string(s).split())
+
+
+def _similarity(a: str, b: str, artist: bool = False) -> float:
+    """Similarity of two titles (or artist names) in [0, 1].
+
+    Case, punctuation, bracketed additions ("(Official Video)", "(Live 2023)")
+    and, for artists, "feat. X" are ignored. If one name is the other plus
+    only qualifier words (see QUALIFIER_WORDS, plus numbers), it still counts
+    as a match; any other extra word does not - "Nova" is not "Nova Lights".
+    """
+    a, b = _normalize_name(a, artist), _normalize_name(b, artist)
     if not a or not b:
         return 0.0
     if a == b:
@@ -53,7 +76,12 @@ def _similarity(a: str, b: str) -> float:
     score = ratio(a, b)
     words_a, words_b = a.split(), b.split()
     shorter, longer = (words_a, words_b) if len(words_a) <= len(words_b) else (words_b, words_a)
-    if shorter and all(w in longer for w in shorter):
+    extra = list(longer)
+    for w in shorter:
+        if w not in extra:
+            return score
+        extra.remove(w)
+    if all(w in QUALIFIER_WORDS or w.isdigit() for w in extra):
         score = max(score, CONTAINED_SIMILARITY)
     return score
 
@@ -179,7 +207,7 @@ def __multi_line_search(artist: str, title: str):
     best, best_score = None, 0.0
     for result, wanted_artist, wanted_title in ((result1, artist1, title1), (result2, artist2, title2)):
         for record in result.get('recording-list', []):
-            artist_sim = _similarity(record.get('artist-credit-phrase', ''), wanted_artist)
+            artist_sim = _similarity(record.get('artist-credit-phrase', ''), wanted_artist, artist=True)
             title_sim = _similarity(record.get('title', ''), wanted_title)
             if artist_sim < MIN_MATCH_SIMILARITY or title_sim < MIN_MATCH_SIMILARITY:
                 continue
