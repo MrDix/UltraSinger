@@ -217,8 +217,25 @@ class TestPlaceLyrics:
         assert len(segs) == 3
         assert segs[0].word.startswith("a")
         assert "b" in "".join(s.word for s in segs)  # no syllable is lost
-        path = seg_lyrics.align_syllables(np.array([0.0, 400.0, 30000.0]), syl)
-        assert len(path) == 3 and [j for j, _ in path] == sorted(j for j, _ in path)
+
+    def test_widening_when_band_starts_beyond_reachable_syllables(self):
+        # 30 syllables in the first 15 s, 3 more at 60 s; only two early notes and
+        # one at 60 s. The band of the last note starts at syllable 30, far beyond
+        # what the two early notes can reach, so the row must be widened.
+        syl = [seg_lyrics.Syllable(f"e{i} ", i * 500, i * 500 + 400) for i in range(30)]
+        syl += [seg_lyrics.Syllable(f"l{i} ", 60000 + i * 500, 60000 + i * 500 + 400) for i in range(3)]
+        path = seg_lyrics.align_syllables(np.array([0.0, 500.0, 60000.0]), syl)
+        assert len(path) == 3
+        assert path[0] == (0, True)                     # a real path, not a fabricated one
+        assert [j for j, _ in path] == sorted(j for j, _ in path)
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.4), (0.5, 0.9), (60.0, 60.4)), syl)
+        text = "".join(s.word for s in segs)
+        assert all(f"e{i} " in text for i in range(30)) and all(f"l{i} " in text for i in range(3))
+
+    def test_unreachable_rows_are_not_finite(self):
+        syl = [seg_lyrics.Syllable("a ", 0, 300)]
+        path = seg_lyrics.align_syllables(np.array([0.0, 400.0]), syl)
+        assert path == [(0, True), (0, False)]
 
     def test_alignment_is_monotonic(self):
         rng = np.random.default_rng(1)

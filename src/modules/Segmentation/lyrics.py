@@ -92,7 +92,7 @@ def align_syllables(note_starts_ms: np.ndarray, syllables: list[Syllable]) -> li
     k_notes, m = len(note_starts_ms), len(syllables)
     if k_notes == 0 or m == 0:
         return []
-    inf = 1e18
+    inf = np.inf  # must be non-finite: reachability is checked with np.isfinite
     sa = np.array([s.start_ms for s in syllables])
     sb = np.array([s.end_ms for s in syllables])
     dp = np.full((k_notes, m), inf)
