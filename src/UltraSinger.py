@@ -305,7 +305,7 @@ def run() -> tuple[str, Score, Score]:
                     if lyrics_language:
                         print(
                             f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the lyrics look like "
-                            f"{blue_highlighted(lyrics_language)} while the audio detection says "
+                            f"{blue_highlighted(lyrics_language)} while the song language was detected as "
                             f"{blue_highlighted(process_data.media_info.language)}; if the result is poor, "
                             f"set the language with --language"
                         )
