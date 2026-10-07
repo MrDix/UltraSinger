@@ -274,7 +274,10 @@ def run() -> tuple[str, Score, Score]:
                 process_data.media_info.artist, process_data.media_info.title,
             )
             if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
-                # Detect language if not explicitly set and no video platform hint
+                # Detect language if not explicitly set and no video platform hint.
+                # Platform metadata is deliberately NOT trusted for rejecting
+                # lyrics: it reflects upload settings and is often a default
+                # (e.g. "en") for songs in other languages.
                 language_is_confident = settings.language is not None
                 if process_data.media_info.language is None:
                     from modules.Speech_Recognition.Whisper import detect_language_with_confidence

@@ -45,6 +45,9 @@ _FUNCTION_WORDS: dict[str, frozenset[str]] = {
 # a mismatch between members of one group is never reported.
 _GROUPS = [frozenset({"es", "pt"}), frozenset({"sv", "da", "no"})]
 
+# Languages we can judge: a function-word profile or a recognisable script.
+_KNOWN_LANGUAGES = frozenset(_FUNCTION_WORDS) | {"ja", "zh", "ko", "ru", "uk", "bg", "sr", "be"}
+
 _MIN_WORDS = 30
 _MIN_SHARE = 0.15     # share of all words that are function words of the winner
 _MIN_MARGIN = 2.0     # winner must have at least this many times the hits of the runner-up
@@ -121,8 +124,6 @@ def lyrics_language_mismatch(lyrics: str, sung_language: str | None) -> str | No
         return None
     return detected
 
-
-_KNOWN_LANGUAGES = frozenset(_FUNCTION_WORDS) | {"ja", "zh", "ko", "ru", "uk", "bg", "sr", "be"}
 
 # Whisper tiny language probability from which the sung language is trusted
 # more than the language of found lyrics.
