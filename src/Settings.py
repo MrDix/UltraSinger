@@ -43,6 +43,8 @@ class Settings:
     pitcher = "swiftf0"  # Pitch detection backend: swiftf0|fcpe (swiftf0 default: ONNX, CPU-only)
     pitch_notes = False  # Generate notes from pitch contour instead of word timing
     segmentation_model = None  # Path to a trained note segmentation model (.pt, see tools/train_segmentation.py); None = word-based notes
+    segmentation_model_repo = None  # GitHub repository "owner/repo[/path]" to download the model from (cached locally); used when segmentation_model is not set
+    segmentation_model_token = None  # Access token for a private model repository, or set ULTRASINGER_MODEL_TOKEN env var
     lyrics_lookup = True  # Look up reference lyrics from LRCLIB and correct Whisper transcription
     disable_reference_lyrics = False  # Disable reference-lyrics-first pipeline (forced alignment with LRCLIB synced lyrics)
     keep_audio_in_video = False  # Keep full audio (vocals+instrumental) embedded in the output video

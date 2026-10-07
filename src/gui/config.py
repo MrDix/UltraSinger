@@ -53,6 +53,8 @@ _DEFAULTS = {
     "pitch_change_split": True,
     "pitch_notes": False,
     "segmentation_model": "",
+    "segmentation_model_repo": "",
+    "segmentation_model_token": "",  # stored in system keyring, never written to config.json
     "keep_numbers": False,
     # Lyrics Lookup
     "disable_lyrics_lookup": False,
@@ -145,6 +147,7 @@ def _is_secret_key(key: str) -> bool:
         key == "llm_api_key"
         or key.startswith("llm_api_key_")
         or key == "remote_stt_api_key"
+        or key == "segmentation_model_token"
     )
 
 

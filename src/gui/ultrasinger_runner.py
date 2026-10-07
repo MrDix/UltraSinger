@@ -26,6 +26,18 @@ def _find_project_root() -> Path:
     return Path.cwd()
 
 
+SECRET_OPTIONS = ("--llm_api_key", "--remote_stt_api_key", "--segmentation_model_token")
+
+
+def redact_secrets(cmd: list[str]) -> list[str]:
+    """Copy of ``cmd`` with the values of secret options replaced by ``***`` (for logs)."""
+    shown = list(cmd)
+    for i, token in enumerate(shown[:-1]):
+        if token in SECRET_OPTIONS:
+            shown[i + 1] = "***"
+    return shown
+
+
 def _build_command(project_root: Path) -> list[str]:
     """Determine the best way to invoke UltraSinger."""
     entry = project_root / "src" / "UltraSinger.py"
@@ -59,12 +71,7 @@ class ConversionWorker(QObject):
         project_root = _find_project_root()
         cmd = _build_command(project_root) + self._args
 
-        # Redact API key values from logged command
-        display_cmd = list(cmd)
-        for i, token in enumerate(display_cmd):
-            if token in ("--llm_api_key", "--remote_stt_api_key") and i + 1 < len(display_cmd):
-                display_cmd[i + 1] = "***"
-        self.line_output.emit(f"[GUI] Running: {' '.join(display_cmd)}")
+        self.line_output.emit(f"[GUI] Running: {' '.join(redact_secrets(cmd))}")
         self.line_output.emit("")
 
         try:
@@ -412,6 +419,10 @@ class UltraSingerRunner(QObject):
             args.append("--pitch_notes")
         if config.get("segmentation_model"):
             args.extend(["--segmentation_model", config["segmentation_model"]])
+        elif config.get("segmentation_model_repo"):
+            args.extend(["--segmentation_model_repo", config["segmentation_model_repo"]])
+            if config.get("segmentation_model_token"):
+                args.extend(["--segmentation_model_token", config["segmentation_model_token"]])
         if config.get("golden_notes"):
             args.append("--golden_notes")
 

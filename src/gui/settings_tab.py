@@ -684,6 +684,31 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._segmentation_model.setText(
                          _DEFAULTS["segmentation_model"]))
 
+        repo_tooltip = (
+            "Download the segmentation model from a GitHub repository instead of "
+            "picking a local file: owner/repo, or owner/repo/path/to/model.pt "
+            "(default file: segmentation.pt). The model is cached on this computer "
+            "and only downloaded again when the repository has a newer version; "
+            "without network access the cached copy is used. Ignored when a local "
+            "Segmentation Model file is set."
+        )
+        self._segmentation_model_repo = QLineEdit()
+        self._segmentation_model_repo.setPlaceholderText("Optional: owner/repo[/model.pt] on GitHub")
+        self._segmentation_model_repo.setText(self._config.get("segmentation_model_repo", ""))
+        card.add_row("Model Repository", self._segmentation_model_repo, repo_tooltip,
+                     reset_callback=lambda: self._segmentation_model_repo.setText(
+                         _DEFAULTS["segmentation_model_repo"]))
+
+        token_tooltip = (
+            "Access token for a private model repository (a GitHub token with read "
+            "access to the repository's contents). Stored in the system keyring, "
+            "never in the settings file. Not needed for public repositories."
+        )
+        self._segmentation_model_token = QLineEdit(self._config.get("segmentation_model_token", ""))
+        self._segmentation_model_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self._segmentation_model_token.setPlaceholderText("Only for private repositories")
+        card.add_row("Repository Token", self._segmentation_model_token, token_tooltip)
+
         self._vocal_gap_fill = ToggleSwitch(
             checked=self._config.get("vocal_gap_fill", False)
         )
@@ -1496,6 +1521,8 @@ class ConversionSettingsForm(QWidget):
             "pitch_change_split": self._pitch_change_split.isChecked(),
             "pitch_notes": self._pitch_notes.isChecked(),
             "segmentation_model": self._segmentation_model.text().strip(),
+            "segmentation_model_repo": self._segmentation_model_repo.text().strip(),
+            "segmentation_model_token": self._segmentation_model_token.text().strip(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),

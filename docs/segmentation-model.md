@@ -39,6 +39,31 @@ uv run python src/UltraSinger.py -i "Artist - Title.mp4" --segmentation_model "D
 
 In the GUI: Settings → Experimental Features → **Segmentation Model**.
 
+### Using a model from a GitHub repository
+
+To use the same model on several computers, put it into a GitHub repository —
+a **private** one, since it is derived from your library — and let UltraSinger
+download it:
+
+```commandline
+uv run python src/UltraSinger.py -i "Artist - Title.mp4" --segmentation_model_repo owner/models-repo --segmentation_model_token <token>
+```
+
+* `--segmentation_model_repo owner/repo` uses the file `segmentation.pt` in the
+  repository root; `owner/repo/path/to/model.pt` picks another file.
+* `--segmentation_model_token` (or the `ULTRASINGER_MODEL_TOKEN` environment
+  variable) is a GitHub access token with read access to the repository's
+  contents (for a fine-grained token: *Contents: Read-only* on that repository).
+  Public repositories need no token.
+* The model is cached per user (`%LOCALAPPDATA%\UltraSinger\models` on Windows,
+  `~/.cache/ultrasinger/models` elsewhere) and only downloaded again when the
+  file in the repository changed. Without network access the cached copy is used.
+* A local `--segmentation_model` file takes precedence.
+
+In the GUI: **Model Repository** and **Repository Token** below Segmentation
+Model. The token is kept in the system keyring, not in the settings file, and is
+masked in the conversion log.
+
 `extract` is resumable — run it again to continue after an interruption. Use
 `--limit N` for a quick test with the first N songs.
 

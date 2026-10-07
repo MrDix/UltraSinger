@@ -154,3 +154,26 @@ class TestSegmentationModelFlag(unittest.TestCase):
 
     def test_class_default_is_none(self):
         self.assertIsNone(Settings().segmentation_model)
+
+
+class TestSegmentationModelRepoFlags(unittest.TestCase):
+    """--segmentation_model_repo / --segmentation_model_token parsing and per-run reset."""
+
+    def test_repo_and_token(self):
+        settings = init_settings(["-i", "test.mp3", "--segmentation_model_repo", "owner/repo",
+                                  "--segmentation_model_token", "tok"])
+        self.assertEqual(settings.segmentation_model_repo, "owner/repo")
+        self.assertEqual(settings.segmentation_model_token, "tok")
+
+    def test_model_flag_not_confused_with_repo_flag(self):
+        settings = init_settings(["-i", "test.mp3", "--segmentation_model", "m.pt",
+                                  "--segmentation_model_repo", "owner/repo"])
+        self.assertEqual(settings.segmentation_model, "m.pt")
+        self.assertEqual(settings.segmentation_model_repo, "owner/repo")
+
+    def test_no_leak_across_calls(self):
+        init_settings(["-i", "test.mp3", "--segmentation_model_repo", "owner/repo",
+                       "--segmentation_model_token", "tok"])
+        settings = init_settings(["-i", "test.mp3"])
+        self.assertIsNone(settings.segmentation_model_repo)
+        self.assertIsNone(settings.segmentation_model_token)

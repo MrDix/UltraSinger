@@ -197,6 +197,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-based note generation enabled (notes from pitch contour)')}")
     if settings.segmentation_model:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Model-based note segmentation: {os.path.basename(settings.segmentation_model)}')}")
+    elif settings.segmentation_model_repo:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Model-based note segmentation: model from repository {settings.segmentation_model_repo}')}")
     if settings.golden_notes:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Golden note generation enabled')}")
     if settings.write_settings_info:
@@ -619,20 +621,26 @@ def run() -> tuple[str, Score, Score]:
     # Fails open: on any problem the word-based segments are kept.
     model_segmentation_used = False
     if (
-        settings.segmentation_model
+        (settings.segmentation_model or settings.segmentation_model_repo)
         and not settings.ignore_audio
         and settings.use_separated_vocal
         and process_data.midi_segments
     ):
         from modules.Segmentation.segmenter import segment_with_model
 
+        # A local model file wins; otherwise fetch (or reuse the cached copy of)
+        # the model from the configured repository.
+        model_path = settings.segmentation_model
+        if not model_path:
+            from modules.Segmentation.model_source import fetch_model
+            model_path = fetch_model(settings.segmentation_model_repo, settings.segmentation_model_token)
         model_segments = segment_with_model(
             process_data.midi_segments,
             vocals_path=process_data.process_data_paths.vocals_audio_file_path,
-            model_path=settings.segmentation_model,
+            model_path=model_path,
             language=process_data.media_info.language,
             device=settings.pytorch_device,
-        )
+        ) if model_path else None
         if model_segments:
             process_data.midi_segments = model_segments
             model_segmentation_used = True
@@ -1089,9 +1097,11 @@ def _write_settings_info_file(
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Pitcher backend:          {settings.pitcher}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
-            if settings.segmentation_model:
+            if settings.segmentation_model or settings.segmentation_model_repo:
                 status = "applied" if model_segmentation_used else "not applied (word-based notes kept)"
-                f.write(f"  Segmentation model:       {os.path.basename(settings.segmentation_model)} ({status})\n")
+                source = (os.path.basename(settings.segmentation_model) if settings.segmentation_model
+                          else f"repository {settings.segmentation_model_repo}")
+                f.write(f"  Segmentation model:       {source} ({status})\n")
             else:
                 f.write(f"  Segmentation model:       (none, word-based notes)\n")
             f.write(f"  Freestyle detection:      {settings.detect_growl}\n")
@@ -1999,6 +2009,8 @@ def init_settings(argv: list[str]) -> Settings:
     settings.ptakf_refit_explicit = False
     settings.chart_style = "singable"
     settings.segmentation_model = None
+    settings.segmentation_model_repo = None
+    settings.segmentation_model_token = None
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2163,10 +2175,14 @@ def init_settings(argv: list[str]) -> Settings:
             settings.pitcher = arg.lower()
         elif opt in ("--pitch_notes"):
             settings.pitch_notes = True
-        elif opt in ("--segmentation_model"):
+        elif opt == "--segmentation_model":
             # A missing file is not fatal: the segmentation step warns and keeps
             # the word-based notes (e.g. a stale path in a saved GUI config).
             settings.segmentation_model = arg
+        elif opt == "--segmentation_model_repo":
+            settings.segmentation_model_repo = arg or None
+        elif opt == "--segmentation_model_token":
+            settings.segmentation_model_token = arg or None
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
         elif opt in ("--disable_reference_lyrics"):
@@ -2366,6 +2382,8 @@ def arg_options():
         "pitcher=",
         "pitch_notes",
         "segmentation_model=",
+        "segmentation_model_repo=",
+        "segmentation_model_token=",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",
