@@ -237,3 +237,107 @@ class TestCoverArt404Detection(unittest.TestCase):
     def test_other_status_is_loud(self):
         _, out = self._run(503)
         self.assertIn("Cover art download failed", out)
+
+
+def _recording(title, artist):
+    return {'title': title, 'artist-credit-phrase': artist, 'release-list': [],
+            'artist-credit': [{'artist': {'id': 'x'}}]}
+
+
+class TestMultiLineMatchValidation(unittest.TestCase):
+    """Artist+title searches only accept recordings that really match."""
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_unrelated_hit_keeps_input_metadata(self, mock_search):
+        # The search returns a different artist and song only: it must not
+        # replace the artist/title we searched for.
+        mock_search.return_value = {'recording-count': 1,
+                                    'recording-list': [_recording('Other Song', 'Other Band')]}
+        info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual(info.artist, 'Wanted Artist')
+        self.assertEqual(info.title, 'Wanted Title')
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_no_hit_keeps_input_artist(self, mock_search):
+        mock_search.return_value = {'recording-count': 0, 'recording-list': []}
+        info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual((info.artist, info.title), ('Wanted Artist', 'Wanted Title'))
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_best_title_wins_not_first(self, mock_search):
+        mock_search.return_value = {'recording-count': 2, 'recording-list': [
+            _recording('Different Song', 'Wanted Artist'),
+            _recording('Wanted Title', 'Wanted Artist'),
+        ]}
+        info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual(info.title, 'Wanted Title')
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_same_artist_wrong_song_rejected(self, mock_search):
+        mock_search.return_value = {'recording-count': 1,
+                                    'recording-list': [_recording('Completely Else', 'Wanted Artist')]}
+        info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual(info.title, 'Wanted Title')
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_spelling_variants_accepted(self, mock_search):
+        mock_search.return_value = {'recording-count': 1, 'recording-list': [
+            _recording("Wanted Title", 'Wanted Artist feat. Guest')]}
+        info = search_musicbrainz('Wanted Title (Official Video)', 'WANTED ARTIST')
+        self.assertEqual((info.artist, info.title), ('Wanted Artist feat. Guest', 'Wanted Title'))
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_swapped_artist_and_title(self, mock_search):
+        # file named "Title - Artist": the second ordering must find it
+        def search(recording=None, limit=None, artist=None, artistname=None):
+            if artist == 'wanted artist':
+                return {'recording-count': 1, 'recording-list': [_recording('Wanted Title', 'Wanted Artist')]}
+            return {'recording-count': 0, 'recording-list': []}
+        mock_search.side_effect = search
+        info = search_musicbrainz('Wanted Artist', 'Wanted Title')
+        self.assertEqual((info.artist, info.title), ('Wanted Artist', 'Wanted Title'))
+
+
+class TestSimilarity(unittest.TestCase):
+    def test_values(self):
+        from src.modules.musicbrainz_client import _similarity
+        self.assertEqual(_similarity('Some Title', 'some title!'), 1.0)
+        self.assertGreaterEqual(_similarity('Title', 'Title (Live) Full HD'), 0.8)
+        self.assertLess(_similarity('Long Artist Name', 'Short'), 0.8)
+        self.assertEqual(_similarity('', 'x'), 0.0)
+
+
+class TestDistinctNamesSharingAWord(unittest.TestCase):
+    """A shared word does not make two different artists or titles the same."""
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_artist_with_extra_name_word_rejected(self, mock_search):
+        mock_search.return_value = {'recording-count': 1,
+                                    'recording-list': [_recording('Wanted Title', 'Nova Lights')]}
+        info = search_musicbrainz('Wanted Title', 'Nova')
+        self.assertEqual((info.artist, info.title), ('Nova', 'Wanted Title'))
+
+    def test_similarity_rules(self):
+        from src.modules.musicbrainz_client import _similarity
+        self.assertLess(_similarity('Nova Lights', 'Nova', artist=True), 0.8)
+        self.assertLess(_similarity('Love', 'Love Me Tender'), 0.8)
+        self.assertGreaterEqual(_similarity('Title', 'Title Full HD 2023'), 0.8)        # qualifiers only
+        self.assertEqual(_similarity('Title', 'Title (Some Other Words)'), 1.0)          # brackets ignored
+        self.assertEqual(_similarity('Nova feat. Guest', 'Nova', artist=True), 1.0)      # featured guest ignored
+        self.assertLess(_similarity('Nova & Friends', 'Nova', artist=True), 0.8)         # a band name is not a feature
+
+
+class TestNumberedTitles(unittest.TestCase):
+    def test_different_numbers_are_different_songs(self):
+        from src.modules.musicbrainz_client import _similarity
+        self.assertEqual(_similarity('Song 2', 'Song 3'), 0.0)
+        self.assertEqual(_similarity('Part 1', 'Part 10'), 0.0)
+        self.assertGreaterEqual(_similarity('Title', 'Title 3'), 0.8)   # one-sided number still a match
+        self.assertEqual(_similarity('Song 2', 'Song 2'), 1.0)
+
+    @patch('musicbrainzngs.search_recordings')
+    def test_wrong_numbered_title_rejected(self, mock_search):
+        mock_search.return_value = {'recording-count': 1,
+                                    'recording-list': [_recording('Wanted Part 3', 'Wanted Artist')]}
+        info = search_musicbrainz('Wanted Part 2', 'Wanted Artist')
+        self.assertEqual(info.title, 'Wanted Part 2')
