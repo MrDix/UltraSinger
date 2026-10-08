@@ -129,6 +129,23 @@ class DetectLanguageFromAudioTest(unittest.TestCase):
 
     @patch("faster_whisper.WhisperModel")
     @patch("whisperx.load_audio")
+    def test_with_confidence_returns_probability(self, mock_load_audio, mock_fw_model_cls):
+        """detect_language_with_confidence also returns Whisper's probability."""
+        import numpy as np
+        from modules.Speech_Recognition.Whisper import detect_language_with_confidence
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+
+        mock_model = MagicMock()
+        mock_model.detect_language.return_value = ("es", 0.54, [("es", 0.54), ("it", 0.30)])
+        mock_fw_model_cls.return_value = mock_model
+
+        language, probability = detect_language_with_confidence("/fake/audio.wav")
+
+        self.assertEqual(language, "es")
+        self.assertAlmostEqual(probability, 0.54)
+
+    @patch("faster_whisper.WhisperModel")
+    @patch("whisperx.load_audio")
     def test_returns_english_for_english_audio(self, mock_load_audio, mock_fw_model_cls):
         """Should return 'en' for English audio."""
         import numpy as np

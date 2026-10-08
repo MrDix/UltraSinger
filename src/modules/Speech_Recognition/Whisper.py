@@ -48,7 +48,12 @@ from modules.Speech_Recognition.language_constants import (
 
 
 def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
-    """Detect language from audio using Whisper tiny model.
+    """Detect the language from audio (see :func:`detect_language_with_confidence`)."""
+    return detect_language_with_confidence(audio_path, device)[0]
+
+
+def detect_language_with_confidence(audio_path: str, device: str = "cpu") -> tuple[str, float]:
+    """Detect language from audio using Whisper tiny model; returns ``(language, probability)``.
 
     Much faster than full transcription (~2-3s vs ~2min) because it only
     loads the tiny model and processes a ~30s window of audio.
@@ -72,7 +77,9 @@ def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
         device: ``"cpu"`` or ``"cuda"``.
 
     Returns:
-        ISO language code (e.g. ``"en"``, ``"de"``).
+        ISO language code (e.g. ``"en"``, ``"de"``) and Whisper's probability
+        for it (the probability of the detected language, also when English
+        is substituted as fallback).
     """
     from faster_whisper import WhisperModel as FasterWhisperModel
 
@@ -101,7 +108,7 @@ def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
                 f"If results are poor, set the language explicitly with --language."
             )
 
-    return language
+    return language, float(probability)
 
 
 class WhisperModel(Enum):
