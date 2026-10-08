@@ -793,6 +793,8 @@ def run() -> tuple[str, Score, Score]:
             pitch_frames=pitch_frames,
             fallback_audio_path=fallback_audio,
             fallback_pitch_frames=fallback_frames,
+            # note boundaries come from the full vocal stem, so do their onsets
+            onset_audio_path=vocals_path,
         )
 
     # ptAKF chart refit — rebuild note boundaries and pitches from the

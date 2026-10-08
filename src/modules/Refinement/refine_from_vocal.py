@@ -486,6 +486,7 @@ def refine_notes(
     pitch_frames: list[dict] | None = None,
     fallback_audio_path: str | None = None,
     fallback_pitch_frames: list[dict] | None = None,
+    onset_audio_path: str | None = None,
 ) -> list[MidiSegment]:
     """Orchestrate all refinement passes on the note list.
 
@@ -518,6 +519,8 @@ def refine_notes(
         fallback_audio_path / fallback_pitch_frames: Optional second audio
             for the pitch refinement of notes in which the detector finds no
             tone in ``vocal_audio_path`` (see ``refine_pitch_with_uscore``).
+        onset_audio_path: Audio for the onset detection of the timing
+            refinement; defaults to ``vocal_audio_path``.
 
     Returns:
         The refined midi_segments list.
@@ -561,7 +564,7 @@ def refine_notes(
         try:
             from modules.Audio.onset_correction import detect_vocal_onsets
 
-            onset_times = detect_vocal_onsets(vocal_audio_path)
+            onset_times = detect_vocal_onsets(onset_audio_path or vocal_audio_path)
             midi_segments, timing_corrections = refine_timing(
                 midi_segments,
                 onset_times,

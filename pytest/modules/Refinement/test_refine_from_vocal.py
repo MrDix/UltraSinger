@@ -664,6 +664,25 @@ class TestRefineGapWithUscorePitchFrames:
 # refine_notes — Phase 3 (GAP sweep) decoupled from Phase 1 (pitch)
 # ---------------------------------------------------------------------------
 
+class TestRefineNotesOnsetAudio:
+    """Timing refinement takes its onsets from onset_audio_path (the full vocal
+    stem) even when pitches are scored against another stem."""
+
+    def _run(self, **kwargs):
+        segments = [MidiSegment(note="C4", start=1.0, end=1.5, word="one")]
+        with patch("modules.Audio.onset_correction.detect_vocal_onsets", return_value=[]) as onsets,                 patch("modules.Refinement.refine_from_vocal.refine_timing", return_value=(segments, 0)):
+            refine_notes(segments, _pitched_data("C4", duration=1.0, n_frames=5), vocal_audio_path="lead.wav",
+                         bpm=120.0, refine_pitch_enabled=False, refine_timing_enabled=True,
+                         refine_gap_enabled=False, **kwargs)
+        return onsets.call_args.args[0]
+
+    def test_onsets_from_onset_audio(self):
+        assert self._run(onset_audio_path="vocals.wav") == "vocals.wav"
+
+    def test_onsets_default_to_scoring_audio(self):
+        assert self._run() == "lead.wav"
+
+
 class TestRefineNotesGapDecoupling:
     """P5: when the caller forces refine_pitch_enabled=False (e.g. because
     ptAKF refit will overwrite pitches anyway), the GAP sweep must still be
