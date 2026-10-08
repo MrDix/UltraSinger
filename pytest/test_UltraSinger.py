@@ -177,3 +177,11 @@ class TestSegmentationModelRepoFlags(unittest.TestCase):
         settings = init_settings(["-i", "test.mp3"])
         self.assertIsNone(settings.segmentation_model_repo)
         self.assertIsNone(settings.segmentation_model_token)
+class TestLeadVocalPitchFlag(unittest.TestCase):
+    def test_default_on(self):
+        self.assertTrue(Settings().lead_vocal_pitch)
+        self.assertTrue(init_settings(["-i", "test.mp3"]).lead_vocal_pitch)
+
+    def test_disable_and_reset(self):
+        self.assertFalse(init_settings(["-i", "test.mp3", "--disable_lead_vocal_pitch"]).lead_vocal_pitch)
+        self.assertTrue(init_settings(["-i", "test.mp3"]).lead_vocal_pitch)

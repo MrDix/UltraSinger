@@ -98,8 +98,18 @@ class TestRefinePitchWithUscore:
     """Test pitch refinement logic by mocking ultrastar-score internals."""
 
     def _run_refinement(self, segments, note_scores, **kwargs):
-        """Helper: run refine_pitch_with_uscore with mocked scoring."""
-        mock_score_fn = _mock_score_song(note_scores)
+        """Helper: run refine_pitch_with_uscore with mocked scoring.
+
+        ``note_scores`` is a list, or a dict of lists keyed by audio path.
+        """
+        if isinstance(note_scores, dict):
+            results = {path: FakeSongScore(line_scores=[FakeLineScore(note_scores=ns)])
+                       for path, ns in note_scores.items()}
+
+            def mock_score_fn(song, audio_path, difficulty=None):
+                return results[audio_path]
+        else:
+            mock_score_fn = _mock_score_song(note_scores)
 
         # Mock the ultrastar_score module that gets imported inside the function
         mock_uscore = MagicMock()
@@ -137,6 +147,30 @@ class TestRefinePitchWithUscore:
         result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
         assert corrections == 1
         assert result[0].note == "D4"
+
+    def test_note_without_tones_is_checked_against_fallback_audio(self):
+        """A note in which the lead stem has no detected tone is judged on the full vocal stem."""
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a "),
+                    MidiSegment(note="C4", start=1.0, end=2.0, word="b ")]
+        scores = {
+            "fake_vocal.wav": [FakeNoteScore(beats_hit=9, beats_total=10, detected_tones=[24] * 10),
+                               FakeNoteScore(beats_hit=0, beats_total=10, detected_tones=[-1] * 10)],
+            "full.wav": [FakeNoteScore(beats_hit=0, beats_total=10, detected_tones=[28] * 10),
+                         FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10)],
+        }
+        result, corrections = self._run_refinement(segments, scores, hit_ratio_threshold=0.5,
+                                                   fallback_audio_path="full.wav")
+        assert corrections == 1
+        assert [s.note for s in result] == ["C4", "D4"]  # the first note was judged on the lead stem
+
+    def test_note_with_tones_ignores_fallback_audio(self):
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a ")]
+        scores = {
+            "fake_vocal.wav": [FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[28] * 10)],
+            "full.wav": [FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10)],
+        }
+        result, _ = self._run_refinement(segments, scores, hit_ratio_threshold=0.5, fallback_audio_path="full.wav")
+        assert result[0].note == "E4"
 
     def test_high_hit_ratio_no_change(self):
         """A note scoring well should not be corrected."""
@@ -629,6 +663,25 @@ class TestRefineGapWithUscorePitchFrames:
 # ---------------------------------------------------------------------------
 # refine_notes — Phase 3 (GAP sweep) decoupled from Phase 1 (pitch)
 # ---------------------------------------------------------------------------
+
+class TestRefineNotesOnsetAudio:
+    """Timing refinement takes its onsets from onset_audio_path (the full vocal
+    stem) even when pitches are scored against another stem."""
+
+    def _run(self, **kwargs):
+        segments = [MidiSegment(note="C4", start=1.0, end=1.5, word="one")]
+        with patch("modules.Audio.onset_correction.detect_vocal_onsets", return_value=[]) as onsets,                 patch("modules.Refinement.refine_from_vocal.refine_timing", return_value=(segments, 0)):
+            refine_notes(segments, _pitched_data("C4", duration=1.0, n_frames=5), vocal_audio_path="lead.wav",
+                         bpm=120.0, refine_pitch_enabled=False, refine_timing_enabled=True,
+                         refine_gap_enabled=False, **kwargs)
+        return onsets.call_args.args[0]
+
+    def test_onsets_from_onset_audio(self):
+        assert self._run(onset_audio_path="vocals.wav") == "vocals.wav"
+
+    def test_onsets_default_to_scoring_audio(self):
+        assert self._run() == "lead.wav"
+
 
 class TestRefineNotesGapDecoupling:
     """P5: when the caller forces refine_pitch_enabled=False (e.g. because

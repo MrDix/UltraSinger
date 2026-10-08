@@ -620,6 +620,13 @@ def run() -> tuple[str, Score, Score]:
     # separated vocal; the word segments above only provide lyrics and timing.
     # Fails open: on any problem the word-based segments are kept.
     model_segmentation_used = False
+    # Audio the note pitches come from. The steps below that compare the notes
+    # with the singing (refinement, ptAKF refit, game score) use the same audio,
+    # so they do not pull lead-vocal pitches back to a louder backing voice.
+    note_pitch_audio = (
+        process_data.process_data_paths.vocals_audio_file_path
+        or process_data.process_data_paths.whisper_audio_path
+    )
     if (
         (settings.segmentation_model or settings.segmentation_model_repo)
         and not settings.ignore_audio
@@ -634,15 +641,18 @@ def run() -> tuple[str, Score, Score]:
         if not model_path:
             from modules.Segmentation.model_source import fetch_model
             model_path = fetch_model(settings.segmentation_model_repo, settings.segmentation_model_token)
-        model_segments = segment_with_model(
+        model_result = segment_with_model(
             process_data.midi_segments,
             vocals_path=process_data.process_data_paths.vocals_audio_file_path,
             model_path=model_path,
             language=process_data.media_info.language,
             device=settings.pytorch_device,
+            lead_vocal_pitch=settings.lead_vocal_pitch,
+            cache_folder=process_data.process_data_paths.cache_folder_path,
         ) if model_path else None
-        if model_segments:
-            process_data.midi_segments = model_segments
+        if model_result:
+            process_data.midi_segments = model_result.segments
+            note_pitch_audio = model_result.pitch_audio_path
             model_segmentation_used = True
 
     # Split notes at pitch change boundaries (melismas, runs)
@@ -728,11 +738,7 @@ def run() -> tuple[str, Score, Score]:
         try:
             from ultrastar_score import detect_pitch_frames
 
-            pitch_frames_vocal_path = (
-                process_data.process_data_paths.vocals_audio_file_path
-                or process_data.process_data_paths.whisper_audio_path
-            )
-            pitch_frames = detect_pitch_frames(pitch_frames_vocal_path)
+            pitch_frames = detect_pitch_frames(note_pitch_audio)
         except (ImportError, OSError, ValueError, RuntimeError,
                 AttributeError, KeyError, TypeError) as e:
             print(
@@ -752,6 +758,24 @@ def run() -> tuple[str, Score, Score]:
     ):
         from modules.Refinement.refine_from_vocal import refine_notes
 
+        # With lead-vocal pitches, notes in which the game's pitch detection
+        # finds nothing in the separated lead stem (it loses frames there)
+        # are checked against the full vocal stem instead.
+        vocals_path = (
+            process_data.process_data_paths.vocals_audio_file_path
+            or process_data.process_data_paths.whisper_audio_path
+        )
+        fallback_audio = vocals_path if note_pitch_audio != vocals_path else None
+        fallback_frames = None
+        if fallback_audio and settings.refine_pitch:
+            try:
+                from ultrastar_score import detect_pitch_frames
+
+                fallback_frames = detect_pitch_frames(fallback_audio)
+            except (ImportError, OSError, ValueError, RuntimeError,
+                    AttributeError, KeyError, TypeError):
+                fallback_frames = None
+
         # NOTE: skipping this phase's pitch correction when ptakf_refit is
         # enabled (since refit overwrites all pitches anyway) was measured
         # and rejected — see refine_gap_enabled docstring in
@@ -760,16 +784,17 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = refine_notes(
             midi_segments=process_data.midi_segments,
             pitched_data=process_data.pitched_data,
-            vocal_audio_path=(
-                process_data.process_data_paths.vocals_audio_file_path
-                or process_data.process_data_paths.whisper_audio_path
-            ),
+            vocal_audio_path=note_pitch_audio,
             bpm=process_data.media_info.bpm,
             refine_pitch_enabled=settings.refine_pitch,
             refine_timing_enabled=settings.refine_timing,
             timing_threshold_ms=settings.refine_timing_threshold,
             hit_ratio_threshold=settings.refine_hit_ratio,
             pitch_frames=pitch_frames,
+            fallback_audio_path=fallback_audio,
+            fallback_pitch_frames=fallback_frames,
+            # note boundaries come from the full vocal stem, so do their onsets
+            onset_audio_path=vocals_path,
         )
 
     # ptAKF chart refit — rebuild note boundaries and pitches from the
@@ -784,10 +809,7 @@ def run() -> tuple[str, Score, Score]:
 
         process_data.midi_segments = refit_notes_ptakf(
             process_data.midi_segments,
-            vocal_audio_path=(
-                process_data.process_data_paths.vocals_audio_file_path
-                or process_data.process_data_paths.whisper_audio_path
-            ),
+            vocal_audio_path=note_pitch_audio,
             bpm=process_data.media_info.bpm,
             min_note_ms=settings.ptakf_refit_min_note_ms,
             fill=settings.ptakf_refit_fill,
@@ -832,12 +854,8 @@ def run() -> tuple[str, Score, Score]:
             format_uscore_report,
         )
 
-        vocal_path = (
-            process_data.process_data_paths.vocals_audio_file_path
-            or process_data.process_data_paths.whisper_audio_path
-        )
         uscore_result = calculate_uscore_report(
-            ultrastar_file_output, vocal_path, pitch_frames=pitch_frames
+            ultrastar_file_output, note_pitch_audio, pitch_frames=pitch_frames
         )
         if uscore_result:
             print(
@@ -1102,6 +1120,7 @@ def _write_settings_info_file(
                 source = (os.path.basename(settings.segmentation_model) if settings.segmentation_model
                           else f"repository {settings.segmentation_model_repo}")
                 f.write(f"  Segmentation model:       {source} ({status})\n")
+                f.write(f"  Lead-vocal pitch:         {settings.lead_vocal_pitch}\n")
             else:
                 f.write(f"  Segmentation model:       (none, word-based notes)\n")
             f.write(f"  Freestyle detection:      {settings.detect_growl}\n")
@@ -2011,6 +2030,7 @@ def init_settings(argv: list[str]) -> Settings:
     settings.segmentation_model = None
     settings.segmentation_model_repo = None
     settings.segmentation_model_token = None
+    settings.lead_vocal_pitch = True
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2175,6 +2195,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.pitcher = arg.lower()
         elif opt in ("--pitch_notes"):
             settings.pitch_notes = True
+        elif opt == "--disable_lead_vocal_pitch":
+            settings.lead_vocal_pitch = False
         elif opt == "--segmentation_model":
             # A missing file is not fatal: the segmentation step warns and keeps
             # the word-based notes (e.g. a stale path in a saved GUI config).
@@ -2384,6 +2406,7 @@ def arg_options():
         "segmentation_model=",
         "segmentation_model_repo=",
         "segmentation_model_token=",
+        "disable_lead_vocal_pitch",
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",

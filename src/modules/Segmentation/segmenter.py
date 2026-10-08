@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import NamedTuple
 
 from modules.Midi.MidiSegment import MidiSegment
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted
@@ -19,18 +20,52 @@ def _get_model(path: str, device: str):
     return _MODEL_CACHE[key]
 
 
+class ModelSegmentation(NamedTuple):
+    segments: list[MidiSegment]
+    pitch_audio_path: str  # the stem the note pitches were taken from (lead or full vocal)
+
+
+def _lead_pitch(vocal_analysis, vocals_path: str, cache_folder: str | None):
+    """``(path, analysis)`` of the lead-vocal stem to take note pitches from, or ``None``
+    to use the vocal stem."""
+    from modules.Segmentation.lead_vocal import MIN_VOICED_RATIO, choose_pitch_source, lead_vocal_analysis
+
+    try:
+        folder = cache_folder or os.path.dirname(vocals_path)
+        lead_path, lead_analysis = lead_vocal_analysis(vocals_path, folder)
+        lead, ratio = choose_pitch_source(vocal_analysis, lead_analysis)
+    except Exception as e:  # noqa: BLE001 - lead pitch is an improvement, never a requirement
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} lead-vocal separation failed ({e!r}) "
+              f"- note pitches from the full vocal")
+        return None
+    if lead is None:
+        print(f"{ULTRASINGER_HEAD} Lead-vocal pitch not used: the lead stem keeps only {ratio:.0%} of the "
+              f"singing (needs {MIN_VOICED_RATIO:.0%})")
+        return None
+    print(f"{ULTRASINGER_HEAD} Note pitches from the lead vocal (keeps {ratio:.0%} of the singing)")
+    return lead_path, lead
+
+
 def segment_with_model(
     midi_segments: list[MidiSegment],
     vocals_path: str,
     model_path: str,
     language: str | None,
     device: str = "cpu",
-) -> list[MidiSegment] | None:
+    lead_vocal_pitch: bool = False,
+    cache_folder: str | None = None,
+) -> ModelSegmentation | None:
     """Predict notes on the separated vocal and place the existing lyrics onto them.
 
     ``midi_segments`` only provides the words and their timing. Returns the new
     segments, or ``None`` when the step cannot run (missing model or vocal file,
     no notes found, any error) so the caller keeps the original segments.
+
+    With ``lead_vocal_pitch`` the vocal stem is also split into lead and backing
+    vocals (cached in ``cache_folder``); the lead stem's pitch is used for the
+    notes when it kept most of the singing (see ``lead_vocal``). The result
+    names the stem the pitches came from, so later steps that compare the notes
+    with the singing can use the same one.
     """
     if not model_path or not os.path.isfile(model_path):
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} segmentation model not found: "
@@ -50,7 +85,9 @@ def segment_with_model(
         model, decode_cfg = _get_model(model_path, device)
         analysis = analyse_vocal(load_vocal(vocals_path))
         probs, onset = predict(model, model_input(analysis), device)
-        notes = decode_notes(probs, onset, analysis, **decode_cfg)
+        lead = _lead_pitch(analysis, vocals_path, cache_folder) if lead_vocal_pitch else None
+        pitch_audio_path, pitch_analysis = lead if lead else (vocals_path, None)
+        notes = decode_notes(probs, onset, analysis, pitch_analysis=pitch_analysis, **decode_cfg)
         if not notes:
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} model found no notes - keeping word-based notes")
             return None
@@ -63,7 +100,7 @@ def segment_with_model(
         freestyle = sum(1 for s in segments if s.note_type == "F")
         print(f"{ULTRASINGER_HEAD} Model segmentation: {len(segments)} notes "
               f"({freestyle} freestyle) from {len(syllables)} syllables")
-        return segments
+        return ModelSegmentation(segments, pitch_audio_path)
     except Exception as e:  # noqa: BLE001 - fail open, never lose the chart
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} model segmentation failed ({e!r}) "
               f"- keeping word-based notes")

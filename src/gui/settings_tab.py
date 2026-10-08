@@ -708,6 +708,17 @@ class ConversionSettingsForm(QWidget):
         self._segmentation_model_token.setEchoMode(QLineEdit.EchoMode.Password)
         self._segmentation_model_token.setPlaceholderText("Only for private repositories")
         card.add_row("Repository Token", self._segmentation_model_token, token_tooltip)
+        self._lead_vocal_pitch = ToggleSwitch(
+            checked=self._config.get("lead_vocal_pitch", True)
+        )
+        card.add_toggle_row("Lead Vocal Pitch", self._lead_vocal_pitch,
+                            "Only with a Segmentation Model: split the vocal stem once more into lead "
+                            "and backing vocals and take the note pitches from the lead vocal, so "
+                            "harmonies and backing singers are not charted. Used only when the lead "
+                            "stem kept at least 80% of the singing. Costs one extra separation "
+                            "(a few seconds on a GPU, noticeably longer on a CPU).",
+                            reset_callback=lambda: self._lead_vocal_pitch.setChecked(
+                                _DEFAULTS["lead_vocal_pitch"]))
 
         self._vocal_gap_fill = ToggleSwitch(
             checked=self._config.get("vocal_gap_fill", False)
@@ -1523,6 +1534,7 @@ class ConversionSettingsForm(QWidget):
             "segmentation_model": self._segmentation_model.text().strip(),
             "segmentation_model_repo": self._segmentation_model_repo.text().strip(),
             "segmentation_model_token": self._segmentation_model_token.text().strip(),
+            "lead_vocal_pitch": self._lead_vocal_pitch.isChecked(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),

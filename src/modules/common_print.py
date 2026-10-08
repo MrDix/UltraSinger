@@ -127,6 +127,10 @@ def print_help() -> None:
     --segmentation_model_token  Access token for a private model repository (read access to its contents).
                             Can also be given as ULTRASINGER_MODEL_TOKEN environment variable, which keeps
                             it out of the process list.
+    --disable_lead_vocal_pitch  With a segmentation model, note pitches are taken from a lead-vocal stem (an extra
+                            karaoke separation of the vocal stem) whenever that stem kept at least 80 % of the
+                            singing; this avoids charting harmonies or backing vocals. Use this flag to take the
+                            pitches from the full vocal stem instead (saves the extra separation, e.g. on a CPU).
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
