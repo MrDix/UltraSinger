@@ -519,7 +519,8 @@ def refine_notes(
     print(
         f"{ULTRASINGER_HEAD} Refining notes using game scoring engine "
         f"(pitch={blue_highlighted(str(refine_pitch_enabled))}, "
-        f"timing={blue_highlighted(str(refine_timing_enabled))})"
+        f"timing={blue_highlighted(str(refine_timing_enabled))}, "
+        f"GAP={blue_highlighted(str(refine_gap_enabled))})"
     )
 
     pitch_corrections = 0

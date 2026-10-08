@@ -161,7 +161,10 @@ def print_help() -> None:
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
                                 for notes from a segmentation model)
-    --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
+    --disable_refine_gap        Disable the GAP sweep, which shifts all notes together by up to 70 ms to where
+                                the game scores them best (enabled by default when refine is on; always
+                                skipped for notes from a segmentation model)
+    --refine_hit_ratio         Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
     --chart_style               singable|score >> ((default) is singable)
                                 singable: natural, held notes like a professional chart - best to sing.
