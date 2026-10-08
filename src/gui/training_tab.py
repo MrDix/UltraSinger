@@ -297,10 +297,12 @@ class TrainingTab(QWidget):
     def shutdown(self):
         """Stop a running training (called when the window closes)."""
         if self._worker:
-            self._worker.cancel()
+            self._worker.cancel()  # stops the process tree, so the worker's run() returns
         if self._thread:
             self._thread.quit()
-            self._thread.wait(10000)
+            # No timeout: a QThread destroyed while still running aborts the
+            # application, and cancel() has already stopped what run() waits for.
+            self._thread.wait()
 
     def _on_progress(self, stage: str, current: int, total: int):
         self._progress.setRange(0, max(total, 1))

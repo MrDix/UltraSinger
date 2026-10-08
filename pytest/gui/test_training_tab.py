@@ -114,6 +114,20 @@ class TestWorker(unittest.TestCase):
 
 
 class TestTrainingTab(unittest.TestCase):
+    def test_shutdown_waits_for_the_worker_thread(self):
+        import time
+        from unittest.mock import patch
+        tab = TrainingTab({})
+        with patch("src.gui.training_tab.validate_inputs", return_value=None),              patch("src.gui.training_tab.build_training_commands",
+                   return_value=[[sys.executable, "-c", "import time; time.sleep(60)"]]),              patch("src.gui.config.save_config"):
+            tab._on_start()
+        deadline = time.time() + 20
+        while tab._worker._process is None and time.time() < deadline:
+            time.sleep(0.05)
+        thread = tab._thread
+        tab.shutdown()
+        self.assertFalse(thread.isRunning())  # never destroyed while running
+
     def test_defaults(self):
         for key in ("training_library", "training_workdir", "training_exclude", "training_model"):
             self.assertEqual(_DEFAULTS[key], "")
