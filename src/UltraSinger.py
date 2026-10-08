@@ -295,6 +295,9 @@ def run() -> tuple[str, Score, Score]:
                     language_is_confident,
                 )
                 if not use_lyrics:
+                    if _lang_source == "whisper_fast":
+                        # The full transcription below determines the language again
+                        _lang_source = "pending"
                     print(
                         f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the found synced lyrics are in "
                         f"{blue_highlighted(lyrics_language)}, not in the sung language "
