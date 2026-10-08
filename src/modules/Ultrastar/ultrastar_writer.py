@@ -1,6 +1,5 @@
 """Ultrastar writer module"""
 
-import math
 import re
 import langcodes
 import numpy as np
@@ -32,6 +31,32 @@ def get_multiplier(real_bpm: float) -> int:
     while real_bpm * multiplier < 400:
         multiplier += 1
     return multiplier
+
+
+def note_beats(
+        midi_segments: list[MidiSegment],
+        gap: float,
+        real_bpm: float,
+        multiplication: int) -> list[tuple[int, int]]:
+    """Start beat and duration of each note on the written beat grid.
+
+    Start and end are each rounded to the nearest beat. (Rounding the start
+    down and the duration up instead started notes half a beat early on
+    average, and the overlap guard then pushed each note of a run of adjacent
+    notes a little later than the one before - several beats by the end of
+    a long run.) A note never starts before the previous one ends and lasts
+    at least one beat.
+    """
+    beats = []
+    previous_end_beat = 0
+    for midi_segment in midi_segments:
+        start_beat = round(second_to_beat((midi_segment.start - gap) * multiplication, real_bpm))
+        end_beat = round(second_to_beat((midi_segment.end - gap) * multiplication, real_bpm))
+        start_beat = max(start_beat, previous_end_beat)
+        duration = max(1, end_beat - start_beat)
+        beats.append((start_beat, duration))
+        previous_end_beat = start_beat + duration
+    return beats
 
 
 def get_language_name(language: str) -> str:
@@ -102,23 +127,10 @@ def create_ultrastar_txt(
         )
 
         # Write the singing part
-        previous_end_beat = 0
+        beats = note_beats(midi_segments, gap, real_bpm, multiplication)
 
         for i, midi_segment in enumerate(midi_segments):
-            start_time = (midi_segment.start - gap) * multiplication
-            end_time = (midi_segment.end - midi_segment.start) * multiplication
-
-            # Use floor for start (prefer slightly early over late) and
-            # max(1, ...) for duration (every note must be at least 1 beat).
-            # round() caused ±0.5 beat errors that accumulated over the song
-            # because max() below only shifts notes later, never earlier.
-            start_beat = math.floor(second_to_beat(start_time, real_bpm))
-            duration = max(1, math.ceil(second_to_beat(end_time, real_bpm)))
-
-            # Prevent overlap: shift start to after previous note if needed
-            if start_beat < previous_end_beat:
-                start_beat = previous_end_beat
-            previous_end_beat = start_beat + duration
+            start_beat, duration = beats[i]
 
             # Use note_type from LRCLIB metadata (: normal, F freestyle)
             note_type = getattr(midi_segment, "note_type", UltrastarTxtNoteTypeTag.NORMAL.value)
@@ -138,12 +150,10 @@ def create_ultrastar_txt(
             file.write(line)
 
             if i in break_indices:
-                show_next = (
-                    second_to_beat(midi_segment.end - gap, real_bpm)
-                    * multiplication
-                )
+                # At the written end of the line's last note, so the line
+                # stays visible until that note is sung
                 linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
-                            f"{str(math.floor(show_next))}\n"
+                            f"{str(start_beat + duration)}\n"
                 file.write(linebreak)
         file.write(f"{UltrastarTxtTag.FILE_END.value}")
 
