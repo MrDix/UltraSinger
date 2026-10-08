@@ -1498,6 +1498,10 @@ class ConversionSettingsForm(QWidget):
 
     # ─── Public API ───────────────────────────────────────────────────────
 
+    def set_segmentation_model(self, path: str):
+        """Set the Segmentation Model file (e.g. after training one)."""
+        self._segmentation_model.setText(path or "")
+
     def collect_config(self) -> dict:
         """Collect all conversion settings into a config dictionary."""
         return {

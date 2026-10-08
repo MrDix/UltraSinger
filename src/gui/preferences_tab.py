@@ -481,6 +481,12 @@ class PreferencesTab(QWidget):
 
     # ── Save / Collect ───────────────────────────────────────────────────
 
+    def set_segmentation_model(self, path: str):
+        """Use a (freshly trained) segmentation model for conversions and save."""
+        self._conversion_form.set_segmentation_model(path)
+        self._save()
+        self.log_message.emit(f"[GUI] Segmentation model set to {path}")
+
     def _save(self):
         """Save current settings to config."""
         from .config import save_config
