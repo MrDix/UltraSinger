@@ -1694,35 +1694,41 @@ def TranscribeAudio(process_data):
             from modules.lrclib_client import search_lyrics
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
             lyrics_info = search_lyrics(process_data.media_info.artist, process_data.media_info.title)
-            if lyrics_info is not None:
-                # The language here normally comes from the full transcription
-                # (or the user), so lyrics in another language are another
-                # version of the song and must not be used for correction or
-                # alignment. Without a detected language it may still be the
-                # platform metadata, which is not trusted for that.
-                language_is_confident = (
-                    settings.language is not None or bool(transcription_result.detected_language)
-                )
+            synced_lyrics = lyrics_info.synced_lyrics if lyrics_info is not None else None
+            plain_lyrics = lyrics_info.plain_lyrics if lyrics_info is not None else None
+            # The language here normally comes from the full transcription (or
+            # the user), so lyrics in another language are another version of
+            # the song and must not be used for correction or alignment. Without
+            # a detected language it may still be the platform metadata, which
+            # is not trusted for that. Synced and plain lyrics are checked on
+            # their own: one matching field must not let the other one through.
+            language_is_confident = (
+                settings.language is not None or bool(transcription_result.detected_language)
+            )
+            for kind, text in (("synced", synced_lyrics), ("plain", plain_lyrics)):
+                if not text:
+                    continue
                 use_lyrics, lyrics_language = check_lyrics_language(
-                    lyrics_info.synced_lyrics or lyrics_info.plain_lyrics or "",
-                    process_data.media_info.language, language_is_confident,
+                    text, process_data.media_info.language, language_is_confident,
                 )
                 if not use_lyrics:
                     print(
-                        f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the found lyrics are in "
+                        f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the found {kind} lyrics are in "
                         f"{blue_highlighted(lyrics_language)}, not in the sung language "
                         f"({blue_highlighted(process_data.media_info.language)}) — ignoring them"
                     )
-                    lyrics_info = None
-            if lyrics_info is not None:
-                # Save synced lyrics for reference-first pipeline (independent of plain lyrics)
-                if lyrics_info.synced_lyrics:
-                    process_data.synced_lyrics = lyrics_info.synced_lyrics
-                if lyrics_info.plain_lyrics:
-                    process_data.plain_lyrics = lyrics_info.plain_lyrics
-                    process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
-                        process_data.transcribed_data, lyrics_info.plain_lyrics
-                    )
+                    if kind == "synced":
+                        synced_lyrics = None
+                    else:
+                        plain_lyrics = None
+            # Save synced lyrics for reference-first pipeline (independent of plain lyrics)
+            if synced_lyrics:
+                process_data.synced_lyrics = synced_lyrics
+            if plain_lyrics:
+                process_data.plain_lyrics = plain_lyrics
+                process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
+                    process_data.transcribed_data, plain_lyrics
+                )
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Lyrics lookup correction skipped: {e}")
 

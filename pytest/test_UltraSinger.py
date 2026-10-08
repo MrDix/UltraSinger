@@ -185,3 +185,51 @@ class TestLeadVocalPitchFlag(unittest.TestCase):
     def test_disable_and_reset(self):
         self.assertFalse(init_settings(["-i", "test.mp3", "--disable_lead_vocal_pitch"]).lead_vocal_pitch)
         self.assertTrue(init_settings(["-i", "test.mp3"]).lead_vocal_pitch)
+
+
+class TestTranscribeAudioLyricsLanguage(unittest.TestCase):
+    """Synced and plain lyrics from the lookup are checked against the sung language on their own."""
+
+    GERMAN = ("[00:01.00] wir sind heute hier und wir singen, denn es ist ein Tag, an dem die Sonne "
+              "scheint und wir sind nicht allein, und es ist schön, dass du da bist, und wir bleiben "
+              "noch, bis die Nacht kommt und es dunkel ist, und dann gehen wir nach Haus")
+    ENGLISH = ("we are here today and we sing, because it is a day on which the sun is shining and we "
+               "are not alone, and it is good that you are here, and we stay until the night comes and "
+               "it is dark, and then we go home to the place where we are from")
+
+    def _run(self, synced, plain):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        import src.UltraSinger as us
+
+        process_data = SimpleNamespace(
+            process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
+            media_info=SimpleNamespace(artist="Artist", title="Title", language=None),
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
+        )
+        transcription = SimpleNamespace(detected_language="de", transcribed_data=[])
+        lyrics = SimpleNamespace(synced_lyrics=synced, plain_lyrics=plain)
+        with patch.object(us, "transcribe_audio", return_value=transcription), \
+                patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data), \
+                patch("modules.lrclib_client.search_lyrics", return_value=lyrics), \
+                patch("modules.Speech_Recognition.lyrics_corrector.correct_transcription_from_lyrics",
+                      return_value=([], None)) as correct, \
+                patch.object(us.settings, "lyrics_lookup", True), \
+                patch.object(us.settings, "llm_correct_lyrics", False), \
+                patch.object(us.settings, "hyphenation", False), \
+                patch.object(us.settings, "language", None):
+            us.TranscribeAudio(process_data)
+        return process_data, correct
+
+    def test_plain_lyrics_in_another_language_are_not_used(self):
+        process_data, correct = self._run(self.GERMAN, self.ENGLISH)
+        self.assertEqual(process_data.synced_lyrics, self.GERMAN)
+        self.assertIsNone(process_data.plain_lyrics)
+        correct.assert_not_called()
+
+    def test_matching_lyrics_are_used(self):
+        plain = self.GERMAN.replace("[00:01.00] ", "")
+        process_data, correct = self._run(self.GERMAN, plain)
+        self.assertEqual(process_data.plain_lyrics, plain)
+        correct.assert_called_once()
