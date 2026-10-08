@@ -1695,12 +1695,17 @@ def TranscribeAudio(process_data):
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
             lyrics_info = search_lyrics(process_data.media_info.artist, process_data.media_info.title)
             if lyrics_info is not None:
-                # The language here comes from the full transcription (or the
-                # user), so lyrics in another language are another version of
-                # the song and must not be used for correction or alignment.
+                # The language here normally comes from the full transcription
+                # (or the user), so lyrics in another language are another
+                # version of the song and must not be used for correction or
+                # alignment. Without a detected language it may still be the
+                # platform metadata, which is not trusted for that.
+                language_is_confident = (
+                    settings.language is not None or bool(transcription_result.detected_language)
+                )
                 use_lyrics, lyrics_language = check_lyrics_language(
                     lyrics_info.synced_lyrics or lyrics_info.plain_lyrics or "",
-                    process_data.media_info.language, language_is_confident=True,
+                    process_data.media_info.language, language_is_confident,
                 )
                 if not use_lyrics:
                     print(
