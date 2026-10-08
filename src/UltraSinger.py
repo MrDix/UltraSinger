@@ -818,7 +818,7 @@ def run() -> tuple[str, Score, Score]:
             vocal_audio_path=note_pitch_audio,
             bpm=process_data.media_info.bpm,
             refine_pitch_enabled=settings.refine_pitch,
-            refine_timing_enabled=settings.refine_timing,
+            refine_timing_enabled=refine_timing_wanted(settings.refine_timing, model_segmentation_used),
             timing_threshold_ms=settings.refine_timing_threshold,
             hit_ratio_threshold=settings.refine_hit_ratio,
             pitch_frames=pitch_frames,
@@ -1013,6 +1013,15 @@ def _write_metadata_tags(process_data: ProcessData) -> None:
         )
 
 
+def refine_timing_wanted(refine_timing: bool, model_segmentation_used: bool) -> bool:
+    """Whether to snap note starts to audio onsets (timing refinement).
+
+    Notes from the segmentation model already start more precisely than the
+    onset snapping would place them, so the step is skipped for them.
+    """
+    return refine_timing and not model_segmentation_used
+
+
 def _write_settings_info_file(
         output_folder: str,
         simple_score: "Score | None",
@@ -1204,7 +1213,9 @@ def _write_settings_info_file(
             f.write(f"  Enabled:                  {settings.refine_from_vocal}\n")
             if settings.refine_from_vocal:
                 f.write(f"  Pitch refinement:         {settings.refine_pitch}\n")
-                f.write(f"  Timing refinement:        {settings.refine_timing}\n")
+                timing_note = " (skipped for segmentation-model notes)" if (
+                    settings.refine_timing and model_segmentation_used) else ""
+                f.write(f"  Timing refinement:        {settings.refine_timing}{timing_note}\n")
                 f.write(f"  Hit ratio threshold:      {settings.refine_hit_ratio}\n")
                 f.write(f"  Timing threshold:         {settings.refine_timing_threshold} ms\n")
             f.write(f"  Chart style:              {settings.chart_style}\n")

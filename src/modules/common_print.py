@@ -159,7 +159,8 @@ def print_help() -> None:
                                 games themselves use to score singing) to find and fix poorly-scoring notes.
     --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
-    --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
+    --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
+                                for notes from a segmentation model)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
     --chart_style               singable|score >> ((default) is singable)

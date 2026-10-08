@@ -148,8 +148,10 @@ on the validation songs.
 * If the model file is missing, no vocal separation is available, or the step
   fails, UltraSinger keeps the word-based notes and prints a warning. The
   settings info file shows whether the model was applied.
-* Pitch-change splitting and syllable merging are skipped when the model is
-  used, because the model already decides where notes start and end.
+* Pitch-change splitting, syllable merging and the timing refinement (which
+  snaps note starts to audio onsets) are skipped when the model is used,
+  because the model already decides where notes start and end, and more
+  precisely than the onset snapping would.
 * Note pitches come from a lead-vocal stem (an extra karaoke separation of the
   vocal stem, cached per song) whenever that stem kept at least 80 % of the
   singing; otherwise from the full vocal stem. This keeps harmonies and backing
@@ -157,7 +159,6 @@ on the validation songs.
   the singing (pitch refinement, ptAKF refit, game score) then use the lead stem
   as well, so they do not pull the pitches back to a louder backing voice; notes
   in which the game's pitch detection finds no tone in the lead stem are checked
-  against the full vocal stem. Note timing is still refined on the full vocal
-  stem.
+  against the full vocal stem.
   `--disable_lead_vocal_pitch` (GUI: Lead Vocal Pitch) skips the extra
   separation.
