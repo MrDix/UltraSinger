@@ -11,6 +11,7 @@ vocal stem is the safer source.
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 from modules.Segmentation.features import VOICED_CONFIDENCE, VocalAnalysis
@@ -36,9 +37,19 @@ def choose_pitch_source(vocals: VocalAnalysis, lead: VocalAnalysis | None,
     return (lead if ratio >= min_ratio else None), ratio
 
 
+def _source_key(path: str) -> str:
+    """Short key of a file's identity (path, size, modification time)."""
+    st = os.stat(path)
+    return hashlib.sha256(f"{os.path.abspath(path)}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8")).hexdigest()[:16]
+
+
 def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOKE_MODEL) -> str:
-    """Path of the lead-vocal stem of ``vocals_path`` (separated once, then cached)."""
-    out_dir = os.path.join(cache_folder, "lead_vocal", os.path.splitext(model)[0])
+    """Path of the lead-vocal stem of ``vocals_path`` (separated once, then cached).
+
+    The cache entry is keyed to the vocal file, so a cache folder shared by
+    several songs never hands one song's lead stem to another.
+    """
+    out_dir = os.path.join(cache_folder, "lead_vocal", os.path.splitext(model)[0], _source_key(vocals_path))
     lead_path = os.path.join(out_dir, "lead.wav")
     if os.path.isfile(lead_path):
         return lead_path

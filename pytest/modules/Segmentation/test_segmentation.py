@@ -352,9 +352,17 @@ class TestLeadVocalPitch:
         import os
         import audio_separator.separator as sepmod
         monkeypatch.setattr(sepmod, "Separator", FakeSeparator)
-        p1 = lead_vocal.separate_lead_vocal(str(tmp_path / "vocals.wav"), str(tmp_path))
-        p2 = lead_vocal.separate_lead_vocal(str(tmp_path / "vocals.wav"), str(tmp_path))
+        vocals = tmp_path / "vocals.wav"
+        vocals.write_bytes(b"one")
+        p1 = lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path))
+        p2 = lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path))
         assert p1 == p2 and p1.endswith("lead.wav") and calls == [lead_vocal.KARAOKE_MODEL]
+        # another song's vocal file in the same cache folder gets its own lead stem
+        other = tmp_path / "other" / "vocals.wav"
+        other.parent.mkdir()
+        other.write_bytes(b"two")
+        p3 = lead_vocal.separate_lead_vocal(str(other), str(tmp_path))
+        assert p3 != p1 and len(calls) == 2
 
     def test_analysis_comes_with_the_stem_path(self, monkeypatch):
         import modules.Segmentation.features as feats
