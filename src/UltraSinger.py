@@ -758,6 +758,24 @@ def run() -> tuple[str, Score, Score]:
     ):
         from modules.Refinement.refine_from_vocal import refine_notes
 
+        # With lead-vocal pitches, notes in which the game's pitch detection
+        # finds nothing in the separated lead stem (it loses frames there)
+        # are checked against the full vocal stem instead.
+        vocals_path = (
+            process_data.process_data_paths.vocals_audio_file_path
+            or process_data.process_data_paths.whisper_audio_path
+        )
+        fallback_audio = vocals_path if note_pitch_audio != vocals_path else None
+        fallback_frames = None
+        if fallback_audio and settings.refine_pitch:
+            try:
+                from ultrastar_score import detect_pitch_frames
+
+                fallback_frames = detect_pitch_frames(fallback_audio)
+            except (ImportError, OSError, ValueError, RuntimeError,
+                    AttributeError, KeyError, TypeError):
+                fallback_frames = None
+
         # NOTE: skipping this phase's pitch correction when ptakf_refit is
         # enabled (since refit overwrites all pitches anyway) was measured
         # and rejected — see refine_gap_enabled docstring in
@@ -773,6 +791,8 @@ def run() -> tuple[str, Score, Score]:
             timing_threshold_ms=settings.refine_timing_threshold,
             hit_ratio_threshold=settings.refine_hit_ratio,
             pitch_frames=pitch_frames,
+            fallback_audio_path=fallback_audio,
+            fallback_pitch_frames=fallback_frames,
         )
 
     # ptAKF chart refit — rebuild note boundaries and pitches from the

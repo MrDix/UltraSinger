@@ -109,35 +109,14 @@ def _write_temp_ultrastar_txt(
     return path
 
 
-def refine_pitch_with_uscore(
+def _note_scores(
     midi_segments: list[MidiSegment],
     vocal_audio_path: str,
     bpm: float,
-    hit_ratio_threshold: float = 0.4,
-    pitch_frames: list[dict] | None = None,
-) -> tuple[list[MidiSegment], int]:
-    """Refine note pitches using ultrastar-score's C++ ptAKF detector.
-
-    Scores the current notes against the vocal audio using the same
-    algorithm as Vocaluxe/USDX.  Notes that score poorly (low hit_ratio)
-    are corrected by taking the median of the ptAKF-detected tones.
-
-    Always uses ``Difficulty.HARD`` (±1 semitone tolerance) for maximum
-    correction precision — benchmarks showed this consistently produces
-    the best results across all song types.
-
-    Args:
-        midi_segments: Notes to refine (modified in-place).
-        vocal_audio_path: Path to vocal-only audio file.
-        bpm: Song BPM for beat/time conversion.
-        hit_ratio_threshold: Notes below this hit ratio are corrected.
-        pitch_frames: Optional pre-computed ptAKF pitch frames (from
-            ``ultrastar_score.detect_pitch_frames``) to reuse instead of
-            re-analysing ``vocal_audio_path`` from scratch.
-
-    Returns:
-        Tuple of (midi_segments, number of corrections made).
-    """
+    pitch_frames: list[dict] | None,
+) -> list | None:
+    """Per-note scores of the notes against the audio (``Difficulty.HARD``),
+    in note order, or ``None`` when they do not match the notes."""
     from ultrastar_score import score_song, Difficulty
     from ultrastar_score.parser import parse_ultrastar
 
@@ -174,36 +153,96 @@ def refine_pitch_with_uscore(
             f"(segments={len(midi_segments)}, scores={len(all_note_scores)}), "
             f"skipping pitch refinement"
         )
+        return None
+    return all_note_scores
+
+
+def _corrected_note(seg: MidiSegment, ns, hit_ratio_threshold: float) -> str | None:
+    """New note name for a poorly scoring note (median of the detected tones), else ``None``."""
+    if ns.beats_total == 0:
+        return None
+
+    # Note already scores well — skip
+    if ns.hit_ratio >= hit_ratio_threshold:
+        return None
+
+    # Get the ptAKF-detected tones for this note (excluding unvoiced = -1)
+    voiced_tones = [t for t in ns.detected_tones if t >= 0]
+    if not voiced_tones:
+        return None
+
+    # Median of detected tones (ptAKF tone index)
+    median_tone = round(float(np.median(voiced_tones)))
+    detected_midi = _ptakf_tone_to_midi(median_tone)
+
+    try:
+        current_midi = librosa.note_to_midi(seg.note)
+    except (ValueError, TypeError):
+        return None
+
+    return librosa.midi_to_note(detected_midi) if detected_midi != current_midi else None
+
+
+def refine_pitch_with_uscore(
+    midi_segments: list[MidiSegment],
+    vocal_audio_path: str,
+    bpm: float,
+    hit_ratio_threshold: float = 0.4,
+    pitch_frames: list[dict] | None = None,
+    fallback_audio_path: str | None = None,
+    fallback_pitch_frames: list[dict] | None = None,
+) -> tuple[list[MidiSegment], int]:
+    """Refine note pitches using ultrastar-score's C++ ptAKF detector.
+
+    Scores the current notes against the vocal audio using the same
+    algorithm as Vocaluxe/USDX.  Notes that score poorly (low hit_ratio)
+    are corrected by taking the median of the ptAKF-detected tones.
+
+    Always uses ``Difficulty.HARD`` (±1 semitone tolerance) for maximum
+    correction precision — benchmarks showed this consistently produces
+    the best results across all song types.
+
+    Args:
+        midi_segments: Notes to refine (modified in-place).
+        vocal_audio_path: Path to vocal-only audio file.
+        bpm: Song BPM for beat/time conversion.
+        hit_ratio_threshold: Notes below this hit ratio are corrected.
+        pitch_frames: Optional pre-computed ptAKF pitch frames (from
+            ``ultrastar_score.detect_pitch_frames``) to reuse instead of
+            re-analysing ``vocal_audio_path`` from scratch.
+        fallback_audio_path: Optional second audio (e.g. the full vocal stem
+            when ``vocal_audio_path`` is a separated lead vocal) for the notes
+            in which the detector finds no tone in ``vocal_audio_path``.
+        fallback_pitch_frames: Pre-computed ptAKF frames for
+            ``fallback_audio_path``.
+
+    Returns:
+        Tuple of (midi_segments, number of corrections made).
+    """
+    all_note_scores = _note_scores(midi_segments, vocal_audio_path, bpm, pitch_frames)
+    if all_note_scores is None:
         return midi_segments, 0
 
     # Stage corrections so segments stay unchanged if we crash mid-loop
     staged: list[tuple[int, str]] = []  # (index, new_note_name)
+    unchecked: list[int] = []  # notes without any detected tone in the audio
     for i, (seg, ns) in enumerate(
         zip(midi_segments, all_note_scores, strict=True)
     ):
-        if ns.beats_total == 0:
+        if fallback_audio_path and ns.beats_total > 0 and not any(t >= 0 for t in ns.detected_tones):
+            unchecked.append(i)
             continue
+        new_note = _corrected_note(seg, ns, hit_ratio_threshold)
+        if new_note:
+            staged.append((i, new_note))
 
-        # Note already scores well — skip
-        if ns.hit_ratio >= hit_ratio_threshold:
-            continue
-
-        # Get the ptAKF-detected tones for this note (excluding unvoiced = -1)
-        voiced_tones = [t for t in ns.detected_tones if t >= 0]
-        if not voiced_tones:
-            continue
-
-        # Median of detected tones (ptAKF tone index)
-        median_tone = round(float(np.median(voiced_tones)))
-        detected_midi = _ptakf_tone_to_midi(median_tone)
-
-        try:
-            current_midi = librosa.note_to_midi(seg.note)
-        except (ValueError, TypeError):
-            continue
-
-        if detected_midi != current_midi:
-            staged.append((i, librosa.midi_to_note(detected_midi)))
+    if unchecked:
+        fallback_scores = _note_scores(midi_segments, fallback_audio_path, bpm, fallback_pitch_frames)
+        if fallback_scores is not None:
+            for i in unchecked:
+                new_note = _corrected_note(midi_segments[i], fallback_scores[i], hit_ratio_threshold)
+                if new_note:
+                    staged.append((i, new_note))
 
     # Commit all corrections at once (transactional)
     for idx, new_note in staged:
@@ -445,6 +484,8 @@ def refine_notes(
     timing_threshold_ms: float = 30.0,
     hit_ratio_threshold: float = 0.4,
     pitch_frames: list[dict] | None = None,
+    fallback_audio_path: str | None = None,
+    fallback_pitch_frames: list[dict] | None = None,
 ) -> list[MidiSegment]:
     """Orchestrate all refinement passes on the note list.
 
@@ -474,6 +515,9 @@ def refine_notes(
             ``ultrastar_score.detect_pitch_frames``) for ``vocal_audio_path``.
             Reused across every ``score_song`` call in Phase 1 and Phase 3
             instead of each re-analysing the audio from scratch.
+        fallback_audio_path / fallback_pitch_frames: Optional second audio
+            for the pitch refinement of notes in which the detector finds no
+            tone in ``vocal_audio_path`` (see ``refine_pitch_with_uscore``).
 
     Returns:
         The refined midi_segments list.
@@ -502,6 +546,8 @@ def refine_notes(
                 bpm=bpm,
                 hit_ratio_threshold=hit_ratio_threshold,
                 pitch_frames=pitch_frames,
+                fallback_audio_path=fallback_audio_path,
+                fallback_pitch_frames=fallback_pitch_frames,
             )
         except (ImportError, OSError, ValueError, RuntimeError,
                 AttributeError, KeyError, TypeError) as e:
