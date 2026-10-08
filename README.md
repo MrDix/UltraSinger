@@ -335,6 +335,9 @@ _Not all options working now!_
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
                                 for notes from a segmentation model)
+    --disable_refine_gap        Disable the GAP sweep, which shifts all notes together by up to 70 ms to where
+                                the game scores them best (enabled by default when refine is on; always
+                                skipped for notes from a segmentation model)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
     --ptakf_refit               (legacy) Explicitly enable the ptAKF chart refit (now the default)
@@ -784,7 +787,7 @@ No model is shipped with UltraSinger. You train your own on your UltraStar song 
 -i XYZ --segmentation_model D:\Models\segmentation.pt
 ```
 
-GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal separation; if the model file is missing or the step fails, the word-based notes are kept. With a model, the timing refinement (snapping note starts to audio onsets) is skipped, because the model places note starts more precisely.
+GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal separation; if the model file is missing or the step fails, the word-based notes are kept. With a model, the timing refinement (snapping note starts to audio onsets) and the GAP sweep (shifting all notes together to where the game scores them best) are skipped, because the model places note starts more precisely.
 
 To share one model between computers, keep it in a (private) GitHub repository and let UltraSinger download it: `--segmentation_model_repo owner/repo[/path/model.pt]` (default file `segmentation.pt`) with the `ULTRASINGER_MODEL_TOKEN` environment variable (or `--segmentation_model_token <token>`) for private repositories. The model is cached locally and only downloaded again when it changed. GUI: "Model Repository" and "Repository Token" (stored in the system keyring).
 

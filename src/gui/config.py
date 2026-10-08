@@ -126,6 +126,7 @@ _DEFAULTS = {
     "refine_from_vocal": True,
     "refine_pitch": True,
     "refine_timing": True,
+    "refine_gap": True,
     "refine_hit_ratio": 0.4,
     "refine_timing_threshold": 30.0,
     # Chart style (singable = professional-like held notes; score = maximise

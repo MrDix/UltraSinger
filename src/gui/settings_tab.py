@@ -784,9 +784,19 @@ class ConversionSettingsForm(QWidget):
             checked=self._config.get("refine_timing", True)
         )
         card.add_toggle_row("Refine Timing", self._refine_timing,
-                           "Correct note start/end times using detected audio onsets.",
+                           "Correct note start/end times using detected audio onsets. "
+                           "Skipped for notes from a segmentation model.",
                            reset_callback=lambda: self._refine_timing.setChecked(
                                _DEFAULTS.get("refine_timing", True)))
+
+        self._refine_gap = ToggleSwitch(
+            checked=self._config.get("refine_gap", True)
+        )
+        card.add_toggle_row("Refine GAP", self._refine_gap,
+                           "Shift all notes together by up to 70 ms to where the game "
+                           "scores them best. Skipped for notes from a segmentation model.",
+                           reset_callback=lambda: self._refine_gap.setChecked(
+                               _DEFAULTS.get("refine_gap", True)))
 
         # Hit ratio threshold
         self._refine_hit_ratio = _NoScrollDoubleSpinBox()
@@ -853,6 +863,7 @@ class ConversionSettingsForm(QWidget):
         def _toggle_refine(on):
             self._refine_pitch.setEnabled(on)
             self._refine_timing.setEnabled(on)
+            self._refine_gap.setEnabled(on)
             self._refine_hit_ratio.setEnabled(on)
             self._refine_timing_threshold.setEnabled(on)
 
@@ -1581,6 +1592,7 @@ class ConversionSettingsForm(QWidget):
             "refine_from_vocal": self._refine_from_vocal.isChecked(),
             "refine_pitch": self._refine_pitch.isChecked(),
             "refine_timing": self._refine_timing.isChecked(),
+            "refine_gap": self._refine_gap.isChecked(),
             "refine_hit_ratio": self._refine_hit_ratio.value(),
             "refine_timing_threshold": self._refine_timing_threshold.value(),
             "ptakf_refit_min_note_ms": self._ptakf_refit_min_note_ms.value(),

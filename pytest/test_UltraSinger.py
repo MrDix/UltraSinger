@@ -235,12 +235,23 @@ class TestTranscribeAudioLyricsLanguage(unittest.TestCase):
         correct.assert_called_once()
 
 
-class TestRefineTimingWithModel(unittest.TestCase):
-    """Timing refinement is skipped for notes from the segmentation model."""
+class TestTimingPassesWithModel(unittest.TestCase):
+    """Timing refinement and GAP sweep are skipped for notes from the segmentation model."""
 
     def test_truth_table(self):
-        from src.UltraSinger import refine_timing_wanted
-        self.assertTrue(refine_timing_wanted(True, False))
-        self.assertFalse(refine_timing_wanted(True, True))
-        self.assertFalse(refine_timing_wanted(False, False))
-        self.assertFalse(refine_timing_wanted(False, True))
+        from src.UltraSinger import timing_pass_wanted
+        self.assertTrue(timing_pass_wanted(True, False))
+        self.assertFalse(timing_pass_wanted(True, True))
+        self.assertFalse(timing_pass_wanted(False, False))
+        self.assertFalse(timing_pass_wanted(False, True))
+
+
+class TestRefineGapFlag(unittest.TestCase):
+    def test_default_on(self):
+        self.assertTrue(Settings().refine_gap)
+        self.assertTrue(init_settings(["-i", "test.mp3"]).refine_gap)
+
+    def test_disable_and_reset(self):
+        settings = init_settings(["-i", "test.mp3", "--disable_refine_gap"])
+        self.assertFalse(settings.refine_gap)
+        self.assertTrue(init_settings(["-i", "test.mp3"]).refine_gap)

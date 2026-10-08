@@ -818,7 +818,8 @@ def run() -> tuple[str, Score, Score]:
             vocal_audio_path=note_pitch_audio,
             bpm=process_data.media_info.bpm,
             refine_pitch_enabled=settings.refine_pitch,
-            refine_timing_enabled=refine_timing_wanted(settings.refine_timing, model_segmentation_used),
+            refine_timing_enabled=timing_pass_wanted(settings.refine_timing, model_segmentation_used),
+            refine_gap_enabled=timing_pass_wanted(settings.refine_gap, model_segmentation_used),
             timing_threshold_ms=settings.refine_timing_threshold,
             hit_ratio_threshold=settings.refine_hit_ratio,
             pitch_frames=pitch_frames,
@@ -1013,13 +1014,15 @@ def _write_metadata_tags(process_data: ProcessData) -> None:
         )
 
 
-def refine_timing_wanted(refine_timing: bool, model_segmentation_used: bool) -> bool:
-    """Whether to snap note starts to audio onsets (timing refinement).
+def timing_pass_wanted(enabled: bool, model_segmentation_used: bool) -> bool:
+    """Whether to run a refinement pass that moves notes in time.
 
-    Notes from the segmentation model already start more precisely than the
-    onset snapping would place them, so the step is skipped for them.
+    That is the timing refinement (note starts snapped to audio onsets) and
+    the GAP sweep (all notes shifted together to the offset with the best game
+    score). Notes from the segmentation model already start more precisely
+    than either pass would place them, so both are skipped for them.
     """
-    return refine_timing and not model_segmentation_used
+    return enabled and not model_segmentation_used
 
 
 def _write_settings_info_file(
@@ -1213,9 +1216,11 @@ def _write_settings_info_file(
             f.write(f"  Enabled:                  {settings.refine_from_vocal}\n")
             if settings.refine_from_vocal:
                 f.write(f"  Pitch refinement:         {settings.refine_pitch}\n")
-                timing_note = " (skipped for segmentation-model notes)" if (
-                    settings.refine_timing and model_segmentation_used) else ""
+                model_note = " (skipped for segmentation-model notes)" if model_segmentation_used else ""
+                timing_note = model_note if settings.refine_timing else ""
+                gap_note = model_note if settings.refine_gap else ""
                 f.write(f"  Timing refinement:        {settings.refine_timing}{timing_note}\n")
+                f.write(f"  GAP refinement:           {settings.refine_gap}{gap_note}\n")
                 f.write(f"  Hit ratio threshold:      {settings.refine_hit_ratio}\n")
                 f.write(f"  Timing threshold:         {settings.refine_timing_threshold} ms\n")
             f.write(f"  Chart style:              {settings.chart_style}\n")
@@ -2099,6 +2104,7 @@ def init_settings(argv: list[str]) -> Settings:
     settings.segmentation_model_repo = None
     settings.segmentation_model_token = None
     settings.lead_vocal_pitch = True
+    settings.refine_gap = True
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2382,6 +2388,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.refine_pitch = False
         elif opt in ("--disable_refine_timing"):
             settings.refine_timing = False
+        elif opt == "--disable_refine_gap":
+            settings.refine_gap = False
         elif opt in ("--refine_hit_ratio"):
             settings.refine_hit_ratio = float(arg)
         elif opt in ("--refine_timing_threshold"):
@@ -2515,6 +2523,7 @@ def arg_options():
         "disable_refine",
         "disable_refine_pitch",
         "disable_refine_timing",
+        "disable_refine_gap",
         "refine_hit_ratio=",
         "refine_timing_threshold=",
         "chart_style=",
