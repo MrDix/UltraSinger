@@ -333,7 +333,8 @@ _Not all options working now!_
                                 games themselves use to score singing) to find and fix poorly-scoring notes.
     --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
-    --disable_refine_timing     Disable timing refinement (enabled by default when refine is on)
+    --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
+                                for notes from a segmentation model)
     --refine_hit_ratio          Notes below this hit ratio are pitch-corrected (0.0-1.0) >> ((default) is 0.4)
     --refine_timing_threshold   Milliseconds threshold before correcting timing >> ((default) is 30)
     --ptakf_refit               (legacy) Explicitly enable the ptAKF chart refit (now the default)
@@ -783,14 +784,14 @@ No model is shipped with UltraSinger. You train your own on your UltraStar song 
 -i XYZ --segmentation_model D:\Models\segmentation.pt
 ```
 
-GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal separation; if the model file is missing or the step fails, the word-based notes are kept.
+GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal separation; if the model file is missing or the step fails, the word-based notes are kept. With a model, the timing refinement (snapping note starts to audio onsets) is skipped, because the model places note starts more precisely.
 
 To share one model between computers, keep it in a (private) GitHub repository and let UltraSinger download it: `--segmentation_model_repo owner/repo[/path/model.pt]` (default file `segmentation.pt`) with the `ULTRASINGER_MODEL_TOKEN` environment variable (or `--segmentation_model_token <token>`) for private repositories. The model is cached locally and only downloaded again when it changed. GUI: "Model Repository" and "Repository Token" (stored in the system keyring).
 
 ```commandline
 -i XYZ --segmentation_model_repo owner/models-repo
 ```
-**Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). The pitch refinement and the game-score report then compare the notes with the lead stem as well (notes without a detected tone there with the full vocal stem); note timing is still refined on the full vocal stem. On a 100-song benchmark this raised the median agreement with hand-made charts by about 1.7 points, mainly on songs with several voices.
+**Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). The pitch refinement and the game-score report then compare the notes with the lead stem as well (notes without a detected tone there with the full vocal stem). On a 100-song benchmark this raised the median agreement with hand-made charts by about 1.7 points, mainly on songs with several voices.
 
 #### Freestyle Detection (`--detect_freestyle`)
 

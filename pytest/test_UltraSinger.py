@@ -233,3 +233,14 @@ class TestTranscribeAudioLyricsLanguage(unittest.TestCase):
         process_data, correct = self._run(self.GERMAN, plain)
         self.assertEqual(process_data.plain_lyrics, plain)
         correct.assert_called_once()
+
+
+class TestRefineTimingWithModel(unittest.TestCase):
+    """Timing refinement is skipped for notes from the segmentation model."""
+
+    def test_truth_table(self):
+        from src.UltraSinger import refine_timing_wanted
+        self.assertTrue(refine_timing_wanted(True, False))
+        self.assertFalse(refine_timing_wanted(True, True))
+        self.assertFalse(refine_timing_wanted(False, False))
+        self.assertFalse(refine_timing_wanted(False, True))
