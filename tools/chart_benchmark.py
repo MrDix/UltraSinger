@@ -48,14 +48,16 @@ Metrics (per song; the summary reports the median over reliable songs):
 ``chart_agreement_pct`` (primary)
     Share of the reference's pitched note time on which the generated chart
     also has a note within +-1 semitone (octave folded, like the games on
-    Medium). Equivalent to "a singer who sings the reference perfectly
-    scores this on the generated chart". Generated notes where the reference
+    Medium). Equivalent to "a singer who sings the generated chart perfectly
+    scores this on the reference chart". Generated notes where the reference
     has none do not lower it - see the precision below.
 ``chart_precision_pct`` / ``chart_f1_pct``
     Share of the generated pitched note time that agrees with the reference
-    (within +-1 semitone, folded) / harmonic mean of agreement and precision.
-    Notes that run past the reference notes or chart backing vocals lower
-    the precision but not the agreement.
+    (within +-1 semitone, folded): what a singer who sings the reference
+    perfectly scores on the generated chart, as the games divide by the
+    chart's own note time. Notes that run past the reference notes or chart
+    backing vocals lower the precision but not the agreement. The F1 is the
+    harmonic mean of agreement and precision.
 ``onset_hit_50_pct`` / ``onset_hit_100_pct``
     Reference note onsets with a generated onset within 50 / 100 ms.
 ``onset_precision_100_pct``
