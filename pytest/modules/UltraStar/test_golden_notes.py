@@ -93,6 +93,30 @@ class TestMarkGoldenNotes(unittest.TestCase):
         result = mark_golden_notes(segments, bpm=120.0, count=1, max_fraction=1.0)
         self.assertEqual(_golden(result), [0])
 
+    def test_a_note_of_exactly_the_minimum_duration_is_eligible(self):
+        # 1.2 - 1.0 is a hair under 0.2 in floating point.
+        segments = [_seg("short ", 0.0, 0.1), _seg("held ", 1.0, 1.2)]
+        result = mark_golden_notes(segments, bpm=120.0, count=1, max_fraction=1.0)
+        self.assertEqual(_golden(result), [1])
+
+    def test_a_second_run_adds_nothing(self):
+        segments = [_seg(f"w{i} ", i * 1.0, i * 1.0 + 0.6) for i in range(100)]
+        mark_golden_notes(segments, bpm=120.0)
+        first = _golden(segments)
+        result = mark_golden_notes(segments, bpm=120.0)
+        self.assertEqual(_golden(result), first)
+
+    def test_existing_golden_notes_count_towards_the_limits(self):
+        # Two golden notes already sit in the first tenth: one more fits there,
+        # and only eight more are needed for the ten.
+        segments = [_seg(f"w{i} ", i * 1.0, i * 1.0 + 0.6) for i in range(100)]
+        segments[0].note_type = "*"
+        segments[1].note_type = "G"
+        result = mark_golden_notes(segments, bpm=120.0)
+        marked = [i for i, seg in enumerate(result) if seg.note_type in ("*", "G")]
+        self.assertEqual(len(marked), 10)
+        self.assertEqual(sum(1 for i in marked if i < 10), 3)
+
 
 class TestPitchLock(unittest.TestCase):
     """A shorter note the singing stays on beats a longer one it misses."""

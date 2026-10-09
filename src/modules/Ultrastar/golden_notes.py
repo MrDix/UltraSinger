@@ -27,6 +27,10 @@ follows that:
 4. At most ``max_per_part`` golden notes in each tenth of the sung time,
    so they do not pile up in one section (long notes tend to gather at
    the end of a song).
+
+Notes that are golden already (``"*"`` or ``"G"``) count towards the
+number, the cap and the per-part limit, so running the pass again adds
+nothing.
 """
 
 from __future__ import annotations
@@ -153,26 +157,35 @@ def mark_golden_notes(
     scorable_count = sum(
         1 for seg in midi_segments if seg.note_type in _SCORABLE_TYPES
     )
-    golden_slots = min(count, int(scorable_count * max_fraction))
+    golden_types = (UltrastarTxtNoteTypeTag.GOLDEN.value, UltrastarTxtNoteTypeTag.RAP_GOLDEN.value)
+    existing = [i for i, seg in enumerate(midi_segments) if seg.note_type in golden_types]
+    golden_slots = min(count, int(scorable_count * max_fraction)) - len(existing)
     if golden_slots <= 0:
         return midi_segments
 
+    # Rounded, so that a note from 1.0 s to 1.2 s counts as 200 ms long.
     candidates = [
         i
         for i, seg in enumerate(midi_segments)
         if seg.note_type == UltrastarTxtNoteTypeTag.NORMAL.value
-        and (seg.end - seg.start) * 1000.0 >= min_duration_ms
+        and round((seg.end - seg.start) * 1000.0, 3) >= min_duration_ms
     ]
     if not candidates:
         return midi_segments
 
     # Best rank first (earlier note on ties), at most max_per_part per tenth
-    # of the sung time.
+    # of the sung time, golden notes already there included.
     lock = _pitch_lock(midi_segments, candidates, pitched_data)
     peaks = _phrase_peaks(midi_segments)
     sung_start = min(seg.start for seg in midi_segments)
     sung_span = max(max(seg.end for seg in midi_segments) - sung_start, 1e-9)
+
+    def part_of(i: int) -> int:
+        return min(int((midi_segments[i].start - sung_start) / sung_span * SPREAD_PARTS), SPREAD_PARTS - 1)
+
     per_part: dict[int, int] = {}
+    for i in existing:
+        per_part[part_of(i)] = per_part.get(part_of(i), 0) + 1
     chosen: list[int] = []
 
     def best_first(i: int) -> tuple[float, int]:
@@ -183,7 +196,7 @@ def mark_golden_notes(
     for i in sorted(candidates, key=best_first):
         if len(chosen) >= golden_slots:
             break
-        part = min(int((midi_segments[i].start - sung_start) / sung_span * SPREAD_PARTS), SPREAD_PARTS - 1)
+        part = part_of(i)
         if per_part.get(part, 0) >= max_per_part:
             continue
         per_part[part] = per_part.get(part, 0) + 1
