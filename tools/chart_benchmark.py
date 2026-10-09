@@ -42,7 +42,13 @@ Metrics (per song; the summary reports the median over reliable songs):
     Share of the reference's pitched note time on which the generated chart
     also has a note within +-1 semitone (octave folded, like the games on
     Medium). Equivalent to "a singer who sings the reference perfectly
-    scores this on the generated chart".
+    scores this on the generated chart". Generated notes where the reference
+    has none do not lower it - see the precision below.
+``chart_precision_pct`` / ``chart_f1_pct``
+    Share of the generated pitched note time that agrees with the reference
+    (within +-1 semitone, folded) / harmonic mean of agreement and precision.
+    Notes that run past the reference notes or chart backing vocals lower
+    the precision but not the agreement.
 ``onset_hit_50_pct`` / ``onset_hit_100_pct``
     Reference note onsets with a generated onset within 50 / 100 ms.
 ``onset_precision_100_pct``
@@ -107,7 +113,8 @@ FREESTYLE_TYPES = {"F", "R", "G"}
 
 PRIMARY_METRIC = "chart_agreement_pct"
 SUMMARY_METRICS = [
-    "chart_agreement_pct", "onset_hit_50_pct", "onset_hit_100_pct", "onset_precision_100_pct",
+    "chart_agreement_pct", "chart_precision_pct", "chart_f1_pct",
+    "onset_hit_50_pct", "onset_hit_100_pct", "onset_precision_100_pct",
     "note_count_ratio", "median_note_ms", "short_notes_pct", "pitch_agree_pct",
     "ref_coverage_pct", "extra_time_pct", "freestyle_charted_pct", "oracle_pitch_pct",
     "vocal_hits_ref_pct", "vocal_hits_gen_pct",
@@ -232,6 +239,13 @@ def _pct(x: float | None) -> float | None:
     return None if x is None else round(100.0 * x, 1)
 
 
+def _f1(recall: float | None, precision: float | None) -> float | None:
+    """Harmonic mean of agreement (recall) and precision."""
+    if recall is None or precision is None:
+        return None
+    return 0.0 if recall + precision == 0 else 2 * recall * precision / (recall + precision)
+
+
 def _onset_hits(onsets: np.ndarray, others: np.ndarray, tol_ms: float) -> float | None:
     if len(onsets) == 0:
         return None
@@ -267,6 +281,8 @@ def chart_metrics(ref: list[ChartNote], gen: list[ChartNote], sung: SungPitch | 
     r_on, g_on = ~np.isnan(r), ~np.isnan(g)
     both = r_on & g_on
     agree = np.abs(fold(g[both] - r[both])) <= 1
+    recall = agree.sum() / r_on.sum() if r_on.any() else None
+    precision = agree.sum() / g_on.sum() if g_on.any() else None
 
     ref_p = [n for n in ref if n.pitched]
     gen_p = [n for n in gen if n.pitched]
@@ -277,7 +293,9 @@ def chart_metrics(ref: list[ChartNote], gen: list[ChartNote], sung: SungPitch | 
     m = {
         "ref_notes": len(ref_p),
         "gen_notes": len(gen_p),
-        "chart_agreement_pct": _pct(agree.sum() / r_on.sum()) if r_on.any() else None,
+        "chart_agreement_pct": _pct(recall),
+        "chart_precision_pct": _pct(precision),
+        "chart_f1_pct": _pct(_f1(recall, precision)),
         "onset_hit_50_pct": _pct(_onset_hits(ref_on, gen_on, 50)),
         "onset_hit_100_pct": _pct(_onset_hits(ref_on, gen_on, 100)),
         "onset_precision_100_pct": _pct(_onset_hits(gen_on, ref_on, 100)),
@@ -568,8 +586,8 @@ def format_summary_md(label: str, summary: dict, rows: list[dict]) -> str:
              f"failed: {summary['songs_failed']})", "",
              "| Metric | Median |", "|---|---|"]
     lines += [f"| {k} | {v} |" for k, v in summary["median"].items()]
-    cols = ["chart_agreement_pct", "onset_hit_100_pct", "note_count_ratio", "pitch_agree_pct",
-            "extra_time_pct", "oracle_pitch_pct", "ref_fit_pct"]
+    cols = ["chart_agreement_pct", "chart_precision_pct", "chart_f1_pct", "onset_hit_100_pct",
+            "note_count_ratio", "pitch_agree_pct", "extra_time_pct", "oracle_pitch_pct", "ref_fit_pct"]
     lines += ["", "| Song | status | " + " | ".join(cols) + " |", "|---" * (len(cols) + 2) + "|"]
     for r in rows:
         lines.append(f"| {r['id']} | {r.get('status')} | " + " | ".join(str(r.get(c)) for c in cols) + " |")

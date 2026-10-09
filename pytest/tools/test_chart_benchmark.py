@@ -169,6 +169,50 @@ class TestChartMetrics:
         assert m["vocal_hits_gen_pct"] == 100.0
 
 
+class TestPrecisionMetrics:
+    def test_identical_charts(self):
+        m = cb.chart_metrics(_melody(), _melody())
+        assert m["chart_precision_pct"] == 100.0
+        assert m["chart_f1_pct"] == 100.0
+
+    def test_longer_notes_lower_precision_not_agreement(self):
+        ref = _melody(n=10, step_ms=500, dur_ms=200)
+        gen = [_note(n.start_ms, n.start_ms + 400, n.midi) for n in ref]  # twice as long
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_agreement_pct"] == 100.0
+        assert m["chart_precision_pct"] == 50.0
+        assert m["chart_f1_pct"] == pytest.approx(66.7)
+
+    def test_extra_note_lowers_precision(self):
+        ref = _melody(n=10, step_ms=500, dur_ms=400)  # 4000 ms of notes
+        gen = list(ref) + [_note(10_000, 14_000, 60)]  # 4000 ms more, no reference there
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_agreement_pct"] == 100.0
+        assert m["chart_precision_pct"] == 50.0
+
+    def test_wrong_pitch_lowers_both(self):
+        ref = _melody()
+        gen = [_note(n.start_ms, n.end_ms, n.midi + 3) for n in ref]
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_precision_pct"] == 0.0
+        assert m["chart_f1_pct"] == 0.0
+
+    def test_no_generated_pitched_notes(self):
+        m = cb.chart_metrics(_melody(n=4), [])
+        assert m["chart_precision_pct"] is None
+        assert m["chart_f1_pct"] is None
+
+    def test_in_summary_and_report(self):
+        rows = [{"id": "song_001", "status": "ok", "chart_agreement_pct": 70.0,
+                 "chart_precision_pct": 60.0, "chart_f1_pct": 64.6}]
+        summary = cb.summarize(rows)
+        assert summary["median"]["chart_precision_pct"] == 60.0
+        assert summary["median"]["chart_f1_pct"] == 64.6
+        md = cb.format_summary_md("base", summary, rows)
+        assert "chart_precision_pct" in md and "chart_f1_pct" in md
+        assert any(k == "chart_f1_pct" for k, *_ in cb.compare_summaries(summary, summary))
+
+
 class TestOffsetFit:
     def test_finds_shift(self):
         ref = _melody()

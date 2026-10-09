@@ -83,7 +83,9 @@ Octaves are folded everywhere, as the games ignore the octave when scoring.
 
 | Metric | Meaning |
 |---|---|
-| `chart_agreement_pct` | **Primary metric.** Share of the reference's pitched note time on which the generated chart also has a note within ±1 semitone. Equals the score a singer who sings the reference perfectly would get on the generated chart (Medium). |
+| `chart_agreement_pct` | **Primary metric.** Share of the reference's pitched note time on which the generated chart also has a note within ±1 semitone. Equals the score a singer who sings the reference perfectly would get on the generated chart (Medium). Generated notes where the reference has none do not lower it — see the precision. |
+| `chart_precision_pct` | Share of the generated pitched note time that agrees with the reference (±1 semitone). Notes that run past the reference notes, or that chart backing vocals, lower the precision but not the agreement. |
+| `chart_f1_pct` | Harmonic mean of agreement and precision — rewards charts that cover the reference *without* padding it. |
 | `onset_hit_50_pct` / `onset_hit_100_pct` | Reference note starts that have a generated note start within 50 / 100 ms. |
 | `onset_precision_100_pct` | Generated note starts that have a reference note start within 100 ms. Low values mean extra or split notes. |
 | `note_count_ratio` | Generated / reference pitched notes (1.0 = same number). |
