@@ -123,8 +123,9 @@ def print_help() -> None:
     --segmentation_model_repo  GitHub repository to download the segmentation model from, as owner/repo or
                             owner/repo/path/to/model.pt (default file: segmentation.pt), e.g. my-account/my-models
                             or my-account/my-models/models/v2.pt. A github.com address of the repository or the file
-                            works as well, a raw download link does not. The file is cached locally and only
-                            downloaded again when it changed; without network access the cached copy is used.
+                            works as well (the branch in it is ignored, the file always comes from the default
+                            branch); a raw download link does not. The file is cached locally and only downloaded
+                            again when it changed; without network access the cached copy is used.
                             Ignored when --segmentation_model is set.
     --segmentation_model_token  Access token for a private model repository (read access to its contents).
                             Can also be given as ULTRASINGER_MODEL_TOKEN environment variable, which keeps
