@@ -36,9 +36,14 @@ fi
 echo "Configuring PyTorch index for CUDA..."
 sed -i 's|whl/cpu|whl/cu128|' pyproject.toml
 
-# Regenerate lockfile with CUDA PyTorch index and sync
+# Regenerate lockfile with CUDA PyTorch index and the newest yt-dlp (video
+# platforms change often, so the yt-dlp pinned in uv.lock soon fails to
+# download; if the upgrade is not possible, e.g. offline, keep the pin), then sync
 echo "Resolving dependencies..."
-uv lock
+if ! uv lock --upgrade-package yt-dlp; then
+    echo "Warning: could not upgrade yt-dlp - keeping the version from uv.lock."
+    uv lock
+fi
 echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
 uv sync --extra gui --extra scoring --extra potoken
 

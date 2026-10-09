@@ -9,6 +9,11 @@
 # scratch). If any step fails, the backed-up files and the protection are
 # restored, so a failed update never leaves a CUDA install half-converted
 # to CPU.
+#
+# Every update also locks the newest yt-dlp release: video platforms change
+# their internals often, so the yt-dlp version pinned in uv.lock soon fails to
+# download. If that upgrade is not possible (e.g. offline), the pinned version
+# is kept.
 
 set -e
 # Capture the script directory BEFORE cd'ing away, so helper paths resolve
@@ -49,7 +54,11 @@ cleanup() {
         git update-index --skip-worktree pyproject.toml 2>/dev/null || true
         git update-index --skip-worktree uv.lock 2>/dev/null || true
     fi
-    [ -n "$BACKUP_DIR" ] && rm -rf "$BACKUP_DIR"
+    if [ -n "$BACKUP_DIR" ]; then
+        rm -rf "$BACKUP_DIR"
+    fi
+    # keep the script's own exit status (the trap's last command would set it)
+    exit "$rc"
 }
 trap cleanup EXIT
 
@@ -61,6 +70,17 @@ if [ -n "$IS_CUDA" ]; then
     git update-index --no-skip-worktree pyproject.toml 2>/dev/null || true
     git update-index --no-skip-worktree uv.lock 2>/dev/null || true
     git checkout -- pyproject.toml uv.lock
+else
+    # The in-app yt-dlp update rewrites uv.lock; such a local change would make
+    # "git pull" fail as soon as the repository's uv.lock changes. It is not
+    # lost: the newest yt-dlp is locked again after the pull.
+    LOCK_DIFF=0
+    git diff --quiet HEAD -- uv.lock 2>/dev/null || LOCK_DIFF=$?
+    if [ "$LOCK_DIFF" -eq 1 ]; then
+        echo "Discarding the local changes to uv.lock - the newest yt-dlp is"
+        echo "locked again after the update."
+        git checkout HEAD -- uv.lock
+    fi
 fi
 
 echo "Pulling latest changes..."
@@ -70,7 +90,14 @@ if [ -n "$IS_CUDA" ]; then
     echo "Re-applying the CUDA PyTorch index..."
     # BSD/macOS sed needs a suffix argument for -i
     sed -i.bak 's|whl/cpu|whl/cu128|' pyproject.toml && rm -f pyproject.toml.bak
-    uv lock
+fi
+
+echo "Resolving dependencies with the newest yt-dlp..."
+if ! uv lock --upgrade-package yt-dlp; then
+    echo "Warning: could not upgrade yt-dlp - keeping the version from uv.lock."
+    if [ -n "$IS_CUDA" ]; then
+        uv lock
+    fi
 fi
 
 # Stop a running instance from this folder so uv can replace locked files.

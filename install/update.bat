@@ -10,6 +10,11 @@ REM restores the protection - then syncs dependencies (without rebuilding
 REM the venv from scratch). If any step fails, the backed-up files and the
 REM protection are restored, so a failed update never leaves a CUDA
 REM install half-converted to CPU.
+REM
+REM Every update also locks the newest yt-dlp release: video platforms change
+REM their internals often, so the yt-dlp version pinned in uv.lock soon fails
+REM to download. If that upgrade is not possible (e.g. offline), the pinned
+REM version is kept.
 
 pushd "%~dp0"
 cd /d ..
@@ -46,6 +51,16 @@ if defined IS_CUDA (
     git update-index --no-skip-worktree pyproject.toml 2>nul
     git update-index --no-skip-worktree uv.lock 2>nul
     git checkout -- pyproject.toml uv.lock
+) else (
+    REM The in-app yt-dlp update rewrites uv.lock; such a local change would
+    REM make "git pull" fail as soon as the repository's uv.lock changes.
+    REM It is not lost: the newest yt-dlp is locked again after the pull.
+    git diff --quiet HEAD -- uv.lock 2>nul
+    if !errorlevel! equ 1 (
+        echo Discarding the local changes to uv.lock - the newest yt-dlp is
+        echo locked again after the update.
+        git checkout HEAD -- uv.lock
+    )
 )
 
 echo Pulling latest changes...
@@ -58,10 +73,18 @@ if !errorlevel! neq 0 (
 if defined IS_CUDA (
     echo Re-applying the CUDA PyTorch index...
     powershell -NoProfile -Command "$c = [IO.File]::ReadAllText('pyproject.toml'); $c = $c -replace 'whl/cpu','whl/cu128'; [IO.File]::WriteAllText('pyproject.toml', $c)"
-    uv lock
-    if !errorlevel! neq 0 (
-        echo Error during uv lock
-        goto :restore_and_fail
+)
+
+echo Resolving dependencies with the newest yt-dlp...
+uv lock --upgrade-package yt-dlp
+if !errorlevel! neq 0 (
+    echo Warning: could not upgrade yt-dlp - keeping the version from uv.lock.
+    if defined IS_CUDA (
+        uv lock
+        if !errorlevel! neq 0 (
+            echo Error during uv lock
+            goto :restore_and_fail
+        )
     )
 )
 

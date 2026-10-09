@@ -101,6 +101,7 @@ This will help me a lot to keep this project alive and improve it.
 2. Run the installer — `install\auto_install.bat` (Windows) or `install/auto_install.sh` (Linux/macOS). It takes care of everything:
    * detects your NVIDIA GPU via `nvidia-smi` and picks the CUDA or CPU build automatically (force with `--cuda` / `--cpu`),
    * installs all dependencies including the GUI, scoring engine and PO-token plugin,
+   * installs the newest `yt-dlp` release — video platforms change their internals often, so the version pinned in `uv.lock` soon fails to download; it is only used when the upgrade is not possible (e.g. offline),
    * builds the local PO-token provider when Node.js is available,
    * detects proxy environment variables and enables OS-store TLS for uv automatically,
    * and prints tailored advice when your GPU has little VRAM (< 8 GB) or none was found — including how a free cloud key can replace the slowest local step (`--remote_stt`).
@@ -109,7 +110,7 @@ This will help me a lot to keep this project alive and improve it.
 
 **Update an existing installation**
 
-Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). **This is the only command you need to update** — you never have to re-run `auto_install`. It pulls the latest changes, syncs the Python packages into `.venv` (so newer dependency versions land too), refreshes the PO-token provider, and re-checks ffmpeg — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten"). `auto_install` is only for the first-time install.
+Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). **This is the only command you need to update** — you never have to re-run `auto_install`. It pulls the latest changes, upgrades `yt-dlp` to its newest release (keeping the pinned version if that is not possible, e.g. offline), syncs the Python packages into `.venv` (so newer dependency versions land too), refreshes the PO-token provider, and re-checks ffmpeg — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten"). Local changes to `uv.lock` from the in-app **Update yt-dlp** button are replaced the same way, since the newest `yt-dlp` is locked again anyway. `auto_install` is only for the first-time install.
 
 **Keeping everything on one drive (e.g. all development on `D:`)**
 
