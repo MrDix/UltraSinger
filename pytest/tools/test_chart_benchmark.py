@@ -815,9 +815,15 @@ class TestCli:
         other = tmp_path / "other_reports"
         assert cb.main(["evaluate", str(work), "--label", "base", "--reports-dir", str(other)]) == 0
         assert (other / "base.json").exists()
+        # A second report that exists only in the other folder, with a higher lyrics score
+        report = json.loads((other / "base.json").read_text(encoding="utf-8"))
+        report["songs"][0]["lyrics_agreement_pct"] += 5.0
+        (other / "alt.json").write_text(json.dumps(report), encoding="utf-8")
         capsys.readouterr()
-        assert cb.main(["compare", str(work), "base", "base", "--reports-dir", str(other),
+        assert cb.main(["compare", str(work), "base", "alt", "--reports-dir", str(other),
                         "--metric", "lyrics_agreement_pct"]) == 0
-        assert "lyrics_agreement_pct per song: 0 higher, 0 lower of 1" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "lyrics_agreement_pct per song: 1 higher, 0 lower of 1" in out
+        assert "song_001: +5.0" in out
         with pytest.raises(SystemExit, match="unknown metric"):
             cb.main(["compare", str(work), "base", "base", "--metric", "nope"])
