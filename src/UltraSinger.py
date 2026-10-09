@@ -850,7 +850,7 @@ def run() -> tuple[str, Score, Score]:
             pitch_frames=pitch_frames,
         )
 
-    # Golden notes — mark a bounded, evenly-spread subset of held notes as
+    # Golden notes — mark the longest held notes, spread over the song, as
     # golden ("*") bonus notes. Runs last, on the final note boundaries/
     # pitches (after refinement and ptAKF refit), so it never gets
     # overwritten by a later pass.

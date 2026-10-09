@@ -2,30 +2,25 @@
 
 Golden notes double the score a player gets for hitting them (see
 ``ultrastar_score.parser.Note.score_factor``: 1 for normal/rap, 2 for
-golden/rap-golden). UltraSinger currently never emits any, so charts
-never contain a bonus section the way commercial/manually-authored
-songs do.
+golden/rap-golden). UltraSinger never emits any on its own, so this
+optional pass adds a bonus selection the way hand-made charts do.
 
-Heuristic (conservative, USDX-conformant):
+Hand-made professional charts mark only a handful of golden notes per
+song - typically about ten single notes, whatever the song's length -
+favour long held notes, and spread them over the whole song. The pass
+follows that:
 
-1. Only real syllable notes are eligible: ``note_type == ":"`` and the
-   word is not a tilde continuation (``"~"``/``"~ "``) produced by
-   melisma/pitch-change splitting. Freestyle (``"F"``) and rap
-   (``"R"``/``"G"``) notes are never touched.
-2. Only notes held for at least ``min_duration_ms`` are eligible —
-   short notes rarely stay on-pitch long enough to be reliably hit, so
-   making them golden would risk losing the bonus rather than gaining
-   it.
-3. The total number of golden notes is capped at ``max_fraction`` of
-   all scorable notes (``":"``, ``"*"``, ``"R"``, ``"G"``), mirroring
-   how USDX-style games keep golden sections a minority of the chart
-   rather than the whole song.
-4. Chosen notes are spread across the song instead of clustering in
-   one high-energy section: eligible candidates are split (in song
-   order) into as many contiguous chunks as there are golden slots,
-   and the single longest note of each chunk is picked. This keeps the
-   "pick the most reliable notes" property while guaranteeing golden
-   notes appear throughout the track, not just at the start.
+1. Only normal notes (``":"``) held for at least ``min_duration_ms`` are
+   eligible; freestyle (``"F"``) and rap (``"R"``/``"G"``) notes are never
+   touched. Tilde continuations (``"~"``) are eligible too: a long one is
+   a held vowel, a typical golden note.
+2. ``count`` notes are marked (default 10), but never more than
+   ``max_fraction`` of all scorable notes (``":"``, ``"*"``, ``"R"``,
+   ``"G"``), so short songs stay mostly normal.
+3. The longest eligible notes are chosen, with at most
+   ``max_per_part`` of them in each tenth of the sung time, so golden
+   notes do not pile up in one section (long notes tend to gather at
+   the end of a song).
 """
 
 from __future__ import annotations
@@ -33,6 +28,12 @@ from __future__ import annotations
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Ultrastar.ultrastar_txt import UltrastarTxtNoteTypeTag
+
+DEFAULT_GOLDEN_COUNT = 10
+MAX_GOLDEN_FRACTION = 0.15
+MIN_GOLDEN_DURATION_MS = 200.0
+SPREAD_PARTS = 10
+MAX_GOLDEN_PER_PART = 3
 
 # Everything that contributes score points (i.e. everything but freestyle).
 _SCORABLE_TYPES = (
@@ -43,41 +44,36 @@ _SCORABLE_TYPES = (
 )
 
 
-def _is_continuation(word: str) -> bool:
-    """True for tilde-continuation notes ("~" / "~ ") produced by melisma
-    and pitch-change splitting — these are not independent syllables and
-    should never be promoted to golden on their own."""
-    return word.strip() == "~"
-
-
 def mark_golden_notes(
     midi_segments: list[MidiSegment],
     bpm: float,
     *,
-    max_fraction: float = 0.15,
-    min_duration_ms: float = 350.0,
+    count: int = DEFAULT_GOLDEN_COUNT,
+    max_fraction: float = MAX_GOLDEN_FRACTION,
+    min_duration_ms: float = MIN_GOLDEN_DURATION_MS,
+    max_per_part: int = MAX_GOLDEN_PER_PART,
 ) -> list[MidiSegment]:
-    """Mark a bounded, evenly-spread subset of held notes as golden.
+    """Mark the longest held notes, spread over the song, as golden.
 
     Args:
         midi_segments: Notes to mark. Mutated in place (matching the
             convention used by ``growl_detector.detect_growl_segments``)
             and also returned for convenient chaining.
-        bpm: Real BPM. Not used by the current time-based heuristic
-            (durations are measured directly from segment start/end
-            seconds) but kept for API symmetry with the other
-            post-processing passes (e.g. ``refit_notes_ptakf``) and to
-            leave room for a future beat-based minimum spacing.
+        bpm: Real BPM. Not used by the time-based selection but kept for
+            API symmetry with the other post-processing passes.
+        count: Number of golden notes to mark (default 10).
         max_fraction: Upper bound on the golden share of all scorable
-            notes (default 0.15, i.e. at most 15%).
+            notes (default 0.15), which only matters for short songs.
         min_duration_ms: Minimum note duration (in ms) to be eligible
-            as golden (default 350ms).
+            as golden (default 200ms).
+        max_per_part: At most this many golden notes in each tenth of
+            the sung time (default 3).
 
     Returns:
-        The same list, with up to ``max_fraction`` of scorable notes
-        switched from ``":"`` to ``"*"``.
+        The same list, with up to ``count`` normal notes switched from
+        ``":"`` to ``"*"``.
     """
-    del bpm  # not used by the current heuristic; see docstring
+    del bpm  # not used by the time-based selection; see docstring
 
     if not midi_segments:
         return midi_segments
@@ -85,38 +81,37 @@ def mark_golden_notes(
     scorable_count = sum(
         1 for seg in midi_segments if seg.note_type in _SCORABLE_TYPES
     )
-    if scorable_count == 0:
-        return midi_segments
-
-    max_golden = int(scorable_count * max_fraction)
-    if max_golden <= 0:
+    golden_slots = min(count, int(scorable_count * max_fraction))
+    if golden_slots <= 0:
         return midi_segments
 
     candidates = [
-        (i, seg)
+        i
         for i, seg in enumerate(midi_segments)
         if seg.note_type == UltrastarTxtNoteTypeTag.NORMAL.value
-        and not _is_continuation(seg.word)
         and (seg.end - seg.start) * 1000.0 >= min_duration_ms
     ]
     if not candidates:
         return midi_segments
 
-    # Split candidates (already in song order) into as many contiguous
-    # chunks as golden slots and keep the longest note per chunk. This
-    # spreads golden notes across the whole song while still favouring
-    # the most reliably-held notes within each region.
-    chunk_count = min(max_golden, len(candidates))
-    chunk_size = len(candidates) / chunk_count
+    # Longest first (whole milliseconds, earlier note on ties), at most
+    # max_per_part per tenth of the sung time.
+    sung_start = min(seg.start for seg in midi_segments)
+    sung_span = max(max(seg.end for seg in midi_segments) - sung_start, 1e-9)
+    per_part: dict[int, int] = {}
     chosen: list[int] = []
-    for c in range(chunk_count):
-        lo = int(c * chunk_size)
-        hi = len(candidates) if c == chunk_count - 1 else int((c + 1) * chunk_size)
-        if lo >= hi:
+
+    def longest_first(i: int) -> tuple[int, int]:
+        return -round((midi_segments[i].end - midi_segments[i].start) * 1000.0), i
+
+    for i in sorted(candidates, key=longest_first):
+        if len(chosen) >= golden_slots:
+            break
+        part = min(int((midi_segments[i].start - sung_start) / sung_span * SPREAD_PARTS), SPREAD_PARTS - 1)
+        if per_part.get(part, 0) >= max_per_part:
             continue
-        chunk = candidates[lo:hi]
-        best_i, _ = max(chunk, key=lambda pair: pair[1].end - pair[1].start)
-        chosen.append(best_i)
+        per_part[part] = per_part.get(part, 0) + 1
+        chosen.append(i)
 
     for i in chosen:
         midi_segments[i].note_type = UltrastarTxtNoteTypeTag.GOLDEN.value
