@@ -352,12 +352,14 @@ _Not all options working now!_
                                 conversion. Scoring is enabled by default
 
     [golden notes]
-    --golden_notes              Mark the 10 longest held notes as golden "*" bonus notes, worth double
-                                score in-game, like hand-made charts do (experimental). Disabled by
-                                default, since it changes the score distribution. Only normal notes held
-                                for at least 200ms are eligible; freestyle and rap notes are never marked.
-                                At most 15% of all scorable notes become golden (short songs), and at
-                                most 3 in each tenth of the song, so they do not pile up in one section.
+    --golden_notes              Mark 10 held notes per song as golden "*" bonus notes, worth double score
+                                in-game, like hand-made charts do (experimental). Disabled by default,
+                                since it changes the score distribution. Long notes the singing stays on
+                                pitch with are preferred (a golden note nobody can hit is worse than none),
+                                with a bonus for the highest note of a phrase. Only normal notes held for
+                                at least 200ms are eligible; freestyle and rap notes are never marked. At
+                                most 15% of all scorable notes become golden (short songs), and at most 3
+                                in each tenth of the song, so they do not pile up in one section.
 
 
     [llm lyric correction]
@@ -837,7 +839,7 @@ Requires the optional scoring dependency (`pip install "ultrastar-score"` — al
 
 Marks held notes as **golden** (`*`) bonus notes, which are worth double score in-game. UltraSinger's charts otherwise never contain any golden notes.
 
-Hand-made professional charts mark only a handful of golden notes per song (typically about ten single notes, whatever the song's length), mostly long held notes spread over the whole song. This pass does the same: it marks the 10 longest normal notes (`note_type == ":"`, held for at least 200ms; a long `~` continuation is a held vowel and counts too), but never more than 15% of all scorable notes (short songs) and at most 3 in each tenth of the song, so they do not pile up in one section — long notes tend to gather at the end of a song. Freestyle and rap notes are never marked. Runs last, after refinement and the ptAKF chart refit, so it always marks the final note boundaries.
+Hand-made professional charts mark only a handful of golden notes per song (typically about ten single notes, whatever the song's length), mostly long held notes spread over the whole song. This pass does the same: it marks 10 normal notes (`note_type == ":"`, held for at least 200ms; a long `~` continuation is a held vowel and counts too), but never more than 15% of all scorable notes (short songs) and at most 3 in each tenth of the song, so they do not pile up in one section — long notes tend to gather at the end of a song. Notes are ranked by duration, weighted by how well the singing stays on the note's pitch (the share of the note's pitch frames that are confident and within one semitone of it, octaves ignored), because a golden note nobody can hit is worse than none; the highest note of a phrase gets a bonus. Freestyle and rap notes are never marked. Runs last, after refinement and the ptAKF chart refit, so it always marks the final note boundaries.
 
 ```commandline
 -i XYZ --golden_notes

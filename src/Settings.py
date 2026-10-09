@@ -76,7 +76,7 @@ class Settings:
     ptakf_refit_fill_min_ms: float = 300.0  # Minimum uncharted voiced run length before it is filled
 
     # Golden notes (bonus notes worth double score in-game)
-    golden_notes = False  # Mark the 10 longest held notes as golden "*" bonus notes (disabled by default: changes score distribution)
+    golden_notes = False  # Mark 10 held notes (long, sung on pitch) as golden "*" bonus notes (disabled by default: changes score distribution)
 
     # Process data Paths
     input_file_path = ""

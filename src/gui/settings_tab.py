@@ -734,10 +734,11 @@ class ConversionSettingsForm(QWidget):
             checked=self._config.get("golden_notes", False)
         )
         card.add_toggle_row("Golden Notes", self._golden_notes,
-                           "Mark the 10 longest held notes as golden bonus notes, worth "
-                           "double score in-game, like hand-made charts do. At most 15% "
-                           "of all notes and at most 3 in each tenth of the song. "
-                           "Changes the in-game score distribution.",
+                           "Mark 10 held notes per song as golden bonus notes, worth "
+                           "double score in-game, like hand-made charts do. Prefers long "
+                           "notes the singing stays on pitch with; at most 15% of all "
+                           "notes and at most 3 in each tenth of the song. Changes the "
+                           "in-game score distribution.",
                            reset_callback=lambda: self._golden_notes.setChecked(
                                _DEFAULTS["golden_notes"]))
 

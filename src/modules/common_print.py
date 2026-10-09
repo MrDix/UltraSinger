@@ -183,12 +183,14 @@ def print_help() -> None:
                                 conversion. Scoring is enabled by default
 
     [golden notes]
-    --golden_notes              Mark the 10 longest held notes as golden "*" bonus notes, worth double
-                                score in-game, like hand-made charts do (experimental). Disabled by
-                                default, since it changes the score distribution. Only normal notes held
-                                for at least 200ms are eligible; freestyle and rap notes are never marked.
-                                At most 15% of all scorable notes become golden (short songs), and at
-                                most 3 in each tenth of the song, so they do not pile up in one section.
+    --golden_notes              Mark 10 held notes per song as golden "*" bonus notes, worth double score
+                                in-game, like hand-made charts do (experimental). Disabled by default,
+                                since it changes the score distribution. Long notes the singing stays on
+                                pitch with are preferred (a golden note nobody can hit is worse than none),
+                                with a bonus for the highest note of a phrase. Only normal notes held for
+                                at least 200ms are eligible; freestyle and rap notes are never marked. At
+                                most 15% of all scorable notes become golden (short songs), and at most 3
+                                in each tenth of the song, so they do not pile up in one section.
 
 
     [llm lyric correction]
