@@ -116,6 +116,17 @@ class TestTraining:
         items = ts.load_dataset(self._workdir(tmp_path), min_fit=0.5)
         assert len(items) == 5 and "tr_00000" not in [i[0] for i in items]
 
+    def test_dataset_skips_chart_with_appended_voice(self, tmp_path, capsys):
+        work = self._workdir(tmp_path)
+        # 900 frames = 14.4 s of audio; the chart goes on for another song length
+        song = [ChartNote(1000 + 400 * k, 1300 + 400 * k, 60, ":", "la ") for k in range(30)]
+        appended = [ChartNote(n.start_ms + 15000, n.end_ms + 15000, 62, ":", "la ") for n in song]
+        ts.save_example(work / "data" / "tr_00099.npz", _analysis(900), song + appended,
+                        offset_ms=0.0, ref_fit=0.9)
+        ids = [i[0] for i in ts.load_dataset(work, min_fit=0.5)]
+        assert "tr_00099" not in ids and len(ids) == 5
+        assert "skipped 1 songs" in capsys.readouterr().out
+
     def test_train_writes_loadable_model(self, tmp_path):
         work = self._workdir(tmp_path)
         out = tmp_path / "models" / "m.pt"

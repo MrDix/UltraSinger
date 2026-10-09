@@ -169,6 +169,149 @@ class TestChartMetrics:
         assert m["vocal_hits_gen_pct"] == 100.0
 
 
+class TestPrecisionMetrics:
+    def test_identical_charts(self):
+        m = cb.chart_metrics(_melody(), _melody())
+        assert m["chart_precision_pct"] == 100.0
+        assert m["chart_f1_pct"] == 100.0
+
+    def test_longer_notes_lower_precision_not_agreement(self):
+        ref = _melody(n=10, step_ms=500, dur_ms=200)
+        gen = [_note(n.start_ms, n.start_ms + 400, n.midi) for n in ref]  # twice as long
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_agreement_pct"] == 100.0
+        assert m["chart_precision_pct"] == 50.0
+        assert m["chart_f1_pct"] == pytest.approx(66.7)
+
+    def test_extra_note_lowers_precision(self):
+        ref = _melody(n=10, step_ms=500, dur_ms=400)  # 4000 ms of notes
+        gen = list(ref) + [_note(10_000, 14_000, 60)]  # 4000 ms more, no reference there
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_agreement_pct"] == 100.0
+        assert m["chart_precision_pct"] == 50.0
+
+    def test_wrong_pitch_lowers_both(self):
+        ref = _melody()
+        gen = [_note(n.start_ms, n.end_ms, n.midi + 3) for n in ref]
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_precision_pct"] == 0.0
+        assert m["chart_f1_pct"] == 0.0
+
+    def test_no_generated_pitched_notes(self):
+        m = cb.chart_metrics(_melody(n=4), [])
+        assert m["chart_precision_pct"] is None
+        assert m["chart_f1_pct"] is None
+
+    def test_in_summary_and_report(self):
+        rows = [{"id": "song_001", "status": "ok", "chart_agreement_pct": 70.0,
+                 "chart_precision_pct": 60.0, "chart_f1_pct": 64.6}]
+        summary = cb.summarize(rows)
+        assert summary["median"]["chart_precision_pct"] == 60.0
+        assert summary["median"]["chart_f1_pct"] == 64.6
+        md = cb.format_summary_md("base", summary, rows)
+        assert "chart_precision_pct" in md and "chart_f1_pct" in md
+        assert any(k == "chart_f1_pct" for k, *_ in cb.compare_summaries(summary, summary))
+
+
+class TestAppendedVoice:
+    """A second voice listed after the end of the song (flattened duet)."""
+    DURATION_MS = 22_000
+    SHIFT_MS = 23_000
+
+    def _duet(self):
+        # voice 1 sings 1.0-10.5 s, voice 2 11.0-20.5 s; the chart appends voice 2 at 34 s
+        v1 = [_note(1000 + 400 * k, 1300 + 400 * k, 60 + k % 5) for k in range(24)]
+        v2 = [_note(11000 + 400 * k, 11300 + 400 * k, 64 + k % 3) for k in range(24)]
+        return v1, v2, cb.shift_notes(v2, self.SHIFT_MS)
+
+    def test_split(self):
+        v1, _, appended = self._duet()
+        song, late = cb.split_appended_voice(v1 + appended, self.DURATION_MS)
+        assert song == v1 and late == appended
+
+    def test_no_split_without_duration_or_for_a_few_late_notes(self):
+        v1, _, appended = self._duet()
+        assert cb.split_appended_voice(v1 + appended, None)[1] == []
+        assert cb.split_appended_voice(v1 + appended[:3], self.DURATION_MS)[1] == []
+
+    def test_offset_fit(self):
+        v1, v2, appended = self._duet()
+        offset, fit = cb.fit_appended_offset(appended, _sung_from(v1 + v2), self.DURATION_MS)
+        assert abs(offset + self.SHIFT_MS) <= 20
+        assert fit > 0.9
+
+    def test_metrics_accept_either_voice(self):
+        v1 = [_note(1000 + 500 * k, 1400 + 500 * k, 60) for k in range(10)]
+        v2 = [_note(n.start_ms, n.end_ms, 67) for n in v1]
+        for n in v2:
+            n.voice = 1
+        gen = [_note(n.start_ms, n.end_ms, 60 if k % 2 else 67) for k, n in enumerate(v1)]
+        m = cb.chart_metrics(v1 + v2, gen, _sung_from(v1))
+        assert m["chart_agreement_pct"] == 100.0
+        assert m["chart_precision_pct"] == 100.0
+        assert m["ref_coverage_pct"] == 100.0
+        assert m["vocal_hits_ref_pct"] == 100.0
+        assert cb.chart_metrics(v1, gen)["chart_agreement_pct"] == 50.0  # one voice only
+
+    def _run(self, tmp_path, appended_pitch=None, sing_voice2=True, text="la"):
+        """Reference with voice 2 appended after a 22 s song; generated chart = what is sung."""
+        v1 = [f": {20 + 8 * k} 6 {60 + k % 5} {text}" for k in range(24)]
+        v2_pitch = [appended_pitch if appended_pitch is not None else 64 + k % 3 for k in range(24)]
+        v2 = [f": {220 + 8 * k} 6 {v2_pitch[k]} {text}" for k in range(24)]
+        appended = [f": {220 + 8 * k + 460} 6 {v2_pitch[k]} {text}" for k in range(24)]
+        ref_txt = _write_chart(tmp_path / "ref.txt", v1 + appended, gap="0")
+        run = tmp_path / "run"
+        song_out = run / "out" / "Artist - Title"
+        (song_out / "cache").mkdir(parents=True)
+        gen_lines = v1 + v2 if sing_voice2 else v1
+        gen_txt = _write_chart(song_out / "Artist - Title.txt", gen_lines, gap="0")
+        sung = _sung_from(cb.load_chart(gen_txt))
+        times = sung.times.tolist() + [self.DURATION_MS / 1000]  # the pitch track spans the song
+        (song_out / "cache" / "swiftf0_False.json").write_text(json.dumps(
+            {"times": times, "frequencies": (440 * 2 ** ((sung.midi - 69) / 12)).tolist() + [0.0],
+             "confidence": [0.95] * len(sung.times) + [0.0]}), encoding="utf-8")
+        (run / "result.json").write_text(json.dumps({"returncode": 0, "seconds": 1, "txt": str(gen_txt)}),
+                                         encoding="utf-8")
+        return cb.evaluate_song({"id": "song_001", "txt": str(ref_txt)}, run, min_ref_fit=50, plots=False)
+
+    def test_evaluate_folds_the_appended_voice_back(self, tmp_path):
+        row = self._run(tmp_path)
+        assert row["appended_voice"] == "folded"
+        assert abs(row["appended_offset_ms"] + self.SHIFT_MS) <= 20
+        # without the fold, half of the reference would lie after the song (~50 %)
+        assert row["chart_agreement_pct"] >= 95.0
+        assert row["chart_precision_pct"] >= 95.0
+
+    def test_lyrics_of_an_appended_voice_are_not_compared(self, tmp_path):
+        row = self._run(tmp_path, text=" word")  # leading space: every note is a word of its own
+        assert row["appended_voice"] == "folded"
+        assert row["ref_words"] == 24  # the first voice only, not the 24 words appended after the song
+        assert row["lyrics_agreement_pct"] >= 95.0
+
+    def test_a_word_running_into_the_appended_voice_is_cut_at_its_start(self, tmp_path):
+        # without spaces all syllables form one word that runs on into the appended part;
+        # only its notes before the appended part count, so it is not half missing
+        row = self._run(tmp_path, text="la")
+        assert row["ref_words"] == 1
+        assert row["lyrics_agreement_pct"] >= 95.0
+
+    def test_evaluate_drops_an_appended_part_that_does_not_fit(self, tmp_path):
+        row = self._run(tmp_path, appended_pitch=70, sing_voice2=False)
+        assert row["appended_voice"] == "dropped"
+        assert row["chart_agreement_pct"] >= 95.0  # scored on the song's own voice only
+
+    def test_ordinary_song_has_no_appended_fields(self, tmp_path):
+        lines = _note_lines(120)
+        ref_txt = _write_chart(tmp_path / "ref.txt", lines)
+        sung = _sung_from(cb.load_chart(ref_txt))
+        p = tmp_path / "pitch.json"
+        p.write_text(json.dumps({"times": sung.times.tolist() + [60.0],
+                                 "frequencies": (440 * 2 ** ((sung.midi - 69) / 12)).tolist() + [0.0],
+                                 "confidence": [0.95] * len(sung.times) + [0.0]}), encoding="utf-8")
+        assert SungPitch.from_pitch_json(p).duration_s == 60.0
+        assert cb.split_appended_voice(cb.load_chart(ref_txt), 60_000)[1] == []
+
+
 class TestOffsetFit:
     def test_finds_shift(self):
         ref = _melody()

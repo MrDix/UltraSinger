@@ -74,6 +74,17 @@ reference fits worse than `--min-ref-fit` (default 50 %) are marked
 `unreliable_reference` and left out of the summary — typically charts with bad
 timing, a different song version, or a voice the pitch tracker cannot follow.
 
+Some charts are duets flattened into one track that list the second voice
+**after** the end of the song (the notes go on for about another song length
+after the audio ends). `evaluate` detects this (at least 10 % of the pitched note
+time starting after the end of the audio), fits the appended part onto the song
+on its own and then scores the generated chart against **either voice**: a frame
+counts as agreeing when the generated note matches one of them. A part that fits
+the vocal worse than `--min-ref-fit` is dropped instead, as notes after the end
+of the audio cannot be measured. Such songs carry `appended_voice`
+(`folded`/`dropped`), `appended_offset_ms` and `appended_fit_pct` in the report.
+The lyrics metrics compare the first voice only, as a chart has one text track.
+
 ---
 
 ## Metrics
@@ -83,7 +94,9 @@ Octaves are folded everywhere, as the games ignore the octave when scoring.
 
 | Metric | Meaning |
 |---|---|
-| `chart_agreement_pct` | **Primary metric.** Share of the reference's pitched note time on which the generated chart also has a note within ±1 semitone. Equals the score a singer who sings the reference perfectly would get on the generated chart (Medium). |
+| `chart_agreement_pct` | **Primary metric.** Share of the reference's pitched note time on which the generated chart also has a note within ±1 semitone. Equals the score a singer who sings the *generated* chart perfectly would get on the reference chart (Medium). Generated notes where the reference has none do not lower it — see the precision. |
+| `chart_precision_pct` | Share of the generated pitched note time that agrees with the reference (±1 semitone). Equals the score a singer who sings the *reference* perfectly would get on the generated chart, as the games divide by the chart's own note time. Notes that run past the reference notes, or that chart backing vocals, lower the precision but not the agreement. |
+| `chart_f1_pct` | Harmonic mean of agreement and precision — rewards charts that cover the reference *without* padding it. |
 | `onset_hit_50_pct` / `onset_hit_100_pct` | Reference note starts that have a generated note start within 50 / 100 ms. |
 | `onset_precision_100_pct` | Generated note starts that have a reference note start within 100 ms. Low values mean extra or split notes. |
 | `note_count_ratio` | Generated / reference pitched notes (1.0 = same number). |

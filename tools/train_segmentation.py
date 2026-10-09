@@ -207,17 +207,28 @@ def load_dataset(workdir: Path, min_fit: float) -> list[tuple]:
     songs_path = workdir / "songs.json"
     if songs_path.exists():
         listed = {s["id"] for s in json.loads(songs_path.read_text(encoding="utf-8"))}
-    items = []
+    items, appended = [], 0
     for p in sorted((workdir / "data").glob("*.npz")):
         if listed is not None and p.stem not in listed:
             continue
         d = load_example(p)
         if float(d["ref_fit"]) < min_fit:
             continue
+        ref = example_reference(d)
+        if cb.split_appended_voice(ref, float(d["duration"]) * 1000)[1]:
+            # A voice appended after the song is sung somewhere in the song,
+            # where these labels say "no note": it would teach the model to
+            # ignore singing. (A chart for a longer version of the song is
+            # skipped as well.)
+            appended += 1
+            continue
         a = example_analysis(d)
         x = model_input(a)
         cls, onset = frame_labels(d, len(x))
-        items.append((p.stem, x, cls, onset, a, example_reference(d)))
+        items.append((p.stem, x, cls, onset, a, ref))
+    if appended:
+        print(f"skipped {appended} songs whose chart goes on after the end of the audio "
+              f"(a second voice appended after the song, or a longer version of the song)", flush=True)
     return items
 
 
