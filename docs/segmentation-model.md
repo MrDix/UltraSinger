@@ -85,7 +85,10 @@ passed to the conversion through its environment, not its command line.
 solo `.txt` per folder (no duets), at least 100 pitched notes, and the audio file
 it refers to. Each chart is aligned to the sung pitch of the separated vocal; how
 well it fits is stored per song, and `train` skips songs below `--min-ref-fit`
-(default 0.5). Charts with sloppy timing teach the model sloppy timing, so the
+(default 0.5). `train` also skips charts that go on after the end of the audio —
+a duet flattened into one track sometimes lists the second voice after the
+song, so the passages that voice sings would be labelled "no note" (it reports
+how many songs it skipped). Charts with sloppy timing teach the model sloppy timing, so the
 model can only be as good as the charts it learns from. Several hundred
 well-timed songs are a good start; more data keeps helping.
 

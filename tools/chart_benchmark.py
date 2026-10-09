@@ -33,6 +33,13 @@ time offset) and flags songs whose reference does not follow the vocal well
 summary. Song IDs in all reports are anonymous (``song_001`` ...); the
 mapping to real folders is only kept in ``WORKDIR/songs.json``.
 
+Some charts carry a second voice appended after the end of the song (a duet
+flattened into one track: the notes go on for about another song length
+after the audio ends). ``evaluate`` folds such a part back onto the song by
+fitting its own offset to the sung pitch and then accepts a generated note
+that matches either voice. A part that does not fit the vocal well enough is
+dropped, as notes after the end of the audio cannot be measured.
+
 The WORKDIR contains file names of your library and copies of your audio.
 Never check it into git.
 
@@ -86,7 +93,7 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -102,6 +109,11 @@ MIN_PITCHED_NOTES = 100
 OFFSET_SEARCH_MS = 1200
 OFFSET_STEP_MS = 10
 SHORT_NOTE_MS = 150
+# A chart continues after the song when at least this share of its pitched
+# note time (and this many pitched notes) starts after the end of the audio.
+APPENDED_MIN_SHARE = 0.1
+APPENDED_MIN_NOTES = 20
+APPENDED_SEARCH_MARGIN_MS = 10000
 DEFAULT_TIMEOUT_S = 3600
 MAX_INPUT_STEM = 100
 
@@ -132,6 +144,7 @@ class ChartNote:
     midi: int
     kind: str
     word: str = ""
+    voice: int = 0  # > 0: an extra voice of the reference (see split_appended_voice)
 
     @property
     def pitched(self) -> bool:
@@ -150,7 +163,8 @@ def load_chart(path: str | Path, shift_ms: float = 0.0) -> list[ChartNote]:
 
 
 def shift_notes(notes: list[ChartNote], shift_ms: float) -> list[ChartNote]:
-    return [ChartNote(n.start_ms + shift_ms, n.end_ms + shift_ms, n.midi, n.kind, n.word) for n in notes]
+    return [ChartNote(n.start_ms + shift_ms, n.end_ms + shift_ms, n.midi, n.kind, n.word, n.voice)
+            for n in notes]
 
 
 def fold(diff):
@@ -176,6 +190,7 @@ class SungPitch:
     """Confident pitch frames of the separated vocal (seconds, MIDI)."""
     times: np.ndarray
     midi: np.ndarray
+    duration_s: float | None = None  # length of the analysed audio, if known
 
     @classmethod
     def from_pitch_json(cls, path: str | Path, confidence: float = CONFIDENCE) -> "SungPitch":
@@ -184,7 +199,8 @@ class SungPitch:
         f = np.asarray(data["frequencies"], dtype=float)
         c = np.asarray(data["confidence"], dtype=float)
         keep = (c >= confidence) & (f > 40.0)
-        return cls(t[keep], 69.0 + 12.0 * np.log2(f[keep] / 440.0))
+        duration = float(t[-1]) if len(t) else None  # the pitch track covers the whole audio
+        return cls(t[keep], 69.0 + 12.0 * np.log2(f[keep] / 440.0), duration)
 
     def frame_indices(self) -> np.ndarray:
         return (self.times * 1000.0 // FRAME_MS).astype(int)
@@ -197,29 +213,42 @@ def _grid_at(grid: np.ndarray, idx: np.ndarray) -> np.ndarray:
     return out
 
 
-def hit_rate(grid: np.ndarray, sung: SungPitch) -> float | None:
-    """Share of sung frames inside notes that are within +-1 semitone (folded)."""
-    target = _grid_at(grid, sung.frame_indices())
-    m = ~np.isnan(target)
-    if not m.any():
+def hit_rate(grid: np.ndarray | list[np.ndarray], sung: SungPitch) -> float | None:
+    """Share of sung frames inside notes that are within +-1 semitone (folded).
+
+    With several grids (voices), a frame inside any voice's note counts and
+    hits when it matches any of them.
+    """
+    grids = grid if isinstance(grid, list) else [grid]
+    idx = sung.frame_indices()
+    inside = np.zeros(len(idx), bool)
+    hit = np.zeros(len(idx), bool)
+    for g in grids:
+        target = _grid_at(g, idx)
+        m = ~np.isnan(target)
+        inside |= m
+        hit[m] |= np.abs(fold(sung.midi[m] - target[m])) <= 1
+    if not inside.any():
         return None
-    return float(np.mean(np.abs(fold(sung.midi[m] - target[m])) <= 1))
+    return float(np.mean(hit[inside]))
 
 
 def fit_reference_offset(ref: list[ChartNote], sung: SungPitch,
                          search_ms: int = OFFSET_SEARCH_MS,
-                         step_ms: int = OFFSET_STEP_MS) -> tuple[float, float]:
+                         step_ms: int = OFFSET_STEP_MS,
+                         center_ms: int = 0) -> tuple[float, float]:
     """Find the time shift that lays the reference notes best onto the sung pitch.
 
     Only the reference and the vocal are used, never the generated chart, so
-    the fit cannot favour the chart under test. Returns ``(offset_ms, fit)``
-    where ``fit`` is the hit rate of the sung pitch on the shifted reference.
+    the fit cannot favour the chart under test. Shifts within
+    ``center_ms +- search_ms`` are tried. Returns ``(offset_ms, fit)`` where
+    ``fit`` is the hit rate of the sung pitch on the shifted reference.
     """
     idx = sung.frame_indices()
-    end = max((n.end_ms for n in ref), default=0.0) + search_ms + 1000
+    end = max((n.end_ms for n in ref), default=0.0) + max(center_ms, 0) + search_ms + 1000
     n_frames = int(end // FRAME_MS) + 1
     best = (0.0, -1.0, 0.0)  # (offset, weighted score, fit)
-    for shift in range(-search_ms, search_ms + 1, step_ms):
+    for shift in range(center_ms - search_ms, center_ms + search_ms + 1, step_ms):
         target = _grid_at(frame_grid(shift_notes(ref, shift), n_frames), idx)
         m = ~np.isnan(target)
         if m.sum() < 50:
@@ -229,6 +258,39 @@ def fit_reference_offset(ref: list[ChartNote], sung: SungPitch,
         if score > best[1]:
             best = (float(shift), score, fit)
     return best[0], best[2]
+
+
+def split_appended_voice(notes: list[ChartNote],
+                         duration_ms: float | None) -> tuple[list[ChartNote], list[ChartNote]]:
+    """Split off a second voice that a chart appends after the end of the song.
+
+    A duet flattened into one track sometimes lists the second voice after
+    the first one, so its notes start after the end of the audio. Returns
+    ``(song, appended)``; ``appended`` is empty unless the notes starting
+    after ``duration_ms`` make up a real part of the chart.
+    """
+    if not duration_ms:
+        return notes, []
+    late = [n for n in notes if n.start_ms >= duration_ms]
+    late_pitched = [n for n in late if n.pitched]
+    total = sum(n.end_ms - n.start_ms for n in notes if n.pitched)
+    late_time = sum(n.end_ms - n.start_ms for n in late_pitched)
+    if len(late_pitched) < APPENDED_MIN_NOTES or total <= 0 or late_time < APPENDED_MIN_SHARE * total:
+        return notes, []
+    return [n for n in notes if n.start_ms < duration_ms], late
+
+
+def fit_appended_offset(part: list[ChartNote], sung: SungPitch, duration_ms: float) -> tuple[float, float]:
+    """Offset that lays an appended voice onto the song (coarse search over the
+    whole song, then the usual fine search). Returns ``(offset_ms, fit)``."""
+    first = min(n.start_ms for n in part)
+    last = max(n.end_ms for n in part)
+    lo = int(-first - APPENDED_SEARCH_MARGIN_MS)
+    hi = int(duration_ms - last + APPENDED_SEARCH_MARGIN_MS)
+    hi = max(hi, lo)
+    center = (lo + hi) // 2
+    coarse, _ = fit_reference_offset(part, sung, search_ms=(hi - lo) // 2 + 50, step_ms=50, center_ms=center)
+    return fit_reference_offset(part, sung, search_ms=60, step_ms=OFFSET_STEP_MS, center_ms=int(coarse))
 
 
 # ---------------------------------------------------------------------------
@@ -271,16 +333,35 @@ def oracle_pitch(ref: list[ChartNote], sung: SungPitch) -> float | None:
     return float(np.mean(hits)) if hits else None
 
 
+def voice_grids(notes: list[ChartNote], n_frames: int, kinds: set[str] = PITCHED_TYPES) -> list[np.ndarray]:
+    """One frame grid per voice of the chart (see ``frame_grid``)."""
+    voices = sorted({n.voice for n in notes}) or [0]
+    return [frame_grid([n for n in notes if n.voice == v], n_frames, kinds) for v in voices]
+
+
 def chart_metrics(ref: list[ChartNote], gen: list[ChartNote], sung: SungPitch | None = None) -> dict:
-    """Compare a generated chart with a (time-aligned) reference chart."""
+    """Compare a generated chart with a (time-aligned) reference chart.
+
+    A reference with several voices (``ChartNote.voice``) counts a frame as
+    charted when any voice has a note there, and a generated note agrees when
+    it matches any of them.
+    """
     end = max([n.end_ms for n in ref + gen] or [0.0]) + 1000
     n_frames = int(end // FRAME_MS) + 1
-    r = frame_grid(ref, n_frames)
+    r_grids = voice_grids(ref, n_frames)
     g = frame_grid(gen, n_frames)
-    r_free = ~np.isnan(frame_grid(ref, n_frames, FREESTYLE_TYPES))
-    r_on, g_on = ~np.isnan(r), ~np.isnan(g)
+    g_on = ~np.isnan(g)
+    r_on = np.zeros(n_frames, bool)
+    agree_at = np.zeros(n_frames, bool)
+    for r in r_grids:
+        on = ~np.isnan(r) & g_on
+        r_on |= ~np.isnan(r)
+        agree_at[on] |= np.abs(fold(g[on] - r[on])) <= 1
+    r_free = np.zeros(n_frames, bool)
+    for r in voice_grids(ref, n_frames, FREESTYLE_TYPES):
+        r_free |= ~np.isnan(r)
     both = r_on & g_on
-    agree = np.abs(fold(g[both] - r[both])) <= 1
+    agree = agree_at[both]
     recall = agree.sum() / r_on.sum() if r_on.any() else None
     precision = agree.sum() / g_on.sum() if g_on.any() else None
 
@@ -309,7 +390,7 @@ def chart_metrics(ref: list[ChartNote], gen: list[ChartNote], sung: SungPitch | 
     }
     if sung is not None:
         m["oracle_pitch_pct"] = _pct(oracle_pitch(ref, sung))
-        m["vocal_hits_ref_pct"] = _pct(hit_rate(r, sung))
+        m["vocal_hits_ref_pct"] = _pct(hit_rate(r_grids, sung))
         m["vocal_hits_gen_pct"] = _pct(hit_rate(g, sung))
     return m
 
@@ -551,13 +632,24 @@ def evaluate_song(song: dict, run_dir: Path, min_ref_fit: float, plots: bool) ->
     sung = SungPitch.from_pitch_json(pitch_json) if pitch_json else None
 
     offset, fit = (0.0, None)
+    appended_info = {}
     if sung is not None and len(sung.times):
+        duration_ms = sung.duration_s * 1000 if sung.duration_s else None
+        ref, appended = split_appended_voice(ref, duration_ms)
         offset, fit = fit_reference_offset(ref, sung)
-    ref = shift_notes(ref, offset)
+        ref = shift_notes(ref, offset)
+        if appended:
+            a_offset, a_fit = fit_appended_offset(appended, sung, duration_ms)
+            folded = a_fit * 100 >= min_ref_fit
+            if folded:
+                ref += [replace(n, voice=1) for n in shift_notes(appended, a_offset)]
+            appended_info = {"appended_voice": "folded" if folded else "dropped",
+                             "appended_offset_ms": a_offset, "appended_fit_pct": _pct(a_fit)}
     metrics = chart_metrics(ref, gen, sung)
     reliable = fit is not None and fit * 100 >= min_ref_fit
     row = {"id": song["id"], "status": "ok" if reliable else "unreliable_reference",
-           "ref_offset_ms": offset, "ref_fit_pct": _pct(fit), "seconds": result.get("seconds"), **metrics}
+           "ref_offset_ms": offset, "ref_fit_pct": _pct(fit), **appended_info,
+           "seconds": result.get("seconds"), **metrics}
     if plots:
         render_piano_roll(ref, gen, sung, run_dir / "plots", song["id"])
     return row
@@ -634,7 +726,7 @@ def render_piano_roll(ref: list[ChartNote], gen: list[ChartNote], sung: SungPitc
         if target is None or not pitched:
             return notes
         k = 12 * round((target - float(np.median(pitched))) / 12)
-        return [ChartNote(n.start_ms, n.end_ms, n.midi + k, n.kind, n.word) for n in notes]
+        return [replace(n, midi=n.midi + k) for n in notes]
 
     ref = to_anchor(ref, anchor)
     ref_pitched = [n.midi for n in ref if n.pitched]
