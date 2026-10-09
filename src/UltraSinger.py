@@ -1215,7 +1215,9 @@ def _write_settings_info_file(
             f.write("[Refinement]\n")
             f.write(f"  Enabled:                  {settings.refine_from_vocal}\n")
             if settings.refine_from_vocal:
-                f.write(f"  Pitch refinement:         {settings.refine_pitch}\n")
+                pitch_note = (" (well-tracked segmentation-model notes keep their pitch)"
+                              if model_segmentation_used and settings.refine_pitch else "")
+                f.write(f"  Pitch refinement:         {settings.refine_pitch}{pitch_note}\n")
                 model_note = " (skipped for segmentation-model notes)" if model_segmentation_used else ""
                 timing_note = model_note if settings.refine_timing else ""
                 gap_note = model_note if settings.refine_gap else ""

@@ -6,7 +6,8 @@ Pitch refinement:
     1. Write a temporary UltraStar TXT from the current midi_segments
     2. Score it against the vocal audio using ultrastar-score's ``score_song()``
     3. For notes with low ``hit_ratio``: replace the pitch with the median
-       of ``detected_tones`` from the ptAKF detector
+       of ``detected_tones`` from the ptAKF detector (a locked pitch only
+       takes a correction that its second pitch track confirms)
     4. Convert back to note names on the MidiSegments
 
 Timing refinement remains librosa-based (onset detection), since ptAKF
@@ -168,6 +169,16 @@ def _corrected_note(seg: MidiSegment, ns, hit_ratio_threshold: float) -> str | N
     return librosa.midi_to_note(detected_midi) if detected_midi != current_midi else None
 
 
+def _correction_allowed(seg: MidiSegment, new_note: str) -> bool:
+    """A locked pitch (see ``MidiSegment.pitch_locked``) only moves to the pitch class
+    that the segment's second pitch track measured."""
+    if not seg.pitch_locked:
+        return True
+    if seg.check_midi is None:
+        return False
+    return (librosa.note_to_midi(new_note) - seg.check_midi) % 12 == 0
+
+
 def refine_pitch_with_uscore(
     midi_segments: list[MidiSegment],
     vocal_audio_path: str,
@@ -186,6 +197,9 @@ def refine_pitch_with_uscore(
     Always uses ``Difficulty.HARD`` (±1 semitone tolerance) for maximum
     correction precision — benchmarks showed this consistently produces
     the best results across all song types.
+
+    Segments with a locked pitch (``MidiSegment.pitch_locked``) keep it unless
+    the correction lands on the pitch class of their ``check_midi``.
 
     Args:
         midi_segments: Notes to refine (modified in-place).
@@ -211,28 +225,38 @@ def refine_pitch_with_uscore(
     # Stage corrections so segments stay unchanged if we crash mid-loop
     staged: list[tuple[int, str]] = []  # (index, new_note_name)
     unchecked: list[int] = []  # notes without any detected tone in the audio
+    kept = 0  # corrections refused for locked pitches
+
+    def stage(i: int, new_note: str | None) -> None:
+        nonlocal kept
+        if not new_note:
+            return
+        if _correction_allowed(midi_segments[i], new_note):
+            staged.append((i, new_note))
+        else:
+            kept += 1
+
     for i, (seg, ns) in enumerate(
         zip(midi_segments, all_note_scores, strict=True)
     ):
         if fallback_audio_path and ns.beats_total > 0 and not any(t >= 0 for t in ns.detected_tones):
             unchecked.append(i)
             continue
-        new_note = _corrected_note(seg, ns, hit_ratio_threshold)
-        if new_note:
-            staged.append((i, new_note))
+        stage(i, _corrected_note(seg, ns, hit_ratio_threshold))
 
     if unchecked:
         fallback_scores = _note_scores(midi_segments, fallback_audio_path, bpm, fallback_pitch_frames)
         if fallback_scores is not None:
             for i in unchecked:
-                new_note = _corrected_note(midi_segments[i], fallback_scores[i], hit_ratio_threshold)
-                if new_note:
-                    staged.append((i, new_note))
+                stage(i, _corrected_note(midi_segments[i], fallback_scores[i], hit_ratio_threshold))
 
     # Commit all corrections at once (transactional)
     for idx, new_note in staged:
         midi_segments[idx].note = new_note
 
+    if kept:
+        print(f"{ULTRASINGER_HEAD} Pitch refinement kept {kept} well-tracked note pitches "
+              f"(no second pitch track confirmed the correction)")
     return midi_segments, len(staged)
 
 

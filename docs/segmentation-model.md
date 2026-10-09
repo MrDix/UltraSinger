@@ -11,10 +11,13 @@ vocal** instead and predicts, frame by frame (16 ms):
 * whether a note is sung here, a freestyle/spoken passage, or nothing to chart,
 * where a new note starts — also between notes that follow each other without a gap.
 
-The note pitch is the median of the pitch tracker (SwiftF0) over each predicted
-note. The lyrics from the usual sources (synced lyrics or Whisper, with forced
-alignment) are split into syllables and placed onto the predicted notes in order
-of time; a syllable held over several notes gets `~` continuations.
+The note pitch comes from the pitch tracker (SwiftF0) over each predicted note:
+the 60th percentile of its confident frames, a little above their median,
+because sung notes sag below their written pitch (scoops into the note, a
+falling end, vibrato). The lyrics from the usual sources (synced lyrics or
+Whisper, with forced alignment) are split into syllables and placed onto the
+predicted notes in order of time; a syllable held over several notes gets `~`
+continuations.
 
 > **No model is shipped.** You train your own on your UltraStar song library.
 > The model and the extracted training data are derived from your library —
@@ -163,3 +166,10 @@ on the validation songs.
   against the full vocal stem.
   `--disable_lead_vocal_pitch` (GUI: Lead Vocal Pitch) skips the extra
   separation.
+* The pitch refinement (which moves badly scoring notes to the pitch the game's
+  own pitch detection hears) keeps the pitch of model notes that the pitch
+  tracker followed through at least half of the note, unless a second pitch
+  track measures the corrected pitch too: the full vocal stem for pitches from
+  the lead stem, otherwise the lead stem (when it was made). Where the pitch
+  tracker is sure, the game's detection is more often the one that is wrong,
+  e.g. a fourth or fifth off on a harmonic.
