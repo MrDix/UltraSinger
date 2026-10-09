@@ -140,13 +140,19 @@ if !errorlevel! equ 0 (
 :: (PowerShell 5.x Set-Content -Encoding UTF8 adds a BOM)
 powershell -NoProfile -Command "$c = [IO.File]::ReadAllText('pyproject.toml'); $c = $c -replace 'whl/cu\d+','whl/cpu'; [IO.File]::WriteAllText('pyproject.toml', $c)"
 
-:: Regenerate lockfile with CPU PyTorch index
+:: Regenerate lockfile with CPU PyTorch index and the newest yt-dlp
+:: (video platforms change often, so the yt-dlp pinned in uv.lock soon fails
+:: to download; if the upgrade is not possible, e.g. offline, keep the pin)
 echo Resolving dependencies...
-uv lock
+uv lock --upgrade-package yt-dlp
 if !errorlevel! neq 0 (
-    echo Error during uv lock
-    pause
-    exit /b 1
+    echo Warning: could not upgrade yt-dlp - keeping the version from uv.lock.
+    uv lock
+    if !errorlevel! neq 0 (
+        echo Error during uv lock
+        pause
+        exit /b 1
+    )
 )
 
 echo Syncing dependencies (core + GUI + scoring + PO-token plugin)...

@@ -298,7 +298,8 @@ class PreferencesTab(QWidget):
         ytdlp_card.add_info(
             "yt-dlp handles all video/audio downloads. Video platforms change "
             "their internals often, so an outdated yt-dlp can start failing downloads "
-            "(HTTP 403). Only update if you're having download problems — this "
+            "(HTTP 403). The install and update scripts fetch the newest release; "
+            "use this button only if downloads fail in between — it "
             "re-runs 'uv lock' and 'uv sync' and takes 1-2 minutes."
         )
 
