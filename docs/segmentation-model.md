@@ -62,7 +62,12 @@ uv run python src/UltraSinger.py -i "Artist - Title.mp4" --segmentation_model_re
 ```
 
 * `--segmentation_model_repo owner/repo` uses the file `segmentation.pt` in the
-  repository root; `owner/repo/path/to/model.pt` picks another file.
+  repository root; `owner/repo/path/to/model.pt` picks another file. Examples:
+  `my-account/my-models` or `my-account/my-models/models/v2.pt`. The address of
+  the repository or the file as the browser shows it on github.com works as well
+  (`https://github.com/my-account/my-models/blob/main/models/v2.pt`; the branch
+  in it is ignored, the file always comes from the default branch). A raw
+  download link does not work.
 * A private repository needs a GitHub access token with read access to the
   repository's contents (for a fine-grained token: *Contents: Read-only* on that
   repository). Set it as the `ULTRASINGER_MODEL_TOKEN` environment variable;
