@@ -127,6 +127,23 @@ class TestTraining:
         assert "tr_00099" not in ids and len(ids) == 5
         assert "skipped 1 songs" in capsys.readouterr().out
 
+    def test_dataset_skips_chart_with_a_few_notes_after_the_audio(self, tmp_path):
+        work = self._workdir(tmp_path)
+        song = [ChartNote(1000 + 400 * k, 1300 + 400 * k, 60, ":", "la ") for k in range(30)]
+        # too few to count as an appended voice, but still not in the 14.4 s of audio
+        late = [ChartNote(16000 + 400 * k, 16300 + 400 * k, 62, ":", "la ") for k in range(3)]
+        ts.save_example(work / "data" / "tr_00099.npz", _analysis(900), song + late,
+                        offset_ms=0.0, ref_fit=0.9)
+        assert "tr_00099" not in [i[0] for i in ts.load_dataset(work, min_fit=0.5)]
+
+    def test_dataset_keeps_chart_ending_just_after_the_audio(self, tmp_path):
+        work = self._workdir(tmp_path)
+        # the last note starts 0.2 s after the end of the 14.4 s of audio
+        song = [ChartNote(1000 + 400 * k, 1300 + 400 * k, 60, ":", "la ") for k in range(35)]
+        ts.save_example(work / "data" / "tr_00099.npz", _analysis(900), song,
+                        offset_ms=0.0, ref_fit=0.9)
+        assert "tr_00099" in [i[0] for i in ts.load_dataset(work, min_fit=0.5)]
+
     def test_train_writes_loadable_model(self, tmp_path):
         work = self._workdir(tmp_path)
         out = tmp_path / "models" / "m.pt"
@@ -191,7 +208,7 @@ class TestExtractSongList:
         data = tmp_path / "data"
         data.mkdir()
         for i in range(3):
-            ts.save_example(data / f"tr_{i:05d}.npz", _analysis(300), _notes(), offset_ms=0.0, ref_fit=0.9)
+            ts.save_example(data / f"tr_{i:05d}.npz", _analysis(500), _notes(), offset_ms=0.0, ref_fit=0.9)
         (tmp_path / "songs.json").write_text(json.dumps([{"id": "tr_00000"}, {"id": "tr_00002"}]),
                                              encoding="utf-8")
         assert sorted(i[0] for i in ts.load_dataset(tmp_path, 0.5)) == ["tr_00000", "tr_00002"]
