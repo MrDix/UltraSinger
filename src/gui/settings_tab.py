@@ -776,7 +776,9 @@ class ConversionSettingsForm(QWidget):
             checked=self._config.get("refine_pitch", True)
         )
         card.add_toggle_row("Refine Pitch", self._refine_pitch,
-                           "Correct note pitches by comparing against the vocal audio.",
+                           "Correct note pitches by comparing against the vocal audio. "
+                           "Notes from a segmentation model keep a well-tracked pitch "
+                           "unless a second pitch track confirms the correction.",
                            reset_callback=lambda: self._refine_pitch.setChecked(
                                _DEFAULTS.get("refine_pitch", True)))
 

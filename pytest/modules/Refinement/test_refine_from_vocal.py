@@ -172,6 +172,43 @@ class TestRefinePitchWithUscore:
         result, _ = self._run_refinement(segments, scores, hit_ratio_threshold=0.5, fallback_audio_path="full.wav")
         assert result[0].note == "E4"
 
+    def test_locked_pitch_is_kept(self):
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a ", pitch_locked=True)]
+        note_scores = [FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10)]
+        result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
+        assert corrections == 0 and result[0].note == "C4"
+
+    def test_locked_pitch_takes_a_confirmed_correction(self):
+        # the second pitch track measured a D (octave does not matter)
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a ", pitch_locked=True, check_midi=74)]
+        note_scores = [FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10)]
+        result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
+        assert corrections == 1 and result[0].note == "D4"
+
+    def test_locked_pitch_refuses_an_unconfirmed_correction(self):
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a ", pitch_locked=True, check_midi=64)]
+        note_scores = [FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10)]
+        result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
+        assert corrections == 0 and result[0].note == "C4"
+
+    def test_unlocked_notes_next_to_locked_ones_are_corrected(self):
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a ", pitch_locked=True),
+                    MidiSegment(note="C4", start=1.0, end=2.0, word="b ")]
+        note_scores = [FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10),
+                       FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10)]
+        result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
+        assert corrections == 1 and [s.note for s in result] == ["C4", "D4"]
+
+    def test_lock_holds_for_notes_judged_on_the_fallback_audio(self):
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a ", pitch_locked=True)]
+        scores = {
+            "fake_vocal.wav": [FakeNoteScore(beats_hit=0, beats_total=10, detected_tones=[-1] * 10)],
+            "full.wav": [FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10)],
+        }
+        result, corrections = self._run_refinement(segments, scores, hit_ratio_threshold=0.5,
+                                                   fallback_audio_path="full.wav")
+        assert corrections == 0 and result[0].note == "C4"
+
     def test_high_hit_ratio_no_change(self):
         """A note scoring well should not be corrected."""
         segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="test")]

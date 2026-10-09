@@ -119,6 +119,54 @@ class TestDecode:
         a.f0_conf[:] = 0.1
         assert decode_notes(_probs(n, pitched=[(10, 40)]), np.zeros(n, np.float32), a, **DEFAULT_DECODE) == []
 
+    def test_pitch_is_upper_middle_of_the_frames(self):
+        # half of the note at 60, half at 62: the median would round to 61
+        n = 60
+        a = _analysis(n, midi=60)
+        a.f0_hz[25:40] = 440.0 * 2 ** ((62 - 69) / 12)
+        notes = decode_notes(_probs(n, pitched=[(10, 40)]), np.zeros(n, np.float32), a, **DEFAULT_DECODE)
+        assert [x.midi for x in notes] == [62]
+
+    def test_coverage_and_second_opinion_of_lead_pitches(self):
+        n = 60
+        vocals, lead = _analysis(n, midi=60), _analysis(n, midi=64)
+        lead.f0_conf[10:25] = 0.1  # the lead covers half of the note
+        notes = decode_notes(_probs(n, pitched=[(10, 40)]), np.zeros(n, np.float32), vocals,
+                             pitch_analysis=lead, **DEFAULT_DECODE)
+        assert [(x.midi, x.voiced, x.check_midi) for x in notes] == [(64, 0.5, 60)]
+
+    def test_vocal_pitch_where_the_lead_is_silent_has_no_second_opinion(self):
+        n = 60
+        vocals, lead = _analysis(n, midi=60), _analysis(n, midi=64)
+        lead.f0_conf[:] = 0.1
+        notes = decode_notes(_probs(n, pitched=[(10, 40)]), np.zeros(n, np.float32), vocals,
+                             pitch_analysis=lead, **DEFAULT_DECODE)
+        assert [(x.midi, x.voiced, x.check_midi) for x in notes] == [(60, 1.0, None)]
+
+    def test_check_track_gives_the_second_opinion_on_vocal_pitches(self):
+        n = 60
+        vocals, check = _analysis(n, midi=60), _analysis(n, midi=67)
+        notes = decode_notes(_probs(n, pitched=[(10, 40)]), np.zeros(n, np.float32), vocals,
+                             check_analysis=check, **DEFAULT_DECODE)
+        assert [(x.midi, x.check_midi) for x in notes] == [(60, 67)]
+        check.f0_conf[:] = 0.1
+        notes = decode_notes(_probs(n, pitched=[(10, 40)]), np.zeros(n, np.float32), vocals,
+                             check_analysis=check, **DEFAULT_DECODE)
+        assert notes[0].check_midi is None
+        # without any check track there is no second opinion
+        assert decode_notes(_probs(n, pitched=[(10, 40)]), np.zeros(n, np.float32), vocals,
+                            **DEFAULT_DECODE)[0].check_midi is None
+
+    def test_freestyle_and_continued_notes_are_not_tracked(self):
+        n = 100
+        a = _analysis(n, midi=65)
+        a.f0_conf[:] = 0.1
+        a.f0_conf[10:20] = 0.95
+        onset = np.zeros(n, np.float32)
+        onset[20] = 0.9
+        notes = decode_notes(_probs(n, pitched=[(10, 40)], free=[(60, 80)]), onset, a, **DEFAULT_DECODE)
+        assert [(x.voiced, x.freestyle) for x in notes] == [(1.0, False), (0.0, False), (0.0, True)]
+
 
 # ── model files ─────────────────────────────────────────────────────────────
 
@@ -303,6 +351,18 @@ class TestSegmenter:
         assert [s.word for s in result.segments] == ["hel", "lo "]
         assert result.pitch_audio_path == str(vocal)
 
+    def test_well_tracked_notes_lock_their_pitch(self):
+        notes = [PredictedNote(0.0, 0.5, 60, voiced=0.5, check_midi=62),
+                 PredictedNote(0.5, 1.0, 62, voiced=0.49, check_midi=62),
+                 PredictedNote(1.0, 1.5, 64, freestyle=True, voiced=1.0)]
+        segments = [_seg("a ", 0.0, 0.5), _seg("b ", 0.5, 1.0), _seg("c ", 1.0, 1.5)]
+        assert segmenter.lock_pitches(segments, notes) == 1
+        assert [(s.pitch_locked, s.check_midi) for s in segments] == [(True, 62), (False, 62), (False, None)]
+
+    def test_new_segments_are_not_locked(self):
+        seg = MidiSegment("C4", 0.0, 1.0, "a ")
+        assert seg.pitch_locked is False and seg.check_midi is None
+
 
 # ── lead-vocal pitch ────────────────────────────────────────────────────────
 
@@ -384,8 +444,9 @@ class TestSegmenterLeadPitch:
         monkeypatch.setattr(feats, "analyse_vocal", lambda y: _analysis(200))
         seen = {}
 
-        def fake_decode(probs, onset, analysis, pitch_analysis=None, **kw):
+        def fake_decode(probs, onset, analysis, pitch_analysis=None, check_analysis=None, **kw):
             seen["pitch_analysis"] = pitch_analysis
+            seen["check_analysis"] = check_analysis
             return _notes((0.0, 0.5))
         monkeypatch.setattr(dec, "decode_notes", fake_decode)
         monkeypatch.setattr(lead_vocal, "lead_vocal_analysis", lead_result)
@@ -396,19 +457,19 @@ class TestSegmenterLeadPitch:
     def test_reliable_lead_is_used(self, tmp_path, monkeypatch):
         lead = _analysis(200, midi=64)
         result, seen = self._run(tmp_path, monkeypatch, lambda p, c: ("lead.wav", lead))
-        assert result.segments and seen["pitch_analysis"] is lead
+        assert result.segments and seen["pitch_analysis"] is lead and seen["check_analysis"] is None
         assert result.pitch_audio_path == "lead.wav"  # later steps compare the notes with the lead stem
 
-    def test_unreliable_lead_is_ignored(self, tmp_path, monkeypatch):
+    def test_unreliable_lead_only_checks_the_pitches(self, tmp_path, monkeypatch):
         lead = _analysis(200, midi=64)
         lead.f0_conf[:150] = 0.1
         result, seen = self._run(tmp_path, monkeypatch, lambda p, c: ("lead.wav", lead))
-        assert result.segments and seen["pitch_analysis"] is None
+        assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is lead
         assert result.pitch_audio_path == str(tmp_path / "v.wav")
 
     def test_separation_error_falls_back(self, tmp_path, monkeypatch):
         def boom(p, c):
             raise RuntimeError("no model")
         result, seen = self._run(tmp_path, monkeypatch, boom)
-        assert result.segments and seen["pitch_analysis"] is None
+        assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is None
         assert result.pitch_audio_path == str(tmp_path / "v.wav")

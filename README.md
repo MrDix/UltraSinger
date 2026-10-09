@@ -333,7 +333,9 @@ _Not all options working now!_
                                 and uses the game's C++ ptAKF (the pitch-detection algorithm the karaoke
                                 games themselves use to score singing) to find and fix poorly-scoring notes.
     --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
-    --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on)
+    --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on; notes from a
+                                segmentation model keep a well-tracked pitch unless a second pitch track
+                                confirms the correction)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
                                 for notes from a segmentation model)
     --disable_refine_gap        Disable the GAP sweep, which shifts all notes together by up to 70 ms to where
