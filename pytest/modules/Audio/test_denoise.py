@@ -108,6 +108,23 @@ class RemoveFilterDelayTest(unittest.TestCase):
             self.assertEqual(open(filtered, "rb").read(), before)
             self.assertEqual(sorted(os.listdir(tmp)), ["in.wav", "out.wav"])
 
+    def test_no_temp_file_possible_keeps_the_file(self):
+        import tempfile
+        from unittest.mock import patch
+
+        sr = 16000
+        x = _vocal_like(sr, 6)
+        delayed = np.concatenate([np.zeros(400, np.float32), x[:-400]])
+        with tempfile.TemporaryDirectory() as tmp:
+            original, filtered = os.path.join(tmp, "in.wav"), os.path.join(tmp, "out.wav")
+            sf.write(original, x, sr, subtype="PCM_16")
+            sf.write(filtered, delayed, sr, subtype="PCM_16")
+            before = open(filtered, "rb").read()
+            with patch("src.modules.Audio.denoise.tempfile.mkstemp", side_effect=PermissionError("read-only")):
+                self.assertEqual(remove_filter_delay(original, filtered), 0.0)
+            self.assertEqual(open(filtered, "rb").read(), before)
+            self.assertEqual(sorted(os.listdir(tmp)), ["in.wav", "out.wav"])
+
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 class DenoiseAlignmentTest(unittest.TestCase):
