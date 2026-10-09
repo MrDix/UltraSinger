@@ -74,7 +74,9 @@ class TestParseSpec:
         assert ms.parse_repo_spec(spec) == expected
 
     @pytest.mark.parametrize("spec", ["", "noslash", "a b/c", "owner/repo/../x.pt",
-                                      "owner/repo/models/..", "owner/repo/a//b.pt"])
+                                      "owner/repo/models/..", "owner/repo/a//b.pt",
+                                      # the help texts say raw download links are not accepted
+                                      "https://raw.githubusercontent.com/owner/repo/main/models/v2.pt"])
     def test_invalid(self, spec):
         with pytest.raises(ValueError):
             ms.parse_repo_spec(spec)

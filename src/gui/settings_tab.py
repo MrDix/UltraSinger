@@ -686,14 +686,20 @@ class ConversionSettingsForm(QWidget):
 
         repo_tooltip = (
             "Download the segmentation model from a GitHub repository instead of "
-            "picking a local file: owner/repo, or owner/repo/path/to/model.pt "
-            "(default file: segmentation.pt). The model is cached on this computer "
-            "and only downloaded again when the repository has a newer version; "
-            "without network access the cached copy is used. Ignored when a local "
+            "picking a local file. Enter the account and repository name, e.g. "
+            "my-account/my-models (uses the file segmentation.pt in the repository "
+            "root), or add the path of another file, e.g. "
+            "my-account/my-models/models/v2.pt. The repository's or the file's "
+            "github.com address from the browser works as well (the branch in it "
+            "is ignored, the file always comes from the default branch); a raw "
+            "download link does not. The model is cached on this computer and only "
+            "downloaded again when the repository has a newer version; without "
+            "network access the cached copy is used. Ignored when a local "
             "Segmentation Model file is set."
         )
         self._segmentation_model_repo = QLineEdit()
-        self._segmentation_model_repo.setPlaceholderText("Optional: owner/repo[/model.pt] on GitHub")
+        self._segmentation_model_repo.setPlaceholderText(
+            "Optional, e.g. my-account/my-models or my-account/my-models/models/v2.pt")
         self._segmentation_model_repo.setText(self._config.get("segmentation_model_repo", ""))
         card.add_row("Model Repository", self._segmentation_model_repo, repo_tooltip,
                      reset_callback=lambda: self._segmentation_model_repo.setText(
