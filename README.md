@@ -648,7 +648,7 @@ These features are experimental and disabled by default. They may change or be r
 
 #### Chart Benchmark Tool
 
-`tools/chart_benchmark.py` converts a reproducible sample of songs from your own UltraStar library and measures how close the generated charts come to the existing hand-made charts (note timing, length, pitch and which passages are charted at all), including game-like piano-roll images. Use it to check whether a pipeline change actually improves the charts — the game score alone cannot tell. All data stays in a work directory outside the repository:
+`tools/chart_benchmark.py` converts a reproducible sample of songs from your own UltraStar library and measures how close the generated charts come to the existing hand-made charts (note timing, length, pitch, which passages are charted at all and whether the lyrics sit under the right notes), including game-like piano-roll images. Use it to check whether a pipeline change actually improves the charts — the game score alone cannot tell. All data stays in a work directory outside the repository:
 
 * 📄 **[Chart Benchmark Tool documentation](docs/chart-benchmark.md)**
 

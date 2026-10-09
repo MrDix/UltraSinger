@@ -95,9 +95,26 @@ Octaves are folded everywhere, as the games ignore the octave when scoring.
 | `oracle_pitch_pct` | Pitch accuracy the pitch tracker would reach with the reference's own note boundaries. If this is high while `chart_agreement_pct` is low, the loss is in note segmentation, not in pitch detection. |
 | `vocal_hits_ref_pct` / `vocal_hits_gen_pct` | Share of sung frames inside notes that hit the reference / generated chart. Similar values do **not** mean similar chart quality — that is exactly why the game score is not used as the target. |
 
-Reports are written to `<workdir>/reports/<label>.json` and `<label>.md`. Song IDs
-in reports are anonymous (`song_001`, …); the mapping to library folders is kept
-only in `<workdir>/songs.json`.
+### Lyrics
+
+The lyrics are compared word by word: syllables are joined into words the way the
+games display them, so a different hyphenation is not an error. Case, accents,
+apostrophes and punctuation are ignored.
+
+| Metric | Meaning |
+|---|---|
+| `lyrics_agreement_pct` | **Main lyrics metric.** Share of the reference's sung time (notes with text) on which the generated chart sings the same word — is the text under the right notes? |
+| `lyrics_agree_pct` | The same, counted only where both charts have a note. The difference to `lyrics_agreement_pct` is the time the generated chart leaves out. |
+| `lyrics_words_found_pct` | Reference words that occur in the generated lyrics, in order (low = transcription errors, a different song version or missing lines). |
+| `word_start_100_pct` / `word_start_250_pct` | Found words whose generated start lies within 100 / 250 ms of the reference start. |
+
+Reports are written to `<workdir>/reports/<label>.json` and `<label>.md`
+(`evaluate --reports-dir` writes them elsewhere, `compare --reports-dir` reads
+them from there). `compare` counts the songs that got better or worse on the
+primary metric; `--metric` counts higher and lower values of another one instead,
+e.g. `--metric lyrics_agreement_pct`.
+Song IDs in reports are anonymous (`song_001`, …); the mapping to library folders
+is kept only in `<workdir>/songs.json`.
 
 ---
 
