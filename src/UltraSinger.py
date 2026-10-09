@@ -850,9 +850,9 @@ def run() -> tuple[str, Score, Score]:
             pitch_frames=pitch_frames,
         )
 
-    # Golden notes — mark a bounded, evenly-spread subset of held notes as
-    # golden ("*") bonus notes. Runs last, on the final note boundaries/
-    # pitches (after refinement and ptAKF refit), so it never gets
+    # Golden notes — mark long held notes the singing stays on, spread over
+    # the song, as golden ("*") bonus notes. Runs last, on the final note
+    # boundaries/pitches (after refinement and ptAKF refit), so it never gets
     # overwritten by a later pass.
     if settings.golden_notes:
         from modules.Ultrastar.golden_notes import mark_golden_notes
@@ -860,6 +860,7 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = mark_golden_notes(
             process_data.midi_segments,
             bpm=process_data.media_info.bpm,
+            pitched_data=process_data.pitched_data,
         )
 
     # Create plot
