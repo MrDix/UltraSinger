@@ -1,5 +1,8 @@
 """Reduce noise from audio"""
 
+import os
+import tempfile
+
 import ffmpeg
 import librosa
 import numpy as np
@@ -96,7 +99,18 @@ def remove_filter_delay(original_path: str, filtered_path: str) -> float:
     if delay > 0:
         aligned = np.zeros_like(filtered)
         aligned[:len(filtered) - delay] = filtered[delay:]
-        sf.write(filtered_path, aligned, sample_rate, subtype=info.subtype)
+        # Write next to the file and swap it in, so a failed write never leaves a broken cache file
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav", dir=os.path.dirname(os.path.abspath(filtered_path)))
+        os.close(fd)
+        try:
+            sf.write(tmp_path, aligned, sample_rate, format=info.format, subtype=info.subtype)
+            os.replace(tmp_path, filtered_path)
+        except Exception as e:  # noqa: BLE001 - keep the (delayed) denoised file usable
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} could not remove the delay of the "
+                  f"noise filter ({e!r}) - the denoised vocal may lag the song")
+            return 0.0
     return delay / sample_rate
 
 
