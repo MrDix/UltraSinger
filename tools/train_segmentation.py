@@ -48,7 +48,10 @@ from modules.Segmentation.features import FRAME_S, VocalAnalysis, analyse_vocal,
 KIND_CODES = {":": 0, "*": 1, "F": 2, "R": 3, "G": 4}
 KIND_NAMES = {v: k for k, v in KIND_CODES.items()}
 CHUNK_FRAMES = 625  # 10 s training windows
-DECODE_GRID = {"onset_thr": [0.3, 0.4, 0.5, 0.6], "act_thr": [0.4, 0.5, 0.6],
+# A chart may end a little after its audio (a held last note, a trimmed file);
+# pitched notes starting later than this are not in the audio at all.
+LATE_NOTE_TOLERANCE_MS = 1000.0
+DECODE_GRID ={"onset_thr": [0.3, 0.4, 0.5, 0.6], "act_thr": [0.4, 0.5, 0.6],
                "min_note_frames": [3, 4, 6], "min_gap_frames": [0, 1, 2]}
 
 
@@ -207,17 +210,31 @@ def load_dataset(workdir: Path, min_fit: float) -> list[tuple]:
     songs_path = workdir / "songs.json"
     if songs_path.exists():
         listed = {s["id"] for s in json.loads(songs_path.read_text(encoding="utf-8"))}
-    items = []
+    items, appended = [], 0
     for p in sorted((workdir / "data").glob("*.npz")):
         if listed is not None and p.stem not in listed:
             continue
         d = load_example(p)
         if float(d["ref_fit"]) < min_fit:
             continue
+        ref = example_reference(d)
+        duration_ms = float(d["duration"]) * 1000
+        if cb.split_appended_voice(ref, duration_ms)[1] or any(
+                n.pitched and n.start_ms >= duration_ms + LATE_NOTE_TOLERANCE_MS for n in ref):
+            # A voice appended after the song is sung somewhere in the song,
+            # where these labels say "no note": it would teach the model to
+            # ignore singing. Charts with fewer notes after the audio (a short
+            # appended part, a chart for a longer version of the song) are
+            # skipped as well.
+            appended += 1
+            continue
         a = example_analysis(d)
         x = model_input(a)
         cls, onset = frame_labels(d, len(x))
-        items.append((p.stem, x, cls, onset, a, example_reference(d)))
+        items.append((p.stem, x, cls, onset, a, ref))
+    if appended:
+        print(f"skipped {appended} songs whose chart goes on after the end of the audio "
+              f"(a second voice appended after the song, or a longer version of the song)", flush=True)
     return items
 
 

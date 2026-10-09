@@ -169,6 +169,149 @@ class TestChartMetrics:
         assert m["vocal_hits_gen_pct"] == 100.0
 
 
+class TestPrecisionMetrics:
+    def test_identical_charts(self):
+        m = cb.chart_metrics(_melody(), _melody())
+        assert m["chart_precision_pct"] == 100.0
+        assert m["chart_f1_pct"] == 100.0
+
+    def test_longer_notes_lower_precision_not_agreement(self):
+        ref = _melody(n=10, step_ms=500, dur_ms=200)
+        gen = [_note(n.start_ms, n.start_ms + 400, n.midi) for n in ref]  # twice as long
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_agreement_pct"] == 100.0
+        assert m["chart_precision_pct"] == 50.0
+        assert m["chart_f1_pct"] == pytest.approx(66.7)
+
+    def test_extra_note_lowers_precision(self):
+        ref = _melody(n=10, step_ms=500, dur_ms=400)  # 4000 ms of notes
+        gen = list(ref) + [_note(10_000, 14_000, 60)]  # 4000 ms more, no reference there
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_agreement_pct"] == 100.0
+        assert m["chart_precision_pct"] == 50.0
+
+    def test_wrong_pitch_lowers_both(self):
+        ref = _melody()
+        gen = [_note(n.start_ms, n.end_ms, n.midi + 3) for n in ref]
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_precision_pct"] == 0.0
+        assert m["chart_f1_pct"] == 0.0
+
+    def test_no_generated_pitched_notes(self):
+        m = cb.chart_metrics(_melody(n=4), [])
+        assert m["chart_precision_pct"] is None
+        assert m["chart_f1_pct"] is None
+
+    def test_in_summary_and_report(self):
+        rows = [{"id": "song_001", "status": "ok", "chart_agreement_pct": 70.0,
+                 "chart_precision_pct": 60.0, "chart_f1_pct": 64.6}]
+        summary = cb.summarize(rows)
+        assert summary["median"]["chart_precision_pct"] == 60.0
+        assert summary["median"]["chart_f1_pct"] == 64.6
+        md = cb.format_summary_md("base", summary, rows)
+        assert "chart_precision_pct" in md and "chart_f1_pct" in md
+        assert any(k == "chart_f1_pct" for k, *_ in cb.compare_summaries(summary, summary))
+
+
+class TestAppendedVoice:
+    """A second voice listed after the end of the song (flattened duet)."""
+    DURATION_MS = 22_000
+    SHIFT_MS = 23_000
+
+    def _duet(self):
+        # voice 1 sings 1.0-10.5 s, voice 2 11.0-20.5 s; the chart appends voice 2 at 34 s
+        v1 = [_note(1000 + 400 * k, 1300 + 400 * k, 60 + k % 5) for k in range(24)]
+        v2 = [_note(11000 + 400 * k, 11300 + 400 * k, 64 + k % 3) for k in range(24)]
+        return v1, v2, cb.shift_notes(v2, self.SHIFT_MS)
+
+    def test_split(self):
+        v1, _, appended = self._duet()
+        song, late = cb.split_appended_voice(v1 + appended, self.DURATION_MS)
+        assert song == v1 and late == appended
+
+    def test_no_split_without_duration_or_for_a_few_late_notes(self):
+        v1, _, appended = self._duet()
+        assert cb.split_appended_voice(v1 + appended, None)[1] == []
+        assert cb.split_appended_voice(v1 + appended[:3], self.DURATION_MS)[1] == []
+
+    def test_offset_fit(self):
+        v1, v2, appended = self._duet()
+        offset, fit = cb.fit_appended_offset(appended, _sung_from(v1 + v2), self.DURATION_MS)
+        assert abs(offset + self.SHIFT_MS) <= 20
+        assert fit > 0.9
+
+    def test_metrics_accept_either_voice(self):
+        v1 = [_note(1000 + 500 * k, 1400 + 500 * k, 60) for k in range(10)]
+        v2 = [_note(n.start_ms, n.end_ms, 67) for n in v1]
+        for n in v2:
+            n.voice = 1
+        gen = [_note(n.start_ms, n.end_ms, 60 if k % 2 else 67) for k, n in enumerate(v1)]
+        m = cb.chart_metrics(v1 + v2, gen, _sung_from(v1))
+        assert m["chart_agreement_pct"] == 100.0
+        assert m["chart_precision_pct"] == 100.0
+        assert m["ref_coverage_pct"] == 100.0
+        assert m["vocal_hits_ref_pct"] == 100.0
+        assert cb.chart_metrics(v1, gen)["chart_agreement_pct"] == 50.0  # one voice only
+
+    def _run(self, tmp_path, appended_pitch=None, sing_voice2=True, text="la"):
+        """Reference with voice 2 appended after a 22 s song; generated chart = what is sung."""
+        v1 = [f": {20 + 8 * k} 6 {60 + k % 5} {text}" for k in range(24)]
+        v2_pitch = [appended_pitch if appended_pitch is not None else 64 + k % 3 for k in range(24)]
+        v2 = [f": {220 + 8 * k} 6 {v2_pitch[k]} {text}" for k in range(24)]
+        appended = [f": {220 + 8 * k + 460} 6 {v2_pitch[k]} {text}" for k in range(24)]
+        ref_txt = _write_chart(tmp_path / "ref.txt", v1 + appended, gap="0")
+        run = tmp_path / "run"
+        song_out = run / "out" / "Artist - Title"
+        (song_out / "cache").mkdir(parents=True)
+        gen_lines = v1 + v2 if sing_voice2 else v1
+        gen_txt = _write_chart(song_out / "Artist - Title.txt", gen_lines, gap="0")
+        sung = _sung_from(cb.load_chart(gen_txt))
+        times = sung.times.tolist() + [self.DURATION_MS / 1000]  # the pitch track spans the song
+        (song_out / "cache" / "swiftf0_False.json").write_text(json.dumps(
+            {"times": times, "frequencies": (440 * 2 ** ((sung.midi - 69) / 12)).tolist() + [0.0],
+             "confidence": [0.95] * len(sung.times) + [0.0]}), encoding="utf-8")
+        (run / "result.json").write_text(json.dumps({"returncode": 0, "seconds": 1, "txt": str(gen_txt)}),
+                                         encoding="utf-8")
+        return cb.evaluate_song({"id": "song_001", "txt": str(ref_txt)}, run, min_ref_fit=50, plots=False)
+
+    def test_evaluate_folds_the_appended_voice_back(self, tmp_path):
+        row = self._run(tmp_path)
+        assert row["appended_voice"] == "folded"
+        assert abs(row["appended_offset_ms"] + self.SHIFT_MS) <= 20
+        # without the fold, half of the reference would lie after the song (~50 %)
+        assert row["chart_agreement_pct"] >= 95.0
+        assert row["chart_precision_pct"] >= 95.0
+
+    def test_lyrics_of_an_appended_voice_are_not_compared(self, tmp_path):
+        row = self._run(tmp_path, text=" word")  # leading space: every note is a word of its own
+        assert row["appended_voice"] == "folded"
+        assert row["ref_words"] == 24  # the first voice only, not the 24 words appended after the song
+        assert row["lyrics_agreement_pct"] >= 95.0
+
+    def test_a_word_running_into_the_appended_voice_is_cut_at_its_start(self, tmp_path):
+        # without spaces all syllables form one word that runs on into the appended part;
+        # only its notes before the appended part count, so it is not half missing
+        row = self._run(tmp_path, text="la")
+        assert row["ref_words"] == 1
+        assert row["lyrics_agreement_pct"] >= 95.0
+
+    def test_evaluate_drops_an_appended_part_that_does_not_fit(self, tmp_path):
+        row = self._run(tmp_path, appended_pitch=70, sing_voice2=False)
+        assert row["appended_voice"] == "dropped"
+        assert row["chart_agreement_pct"] >= 95.0  # scored on the song's own voice only
+
+    def test_ordinary_song_has_no_appended_fields(self, tmp_path):
+        lines = _note_lines(120)
+        ref_txt = _write_chart(tmp_path / "ref.txt", lines)
+        sung = _sung_from(cb.load_chart(ref_txt))
+        p = tmp_path / "pitch.json"
+        p.write_text(json.dumps({"times": sung.times.tolist() + [60.0],
+                                 "frequencies": (440 * 2 ** ((sung.midi - 69) / 12)).tolist() + [0.0],
+                                 "confidence": [0.95] * len(sung.times) + [0.0]}), encoding="utf-8")
+        assert SungPitch.from_pitch_json(p).duration_s == 60.0
+        assert cb.split_appended_voice(cb.load_chart(ref_txt), 60_000)[1] == []
+
+
 class TestOffsetFit:
     def test_finds_shift(self):
         ref = _melody()
@@ -195,6 +338,116 @@ class TestSungPitch:
         s = SungPitch.from_pitch_json(p)
         assert list(s.times) == [0.0]
         assert s.midi[0] == pytest.approx(69.0)
+
+
+# ── lyrics ───────────────────────────────────────────────────────────────────
+
+def _words(path, shift_ms=0.0):
+    return [(w.text, round(w.start_ms)) for w in cb.load_words(path, shift_ms)]
+
+
+def _word(text, *spans):
+    return cb.ChartWord(text, [(float(a), float(b)) for a, b in spans])
+
+
+class TestNormalizeWord:
+    @pytest.mark.parametrize("raw, key", [("Don't", "dont"), ("Café", "cafe"), ("ÜBER!", "uber"),
+                                          ("Straße", "strasse"), ("rock-n-roll", "rocknroll"), ("...", "")])
+    def test_keys(self, raw, key):
+        assert cb.normalize_word(raw) == key
+
+
+class TestLoadWords:
+    def test_leading_space_starts_a_word(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 2 60 Hel", ": 2 2 60 lo", ": 4 2 60  world"])
+        assert _words(p) == [("hello", 1000), ("world", 1200)]
+
+    def test_trailing_space_ends_a_word(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 2 60 Hel", ": 2 2 60 lo ", ": 4 2 60 world"])
+        assert _words(p) == [("hello", 1000), ("world", 1200)]
+
+    def test_line_break_ends_a_word(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 2 60 one", "- 3", ": 4 2 60 two"])
+        assert _words(p) == [("one", 1000), ("two", 1200)]
+
+    def test_continuation_notes_extend_the_word(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 2 60 mind", ": 2 2 62 ~", ": 4 2 64 ~ ", ": 6 2 60 again"])
+        words = cb.load_words(p)
+        assert [w.text for w in words] == ["mind", "again"]
+        assert words[0].spans == [(1000, 1100), (1100, 1200), (1200, 1300)]
+
+    def test_continuation_after_a_word_end_keeps_the_next_word_separate(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 2 60 mind ", ": 2 2 62 ~", ": 4 2 60 again"])
+        assert [w.text for w in cb.load_words(p)] == ["mind", "again"]
+
+    def test_several_words_on_one_note_share_its_time(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 4 60 ab cd "])
+        words = cb.load_words(p)
+        assert [w.text for w in words] == ["ab", "cd"]
+        assert words[0].spans == [(1000, 1100)] and words[1].spans == [(1100, 1200)]
+
+    def test_punctuation_only_and_shift(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 2 60 Hi ", ": 2 2 60 !", "F 4 2 60  yo"])
+        assert _words(p, shift_ms=-100) == [("hi", 900), ("yo", 1100)]
+
+    def test_cp1252_text(self, tmp_path):
+        p = tmp_path / "a.txt"
+        p.write_bytes("\n".join(["#BPM:300", "#GAP:0", ": 0 2 60 sch\xf6n", "E"]).encode("cp1252"))
+        assert _words(p) == [("schon", 0)]
+
+
+class TestAlignWords:
+    def test_order_preserving(self):
+        ref = [_word("a", (0, 100)), _word("b", (200, 300))]
+        assert cb.align_words(ref, [_word("b", (0, 100)), _word("a", (200, 300))]) in ([(0, 1)], [(1, 0)])
+
+    def test_missing_word_skipped(self):
+        ref = [_word("a", (0, 100)), _word("b", (200, 300)), _word("c", (400, 500))]
+        assert cb.align_words(ref, [_word("a", (0, 100)), _word("c", (400, 500))]) == [(0, 0), (2, 1)]
+
+    def test_repeated_word_matched_to_the_closer_occurrence(self):
+        ref = [_word("oh", (10_000, 10_200))]
+        gen = [_word("oh", (0, 200)), _word("oh", (10_100, 10_300))]
+        assert cb.align_words(ref, gen) == [(0, 1)]
+
+    def test_empty(self):
+        assert cb.align_words([], [_word("a", (0, 1))]) == []
+
+
+class TestLyricsMetrics:
+    def _ref(self):
+        return [_word(t, (i * 500, i * 500 + 400)) for i, t in enumerate(["one", "two", "three", "four"])]
+
+    def test_identical(self):
+        m = cb.lyrics_metrics(self._ref(), self._ref())
+        assert m["lyrics_agreement_pct"] == 100.0 and m["lyrics_agree_pct"] == 100.0
+        assert m["lyrics_words_found_pct"] == 100.0 and m["word_start_100_pct"] == 100.0
+
+    def test_words_one_note_late(self):
+        ref = self._ref()
+        gen = [_word("one", (0, 900))] + [_word(w.text, (w.spans[0][0] + 500, w.spans[0][1] + 500)) for w in ref[1:]]
+        m = cb.lyrics_metrics(ref, gen)
+        assert m["lyrics_agreement_pct"] == 25.0  # only "one" is under its notes
+        assert m["lyrics_words_found_pct"] == 100.0
+        assert m["word_start_250_pct"] == 25.0
+
+    def test_missing_word_and_missing_notes(self):
+        ref = self._ref()
+        gen = [ref[0], ref[1], ref[3]]  # "three" neither sung nor charted
+        m = cb.lyrics_metrics(ref, gen)
+        assert m["lyrics_words_found_pct"] == 75.0
+        assert m["lyrics_agreement_pct"] == 75.0
+        assert m["lyrics_agree_pct"] == 100.0  # where both charts have a note, the text matches
+
+    def test_wrong_word(self):
+        ref = self._ref()
+        gen = [ref[0], _word("too", ref[1].spans[0]), ref[2], ref[3]]
+        m = cb.lyrics_metrics(ref, gen)
+        assert m["lyrics_agreement_pct"] == 75.0 and m["lyrics_agree_pct"] == 75.0
+
+    def test_no_reference_words(self):
+        m = cb.lyrics_metrics([], self._ref())
+        assert m["lyrics_agreement_pct"] is None and m["gen_words"] == 4
 
 
 # ── library discovery ────────────────────────────────────────────────────────
@@ -456,6 +709,7 @@ class TestEvaluateSong:
         assert row["status"] == "ok"
         assert row["chart_agreement_pct"] == 100.0
         assert abs(row["ref_offset_ms"]) <= 10
+        assert row["lyrics_agreement_pct"] == 100.0 and row["lyrics_words_found_pct"] == 100.0
 
     def test_unreliable_reference_flagged(self, tmp_path):
         song, run = self._setup(tmp_path, ref_fit_ok=False)
@@ -555,4 +809,21 @@ class TestCli:
         assert cb.main(["evaluate", str(work), "--label", "base"]) == 0
         assert (work / "reports" / "base.json").exists()
         assert cb.main(["compare", str(work), "base", "base"]) == 0
-        assert "chart_agreement_pct" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "chart_agreement_pct" in out and "lyrics_agreement_pct" in out
+
+        other = tmp_path / "other_reports"
+        assert cb.main(["evaluate", str(work), "--label", "base", "--reports-dir", str(other)]) == 0
+        assert (other / "base.json").exists()
+        # A second report that exists only in the other folder, with a higher lyrics score
+        report = json.loads((other / "base.json").read_text(encoding="utf-8"))
+        report["songs"][0]["lyrics_agreement_pct"] += 5.0
+        (other / "alt.json").write_text(json.dumps(report), encoding="utf-8")
+        capsys.readouterr()
+        assert cb.main(["compare", str(work), "base", "alt", "--reports-dir", str(other),
+                        "--metric", "lyrics_agreement_pct"]) == 0
+        out = capsys.readouterr().out
+        assert "lyrics_agreement_pct per song: 1 higher, 0 lower of 1" in out
+        assert "song_001: +5.0" in out
+        with pytest.raises(SystemExit, match="unknown metric"):
+            cb.main(["compare", str(work), "base", "base", "--metric", "nope"])
