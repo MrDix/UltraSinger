@@ -19,11 +19,12 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import logging
-import shutil
 import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from .uv_locator import find_uv
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,8 @@ def _run_step(cmd: list[str], cwd: Path, timeout: int) -> tuple[bool, str]:
 def run_update(repo_root: str | Path) -> tuple[bool, str]:
     """Upgrade yt-dlp in the project's uv-managed environment.
 
-    Runs, in ``repo_root``:
+    Runs, in ``repo_root`` and with the uv the install scripts use (see
+    :func:`find_uv`):
 
       1. ``uv lock --upgrade-package yt-dlp``
       2. ``uv sync --extra gui --extra scoring --extra potoken``
@@ -149,9 +151,10 @@ def run_update(repo_root: str | Path) -> tuple[bool, str]:
     """
     repo_root = Path(repo_root)
 
-    if shutil.which("uv") is None:
+    uv = find_uv()
+    if uv is None:
         msg = (
-            "'uv' was not found on PATH. Install uv "
+            "'uv' was not found (neither in ~/.local/bin nor on PATH). Install uv "
             "(https://docs.astral.sh/uv/) and try again, or re-run the "
             "install script for this platform."
         )
@@ -159,9 +162,9 @@ def run_update(repo_root: str | Path) -> tuple[bool, str]:
         return False, msg
 
     steps = [
-        (["uv", "lock", "--upgrade-package", "yt-dlp"], _LOCK_TIMEOUT),
+        ([uv, "lock", "--upgrade-package", "yt-dlp"], _LOCK_TIMEOUT),
         (
-            ["uv", "sync", "--extra", "gui", "--extra", "scoring", "--extra", "potoken"],
+            [uv, "sync", "--extra", "gui", "--extra", "scoring", "--extra", "potoken"],
             _SYNC_TIMEOUT,
         ),
     ]

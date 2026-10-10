@@ -1,4 +1,4 @@
-"""Tests for the install / update scripts in install/.
+"""Tests for the install / update scripts in install/ and the GUI launchers.
 
 Every script that locks the dependencies must lock the newest yt-dlp (video
 platforms change often, so the pinned yt-dlp soon fails to download) and fall
@@ -48,6 +48,20 @@ def test_install_falls_back_to_the_pinned_version(script):
     sync = _index(lines, lambda l: l.startswith("uv sync"))
     assert "uv lock" in lines[upgrade + 1:sync], "no plain 'uv lock' fallback after the yt-dlp upgrade"
     assert any("Warning: could not upgrade yt-dlp" in l for l in lines[upgrade:sync])
+
+
+# The line that puts the uv of the install scripts first on PATH, and the launcher's uv check
+LAUNCHERS = {
+    "run_gui_on_windows.bat": ('set "PATH=%USERPROFILE%\\.local\\bin;', "where uv"),
+    "run_gui_on_linux.sh": ('export PATH="$HOME/.local/bin:', "if ! command -v uv"),
+}
+
+
+@pytest.mark.parametrize("script", sorted(LAUNCHERS))
+def test_gui_launcher_prefers_the_installed_uv(script):
+    prefer, check = LAUNCHERS[script]
+    lines = [line.strip() for line in (REPO / script).read_text(encoding="utf-8").splitlines()]
+    assert _index(lines, lambda l: l.startswith(prefer)) < _index(lines, lambda l: l.startswith(check))
 
 
 @pytest.mark.parametrize("script", UPDATE_SCRIPTS)
