@@ -2,6 +2,7 @@
 
 import unittest
 from unittest.mock import patch
+from src.modules.Audio import video_platform
 from src.modules.Audio.video_platform import get_video_title, strip_unmatched_suffixes
 from src.modules.Audio.video_platform import download_and_convert_thumbnail
 
@@ -310,6 +311,30 @@ class TestGetVideoTitle(unittest.TestCase):
         mock_yt_dl.assert_called_once_with(ydl_opts)
         mock_yt_dl.return_value.__enter__.return_value.extract_info.assert_called_once_with(url, download=False)
         mock_yt_dl.return_value.__enter__.return_value.urlopen.assert_called_once_with("test_thumbnail_url")
+
+
+class TestDownloadRetries(unittest.TestCase):
+    """A stalled connection is retried instead of ending the download."""
+
+    @patch("src.modules.Audio.video_platform.yt_dlp.YoutubeDL")
+    def test_download_retries_like_the_command_line(self, mock_yt_dl):
+        mock_yt_dl.return_value.__enter__.return_value.download.return_value = 0
+        download = getattr(video_platform, "__download_video_with_audio")
+
+        download("https://fakeUrl", "test", "/path/to/output")
+
+        ydl_opts = mock_yt_dl.call_args.args[0]
+        self.assertEqual(ydl_opts["retries"], 10)
+        self.assertEqual(ydl_opts["fragment_retries"], 10)
+
+    def test_retries_are_shown_and_other_screen_messages_are_not(self):
+        logger = video_platform._FilteredLogger()
+        retry = "[download] Got error: Read timed out. Retrying (1/10)..."
+        with patch("builtins.print") as mock_print:
+            logger.debug(retry)
+            logger.debug("[download]  42.0% of 10.00MiB")
+        mock_print.assert_called_once_with(f"WARNING: {retry}")
+
 
 if __name__ == "__main__":
     unittest.main()
