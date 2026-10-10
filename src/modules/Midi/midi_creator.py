@@ -655,11 +655,14 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
             j += 1
         phrase_median = float(np.median(midis[i:j + 1]))
         if abs(phrase_median - global_median) >= 12:
-            shift = min((-24, -12, 12, 24), key=lambda k: abs(phrase_median + k - global_median))
-            # The detected notes next to the phrase are the evidence, also
-            # when they belong to a phrase that is moved as well
-            if (abs(phrase_median + shift - global_median) <= 11
-                    and (joined(i - 1, i, shift_b=shift) or joined(j, j + 1, shift_a=shift))):
+            # Of the shifts that bring the phrase within an octave of the
+            # median, the closest one that joins it to a detected note next to
+            # it (also when that note belongs to a phrase moved as well)
+            shifts = [k for k in (-12, 12, -24, 24)
+                      if abs(phrase_median + k - global_median) <= 11
+                      and (joined(i - 1, i, shift_b=k) or joined(j, j + 1, shift_a=k))]
+            if shifts:
+                shift = min(shifts, key=lambda k: abs(phrase_median + k - global_median))
                 for k in range(i, j + 1):
                     midi_segments[k].note = librosa.midi_to_note(midis[k] + shift)
                 moved += j + 1 - i
@@ -706,9 +709,10 @@ def correct_octave_outliers(
         passes: Number of local correction passes (default 2).  Use
             ``1`` for the legacy single-pass behaviour.
         phrase_aware: For notes from the segmentation model, whose pitches
-            come straight from the vocal.  In phase 1, of several octave
-            candidates the one closest to the neighbours wins (the global
-            median only breaks exact ties).  Phase 2 moves whole phrases
+            come straight from the vocal.  In phase 1, only notes up to the
+            next rest of more than a second count as neighbours, and of
+            several octave candidates the one closest to them wins (the
+            global median only breaks exact ties).  Phase 2 moves whole phrases
             instead of single notes: notes joined by steps of at most 6
             semitones (without a rest of more than a second) move together,
             and only when the median of the phrase is an octave or more from
@@ -726,6 +730,13 @@ def correct_octave_outliers(
         return midi_segments
 
     print(f"{ULTRASINGER_HEAD} Correcting octave outliers ({passes} pass{'es' if passes != 1 else ''})")
+
+    # Phrase-aware: neighbours only up to the next rest, as a part sung after a
+    # rest may be in another octave
+    part = [0] * len(midi_segments)
+    for k in range(1, len(midi_segments)):
+        rest = midi_segments[k].start - midi_segments[k - 1].end
+        part[k] = part[k - 1] + (1 if phrase_aware and rest > _PHRASE_MAX_REST_S else 0)
 
     # ── Phase 1: Local outlier correction ────────────────────────────
     for _pass_num in range(passes):
@@ -758,7 +769,7 @@ def correct_octave_outliers(
             neighbours = [
                 midi_values[j]
                 for j in range(lo, hi)
-                if j != i and midi_values[j] is not None
+                if j != i and midi_values[j] is not None and part[j] == part[i]
             ]
 
             if not neighbours:
