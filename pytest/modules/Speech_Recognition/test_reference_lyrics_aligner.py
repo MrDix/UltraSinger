@@ -196,6 +196,20 @@ class TestSplitWordAtPitchChanges:
         assert result[0].start == pytest.approx(0.5)
         assert result[-1].end == pytest.approx(4.5)
 
+    def test_word_kept_when_the_first_part_is_too_short(self):
+        """A first pitch part shorter than min_note_ms is skipped, but the word is not lost."""
+        fps = 62.5  # 16 ms frames
+        times = [i / fps for i in range(64)]  # about one second
+        # 5 frames (64 ms from first to last frame, under 80 ms) at A4, then F#4 and D#4
+        frequencies = [440.0] * 5 + [370.0] * 26 + [311.0] * 33
+        pd = PitchedData(times=times, frequencies=frequencies, confidence=[0.95] * 64)
+
+        result = _split_word_at_pitch_changes("glide", 0.0, times[-1], pd)
+
+        assert len(result) == 2
+        assert [s.word for s in result] == ["glide", "~ "]
+        assert result[0].start == pytest.approx(0.0)  # still starts at the word start
+
 
 # ---------------------------------------------------------------------------
 # Voiced-region trimming
