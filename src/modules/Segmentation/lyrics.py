@@ -3,7 +3,9 @@
 The existing word segments (lyrics source + forced alignment) provide the
 text and its timing. Words are split into syllables, then a monotonic dynamic
 programme gives every note either a new syllable or a "~" continuation of the
-previous one. Syllables without a matching note are merged into the next one.
+previous one. Syllables without a matching note are merged, in order, into the
+note before or after them, never across the start of a line. Lines that the
+model has no note for, such as those after the last note, are left out.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ MAX_SKIP = 3              # syllables that may be merged in one step
 BAND_MS = 8000.0          # only syllables this close to a note are candidates
 
 _WORD_RE = re.compile(r"[\w'’-]+", re.UNICODE)
+_EDGES_RE = re.compile(r"(\W*)(.*?)(\W*)", re.DOTALL)  # punctuation before, word, punctuation after
 
 
 @dataclass
@@ -43,6 +46,45 @@ def _hyphenator(language: str | None):
         return Hyphenator(region) if region else None
     except Exception:  # noqa: BLE001 - hyphenation is optional
         return None
+
+
+def _hyphen_chain(core: str) -> list[str]:
+    """Pieces of a hyphen chain, sung one after another: "ooh-ooh-oh," -> ["ooh-", "ooh-", "oh,"].
+
+    The hyphen stays with the piece before it; a piece without letters (a lone
+    or doubled hyphen) joins its neighbour, so it never becomes a syllable.
+    """
+    pieces: list[str] = []
+    for piece in re.split(r"(?<=-)", core):
+        if not piece:
+            continue
+        if pieces and (not re.search(r"\w", piece) or not re.search(r"\w", pieces[-1])):
+            pieces[-1] += piece
+        else:
+            pieces.append(piece)
+    return pieces
+
+
+def _syllable_parts(core: str, hyph) -> list[str]:
+    """Syllables of a word: hyphen chains split at their hyphens, then each piece hyphenated.
+
+    Punctuation around a piece ("dancing," or "(oh") and its hyphen stay with
+    its first and last syllable.
+    """
+    parts: list[str] = []
+    for piece in _hyphen_chain(core):
+        lead, word, trail = _EDGES_RE.fullmatch(piece).groups()
+        sub = None
+        if hyph and len(word) > 3 and "-" not in word and _WORD_RE.fullmatch(word):
+            try:
+                sub = hyph.syllables(word)
+            except Exception:  # noqa: BLE001
+                sub = None
+        if sub and len(sub) >= 2 and "".join(sub) == word:
+            parts.extend([lead + sub[0]] + sub[1:-1] + [sub[-1] + trail])
+        else:
+            parts.append(piece)
+    return parts
 
 
 def syllables_from_segments(segments: list[MidiSegment], language: str | None) -> list[Syllable]:
@@ -66,13 +108,8 @@ def syllables_from_segments(segments: list[MidiSegment], language: str | None) -
     out: list[Syllable] = []
     for text, a, b, ls in tokens:
         core = text.strip()
-        parts = None
-        if hyph and len(core) > 3 and _WORD_RE.fullmatch(core):
-            try:
-                parts = hyph.syllables(core)
-            except Exception:  # noqa: BLE001
-                parts = None
-        if not parts or len(parts) < 2 or "".join(parts) != core:
+        parts = _syllable_parts(core, hyph)
+        if len(parts) < 2 or "".join(parts) != core:
             out.append(Syllable(text, a, b, ls))
             continue
         lead = text[: len(text) - len(text.lstrip())]
@@ -142,6 +179,34 @@ def align_syllables(note_starts_ms: np.ndarray, syllables: list[Syllable]) -> li
     return path
 
 
+def _gap_split(gap: list[Syllable], prev_end_ms: float | None, next_start_ms: float,
+               next_starts_line: bool) -> tuple[int, int]:
+    """Of the syllables without a note of their own (in sung order), those that join
+    the note before them (gap[:split]) and those that join the note after them
+    (gap[resume:]).
+
+    A line start among them, or at the next syllable, fixes the split there, so no
+    syllable moves into another line. A whole line between the two notes has no
+    note and is left out (gap[split:resume]). Otherwise the split with the least
+    distance in time wins.
+    """
+    starts = [k for k, s in enumerate(gap) if s.line_start]
+    if starts:
+        split = 0 if prev_end_ms is None else starts[0]
+        return split, len(gap) if next_starts_line else starts[-1]
+    if prev_end_ms is None:
+        return 0, 0
+    if next_starts_line:
+        return len(gap), len(gap)
+    best, best_cost = 0, float("inf")
+    for split in range(len(gap) + 1):
+        cost = (sum(abs(s.start_ms - prev_end_ms) for s in gap[:split])
+                + sum(abs(next_start_ms - s.end_ms) for s in gap[split:]))
+        if cost < best_cost:
+            best, best_cost = split, cost
+    return best, best
+
+
 def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[MidiSegment]:
     """MidiSegments with syllable text, "~" continuations and line breaks."""
     if not notes:
@@ -156,17 +221,16 @@ def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[
     prev_end_ms = 0.0     # end of the last note carrying prev_j (incl. continuations)
     for i, (j, is_start) in enumerate(path):
         if is_start and j != prev_j:
-            # Syllables without a note of their own join the closer neighbour in time.
-            head, tail_line = "", False
-            for k in range(prev_j + 1, j):
-                s = syllables[k]
-                to_prev = abs(s.start_ms - prev_end_ms) if prev_head >= 0 else float("inf")
-                to_next = abs(notes[i].start * 1000 - s.end_ms)
-                if to_prev < to_next and not s.line_start:
-                    texts[prev_head] += s.text
-                else:
-                    head += s.text
-                    tail_line = tail_line or s.line_start
+            # Syllables without a note of their own join the note before or after
+            # them, keeping their order and their line; a line in between without
+            # a note is left out.
+            gap = syllables[prev_j + 1:j]
+            split, resume = _gap_split(gap, prev_end_ms if prev_head >= 0 else None, notes[i].start * 1000,
+                                       syllables[j].line_start)
+            for s in gap[:split]:
+                texts[prev_head] += s.text
+            head = "".join(s.text for s in gap[resume:])
+            tail_line = any(s.line_start for s in gap[resume:])
             texts.append(head + syllables[j].text)
             if tail_line or syllables[j].line_start:
                 line_starts.add(i)
@@ -174,8 +238,13 @@ def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[
         else:
             texts.append("~")
         prev_end_ms = notes[i].end * 1000
-    if prev_j < len(syllables) - 1:
-        tail = "".join(s.text for s in syllables[prev_j + 1:])
+    # The rest of the last line joins its last note. The lines after it have no
+    # note of the model and are left out instead of being appended to the line
+    # before (mostly lyrics that the recording does not sing at all).
+    rest = syllables[prev_j + 1:]
+    rest = rest[:next((k for k, s in enumerate(rest) if s.line_start), len(rest))]
+    if rest:
+        tail = "".join(s.text for s in rest)
         last = max((i for i, t in enumerate(texts) if t != "~"), default=len(texts) - 1)
         texts[last] = (texts[last].rstrip() + " " + tail.lstrip()) if texts[last] != "~" else tail
     # The trailing space marks a word boundary and belongs to the LAST note of

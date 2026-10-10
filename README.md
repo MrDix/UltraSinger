@@ -782,7 +782,7 @@ Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones 
 
 #### Model-Based Note Segmentation (`--segmentation_model`)
 
-Instead of deriving notes from the word timing, a small neural network predicts directly on the separated vocal where notes start, how long they are, and which passages are charted at all (e.g. spoken parts become freestyle, background vocals are left out). The lyrics from the usual sources (synced lyrics or Whisper, with forced alignment) are then split into syllables and placed onto these notes; syllables held over several notes get `~` continuations.
+Instead of deriving notes from the word timing, a small neural network predicts directly on the separated vocal where notes start, how long they are, and which passages are charted at all (e.g. spoken parts become freestyle, background vocals are left out). The lyrics from the usual sources (synced lyrics or Whisper, with forced alignment) are then split into syllables and placed onto these notes; syllables held over several notes get `~` continuations, and syllables without a note of their own join a neighbouring note of the same line.
 
 No model is shipped with UltraSinger. You train your own on your UltraStar song library with `tools/train_segmentation.py` or with **Train...** next to the Segmentation Model setting in the GUI — the more well-timed charts it sees, the better. Keep the model and the extracted training data private. Measure the result on songs the model was not trained on with the [Chart Benchmark Tool](#chart-benchmark-tool).
 

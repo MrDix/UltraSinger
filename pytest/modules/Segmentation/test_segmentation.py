@@ -226,6 +226,24 @@ class TestSyllables:
         syl = seg_lyrics.syllables_from_segments([_seg("dancing ", 0, 1)], "en")
         assert [s.text for s in syl] == ["dancing "]
 
+    def test_hyphen_chain_is_sung_piece_by_piece(self, fake_hyphen):
+        syl = seg_lyrics.syllables_from_segments([_seg("Ooh-ooh-oh, ", 0.0, 1.1)], "en")
+        assert [s.text for s in syl] == ["Ooh-", "ooh-", "oh, "]
+        assert syl[0].start_ms == 0 and syl[-1].end_ms == pytest.approx(1100)
+
+    def test_no_syllable_of_hyphens_only(self, fake_hyphen):
+        syl = seg_lyrics.syllables_from_segments([_seg("la--la ", 0.0, 1.0), _seg("-oh ", 1.0, 1.5)], "en")
+        assert [s.text for s in syl] == ["la--", "la ", "-oh "]
+
+    def test_pieces_of_a_hyphenated_word_are_hyphenated_further(self, fake_hyphen):
+        syl = seg_lyrics.syllables_from_segments([_seg("hello-dancing ", 0.0, 1.2)], "en")
+        assert [s.text for s in syl] == ["hel", "lo-", "dan", "cing "]
+
+    def test_punctuation_stays_with_the_first_and_last_syllable(self, fake_hyphen):
+        segs = [_seg("hello-dancing, ", 0.0, 1.2), _seg("(dancing) ", 1.2, 2.0)]
+        syl = seg_lyrics.syllables_from_segments(segs, "en")
+        assert [s.text for s in syl] == ["hel", "lo-", "dan", "cing, ", "(dan", "cing) "]
+
 
 def _notes(*spans):
     return [PredictedNote(a, b, 60) for a, b in spans]
@@ -248,10 +266,64 @@ class TestPlaceLyrics:
         segs = seg_lyrics.place_lyrics(_notes((0.0, 0.4), (2.0, 2.3)), syl)
         assert [s.word for s in segs] == ["a b ", "c "]
 
+    def test_syllables_without_notes_keep_their_order(self):
+        """b is nearer the next note and c nearer the previous one, but c is sung after b."""
+        syl = [seg_lyrics.Syllable("a ", 0, 250), seg_lyrics.Syllable("b ", 300, 500),
+               seg_lyrics.Syllable("c ", 950, 1000), seg_lyrics.Syllable("d ", 1100, 1300)]
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 1.0), (1.1, 1.3)), syl)
+        assert [s.word for s in segs] == ["a ", "b c d "]
+
+    def test_no_syllable_moves_into_the_next_line(self):
+        """The last word of a line stays there, although the next line's note is nearer."""
+        syl = [seg_lyrics.Syllable("the ", 0, 500, line_start=True), seg_lyrics.Syllable("end ", 1500, 1800),
+               seg_lyrics.Syllable("You ", 2000, 2200, line_start=True)]
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.5), (1.95, 2.2)), syl)
+        assert [s.word for s in segs] == ["the end ", "You "]
+        assert segs[0].line_break_after
+
+    def test_no_syllable_moves_into_the_previous_line(self):
+        syl = [seg_lyrics.Syllable("a ", 0, 200, line_start=True), seg_lyrics.Syllable("b ", 300, 500),
+               seg_lyrics.Syllable("c ", 600, 800, line_start=True), seg_lyrics.Syllable("d ", 2800, 2900),
+               seg_lyrics.Syllable("e ", 3000, 3200)]
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.5), (3.0, 3.2)), syl)
+        assert [s.word for s in segs] == ["a b ", "c d e "]  # c is nearer the first note
+        assert segs[0].line_break_after
+
     def test_trailing_syllables_appended(self):
         syl = [seg_lyrics.Syllable("a ", 0, 200), seg_lyrics.Syllable("end ", 5000, 5200)]
         segs = seg_lyrics.place_lyrics(_notes((0.0, 0.2)), syl)
         assert segs[0].word.split() == ["a", "end"]
+
+    def test_lines_after_the_last_note_are_left_out(self):
+        """The rest of the last line joins its last note; a line after it, which
+        the model has no note for, is not appended to the line before."""
+        syl = [seg_lyrics.Syllable("a ", 0, 200, line_start=True), seg_lyrics.Syllable("end ", 5000, 5200),
+               seg_lyrics.Syllable("b ", 20000, 20200, line_start=True), seg_lyrics.Syllable("c ", 20300, 20500)]
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.2)), syl)
+        assert [s.word for s in segs] == ["a end "]
+        syl = [seg_lyrics.Syllable("a ", 0, 200), seg_lyrics.Syllable("b ", 1000, 1200, line_start=True)]
+        assert [s.word for s in seg_lyrics.place_lyrics(_notes((0.0, 0.2)), syl)] == ["a "]
+
+    def test_a_line_without_a_note_is_left_out(self):
+        """A short line between two notes, which the model has no note for, is not
+        put onto the line of the next note."""
+        syl = [seg_lyrics.Syllable("a ", 0, 200, line_start=True),
+               seg_lyrics.Syllable("oh ", 1000, 1200, line_start=True),
+               seg_lyrics.Syllable("c ", 2000, 2200, line_start=True), seg_lyrics.Syllable("d ", 2300, 2500)]
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.2), (2.3, 2.5)), syl)
+        assert [s.word for s in segs] == ["a ", "c d "]
+        assert segs[0].line_break_after
+        # also when the next note starts its line
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.2), (2.0, 2.2)), syl[:3])
+        assert [s.word for s in segs] == ["a ", "c "]
+        assert segs[0].line_break_after
+
+    def test_gap_split_leaves_out_the_lines_between_the_notes(self):
+        gap = [seg_lyrics.Syllable("b ", 300, 500), seg_lyrics.Syllable("oh ", 1000, 1200, line_start=True),
+               seg_lyrics.Syllable("c ", 2000, 2200, line_start=True)]
+        assert seg_lyrics._gap_split(gap, 250.0, 2300.0, False) == (1, 2)  # b before, c after, oh out
+        assert seg_lyrics._gap_split(gap, 250.0, 2300.0, True) == (1, 3)   # the next note starts a line
+        assert seg_lyrics._gap_split(gap[:1], 250.0, 2300.0, False) == (1, 1)
 
     def test_line_break_before_line_start(self):
         syl = [seg_lyrics.Syllable("a ", 0, 200, line_start=True), seg_lyrics.Syllable("b ", 1000, 1200, line_start=True)]
