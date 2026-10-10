@@ -90,6 +90,12 @@ def _apply_po_token(ydl_opts: dict, po_token: str | None) -> dict:
 # where the download stopped.
 _DOWNLOAD_RETRIES = 10
 
+# Premium formats (higher-bitrate copies for subscribers) can come very slowly,
+# with connections that stall again and again, even when the format picked in
+# their place comes at a normal speed. So they are only taken when no other
+# mp4 video is offered.
+_VIDEO_FORMAT = "bestvideo[ext=mp4][format_note!*=?Premium]+bestaudio/bestvideo[ext=mp4]+bestaudio/best"
+
 
 def get_video_title(url: str, cookiefile: str | None = None,
                      po_token: str | None = None) -> tuple[str, str, str, str]:
@@ -131,7 +137,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
 
     print(f"{ULTRASINGER_HEAD} Downloading Video with Audio")
     ydl_opts = _apply_po_token({
-        "format": "bestvideo[ext=mp4]+bestaudio/best",
+        "format": _VIDEO_FORMAT,
         "outtmpl": output_path + "/" + clear_filename + ".%(ext)s",
         "merge_output_format": "mp4",
         "retries": _DOWNLOAD_RETRIES,
