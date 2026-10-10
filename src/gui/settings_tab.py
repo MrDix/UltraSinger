@@ -97,10 +97,14 @@ class ConversionSettingsForm(QWidget):
     # Emitted when the user clicks "Manage..." next to the LLM provider
     # selector; the host (PreferencesTab) scrolls to its provider section.
     manage_providers_requested = Signal()
+    # Emitted by "Train..." next to the Segmentation Model (only shown with
+    # allow_training, i.e. on the Settings page, not in per-song dialogs).
+    training_requested = Signal()
 
-    def __init__(self, config: dict, parent=None):
+    def __init__(self, config: dict, parent=None, *, allow_training: bool = False):
         super().__init__(parent)
         self._config = config
+        self._allow_training = allow_training
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
@@ -298,7 +302,13 @@ class ConversionSettingsForm(QWidget):
         mode_row.setSpacing(12)
         self._lang_mode_group = QButtonGroup(self)
         self._lang_auto = QRadioButton("Auto-detect")
+        self._lang_auto.setToolTip(
+            "Detect the language of the lyrics: from the video platform's metadata "
+            "for video URLs, otherwise by Whisper from the singing.")
         self._lang_manual = QRadioButton("Manual selection")
+        self._lang_manual.setToolTip(
+            "Always use the language chosen below (useful when the detection picks "
+            "the wrong language).")
         self._lang_mode_group.addButton(self._lang_auto, 0)
         self._lang_mode_group.addButton(self._lang_manual, 1)
         is_manual = self._config.get("language_mode") == "manual"
@@ -664,7 +674,8 @@ class ConversionSettingsForm(QWidget):
             "where notes start, how long they are and which passages are charted "
             "at all, directly from the separated vocal; the lyrics are then placed "
             "onto these notes. Train your own model on your UltraStar song library "
-            "with tools/train_segmentation.py (see docs/segmentation-model.md). "
+            "with Train... next to this field on the Settings page or with "
+            "tools/train_segmentation.py (see docs/segmentation-model.md). "
             "Leave empty to keep notes that follow the word timing."
         )
         self._segmentation_model = QLineEdit()
@@ -674,10 +685,17 @@ class ConversionSettingsForm(QWidget):
         seg_row.setContentsMargins(0, 0, 0, 0)
         seg_row.addWidget(self._segmentation_model, 1)
         seg_browse = QPushButton("Browse")
+        seg_browse.setToolTip("Pick a trained segmentation model file (.pt).")
         seg_browse.clicked.connect(
             lambda: self._browse_file(self._segmentation_model, "Segmentation model (*.pt)")
         )
         seg_row.addWidget(seg_browse)
+        self._train_button: QPushButton | None = None
+        if self._allow_training:
+            self._train_button = QPushButton("Train...")
+            self._train_button.clicked.connect(self.training_requested.emit)
+            seg_row.addWidget(self._train_button)
+            self.set_training_running(False)
         seg_container = QWidget()
         seg_container.setLayout(seg_row)
         card.add_row("Segmentation Model", seg_container, seg_tooltip,
@@ -1375,45 +1393,37 @@ class ConversionSettingsForm(QWidget):
         self._musescore_path = QLineEdit()
         self._musescore_path.setPlaceholderText("Optional: Path to MuseScore")
         self._musescore_path.setText(self._config.get("musescore_path", ""))
-        self._musescore_path.setToolTip(
-            "Path to the MuseScore executable. "
-            "Used to convert generated MIDI files into sheet music (PDF). "
-            "Leave empty if MuseScore is not installed."
-        )
-        ms_row = QHBoxLayout()
-        ms_row.addWidget(self._musescore_path, 1)
-        ms_browse = QPushButton("Browse")
-        ms_browse.clicked.connect(
-            lambda: self._browse_file(self._musescore_path, "MuseScore Executable (*)")
-        )
-        ms_row.addWidget(ms_browse)
-        card.add_row("MuseScore Path", QWidget(),
+        card.add_row("MuseScore Path",
+                     self._path_field(self._musescore_path, "MuseScore Executable (*)",
+                                      "Pick the MuseScore executable."),
                      "Path to the MuseScore executable. "
                      "Used to convert generated MIDI files into sheet music (PDF). "
                      "Leave empty if MuseScore is not installed.")
-        # Replace the empty widget with the row
-        card.remove_last_item()
-        card.add_layout(ms_row)
 
         # FFmpeg
         self._ffmpeg_path = QLineEdit()
         self._ffmpeg_path.setPlaceholderText("Optional: Custom FFmpeg path")
         self._ffmpeg_path.setText(self._config.get("ffmpeg_path", ""))
-        self._ffmpeg_path.setToolTip(
-            "Custom path to FFmpeg. "
-            "FFmpeg handles audio/video format conversion. "
-            "Leave empty to use the system-installed version."
-        )
-        ff_row = QHBoxLayout()
-        ff_row.addWidget(self._ffmpeg_path, 1)
-        ff_browse = QPushButton("Browse")
-        ff_browse.clicked.connect(
-            lambda: self._browse_file(self._ffmpeg_path, "FFmpeg (*)")
-        )
-        ff_row.addWidget(ff_browse)
-        card.add_layout(ff_row)
+        card.add_row("FFmpeg Path",
+                     self._path_field(self._ffmpeg_path, "FFmpeg (*)",
+                                      "Pick the FFmpeg executable."),
+                     "Custom path to FFmpeg. "
+                     "FFmpeg handles audio/video format conversion. "
+                     "Leave empty to use the system-installed version.")
 
         self._main_layout.addWidget(card)
+
+    def _path_field(self, line_edit: QLineEdit, filter_text: str, browse_tooltip: str) -> QWidget:
+        """A path field with a Browse button, as one row widget."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(line_edit, 1)
+        browse = QPushButton("Browse")
+        browse.setToolTip(browse_tooltip)
+        browse.clicked.connect(lambda: self._browse_file(line_edit, filter_text))
+        row.addWidget(browse)
+        return container
 
     def _browse_file(self, line_edit: QLineEdit, filter_text: str):
         path, _ = QFileDialog.getOpenFileName(self, "Select File", "", filter_text)
@@ -1521,6 +1531,21 @@ class ConversionSettingsForm(QWidget):
     def set_segmentation_model(self, path: str):
         """Set the Segmentation Model file (e.g. after training one)."""
         self._segmentation_model.setText(path or "")
+
+    def set_training_running(self, running: bool):
+        """Show on the Train button whether a model training is running."""
+        if self._train_button is None:
+            return
+        if running:
+            self._train_button.setText("Training...")
+            self._train_button.setToolTip(
+                "A segmentation model is being trained. Click to show its progress; "
+                "the finished model is set here automatically.")
+        else:
+            self._train_button.setText("Train...")
+            self._train_button.setToolTip(
+                "Train a segmentation model on your own UltraStar song library. "
+                "The finished model is set here automatically.")
 
     def collect_config(self) -> dict:
         """Collect all conversion settings into a config dictionary."""

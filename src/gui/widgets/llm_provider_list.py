@@ -144,6 +144,9 @@ class LLMProviderRow(QWidget):
         self._name_edit = QLineEdit(provider.name)
         self._name_edit.setPlaceholderText("Provider name (e.g. Groq Free)")
         self._name_edit.setStyleSheet("font-weight: bold;")
+        self._name_edit.setToolTip(
+            "Name of this provider, shown in the LLM Provider selection of the "
+            "conversion settings.")
         self._name_edit.textChanged.connect(self._on_field_changed)
         header.addWidget(self._name_edit, 1)
 
@@ -162,7 +165,10 @@ class LLMProviderRow(QWidget):
         fields_key = QHBoxLayout()
         fields_key.setSpacing(8)
 
+        key_tooltip = ("API key for this provider. Stored in the system keyring, "
+                       "never in the settings file.")
         key_label = QLabel("Key")
+        key_label.setToolTip(key_tooltip)
         key_label.setFixedWidth(40)
         key_label.setObjectName("caption")
         fields_key.addWidget(key_label)
@@ -170,6 +176,7 @@ class LLMProviderRow(QWidget):
         self._key_edit = QLineEdit()
         self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._key_edit.setPlaceholderText("gsk_...")
+        self._key_edit.setToolTip(key_tooltip)
         self._key_edit.textChanged.connect(self._on_field_changed)
         self._key_edit.editingFinished.connect(self._on_key_editing_finished)
         fields_key.addWidget(self._key_edit, 1)
@@ -188,13 +195,17 @@ class LLMProviderRow(QWidget):
         fields_url = QHBoxLayout()
         fields_url.setSpacing(8)
 
+        url_tooltip = ("Base URL of the provider's OpenAI-compatible API "
+                       "(the address that ends before /chat/completions).")
         url_label = QLabel("URL")
+        url_label.setToolTip(url_tooltip)
         url_label.setFixedWidth(40)
         url_label.setObjectName("caption")
         fields_url.addWidget(url_label)
 
         self._url_edit = QLineEdit(provider.api_base_url)
         self._url_edit.setPlaceholderText("https://api.groq.com/openai/v1")
+        self._url_edit.setToolTip(url_tooltip)
         self._url_edit.textChanged.connect(self._on_field_changed)
         self._url_edit.editingFinished.connect(self._on_url_editing_finished)
         self._last_fetched_url = provider.api_base_url
@@ -206,7 +217,10 @@ class LLMProviderRow(QWidget):
         fields_model = QHBoxLayout()
         fields_model.setSpacing(8)
 
+        model_tooltip = ("Model used for the lyric correction. The list is fetched from "
+                         "the provider once URL and key are set; you can also type a name.")
         model_label = QLabel("Model")
+        model_label.setToolTip(model_tooltip)
         model_label.setFixedWidth(40)
         model_label.setObjectName("caption")
         fields_model.addWidget(model_label)
@@ -214,6 +228,7 @@ class LLMProviderRow(QWidget):
         self._model_combo = _NoScrollComboBox()
         self._model_combo.setEditable(True)
         self._model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._model_combo.setToolTip(model_tooltip)
         self._model_combo.lineEdit().setPlaceholderText("qwen/qwen3-32b")
         if provider.default_model:
             self._model_combo.addItem(provider.default_model)
@@ -420,6 +435,9 @@ class LLMProviderListWidget(QWidget):
 
         # Add button
         add_btn = QPushButton("+ Add LLM Provider")
+        add_btn.setToolTip(
+            "Add a provider entry, filled in with example values for a free "
+            "service. Adjust the name, key, URL and model as needed.")
         add_btn.setObjectName("ghostButton")
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(self._add_default_provider)

@@ -21,7 +21,7 @@ from .preferences_tab import PreferencesTab
 from .queue_manager import QueueManager
 from .queue_tab import QueueTab
 from .settings_dialog import PerSongSettingsDialog, ReadOnlySettingsDialog
-from .training_tab import TrainingTab
+from .training_dialog import TrainingDialog
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
@@ -139,7 +139,6 @@ class MainWindow(QMainWindow):
         self._sidebar.add_section("\U0001F310", "Video")
         self._sidebar.add_section("\U0001F4BB", "Console")
         self._sidebar.add_section("\u2699\uFE0F", "Settings")
-        self._sidebar.add_section("\U0001F9E0", "Training")
         self._sidebar.finalize()
         main_layout.addWidget(self._sidebar)
 
@@ -149,7 +148,7 @@ class MainWindow(QMainWindow):
         self._stack.setFrameShape(QFrame.Shape.NoFrame)
         main_layout.addWidget(self._stack, 1)
 
-        # Create tabs (Video, Console, Settings, Training)
+        # Create tabs (Video, Console, Settings)
         self._browser_tab = BrowserTab()
         self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
         self._queue_tab = QueueTab()
@@ -161,9 +160,11 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._browser_tab)
         self._stack.addWidget(self._queue_tab)
         self._stack.addWidget(self._settings_tab)
-        self._training_tab = TrainingTab(self._config)
-        self._training_tab.model_ready.connect(self._settings_tab.set_segmentation_model)
-        self._stack.addWidget(self._training_tab)
+
+        # Training window, opened with "Train..." next to the Segmentation Model
+        # setting; created on first use and kept while the app runs.
+        self._training_dialog: TrainingDialog | None = None
+        self._settings_tab.training_requested.connect(self._open_training)
 
         # Queue manager (owns the runner, drives batch execution)
         self._queue_mgr = QueueManager(self)
@@ -353,6 +354,20 @@ class MainWindow(QMainWindow):
             thread.quit()
             if not thread.wait(8000):
                 logger.warning("yt-dlp update-check thread did not stop in time")
+
+    # ── Model training ────────────────────────────────────────────────
+
+    def _open_training(self):
+        """Show the training window (a running training keeps going while it is closed)."""
+        if self._training_dialog is None:
+            dialog = TrainingDialog(self._config, self)
+            dialog.model_ready.connect(self._settings_tab.set_segmentation_model)
+            dialog.running_changed.connect(self._settings_tab.set_training_running)
+            dialog.ended.connect(lambda message: self._queue_tab.append_log(f"[Training] {message}"))
+            self._training_dialog = dialog
+        self._training_dialog.show()
+        self._training_dialog.raise_()
+        self._training_dialog.activateWindow()
 
     # ── Queue operations ───────────────────────────────────────────────
 
@@ -670,9 +685,25 @@ class MainWindow(QMainWindow):
         before the process exits.  Without this, the subprocess stays
         alive and locks the database files, preventing persistence.
         """
+        training = self._training_dialog
+        if training is not None and training.is_running:
+            answer = QMessageBox.question(
+                self,
+                "UltraSinger",
+                "A segmentation model is still being trained. Quit anyway and stop the "
+                "training?\n\nStarting it again later continues the extraction where it "
+                "stopped; the training itself starts over.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
         try:
             all_settings = self._settings_tab.collect_all()
-            all_settings.update(self._training_tab.values())
+            if training is not None:
+                all_settings.update(training.values())
             self._config.update(all_settings)
             save_config(self._config)
         except (OSError, ValueError, TypeError):
@@ -685,7 +716,8 @@ class MainWindow(QMainWindow):
         self._shutdown_ytdlp_update_check()
 
         # Stop a running model training (its subprocess tree)
-        self._training_tab.shutdown()
+        if training is not None:
+            training.shutdown()
 
         # Shut down the browser engine so Chromium can flush cookies
         self._browser_tab.shutdown()

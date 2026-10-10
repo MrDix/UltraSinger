@@ -1,8 +1,9 @@
-"""Training tab: train a note segmentation model on the user's own song library.
+"""Training window: train a note segmentation model on the user's own song library.
 
-Runs ``tools/train_segmentation.py extract`` and then ``train`` in a background
-process, shows progress and the log, and can hand the finished model to the
-conversion settings.
+Opened with "Train..." next to the Segmentation Model setting. Runs
+``tools/train_segmentation.py extract`` and then ``train`` in a background
+process, shows progress and the log, and sets the finished model as
+Segmentation Model in the settings.
 """
 
 from __future__ import annotations
@@ -17,13 +18,13 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -146,26 +147,32 @@ class TrainingWorker(QObject):
             threading.Thread(target=self._process.wait, daemon=True).start()
 
 
-class TrainingTab(QWidget):
-    """Page with inputs, progress and log for training a segmentation model."""
+class TrainingDialog(QDialog):
+    """Window with inputs, progress and log for training a segmentation model.
 
-    model_ready = Signal(str)  # path of a finished model the user wants to use
+    Not modal: a training runs for a long time and the main window stays usable.
+    Closing the window only hides it; a running training continues, and the
+    finished model is handed to the settings through ``model_ready``.
+    """
+
+    model_ready = Signal(str)  # path of a model that has just been trained
+    running_changed = Signal(bool)
+    ended = Signal(str)  # status message when a training run has ended
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
+        self.setWindowTitle("Train a Segmentation Model")
+        self.setModal(False)
+        self.setMinimumSize(760, 560)
+        self.resize(900, 720)
         self._config = config
         self._thread: QThread | None = None
         self._worker: TrainingWorker | None = None
+        self._model_in_training = ""
         self._project_root = _find_project_root()
+        self._input_rows: list[QWidget] = []
 
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        inner = QWidget()
-        layout = QVBoxLayout(inner)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
-        scroll.setWidget(inner)
+        layout = QVBoxLayout(self)
 
         card = SettingsCard("Train a Segmentation Model (experimental)")
         card.add_info(
@@ -173,43 +180,57 @@ class TrainingTab(QWidget):
             "they are and which passages are charted at all. Every song is separated once (GPU "
             "recommended, about 20-40 s per song), then the model is trained (about 30 minutes "
             "for 1000 songs on a GPU). Use well-timed charts: the model learns their style. The "
-            "work folder and the model are derived from your library - keep them private."
+            "work folder and the model are derived from your library - keep them private. "
+            "You can close this window while the training runs; it continues in the background, "
+            "and the finished model is set as Segmentation Model in the settings."
         )
-        self._library = self._path_row(card, "Song Library", "training_library", folder=True,
-                                       tooltip="Folder with your UltraStar songs (searched recursively). "
-                                               "Solo charts with at least 100 notes and their audio are used.")
-        self._workdir = self._path_row(card, "Work Folder", "training_workdir", folder=True,
-                                       tooltip="Where the extracted training data is stored (several GB for "
-                                               "1000 songs). An interrupted extraction continues here.")
-        self._exclude = self._path_row(card, "Exclude Songs", "training_exclude", folder=False,
-                                       file_filter="Song list (songs.json)",
-                                       tooltip="Optional: songs.json of a chart benchmark sample - these songs are never "
-                                               "trained on, so the benchmark stays meaningful.")
-        self._model_out = self._path_row(card, "Model File", "training_model", folder=False, save=True,
-                                         file_filter="Segmentation model (*.pt)",
-                                         tooltip="Where the trained model is written.")
+        self._library = self._path_row(
+            card, "Song Library", "training_library", folder=True,
+            tooltip="Folder with your UltraStar songs (searched recursively). "
+                    "Solo charts with at least 100 notes and their audio are used.",
+            browse_tooltip="Pick the folder with your UltraStar songs.")
+        self._workdir = self._path_row(
+            card, "Work Folder", "training_workdir", folder=True,
+            tooltip="Where the extracted training data is stored (several GB for 1000 songs), "
+                    "outside the UltraSinger folder. An interrupted extraction continues here.",
+            browse_tooltip="Pick a folder for the extracted training data.")
+        self._exclude = self._path_row(
+            card, "Exclude Songs", "training_exclude", folder=False,
+            file_filter="Song list (songs.json)",
+            tooltip="Optional: songs.json of a chart benchmark sample - these songs are never "
+                    "trained on, so the benchmark stays meaningful.",
+            browse_tooltip="Pick the songs.json of a chart benchmark sample.")
+        self._model_out = self._path_row(
+            card, "Model File", "training_model", folder=False, save=True,
+            file_filter="Segmentation model (*.pt)",
+            tooltip="Where the trained model is written, outside the UltraSinger folder. When the "
+                    "training has finished, this file is set as Segmentation Model in the settings.",
+            browse_tooltip="Choose where to save the trained model.")
         self._epochs = QSpinBox()
         self._epochs.setRange(1, 200)
         self._epochs.setValue(int(config.get("training_epochs", 30)))
-        card.add_row("Epochs", self._epochs, "Training passes; the best one on held-out songs is kept.")
+        card.add_row("Epochs", self._epochs, "Training passes over the extracted songs; the model "
+                     "of the pass that does best on held-out songs is kept.")
+        self._input_rows.append(self._epochs)
         layout.addWidget(card)
 
         buttons = QHBoxLayout()
         self._start = QPushButton("Start Training")
+        self._start.setToolTip("Extract the training data from the song library (an interrupted "
+                               "extraction continues), then train the model and save it as Model File.")
         self._start.clicked.connect(self._on_start)
-        self._cancel = QPushButton("Cancel")
-        self._cancel.setEnabled(False)
-        self._cancel.clicked.connect(self._on_cancel)
-        self._use = QPushButton("Use This Model")
-        self._use.setEnabled(False)
-        self._use.setToolTip("Set the trained model as Segmentation Model in the conversion settings.")
-        self._use.clicked.connect(lambda: self.model_ready.emit(self._model_out.text().strip()))
-        for b in (self._start, self._cancel, self._use):
-            buttons.addWidget(b)
+        self._stop = QPushButton("Stop Training")
+        self._stop.setToolTip("Stop the extraction or training. Starting again continues the "
+                              "extraction where it stopped; the training itself starts over.")
+        self._stop.setEnabled(False)
+        self._stop.clicked.connect(self._on_stop)
+        buttons.addWidget(self._start)
+        buttons.addWidget(self._stop)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
         self._status = QLabel("")
+        self._status.setWordWrap(True)
         self._progress = QProgressBar()
         self._progress.setVisible(False)
         layout.addWidget(self._status)
@@ -217,14 +238,27 @@ class TrainingTab(QWidget):
         self._log = LogViewer()
         layout.addWidget(self._log, 1)
 
+        bottom = QHBoxLayout()
+        bottom.addStretch(1)
+        self._close = QPushButton("Close")
+        self._close.setToolTip("Close this window. A running training continues in the background.")
+        self._close.clicked.connect(self.close)
+        bottom.addWidget(self._close)
+        layout.addLayout(bottom)
+
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)  # Enter in a path field must not press a button
+
     # ── helpers ─────────────────────────────────────────────────────────
 
-    def _path_row(self, card, label, key, folder, save=False, file_filter="", tooltip=""):
+    def _path_row(self, card, label, key, folder, save=False, file_filter="", tooltip="",
+                  browse_tooltip=""):
         edit = QLineEdit(self._config.get(key, ""))
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(edit, 1)
         browse = QPushButton("Browse")
+        browse.setToolTip(browse_tooltip)
 
         def pick():
             if folder:
@@ -241,7 +275,12 @@ class TrainingTab(QWidget):
         container = QWidget()
         container.setLayout(row)
         card.add_row(label, container, tooltip)
+        self._input_rows.append(container)
         return edit
+
+    def _set_inputs_enabled(self, enabled: bool):
+        for row in self._input_rows:
+            row.setEnabled(enabled)
 
     def values(self) -> dict:
         return {
@@ -273,10 +312,11 @@ class TrainingTab(QWidget):
             logger.debug("could not save training settings", exc_info=True)
         commands = build_training_commands(self._project_root, v["training_library"], v["training_workdir"],
                                            v["training_model"], v["training_exclude"], v["training_epochs"])
+        self._model_in_training = v["training_model"]
         self._log.clear_log()
-        self._use.setEnabled(False)
+        self._set_inputs_enabled(False)
         self._start.setEnabled(False)
-        self._cancel.setEnabled(True)
+        self._stop.setEnabled(True)
         self._progress.setVisible(True)
         self._progress.setRange(0, 0)
         self._status.setText("Preparing...")
@@ -288,14 +328,15 @@ class TrainingTab(QWidget):
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
         self._thread.start()
+        self.running_changed.emit(True)
 
-    def _on_cancel(self):
+    def _on_stop(self):
         if self._worker:
             self._worker.cancel()
-        self._cancel.setEnabled(False)
+        self._stop.setEnabled(False)
 
     def shutdown(self):
-        """Stop a running training (called when the window closes)."""
+        """Stop a running training (called when the main window closes)."""
         if self._worker:
             self._worker.cancel()  # stops the process tree, so the worker's run() returns
         if self._thread:
@@ -312,17 +353,26 @@ class TrainingTab(QWidget):
 
     def _on_finished(self, code: int):
         self._start.setEnabled(True)
-        self._cancel.setEnabled(False)
+        self._stop.setEnabled(False)
+        self._set_inputs_enabled(True)
         self._progress.setVisible(False)
-        if code == 0 and os.path.isfile(self._model_out.text().strip()):
-            self._status.setText("Model trained. Measure it with the chart benchmark before relying on it.")
-            self._use.setEnabled(True)
+        model = self._model_in_training
+        trained = code == 0 and os.path.isfile(model)
+        if trained:
+            self._status.setText("Model trained and set as Segmentation Model in the settings. "
+                                 "Measure it with the chart benchmark before relying on it.")
+        elif code == 0:
+            self._status.setText("The training ended without writing the model file - see the training log.")
         elif code == -2:
-            self._status.setText("Cancelled. Starting again continues the extraction where it stopped.")
+            self._status.setText("Stopped. Starting again continues the extraction where it stopped.")
         else:
-            self._status.setText(f"Training failed (exit code {code}) - see the log.")
+            self._status.setText(f"Training failed (exit code {code}) - see the training log.")
         if self._thread:
             self._thread.quit()
             self._thread.wait()
             self._thread = None
         self._worker = None
+        self.running_changed.emit(False)
+        if trained:
+            self.model_ready.emit(model)
+        self.ended.emit(self._status.text())

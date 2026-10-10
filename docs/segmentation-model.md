@@ -47,12 +47,15 @@ In the GUI: Settings → Experimental Features → **Segmentation Model**.
 
 ### Training in the GUI
 
-The **Training** page (sidebar) runs the same two steps: choose the song library, a work
+**Train...** next to the Segmentation Model field (Settings → Experimental Features)
+opens the training window, which runs the same two steps: choose the song library, a work
 folder for the extracted data (outside the UltraSinger folder), optionally a `songs.json`
 of songs to exclude (e.g. a chart benchmark sample) and where to save the model, then
-**Start Training**. The page shows the extraction and training progress and the log;
-**Cancel** stops it, and starting again continues the extraction where it stopped. When
-the model is ready, **Use This Model** sets it as Segmentation Model in the settings.
+**Start Training**. The window shows the extraction and training progress and the log;
+**Stop Training** stops it, and starting again continues the extraction where it stopped.
+You can close the window while the training runs — it continues in the background, and
+the button reads **Training...** until it has finished. When the model is ready, it is
+set as Segmentation Model in the settings automatically.
 
 ### Using a model from a GitHub repository
 

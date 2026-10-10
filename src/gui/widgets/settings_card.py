@@ -82,6 +82,12 @@ class SettingsCard(QWidget):
         if tooltip:
             label.setToolTip(tooltip)
             widget.setToolTip(tooltip)
+            if type(widget) is QWidget:
+                # A plain container (e.g. a path field with a Browse button): its
+                # controls get the row's tooltip too, unless they have their own.
+                for child in widget.children():
+                    if isinstance(child, QWidget) and not child.toolTip():
+                        child.setToolTip(tooltip)
         row.addWidget(label)
         row.addWidget(widget, 1)
 
@@ -119,20 +125,6 @@ class SettingsCard(QWidget):
         )
         info.setCursor(Qt.CursorShape.IBeamCursor)
         self._layout.addWidget(info)
-
-    def remove_last_item(self):
-        """Remove and clean up the last item from the card layout."""
-        if self._layout.count() == 0:
-            return
-        last = self._layout.takeAt(self._layout.count() - 1)
-        if last.widget():
-            last.widget().hide()
-            last.widget().deleteLater()
-        elif last.layout():
-            while last.layout().count():
-                child = last.layout().takeAt(0)
-                if child.widget():
-                    child.widget().deleteLater()
 
     def add_separator(self):
         """Add a subtle horizontal separator."""
