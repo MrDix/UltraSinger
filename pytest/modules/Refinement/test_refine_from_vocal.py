@@ -148,6 +148,18 @@ class TestRefinePitchWithUscore:
         assert corrections == 1
         assert result[0].note == "D4"
 
+    def test_correction_keeps_the_octave_of_the_note(self):
+        """Only the pitch class is taken from the detector, never its octave."""
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a "),
+                    MidiSegment(note="C4", start=1.0, end=2.0, word="b ")]
+        note_scores = [
+            FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[14] * 10),  # D3
+            FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[34] * 10),  # A#4
+        ]
+        result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
+        assert corrections == 2
+        assert [s.note for s in result] == ["D4", "A♯3"]  # nearest note of the class: up 2, down 2
+
     def test_note_without_tones_is_checked_against_fallback_audio(self):
         """A note in which the lead stem has no detected tone is judged on the full vocal stem."""
         segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a "),

@@ -255,3 +255,52 @@ class TestRefineGapFlag(unittest.TestCase):
         settings = init_settings(["-i", "test.mp3", "--disable_refine_gap"])
         self.assertFalse(settings.refine_gap)
         self.assertTrue(init_settings(["-i", "test.mp3"]).refine_gap)
+
+
+class TestOctaveConsistencyFlags(unittest.TestCase):
+    """By default the octave consistency pass runs for model notes only; the flags set it for all notes."""
+
+    def test_truth_table(self):
+        from src.UltraSinger import octave_consistency_wanted
+        self.assertTrue(octave_consistency_wanted(None, True))
+        self.assertFalse(octave_consistency_wanted(None, False))
+        for model_segmentation_used in (True, False):
+            self.assertTrue(octave_consistency_wanted(True, model_segmentation_used))
+            self.assertFalse(octave_consistency_wanted(False, model_segmentation_used))
+
+    def test_flags_and_reset(self):
+        self.assertIsNone(Settings().octave_consistency)
+        self.assertTrue(init_settings(["-i", "test.mp3", "--octave_consistency"]).octave_consistency)
+        self.assertIs(init_settings(["-i", "test.mp3", "--disable_octave_consistency"]).octave_consistency, False)
+        self.assertIsNone(init_settings(["-i", "test.mp3"]).octave_consistency)
+
+
+class TestOctaveInfoLines(unittest.TestCase):
+    """The info file lists both octave options and whether model notes got the consistency pass by default."""
+
+    def _info(self, octave_consistency=None, **kwargs):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        import src.UltraSinger as us
+        with tempfile.TemporaryDirectory() as d, \
+                patch.object(us.settings, "octave_consistency", octave_consistency), \
+                patch.object(us.settings, "octave_snap", False):
+            us._write_settings_info_file(d, None, None, **kwargs)
+            with open(os.path.join(d, "ultrasinger_parameter.info"), encoding="utf-8") as f:
+                return f.read()
+
+    def test_model_notes(self):
+        text = self._info(model_segmentation_used=True)
+        self.assertIn("Octave consistency:       True (default for the segmentation-model notes)", text)
+        self.assertIn("Octave spike snap:        False", text)
+
+    def test_word_based_notes(self):
+        self.assertIn("Octave consistency:       False\n", self._info())
+
+    def test_disabled(self):
+        self.assertIn("Octave consistency:       False\n", self._info(False, model_segmentation_used=True))
+
+    def test_all_notes(self):
+        self.assertIn("Octave consistency:       True\n", self._info(True))

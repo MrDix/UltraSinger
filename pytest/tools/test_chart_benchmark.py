@@ -120,6 +120,20 @@ class TestChartMetrics:
         ref = _melody()
         gen = [_note(n.start_ms, n.end_ms, n.midi - 12) for n in ref]
         assert cb.chart_metrics(ref, gen)["chart_agreement_pct"] == 100.0
+        assert cb.chart_metrics(ref, gen)["octave_agree_pct"] == 100.0  # the whole chart moved
+
+    def test_notes_in_another_octave_lower_octave_agreement(self):
+        ref = _melody()  # 40 notes of equal length
+        gen = [_note(n.start_ms, n.end_ms, n.midi + (12 if i % 10 == 0 else 0)) for i, n in enumerate(ref)]
+        m = cb.chart_metrics(ref, gen)
+        assert m["chart_agreement_pct"] == 100.0  # octaves are folded here...
+        assert m["octave_agree_pct"] == 90.0  # ...but 4 of 40 notes jump an octave
+        assert "octave_agree_pct" in cb.SUMMARY_METRICS
+
+    def test_no_octave_agreement_without_agreeing_notes(self):
+        ref = _melody()
+        gen = [_note(n.start_ms, n.end_ms, n.midi + 3) for n in ref]
+        assert cb.chart_metrics(ref, gen)["octave_agree_pct"] is None
 
     def test_wrong_pitch_lowers_agreement(self):
         ref = _melody()
@@ -252,6 +266,16 @@ class TestAppendedVoice:
         assert m["ref_coverage_pct"] == 100.0
         assert m["vocal_hits_ref_pct"] == 100.0
         assert cb.chart_metrics(v1, gen)["chart_agreement_pct"] == 50.0  # one voice only
+
+    def test_octave_agreement_fits_any_agreeing_voice(self):
+        v1 = [_note(1000 + 500 * k, 1400 + 500 * k, 60) for k in range(10)]
+        v2 = [_note(n.start_ms, n.end_ms, 72) for n in v1[:5]]  # an octave above voice 1
+        for n in v2:
+            n.voice = 1
+        gen = [_note(n.start_ms, n.end_ms, 72 if k < 5 else 60) for k, n in enumerate(v1)]
+        # every generated note is in the octave of a voice it agrees with
+        assert cb.chart_metrics(v1 + v2, gen)["octave_agree_pct"] == 100.0
+        assert cb.chart_metrics(v1, gen)["octave_agree_pct"] == 50.0  # voice 1 alone
 
     def _run(self, tmp_path, appended_pitch=None, sing_voice2=True, text="la"):
         """Reference with voice 2 appended after a 22 s song; generated chart = what is sung."""

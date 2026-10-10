@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 import importlib.metadata
 from pathlib import Path
 
-from .config import _DEFAULTS
+from .config import _DEFAULTS, octave_consistency_choice
 from .models import LLMProvider
 from .widgets import SettingsCard, ToggleSwitch
 from .widgets.llm_provider_list import _ModelFetcher, filter_stt_models
@@ -85,6 +85,14 @@ class _NoScrollComboBox(QComboBox):
 
     def wheelEvent(self, event):
         event.ignore()
+
+
+# "Octave Consistency" choices: (shown text, config value)
+_OCTAVE_CONSISTENCY_CHOICES = (
+    ("Segmentation-model notes", "model"),
+    ("All notes", "all"),
+    ("Off", "off"),
+)
 
 
 class ConversionSettingsForm(QWidget):
@@ -414,20 +422,25 @@ class ConversionSettingsForm(QWidget):
                                _DEFAULTS.get("octave_snap", False)))
 
         # Viterbi octave consistency
-        self._octave_consistency = ToggleSwitch(
-            checked=self._config.get("octave_consistency", False))
-        card.add_toggle_row("Octave Consistency", self._octave_consistency,
-                           "Pick each note's octave so the melody line is "
-                           "consistent to sing. Pitch trackers scatter notes and "
-                           "short runs into the wrong octave (measured: ~10x more "
-                           "jarring octave-size jumps than professional charts); "
-                           "this keeps every note's pitch class and re-chooses "
-                           "only the octave via dynamic programming. Genuine "
-                           "octave passages and wide-range songs are preserved, "
-                           "and the game score is unaffected (scoring folds "
-                           "octaves). Off by default.",
-                           reset_callback=lambda: self._octave_consistency.setChecked(
-                               _DEFAULTS.get("octave_consistency", False)))
+        self._octave_consistency = _NoScrollComboBox()
+        for text, value in _OCTAVE_CONSISTENCY_CHOICES:
+            self._octave_consistency.addItem(text, value)
+        self._set_octave_consistency(self._config.get("octave_consistency"))
+        card.add_row("Octave Consistency", self._octave_consistency,
+                     "Pick each note's octave so the melody line is "
+                     "consistent to sing. Pitch trackers scatter notes and "
+                     "short runs into the wrong octave (measured: ~10x more "
+                     "jarring octave-size jumps than professional charts); "
+                     "this keeps every note's pitch class and re-chooses "
+                     "only the octave via dynamic programming. Genuine "
+                     "octave passages and wide-range songs are preserved, "
+                     "and the game score is unaffected (scoring folds "
+                     "octaves). 'Segmentation-model notes' (default): only "
+                     "for the notes of a Segmentation Model. 'All notes': "
+                     "for word-based notes as well. 'Off': for no notes — "
+                     "it can flatten a sung leap of a note or two.",
+                     reset_callback=lambda: self._set_octave_consistency(
+                         _DEFAULTS["octave_consistency"]))
 
         # Onset correction
         self._onset_correction = ToggleSwitch(
@@ -802,6 +815,7 @@ class ConversionSettingsForm(QWidget):
         )
         card.add_toggle_row("Refine Pitch", self._refine_pitch,
                            "Correct note pitches by comparing against the vocal audio. "
+                           "A note keeps its octave; only its pitch class is corrected. "
                            "Notes from a segmentation model keep a well-tracked pitch "
                            "unless a second pitch track confirms the correction.",
                            reset_callback=lambda: self._refine_pitch.setChecked(
@@ -1547,6 +1561,10 @@ class ConversionSettingsForm(QWidget):
                 "Train a segmentation model on your own UltraStar song library. "
                 "The finished model is set here automatically.")
 
+    def _set_octave_consistency(self, value) -> None:
+        self._octave_consistency.setCurrentIndex(
+            self._octave_consistency.findData(octave_consistency_choice(value)))
+
     def collect_config(self) -> dict:
         """Collect all conversion settings into a config dictionary."""
         return {
@@ -1570,7 +1588,7 @@ class ConversionSettingsForm(QWidget):
             "disable_quantization": not self._quantize.isChecked(),
             "disable_vocal_center": not self._vocal_center.isChecked(),
             "octave_snap": self._octave_snap.isChecked(),
-            "octave_consistency": self._octave_consistency.isChecked(),
+            "octave_consistency": self._octave_consistency.currentData(),
             "disable_onset_correction": not self._onset_correction.isChecked(),
             "disable_denoise_track_noise": not self._denoise.isChecked(),
             "denoise_nr": self._denoise_nr.value(),

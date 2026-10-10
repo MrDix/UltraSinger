@@ -103,6 +103,7 @@ Octaves are folded everywhere, as the games ignore the octave when scoring.
 | `note_count_ratio` | Generated / reference pitched notes (1.0 = same number). |
 | `median_note_ms`, `short_notes_pct` | Generated note lengths (short = under 150 ms). |
 | `pitch_agree_pct` | Where both charts have a note: pitch within ±1 semitone. |
+| `octave_agree_pct` | Where the pitch agrees: share in the same octave as the reference, once the generated chart is moved by the whole number of octaves that fits best (a frame that agrees with several voices fits the octave of each of them). The score ignores octaves, but the games draw them — a low value means notes that jump between octaves on screen. |
 | `ref_coverage_pct` | Reference note time covered by any generated note. |
 | `extra_time_pct` | Generated note time where the reference has no pitched note (backing vocals, ad-libs, echoes). |
 | `freestyle_charted_pct` | Reference freestyle/rap time the generated chart covers with pitched notes. |

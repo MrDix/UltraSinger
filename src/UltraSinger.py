@@ -698,15 +698,19 @@ def run() -> tuple[str, Score, Score]:
     # Correct global octave shift (e.g. sub-harmonic detection)
     process_data.midi_segments = correct_global_octave(process_data.midi_segments)
 
-    # Correct local octave outliers
-    process_data.midi_segments = correct_octave_outliers(process_data.midi_segments)
+    # Correct local octave outliers (model notes: whole phrases, so a run into the
+    # low or high end of a wide-range song is not folded toward its middle)
+    process_data.midi_segments = correct_octave_outliers(
+        process_data.midi_segments, phrase_aware=model_segmentation_used
+    )
 
     # Optional: fold isolated single-note octave spikes onto the melody
     if settings.octave_snap:
         process_data.midi_segments = snap_isolated_octave_spikes(process_data.midi_segments)
 
-    # Optional: per-note Viterbi octave assignment for a consistent melody line
-    if settings.octave_consistency:
+    # Per-note Viterbi octave assignment for a consistent melody line (by
+    # default for model notes, after their phrase-aware outlier pass above)
+    if octave_consistency_wanted(settings.octave_consistency, model_segmentation_used):
         process_data.midi_segments = enforce_octave_consistency(process_data.midi_segments)
 
     # Safety-net: shift notes toward vocal centre if still concentrated
@@ -1026,6 +1030,17 @@ def timing_pass_wanted(enabled: bool, model_segmentation_used: bool) -> bool:
     return enabled and not model_segmentation_used
 
 
+def octave_consistency_wanted(setting: bool | None, model_segmentation_used: bool) -> bool:
+    """Whether to run the octave consistency pass (``enforce_octave_consistency``).
+
+    ``--octave_consistency`` (True) runs it for all notes and
+    ``--disable_octave_consistency`` (False) for none. By default (None) it
+    runs for the notes of the segmentation model only, whose phrase-aware
+    octave outlier pass leaves the scattered wrong-octave notes to it.
+    """
+    return model_segmentation_used if setting is None else setting
+
+
 def _write_settings_info_file(
         output_folder: str,
         simple_score: "Score | None",
@@ -1159,6 +1174,11 @@ def _write_settings_info_file(
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Pitcher backend:          {settings.pitcher}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
+            f.write(f"  Octave spike snap:        {settings.octave_snap}\n")
+            consistency = octave_consistency_wanted(settings.octave_consistency, model_segmentation_used)
+            consistency_note = (" (default for the segmentation-model notes)"
+                                if model_segmentation_used and settings.octave_consistency is None else "")
+            f.write(f"  Octave consistency:       {consistency}{consistency_note}\n")
             if settings.segmentation_model or settings.segmentation_model_repo:
                 status = "applied" if model_segmentation_used else "not applied (word-based notes kept)"
                 source = (os.path.basename(settings.segmentation_model) if settings.segmentation_model
@@ -2111,6 +2131,7 @@ def init_settings(argv: list[str]) -> Settings:
     settings.segmentation_model_token = None
     settings.lead_vocal_pitch = True
     settings.refine_gap = True
+    settings.octave_consistency = None
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2257,6 +2278,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.octave_snap = True
         elif opt in ("--octave_consistency"):
             settings.octave_consistency = True
+        elif opt in ("--disable_octave_consistency"):
+            settings.octave_consistency = False
         elif opt in ("--disable_onset_correction"):
             settings.onset_correction = False
         elif opt in ("--syllable_split"):
@@ -2478,6 +2501,7 @@ def arg_options():
         "disable_vocal_center",
         "octave_snap",
         "octave_consistency",
+        "disable_octave_consistency",
         "disable_onset_correction",
         "syllable_split",
         "vocal_gap_fill",

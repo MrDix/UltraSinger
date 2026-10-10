@@ -358,6 +358,126 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
                 f"Boundary note {i} is MIDI {midis[i]}, expected 60 (C4)"
             )
 
+    # -- phrase_aware (notes of the segmentation model) ----------------------
+
+    # A wide-range song: chorus around F#4, verses around A3, and a run that
+    # descends step by step from B3 to C#3.
+    _CHORUS = ["E4", "F#4", "G#4", "F#4"] * 8
+    _VERSE = ["A#3", "G#3", "A#3", "A#3"]
+    _RUN = ["B3", "A#3", "A3", "G#3", "F#3", "E3", "D#3", "D#3", "C#3"]
+
+    def test_global_consensus_folds_a_low_run_of_a_wide_range_song(self):
+        """Per note, the second half of the run is an octave or more below the
+        middle of the song and is folded up (shown as a jump in the run)."""
+        notes = self._CHORUS + self._VERSE + self._RUN + self._VERSE + self._CHORUS
+        a = len(self._CHORUS) + len(self._VERSE)
+        midis = self._get_midis(correct_octave_outliers(self._make_segs(notes)))
+        self.assertEqual(midis[a:a + len(self._RUN)], [59, 58, 57, 56, 66, 64, 63, 63, 61])
+
+    def test_phrase_aware_keeps_a_low_run_of_a_wide_range_song(self):
+        """The run belongs to the verse phrase (small steps), whose median is
+        less than an octave below the middle of the song."""
+        notes = self._CHORUS + self._VERSE + self._RUN + self._VERSE + self._CHORUS
+        result = correct_octave_outliers(self._make_segs(notes), phrase_aware=True)
+        self.assertEqual(self._get_notes(result), notes)
+
+    def test_phrase_aware_moves_a_phrase_read_an_octave_off(self):
+        """A phrase entered and left by octave jumps is moved as a whole."""
+        line = ["C4", "D4", "E4", "D4"] * 6
+        off = ["C5", "D5", "E5", "D5", "C5", "E5", "D5", "C5"]
+        notes = line + off + line
+        midis = self._get_midis(correct_octave_outliers(self._make_segs(notes), phrase_aware=True))
+        self.assertEqual(midis[len(line):len(line) + len(off)], [60, 62, 64, 62, 60, 64, 62, 60])
+        self.assertEqual(midis[:len(line)] + midis[len(line) + len(off):],
+                         self._get_midis(self._make_segs(line + line)))
+
+    def test_phrase_aware_still_corrects_an_isolated_outlier(self):
+        notes = ["C4", "D4", "E4", "C6", "D4", "E4", "C4"]
+        midis = self._get_midis(correct_octave_outliers(self._make_segs(notes), phrase_aware=True))
+        self.assertEqual(midis[3], 60)
+
+    def test_phrase_aware_prefers_the_octave_closest_to_the_neighbours(self):
+        """A note read two octaves low in a verse: the octave next to the verse
+        (G#3) wins over the one nearer the middle of the song (G#4)."""
+        before = ["A3", "B3", "A3", "G#3", "A3"]
+        after = ["A3", "C4", "B3", "A3", "G#3", "A3", "B3", "C4"]
+        notes = self._CHORUS + before + ["G#2"] + after + self._CHORUS
+        onset = len(self._CHORUS) + len(before)
+        self.assertEqual(self._get_midis(correct_octave_outliers(self._make_segs(notes)))[onset], 68)
+        result = correct_octave_outliers(self._make_segs(notes), phrase_aware=True)
+        self.assertEqual(self._get_midis(result)[onset], 56)
+        self.assertEqual([n for i, n in enumerate(self._get_notes(result)) if i != onset],
+                         [n for i, n in enumerate(notes) if i != onset])
+
+    def test_phrase_aware_rest_ends_a_phrase(self):
+        """A high part reached by small steps belongs to the phrase before it,
+        unless a rest of more than a second separates them: on its own, it is
+        moved, as it drops back to the line by an octave-size jump."""
+        line = ["C4", "D4", "E4", "D4"] * 6
+        high = ["G#4", "C5", "E5", "F#5", "E5", "F#5", "E5", "F#5"]
+        a, b = len(line), len(line) + len(high)
+
+        joined = self._make_segs(line + high + line)
+        midis = self._get_midis(correct_octave_outliers(joined, phrase_aware=True))
+        self.assertEqual(midis[a:b], [68, 72, 76, 78, 76, 78, 76, 78])
+
+        apart = self._make_segs(line + high + line)
+        for seg in apart[a:]:  # a rest of 2 s before the high part
+            seg.start, seg.end = seg.start + 2.0, seg.end + 2.0
+        midis = self._get_midis(correct_octave_outliers(apart, phrase_aware=True))
+        self.assertEqual(midis[a:b], [56, 60, 64, 66, 64, 66, 64, 66])
+
+    def test_phrase_aware_keeps_a_short_high_phrase_between_rests(self):
+        """Phase 1 does not compare a short part after a rest with the notes
+        before the rest: three C5 between rests in a C4 song keep their octave."""
+        line, high = ["C4"] * 24, ["C5"] * 3
+        a, b = len(line), len(line) + len(high)
+        apart = self._make_segs(line + high + line)
+        for k, seg in enumerate(apart[a:], start=a):  # rests of 2 s before and after the high part
+            shift = 2.0 if k < b else 4.0
+            seg.start, seg.end = seg.start + shift, seg.end + shift
+        self.assertEqual(self._get_midis(correct_octave_outliers(apart, phrase_aware=True))[a:b], [72] * 3)
+        self.assertEqual(self._get_midis(correct_octave_outliers(apart))[a:b], [60] * 3)  # per note: moved
+
+    def test_phrase_aware_takes_the_shift_that_joins_a_neighbour(self):
+        """F#5 in a C4 song: F#3 and F#4 are as close to the median, but only
+        F#4 joins the E4 before the phrase (a rest follows it)."""
+        line, high = ["C4"] * 24, ["F#5"] * 8
+        notes = line + ["E4"] + high + line
+        a, b = len(line) + 1, len(line) + 1 + len(high)
+        segs = self._make_segs(notes)
+        for seg in segs[b:]:  # a rest of 2 s after the phrase
+            seg.start, seg.end = seg.start + 2.0, seg.end + 2.0
+        self.assertEqual(self._get_midis(correct_octave_outliers(segs, phrase_aware=True))[a:b], [66] * 8)
+
+    def test_phrase_aware_joins_a_phrase_to_the_moved_phrase_before(self):
+        """C5 and right after it C6 after a C4 line: the C5 phrase moves to C4,
+        and the C6 phrase joins it there (a rest follows it), although it does
+        not join the C5 that was detected."""
+        line = ["C4"] * 24
+        notes = line + ["C5"] * 8 + ["C6"] * 8 + line
+        a, b = len(line), len(line) + 16
+        segs = self._make_segs(notes)
+        for seg in segs[b:]:  # a rest of 2 s after the C6 phrase
+            seg.start, seg.end = seg.start + 2.0, seg.end + 2.0
+        self.assertEqual(self._get_midis(correct_octave_outliers(segs, phrase_aware=True))[a:b], [60] * 16)
+
+    def test_phrase_aware_keeps_a_high_phrase_between_rests(self):
+        """A part sung an octave above the rest of the song, with rests before
+        and after it, shows no octave error and keeps its octave; without the
+        rests, the octave jumps into and out of it mark it as read too high."""
+        line, high = ["C4"] * 24, ["C5"] * 8
+        a, b = len(line), len(line) + len(high)
+        apart = self._make_segs(line + high + line)
+        for k, seg in enumerate(apart[a:], start=a):  # rests of 2 s before and after the high part
+            shift = 2.0 if k < b else 4.0
+            seg.start, seg.end = seg.start + shift, seg.end + shift
+        midis = self._get_midis(correct_octave_outliers(apart, phrase_aware=True))
+        self.assertEqual(midis, [60] * a + [72] * len(high) + [60] * len(line))
+
+        midis = self._get_midis(correct_octave_outliers(self._make_segs(line + high + line), phrase_aware=True))
+        self.assertEqual(midis, [60] * len(line + high + line))
+
     # -- shift is always a multiple of 12 ------------------------------------
 
     def test_shifts_are_octave_multiples(self):

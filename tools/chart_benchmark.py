@@ -68,6 +68,12 @@ Metrics (per song; the summary reports the median over reliable songs):
     reference; short = under 150 ms).
 ``pitch_agree_pct``
     Where both charts have a note: pitch within +-1 semitone, folded.
+``octave_agree_pct``
+    Where the pitch agrees (folded): share in the same octave as the
+    reference once the generated chart is moved by the whole number of
+    octaves that fits best (a frame that agrees with several voices fits
+    the octave of each of them). The score ignores octaves, but the games
+    draw them: a low value means notes that jump between octaves on screen.
 ``ref_coverage_pct`` / ``extra_time_pct``
     Reference note time covered by any generated note / generated note
     time where the reference has no pitched note (backing vocals, ad-libs).
@@ -146,7 +152,7 @@ PRIMARY_METRIC = "chart_agreement_pct"
 SUMMARY_METRICS = [
     "chart_agreement_pct", "chart_precision_pct", "chart_f1_pct",
     "onset_hit_50_pct", "onset_hit_100_pct", "onset_precision_100_pct",
-    "note_count_ratio", "median_note_ms", "short_notes_pct", "pitch_agree_pct",
+    "note_count_ratio", "median_note_ms", "short_notes_pct", "pitch_agree_pct", "octave_agree_pct",
     "ref_coverage_pct", "extra_time_pct", "freestyle_charted_pct", "oracle_pitch_pct",
     "vocal_hits_ref_pct", "vocal_hits_gen_pct",
     "lyrics_agreement_pct", "lyrics_agree_pct", "lyrics_words_found_pct",
@@ -354,6 +360,21 @@ def oracle_pitch(ref: list[ChartNote], sung: SungPitch) -> float | None:
     return float(np.mean(hits)) if hits else None
 
 
+def _octave_agreement(agree_at: np.ndarray, voice_octaves: list[np.ndarray]) -> float | None:
+    """Share of agreeing frames in the octave that most of them share with the reference.
+
+    ``voice_octaves`` holds, per reference voice, the whole octaves between the
+    generated note and that voice where they agree (NaN elsewhere). A frame that
+    agrees with several voices fits the octave of each of them.
+    """
+    agreeing = int(agree_at.sum())
+    if agreeing == 0:
+        return None
+    offsets = np.unique(np.concatenate([o[~np.isnan(o)] for o in voice_octaves]))
+    fits = max(int(np.logical_or.reduce([o == k for o in voice_octaves]).sum()) for k in offsets)
+    return fits / agreeing
+
+
 def voice_grids(notes: list[ChartNote], n_frames: int, kinds: set[str] = PITCHED_TYPES) -> list[np.ndarray]:
     """One frame grid per voice of the chart (see ``frame_grid``)."""
     voices = sorted({n.voice for n in notes}) or [0]
@@ -374,10 +395,16 @@ def chart_metrics(ref: list[ChartNote], gen: list[ChartNote], sung: SungPitch | 
     g_on = ~np.isnan(g)
     r_on = np.zeros(n_frames, bool)
     agree_at = np.zeros(n_frames, bool)
+    voice_octaves = []  # per voice: whole octaves from it where it agrees (NaN elsewhere)
     for r in r_grids:
         on = ~np.isnan(r) & g_on
         r_on |= ~np.isnan(r)
-        agree_at[on] |= np.abs(fold(g[on] - r[on])) <= 1
+        hit = np.zeros(n_frames, bool)
+        hit[on] = np.abs(fold(g[on] - r[on])) <= 1
+        octaves = np.full(n_frames, np.nan)
+        octaves[hit] = np.round((g[hit] - r[hit]) / 12.0)
+        voice_octaves.append(octaves)
+        agree_at |= hit
     r_free = np.zeros(n_frames, bool)
     for r in voice_grids(ref, n_frames, FREESTYLE_TYPES):
         r_free |= ~np.isnan(r)
@@ -405,6 +432,7 @@ def chart_metrics(ref: list[ChartNote], gen: list[ChartNote], sung: SungPitch | 
         "median_note_ms": round(float(np.median(gen_dur))) if gen_dur else None,
         "short_notes_pct": _pct(float(np.mean(np.array(gen_dur) < SHORT_NOTE_MS))) if gen_dur else None,
         "pitch_agree_pct": _pct(float(agree.mean())) if both.any() else None,
+        "octave_agree_pct": _pct(_octave_agreement(agree_at, voice_octaves)),
         "ref_coverage_pct": _pct(both.sum() / r_on.sum()) if r_on.any() else None,
         "extra_time_pct": _pct((g_on & ~r_on).sum() / g_on.sum()) if g_on.any() else None,
         "freestyle_charted_pct": _pct((g_on & r_free).sum() / r_free.sum()) if r_free.any() else None,
