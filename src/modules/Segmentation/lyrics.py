@@ -4,8 +4,8 @@ The existing word segments (lyrics source + forced alignment) provide the
 text and its timing. Words are split into syllables, then a monotonic dynamic
 programme gives every note either a new syllable or a "~" continuation of the
 previous one. Syllables without a matching note are merged, in order, into the
-note before or after them, never across the start of a line. Lines after the
-last note, which the model has no note for, are left out.
+note before or after them, never across the start of a line. Lines that the
+model has no note for, such as those after the last note, are left out.
 """
 
 from __future__ import annotations
@@ -180,28 +180,31 @@ def align_syllables(note_starts_ms: np.ndarray, syllables: list[Syllable]) -> li
 
 
 def _gap_split(gap: list[Syllable], prev_end_ms: float | None, next_start_ms: float,
-               next_starts_line: bool) -> int:
-    """How many of the syllables without a note of their own (in sung order) join the
-    note before them; the rest join the note after them.
+               next_starts_line: bool) -> tuple[int, int]:
+    """Of the syllables without a note of their own (in sung order), those that join
+    the note before them (gap[:split]) and those that join the note after them
+    (gap[resume:]).
 
     A line start among them, or at the next syllable, fixes the split there, so no
-    syllable moves into another line. Otherwise the split with the least distance
-    in time wins.
+    syllable moves into another line. A whole line between the two notes has no
+    note and is left out (gap[split:resume]). Otherwise the split with the least
+    distance in time wins.
     """
+    starts = [k for k, s in enumerate(gap) if s.line_start]
+    if starts:
+        split = 0 if prev_end_ms is None else starts[0]
+        return split, len(gap) if next_starts_line else starts[-1]
     if prev_end_ms is None:
-        return 0
-    for k, s in enumerate(gap):
-        if s.line_start:
-            return k
+        return 0, 0
     if next_starts_line:
-        return len(gap)
+        return len(gap), len(gap)
     best, best_cost = 0, float("inf")
     for split in range(len(gap) + 1):
         cost = (sum(abs(s.start_ms - prev_end_ms) for s in gap[:split])
                 + sum(abs(next_start_ms - s.end_ms) for s in gap[split:]))
         if cost < best_cost:
             best, best_cost = split, cost
-    return best
+    return best, best
 
 
 def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[MidiSegment]:
@@ -219,14 +222,15 @@ def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[
     for i, (j, is_start) in enumerate(path):
         if is_start and j != prev_j:
             # Syllables without a note of their own join the note before or after
-            # them, keeping their order and their line.
+            # them, keeping their order and their line; a line in between without
+            # a note is left out.
             gap = syllables[prev_j + 1:j]
-            split = _gap_split(gap, prev_end_ms if prev_head >= 0 else None, notes[i].start * 1000,
-                               syllables[j].line_start)
+            split, resume = _gap_split(gap, prev_end_ms if prev_head >= 0 else None, notes[i].start * 1000,
+                                       syllables[j].line_start)
             for s in gap[:split]:
                 texts[prev_head] += s.text
-            head = "".join(s.text for s in gap[split:])
-            tail_line = any(s.line_start for s in gap[split:])
+            head = "".join(s.text for s in gap[resume:])
+            tail_line = any(s.line_start for s in gap[resume:])
             texts.append(head + syllables[j].text)
             if tail_line or syllables[j].line_start:
                 line_starts.add(i)

@@ -20,8 +20,8 @@ predicted notes in order of time; a syllable held over several notes gets `~`
 continuations. A hyphen chain such as `ooh-ooh-oh` is sung piece by piece
 (`ooh-` `ooh-` `oh`). Syllables that get no note of their own join the note
 before or after them, in their order and never across the start of a line.
-Lines after the last predicted note are left out; they are mostly lyrics that
-the recording does not sing.
+Lines without a predicted note, such as those after the last one, are left
+out; they are mostly lyrics that the recording does not sing.
 
 > **No model is shipped.** You train your own on your UltraStar song library.
 > The model and the extracted training data are derived from your library —

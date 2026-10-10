@@ -304,6 +304,27 @@ class TestPlaceLyrics:
         syl = [seg_lyrics.Syllable("a ", 0, 200), seg_lyrics.Syllable("b ", 1000, 1200, line_start=True)]
         assert [s.word for s in seg_lyrics.place_lyrics(_notes((0.0, 0.2)), syl)] == ["a "]
 
+    def test_a_line_without_a_note_is_left_out(self):
+        """A short line between two notes, which the model has no note for, is not
+        put onto the line of the next note."""
+        syl = [seg_lyrics.Syllable("a ", 0, 200, line_start=True),
+               seg_lyrics.Syllable("oh ", 1000, 1200, line_start=True),
+               seg_lyrics.Syllable("c ", 2000, 2200, line_start=True), seg_lyrics.Syllable("d ", 2300, 2500)]
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.2), (2.3, 2.5)), syl)
+        assert [s.word for s in segs] == ["a ", "c d "]
+        assert segs[0].line_break_after
+        # also when the next note starts its line
+        segs = seg_lyrics.place_lyrics(_notes((0.0, 0.2), (2.0, 2.2)), syl[:3])
+        assert [s.word for s in segs] == ["a ", "c "]
+        assert segs[0].line_break_after
+
+    def test_gap_split_leaves_out_the_lines_between_the_notes(self):
+        gap = [seg_lyrics.Syllable("b ", 300, 500), seg_lyrics.Syllable("oh ", 1000, 1200, line_start=True),
+               seg_lyrics.Syllable("c ", 2000, 2200, line_start=True)]
+        assert seg_lyrics._gap_split(gap, 250.0, 2300.0, False) == (1, 2)  # b before, c after, oh out
+        assert seg_lyrics._gap_split(gap, 250.0, 2300.0, True) == (1, 3)   # the next note starts a line
+        assert seg_lyrics._gap_split(gap[:1], 250.0, 2300.0, False) == (1, 1)
+
     def test_line_break_before_line_start(self):
         syl = [seg_lyrics.Syllable("a ", 0, 200, line_start=True), seg_lyrics.Syllable("b ", 1000, 1200, line_start=True)]
         segs = seg_lyrics.place_lyrics(_notes((0.0, 0.2), (1.0, 1.2)), syl)
