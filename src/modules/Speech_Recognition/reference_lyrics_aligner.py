@@ -690,7 +690,9 @@ def _split_word_at_pitch_changes(
             continue
 
         note = _compute_note_for_word(seg_start, seg_end, pitched_data, allowed_notes)
-        text = word if j == 0 else "~ "
+        # The first segment that is kept carries the word: a first part that is
+        # too short was skipped above and must not take the word with it.
+        text = word if not segments else "~ "
         segments.append(MidiSegment(note, seg_start, seg_end, text))
 
     if not segments:
