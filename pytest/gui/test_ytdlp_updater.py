@@ -92,7 +92,7 @@ class TestRunUpdate:
     def test_ok_when_both_steps_succeed(self, tmp_path):
         lock_result = MagicMock(returncode=0, stdout="Resolved 42 packages\n", stderr="")
         sync_result = MagicMock(returncode=0, stdout="Installed 1 package\n", stderr="")
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
+        with patch.object(up, "find_uv", return_value="/usr/bin/uv"), \
              patch("subprocess.run", side_effect=[lock_result, sync_result]) as run:
             ok, output = up.run_update(tmp_path)
         assert ok is True
@@ -100,14 +100,14 @@ class TestRunUpdate:
         assert run.call_count == 2
         first_cmd = run.call_args_list[0].args[0]
         second_cmd = run.call_args_list[1].args[0]
-        assert first_cmd == ["uv", "lock", "--upgrade-package", "yt-dlp"]
+        assert first_cmd == ["/usr/bin/uv", "lock", "--upgrade-package", "yt-dlp"]
         assert second_cmd == [
-            "uv", "sync", "--extra", "gui", "--extra", "scoring", "--extra", "potoken",
+            "/usr/bin/uv", "sync", "--extra", "gui", "--extra", "scoring", "--extra", "potoken",
         ]
 
     def test_fails_when_lock_step_fails(self, tmp_path):
         lock_result = MagicMock(returncode=1, stdout="", stderr="resolution failed")
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
+        with patch.object(up, "find_uv", return_value="/usr/bin/uv"), \
              patch("subprocess.run", return_value=lock_result) as run:
             ok, output = up.run_update(tmp_path)
         assert ok is False
@@ -117,14 +117,14 @@ class TestRunUpdate:
     def test_fails_when_sync_step_fails(self, tmp_path):
         lock_result = MagicMock(returncode=0, stdout="ok\n", stderr="")
         sync_result = MagicMock(returncode=1, stdout="", stderr="network error")
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
+        with patch.object(up, "find_uv", return_value="/usr/bin/uv"), \
              patch("subprocess.run", side_effect=[lock_result, sync_result]):
             ok, output = up.run_update(tmp_path)
         assert ok is False
         assert "network error" in output
 
-    def test_fails_open_without_uv_on_path(self, tmp_path):
-        with patch("shutil.which", return_value=None), \
+    def test_fails_open_without_uv(self, tmp_path):
+        with patch.object(up, "find_uv", return_value=None), \
              patch("subprocess.run") as run:
             ok, output = up.run_update(tmp_path)
         assert ok is False
@@ -132,7 +132,7 @@ class TestRunUpdate:
         run.assert_not_called()
 
     def test_handles_timeout(self, tmp_path):
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
+        with patch.object(up, "find_uv", return_value="/usr/bin/uv"), \
              patch(
                  "subprocess.run",
                  side_effect=subprocess.TimeoutExpired(cmd="uv lock", timeout=180),
@@ -142,7 +142,7 @@ class TestRunUpdate:
         assert "timed out" in output.lower()
 
     def test_handles_launch_failure(self, tmp_path):
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
+        with patch.object(up, "find_uv", return_value="/usr/bin/uv"), \
              patch("subprocess.run", side_effect=OSError("not found")):
             ok, output = up.run_update(tmp_path)
         assert ok is False
@@ -152,7 +152,7 @@ class TestRunUpdate:
         # Guard against accidentally shelling out to real uv in CI.
         lock_result = MagicMock(returncode=0, stdout="", stderr="")
         sync_result = MagicMock(returncode=0, stdout="", stderr="")
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
+        with patch.object(up, "find_uv", return_value="/usr/bin/uv"), \
              patch("subprocess.run", side_effect=[lock_result, sync_result]) as run:
             up.run_update(tmp_path)
             for call in run.call_args_list:

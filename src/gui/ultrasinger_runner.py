@@ -2,13 +2,14 @@
 
 import logging
 import os
-import shutil
 import subprocess
 import sys
 import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
+
+from .uv_locator import find_uv
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def redact_secrets(cmd: list[str]) -> list[str]:
 def _build_command(project_root: Path) -> list[str]:
     """Determine the best way to invoke UltraSinger."""
     entry = project_root / "src" / "UltraSinger.py"
-    uv = shutil.which("uv")
+    uv = find_uv()
     if uv:
         return [uv, "run", "python", str(entry)]
     return [sys.executable, str(entry)]

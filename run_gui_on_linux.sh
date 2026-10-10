@@ -4,6 +4,10 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Prefer the uv that the install and update scripts install: an older uv found
+# earlier on PATH (e.g. one installed with pip) may rewrite uv.lock in an old format
+export PATH="$HOME/.local/bin:$PATH"
+
 # Check if uv is available
 if ! command -v uv &> /dev/null; then
     echo "============================================================"

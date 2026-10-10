@@ -2,6 +2,10 @@
 :: Launch UltraSinger GUI on Windows
 cd /d "%~dp0"
 
+:: Prefer the uv that the install and update scripts install: an older uv found
+:: earlier on PATH (e.g. one installed with pip) may rewrite uv.lock in an old format
+set "PATH=%USERPROFILE%\.local\bin;%PATH%"
+
 :: Check if uv is available
 where uv >nul 2>&1
 if errorlevel 1 (
