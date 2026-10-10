@@ -698,15 +698,19 @@ def run() -> tuple[str, Score, Score]:
     # Correct global octave shift (e.g. sub-harmonic detection)
     process_data.midi_segments = correct_global_octave(process_data.midi_segments)
 
-    # Correct local octave outliers
-    process_data.midi_segments = correct_octave_outliers(process_data.midi_segments)
+    # Correct local octave outliers (model notes: whole phrases, so a run into the
+    # low or high end of a wide-range song is not folded toward its middle)
+    process_data.midi_segments = correct_octave_outliers(
+        process_data.midi_segments, phrase_aware=model_segmentation_used
+    )
 
     # Optional: fold isolated single-note octave spikes onto the melody
     if settings.octave_snap:
         process_data.midi_segments = snap_isolated_octave_spikes(process_data.midi_segments)
 
-    # Optional: per-note Viterbi octave assignment for a consistent melody line
-    if settings.octave_consistency:
+    # Per-note Viterbi octave assignment for a consistent melody line (optional;
+    # always for model notes, after their phrase-aware outlier pass above)
+    if settings.octave_consistency or model_segmentation_used:
         process_data.midi_segments = enforce_octave_consistency(process_data.midi_segments)
 
     # Safety-net: shift notes toward vocal centre if still concentrated
@@ -1159,6 +1163,10 @@ def _write_settings_info_file(
             f.write(f"  Reference lyrics:         {not settings.disable_reference_lyrics}\n")
             f.write(f"  Pitcher backend:          {settings.pitcher}\n")
             f.write(f"  Pitch-based notes:        {settings.pitch_notes}\n")
+            f.write(f"  Octave spike snap:        {settings.octave_snap}\n")
+            consistency_note = (" (applied to the segmentation-model notes)"
+                                if model_segmentation_used and not settings.octave_consistency else "")
+            f.write(f"  Octave consistency:       {settings.octave_consistency}{consistency_note}\n")
             if settings.segmentation_model or settings.segmentation_model_repo:
                 status = "applied" if model_segmentation_used else "not applied (word-based notes kept)"
                 source = (os.path.basename(settings.segmentation_model) if settings.segmentation_model

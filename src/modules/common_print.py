@@ -104,7 +104,8 @@ def print_help() -> None:
                             short runs (measured 507 -> 61 jarring >=10-semitone jumps on 8 reference
                             songs, matching professional chart level). Genuine octave passages and
                             wide-range songs are preserved; the game score is unaffected
-                            (octave-folded scoring). Disabled by default.
+                            (octave-folded scoring). Disabled by default; always applied to the
+                            notes of a segmentation model.
     --syllable_split        Preserve syllable-level note splits at pitch changes (experimental). Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
     --pitch_change_split    Split notes at pitch change boundaries within a syllable. Enabled by default.
@@ -161,9 +162,10 @@ def print_help() -> None:
                                 and uses the game's C++ ptAKF (the pitch-detection algorithm the karaoke
                                 games themselves use to score singing) to find and fix poorly-scoring notes.
     --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
-    --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on; notes from a
-                                segmentation model keep a well-tracked pitch unless a second pitch track
-                                confirms the correction)
+    --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on; a note keeps
+                                its octave, only its pitch class is corrected; notes from a segmentation
+                                model keep a well-tracked pitch unless a second pitch track confirms the
+                                correction)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
                                 for notes from a segmentation model)
     --disable_refine_gap        Disable the GAP sweep, which shifts all notes together by up to 70 ms to where

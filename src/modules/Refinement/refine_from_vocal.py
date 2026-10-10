@@ -5,9 +5,10 @@ would score poorly, then corrects them.
 Pitch refinement:
     1. Write a temporary UltraStar TXT from the current midi_segments
     2. Score it against the vocal audio using ultrastar-score's ``score_song()``
-    3. For notes with low ``hit_ratio``: replace the pitch with the median
-       of ``detected_tones`` from the ptAKF detector (a locked pitch only
-       takes a correction that its second pitch track confirms)
+    3. For notes with low ``hit_ratio``: move the pitch to the pitch class
+       of the median of ``detected_tones`` from the ptAKF detector, in the
+       note's own octave (a locked pitch only takes a correction that its
+       second pitch track confirms)
     4. Convert back to note names on the MidiSegments
 
 Timing refinement remains librosa-based (onset detection), since ptAKF
@@ -144,7 +145,8 @@ def _note_scores(
 
 
 def _corrected_note(seg: MidiSegment, ns, hit_ratio_threshold: float) -> str | None:
-    """New note name for a poorly scoring note (median of the detected tones), else ``None``."""
+    """New note name for a poorly scoring note, else ``None``: the pitch class of the
+    median detected tone, in the octave of the note (nearest note of that class)."""
     if ns.beats_total == 0:
         return None
 
@@ -166,7 +168,11 @@ def _corrected_note(seg: MidiSegment, ns, hit_ratio_threshold: float) -> str | N
     except (ValueError, TypeError):
         return None
 
-    return librosa.midi_to_note(detected_midi) if detected_midi != current_midi else None
+    # Correct the pitch class only and keep the note's octave: the scoring
+    # ignores octaves, and taking the detector's octave would bring back the
+    # octave jumps that the octave passes removed
+    new_midi = current_midi + ((detected_midi - current_midi + 6) % 12 - 6)
+    return librosa.midi_to_note(new_midi) if new_midi != current_midi else None
 
 
 def _correction_allowed(seg: MidiSegment, new_note: str) -> bool:
@@ -192,7 +198,8 @@ def refine_pitch_with_uscore(
 
     Scores the current notes against the vocal audio using the same
     algorithm as Vocaluxe/USDX.  Notes that score poorly (low hit_ratio)
-    are corrected by taking the median of the ptAKF-detected tones.
+    are corrected to the pitch class of the median ptAKF-detected tone;
+    the note keeps its octave (the scoring ignores octaves).
 
     Always uses ``Difficulty.HARD`` (±1 semitone tolerance) for maximum
     correction precision — benchmarks showed this consistently produces

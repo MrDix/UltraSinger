@@ -255,3 +255,28 @@ class TestRefineGapFlag(unittest.TestCase):
         settings = init_settings(["-i", "test.mp3", "--disable_refine_gap"])
         self.assertFalse(settings.refine_gap)
         self.assertTrue(init_settings(["-i", "test.mp3"]).refine_gap)
+
+
+class TestOctaveInfoLines(unittest.TestCase):
+    """The info file lists both octave options and that model notes always get the consistency pass."""
+
+    def _info(self, **kwargs):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        import src.UltraSinger as us
+        with tempfile.TemporaryDirectory() as d, \
+                patch.object(us.settings, "octave_consistency", False), \
+                patch.object(us.settings, "octave_snap", False):
+            us._write_settings_info_file(d, None, None, **kwargs)
+            with open(os.path.join(d, "ultrasinger_parameter.info"), encoding="utf-8") as f:
+                return f.read()
+
+    def test_model_notes(self):
+        text = self._info(model_segmentation_used=True)
+        self.assertIn("Octave consistency:       False (applied to the segmentation-model notes)", text)
+        self.assertIn("Octave spike snap:        False", text)
+
+    def test_word_based_notes(self):
+        self.assertIn("Octave consistency:       False\n", self._info())

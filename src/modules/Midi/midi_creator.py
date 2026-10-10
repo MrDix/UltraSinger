@@ -604,10 +604,61 @@ def enforce_octave_consistency(
     return midi_segments
 
 
+# A phrase for correct_octave_outliers(phrase_aware=True): notes joined by steps
+# of at most this many semitones, without a rest longer than this many seconds.
+_PHRASE_MAX_STEP = 6
+_PHRASE_MAX_REST_S = 1.0
+
+
+def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
+    """Phase 2 of ``correct_octave_outliers(phrase_aware=True)``.
+
+    Moves every phrase whose median is an octave or more from the song's
+    median by whole octaves toward it, all its notes together.  Applies only
+    when most notes lie near the song's median, like the per-note phase 2.
+    Returns the number of notes moved.
+    """
+    midis: list[int | None] = []
+    for seg in midi_segments:
+        try:
+            midis.append(int(librosa.note_to_midi(seg.note)))
+        except (ValueError, KeyError, librosa.ParameterError):
+            midis.append(None)
+    valid = [v for v in midis if v is not None]
+    if len(valid) < 3:
+        return 0
+    global_median = float(np.median(valid))
+    if sum(1 for v in valid if abs(v - global_median) <= 6) / len(valid) <= 0.5:
+        return 0
+
+    moved = 0
+    i = 0
+    while i < len(midi_segments):
+        if midis[i] is None:
+            i += 1
+            continue
+        j = i
+        while (j + 1 < len(midi_segments) and midis[j + 1] is not None
+               and abs(midis[j + 1] - midis[j]) <= _PHRASE_MAX_STEP
+               and midi_segments[j + 1].start - midi_segments[j].end <= _PHRASE_MAX_REST_S):
+            j += 1
+        phrase_median = float(np.median(midis[i:j + 1]))
+        if abs(phrase_median - global_median) >= 12:
+            shift = min((-24, -12, 12, 24), key=lambda k: abs(phrase_median + k - global_median))
+            if abs(phrase_median + shift - global_median) <= 11:
+                for k in range(i, j + 1):
+                    midi_segments[k].note = librosa.midi_to_note(midis[k] + shift)
+                moved += j + 1 - i
+        i = j + 1
+    return moved
+
+
 def correct_octave_outliers(
     midi_segments: list[MidiSegment],
     window: int = 5,
     passes: int = 2,
+    *,
+    phrase_aware: bool = False,
 ) -> list[MidiSegment]:
     """Correct octave outliers by comparing each note to its neighbours.
 
@@ -640,6 +691,17 @@ def correct_octave_outliers(
         window: Number of neighbours on each side to consider.
         passes: Number of local correction passes (default 2).  Use
             ``1`` for the legacy single-pass behaviour.
+        phrase_aware: For notes from the segmentation model, whose pitches
+            come straight from the vocal.  In phase 1, of several octave
+            candidates the one closest to the neighbours wins (the global
+            median only breaks exact ties).  Phase 2 moves whole phrases
+            instead of single notes: notes joined by steps of at most 6
+            semitones (without a rest of more than a second) move together,
+            and only when the median of the phrase is an octave or more from
+            the global median.  A run that descends step by step into the
+            low end of a wide-range song is kept, while a phrase the tracker
+            read an octave off — entered and left by octave-size jumps — is
+            still moved.
 
     Returns:
         The same list, with outlier notes corrected in-place.
@@ -718,8 +780,12 @@ def correct_octave_outliers(
                         shifted += 12
                 candidates = [shifted]
 
-            # Pick candidate closest to global median (tie-breaker)
-            best = min(candidates, key=lambda x: abs(x - global_median))
+            if phrase_aware:
+                # Closest to the neighbours; the global median only breaks ties
+                best = min(candidates, key=lambda x: (abs(x - median_neighbour), abs(x - global_median)))
+            else:
+                # Pick candidate closest to global median (tie-breaker)
+                best = min(candidates, key=lambda x: abs(x - global_median))
 
             if best != midi_values[i]:
                 pending_updates.append((i, best))
@@ -731,6 +797,14 @@ def correct_octave_outliers(
         if not pending_updates:
             # No changes this pass — further passes won't help
             break
+
+    if phrase_aware:
+        moved = _fold_phrases_toward_median(midi_segments)
+        if moved:
+            print(f"{ULTRASINGER_HEAD} Global consensus: moved "
+                  f"{blue_highlighted(str(moved))} note{'s' if moved != 1 else ''} "
+                  f"of phrases an octave off")
+        return midi_segments
 
     # ── Phase 2: Global consensus correction ─────────────────────────
     # Fixes clusters that local correction couldn't handle because the

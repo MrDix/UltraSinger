@@ -425,7 +425,8 @@ class ConversionSettingsForm(QWidget):
                            "only the octave via dynamic programming. Genuine "
                            "octave passages and wide-range songs are preserved, "
                            "and the game score is unaffected (scoring folds "
-                           "octaves). Off by default.",
+                           "octaves). Off by default; always applied to the "
+                           "notes of a Segmentation Model.",
                            reset_callback=lambda: self._octave_consistency.setChecked(
                                _DEFAULTS.get("octave_consistency", False)))
 
@@ -802,6 +803,7 @@ class ConversionSettingsForm(QWidget):
         )
         card.add_toggle_row("Refine Pitch", self._refine_pitch,
                            "Correct note pitches by comparing against the vocal audio. "
+                           "A note keeps its octave; only its pitch class is corrected. "
                            "Notes from a segmentation model keep a well-tracked pitch "
                            "unless a second pitch track confirms the correction.",
                            reset_callback=lambda: self._refine_pitch.setChecked(

@@ -333,9 +333,10 @@ _Not all options working now!_
                                 and uses the game's C++ ptAKF (the pitch-detection algorithm the karaoke
                                 games themselves use to score singing) to find and fix poorly-scoring notes.
     --refine_from_vocal         (legacy) Explicitly enable refinement (now the default)
-    --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on; notes from a
-                                segmentation model keep a well-tracked pitch unless a second pitch track
-                                confirms the correction)
+    --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on; a note keeps
+                                its octave, only its pitch class is corrected; notes from a segmentation
+                                model keep a well-tracked pitch unless a second pitch track confirms the
+                                correction)
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
                                 for notes from a segmentation model)
     --disable_refine_gap        Disable the GAP sweep, which shifts all notes together by up to 70 ms to where
@@ -575,7 +576,7 @@ Separately from a whole-song shift, the pitch tracker occasionally lifts or drop
 
 #### Octave consistency (`--octave_consistency`, GUI: Settings → Post-Processing → "Octave Consistency")
 
-The stronger octave repair: pitch trackers scatter individual notes *and short runs* into the wrong octave — measured against professional reference charts, generated charts contained about **10× as many jarring octave-size jumps** between adjacent notes (507 vs 47 across 8 songs), which makes passages extremely confusing to sing. `--octave_consistency` keeps every note's pitch class and re-chooses only its octave via dynamic programming over the whole song, balancing melodic smoothness against fidelity to what the tracker detected. The balance is self-limiting: short wrong-octave scatter (roughly 1–3 notes) is folded onto the melody line, while a genuine octave passage of about five notes or more is cheaper to keep — so real octave jumps and wide-range songs survive (validated on the same 8 reference songs: jumps dropped to professional-chart level while octave-sensitive pitch agreement with the references stayed within 1 percentage point). The game score is unaffected because scoring folds octaves. Disabled by default.
+The stronger octave repair: pitch trackers scatter individual notes *and short runs* into the wrong octave — measured against professional reference charts, generated charts contained about **10× as many jarring octave-size jumps** between adjacent notes (507 vs 47 across 8 songs), which makes passages extremely confusing to sing. `--octave_consistency` keeps every note's pitch class and re-chooses only its octave via dynamic programming over the whole song, balancing melodic smoothness against fidelity to what the tracker detected. The balance is self-limiting: short wrong-octave scatter (roughly 1–3 notes) is folded onto the melody line, while a genuine octave passage of about five notes or more is cheaper to keep — so real octave jumps and wide-range songs survive (validated on the same 8 reference songs: jumps dropped to professional-chart level while octave-sensitive pitch agreement with the references stayed within 1 percentage point). The game score is unaffected because scoring folds octaves. Disabled by default — but always applied to the notes of a [segmentation model](#model-based-note-segmentation---segmentation_model): there the octave outlier pass moves whole phrases (notes joined by small steps) instead of every single note that is an octave or more away from the middle of the song — which pulled a correctly sung run into the low or high end of a wide-range song up or down an octave halfway — and this pass then removes the scattered wrong-octave notes. Measured on 99 benchmark songs: jumps of 10+ semitones that the reference chart does not have went down from 1.16 to 0.30 per 100 notes.
 
 ### Sheet Music
 
