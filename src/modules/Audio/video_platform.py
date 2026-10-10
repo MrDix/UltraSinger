@@ -84,6 +84,13 @@ def _apply_po_token(ydl_opts: dict, po_token: str | None) -> dict:
     return ydl_opts
 
 
+# The yt-dlp library does not retry by default (its command line retries 10
+# times), so one connection that stalled for the socket timeout ended the
+# download, or left a fragment of a fragmented stream out. Each retry goes on
+# where the download stopped.
+_DOWNLOAD_RETRIES = 10
+
+
 def get_video_title(url: str, cookiefile: str | None = None,
                      po_token: str | None = None) -> tuple[str, str, str, str]:
     """Get the title and language of the video.
@@ -127,6 +134,8 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         "format": "bestvideo[ext=mp4]+bestaudio/best",
         "outtmpl": output_path + "/" + clear_filename + ".%(ext)s",
         "merge_output_format": "mp4",
+        "retries": _DOWNLOAD_RETRIES,
+        "fragment_retries": _DOWNLOAD_RETRIES,
         "cookiefile": cookiefile,
         "logger": _FilteredLogger(),
     }, po_token)
@@ -179,9 +188,14 @@ _SUPPRESSED_WARNINGS = [
 
 
 class _FilteredLogger:
-    """Custom yt-dlp logger that suppresses known harmless warnings."""
+    """Custom yt-dlp logger that suppresses known harmless warnings and shows retries."""
 
     def debug(self, msg):
+        # yt-dlp passes its screen messages here. Retries are shown, so that a
+        # download that waits for a stalled connection does not look hung.
+        if msg.startswith("[download] Got error"):
+            print(f"WARNING: {msg}")
+            return
         _logger.debug(msg)
 
     def info(self, msg):
