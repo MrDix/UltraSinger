@@ -613,10 +613,14 @@ _PHRASE_MAX_REST_S = 1.0
 def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
     """Phase 2 of ``correct_octave_outliers(phrase_aware=True)``.
 
-    Moves every phrase whose median is an octave or more from the song's
-    median by whole octaves toward it, all its notes together.  Applies only
-    when most notes lie near the song's median, like the per-note phase 2.
-    Returns the number of notes moved.
+    Moves a phrase whose median is an octave or more from the song's median
+    by whole octaves toward it, all its notes together, when the move joins
+    it to a note right before or after it (one without a rest in between is
+    then at most a phrase step away).  That octave-size jump into or out of
+    the phrase marks a tracker error; a part sung an octave higher or lower
+    after a rest keeps its octave.  Applies only when most notes lie near
+    the song's median, like the per-note phase 2.  Returns the number of
+    notes moved.
     """
     midis: list[int | None] = []
     for seg in midi_segments:
@@ -631,6 +635,12 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
     if sum(1 for v in valid if abs(v - global_median) <= 6) / len(valid) <= 0.5:
         return 0
 
+    def joined(a: int, b: int, shift_a: int = 0, shift_b: int = 0) -> bool:
+        """Whether the notes a and b = a + 1, moved by the shifts, are in one phrase."""
+        return (0 <= a and b < len(midi_segments) and midis[a] is not None and midis[b] is not None
+                and abs(midis[b] + shift_b - midis[a] - shift_a) <= _PHRASE_MAX_STEP
+                and midi_segments[b].start - midi_segments[a].end <= _PHRASE_MAX_REST_S)
+
     moved = 0
     i = 0
     while i < len(midi_segments):
@@ -638,14 +648,15 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
             i += 1
             continue
         j = i
-        while (j + 1 < len(midi_segments) and midis[j + 1] is not None
-               and abs(midis[j + 1] - midis[j]) <= _PHRASE_MAX_STEP
-               and midi_segments[j + 1].start - midi_segments[j].end <= _PHRASE_MAX_REST_S):
+        while joined(j, j + 1):
             j += 1
         phrase_median = float(np.median(midis[i:j + 1]))
         if abs(phrase_median - global_median) >= 12:
             shift = min((-24, -12, 12, 24), key=lambda k: abs(phrase_median + k - global_median))
-            if abs(phrase_median + shift - global_median) <= 11:
+            # The detected notes next to the phrase are the evidence, also
+            # when they belong to a phrase that is moved as well
+            if (abs(phrase_median + shift - global_median) <= 11
+                    and (joined(i - 1, i, shift_b=shift) or joined(j, j + 1, shift_a=shift))):
                 for k in range(i, j + 1):
                     midi_segments[k].note = librosa.midi_to_note(midis[k] + shift)
                 moved += j + 1 - i
@@ -698,9 +709,11 @@ def correct_octave_outliers(
             instead of single notes: notes joined by steps of at most 6
             semitones (without a rest of more than a second) move together,
             and only when the median of the phrase is an octave or more from
-            the global median.  A run that descends step by step into the
-            low end of a wide-range song is kept, while a phrase the tracker
-            read an octave off — entered and left by octave-size jumps — is
+            the global median and the move joins the phrase to a note right
+            before or after it.  A run that descends step by step into the
+            low end of a wide-range song is kept, and so is a part sung an
+            octave higher or lower after a rest, while a phrase the tracker
+            read an octave off — entered or left by an octave-size jump — is
             still moved.
 
     Returns:

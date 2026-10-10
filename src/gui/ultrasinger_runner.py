@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 
+from .config import octave_consistency_choice
 from .uv_locator import find_uv
 
 logger = logging.getLogger(__name__)
@@ -369,8 +370,11 @@ class UltraSingerRunner(QObject):
             args.append("--disable_vocal_center")
         if config.get("octave_snap"):
             args.append("--octave_snap")
-        if config.get("octave_consistency"):
+        octave_consistency = octave_consistency_choice(config.get("octave_consistency"))
+        if octave_consistency == "all":
             args.append("--octave_consistency")
+        elif octave_consistency == "off":
+            args.append("--disable_octave_consistency")
         if config.get("disable_lyrics_lookup"):
             args.append("--disable_lyrics_lookup")
         if config.get("disable_reference_lyrics"):

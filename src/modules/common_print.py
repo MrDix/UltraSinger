@@ -104,8 +104,10 @@ def print_help() -> None:
                             short runs (measured 507 -> 61 jarring >=10-semitone jumps on 8 reference
                             songs, matching professional chart level). Genuine octave passages and
                             wide-range songs are preserved; the game score is unaffected
-                            (octave-folded scoring). Disabled by default; always applied to the
-                            notes of a segmentation model.
+                            (octave-folded scoring). By default applied to the notes of a
+                            segmentation model only; this applies it to all notes.
+    --disable_octave_consistency  Do not apply it, not even to the notes of a segmentation model
+                            (it can flatten a sung leap of a note or two).
     --syllable_split        Preserve syllable-level note splits at pitch changes (experimental). Disabled by default.
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
     --pitch_change_split    Split notes at pitch change boundaries within a syllable. Enabled by default.

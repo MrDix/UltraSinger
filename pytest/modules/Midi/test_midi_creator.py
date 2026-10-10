@@ -411,7 +411,8 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
 
     def test_phrase_aware_rest_ends_a_phrase(self):
         """A high part reached by small steps belongs to the phrase before it,
-        unless a rest of more than a second separates them."""
+        unless a rest of more than a second separates them: on its own, it is
+        moved, as it drops back to the line by an octave-size jump."""
         line = ["C4", "D4", "E4", "D4"] * 6
         high = ["G#4", "C5", "E5", "F#5", "E5", "F#5", "E5", "F#5"]
         a, b = len(line), len(line) + len(high)
@@ -425,6 +426,22 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
             seg.start, seg.end = seg.start + 2.0, seg.end + 2.0
         midis = self._get_midis(correct_octave_outliers(apart, phrase_aware=True))
         self.assertEqual(midis[a:b], [56, 60, 64, 66, 64, 66, 64, 66])
+
+    def test_phrase_aware_keeps_a_high_phrase_between_rests(self):
+        """A part sung an octave above the rest of the song, with rests before
+        and after it, shows no octave error and keeps its octave; without the
+        rests, the octave jumps into and out of it mark it as read too high."""
+        line, high = ["C4"] * 24, ["C5"] * 8
+        a, b = len(line), len(line) + len(high)
+        apart = self._make_segs(line + high + line)
+        for k, seg in enumerate(apart[a:], start=a):  # rests of 2 s before and after the high part
+            shift = 2.0 if k < b else 4.0
+            seg.start, seg.end = seg.start + shift, seg.end + shift
+        midis = self._get_midis(correct_octave_outliers(apart, phrase_aware=True))
+        self.assertEqual(midis, [60] * a + [72] * len(high) + [60] * len(line))
+
+        midis = self._get_midis(correct_octave_outliers(self._make_segs(line + high + line), phrase_aware=True))
+        self.assertEqual(midis, [60] * len(line + high + line))
 
     # -- shift is always a multiple of 12 ------------------------------------
 

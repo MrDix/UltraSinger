@@ -42,7 +42,7 @@ _DEFAULTS = {
     "disable_quantization": False,
     "disable_vocal_center": False,
     "octave_snap": False,
-    "octave_consistency": False,
+    "octave_consistency": "model",  # "model" (segmentation-model notes only), "all" or "off"
     "disable_onset_correction": False,
     "disable_denoise_track_noise": False,
     "denoise_nr": 20,
@@ -268,6 +268,17 @@ def _ensure_config_dir() -> None:
         logger.info("Created secure config directory: %s", _CONFIG_DIR)
 
 
+def octave_consistency_choice(value) -> str:
+    """The "Octave Consistency" setting as "model", "all" or "off".
+
+    Older configs stored a switch: on applied it to all notes, and off was the
+    default, which now applies it to the notes of a segmentation model.
+    """
+    if value is True:
+        return "all"
+    return value if value in ("all", "off") else "model"
+
+
 def load_config() -> dict:
     """Load configuration from disk, merged with defaults.
 
@@ -291,6 +302,9 @@ def load_config() -> dict:
     providers = config.get("llm_providers", [])
     if not providers:
         _migrate_single_llm_to_provider(config)
+
+    # Migrate the legacy on/off "octave_consistency" switch
+    config["octave_consistency"] = octave_consistency_choice(config.get("octave_consistency"))
 
     # Migrate legacy "youtube_url" key (pre-rename) to "video_url"
     if "youtube_url" in config:
