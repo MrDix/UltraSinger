@@ -58,6 +58,8 @@ class PreferencesTab(QWidget):
     # Emitted so MainWindow can forward yt-dlp update messages to the
     # Console tab (this widget has no direct reference to it).
     log_message = Signal(str)
+    # "Train..." next to the Segmentation Model; MainWindow opens the training window.
+    training_requested = Signal()
 
     def __init__(self, config: dict, cookie_manager=None, parent=None):
         super().__init__(parent)
@@ -103,7 +105,8 @@ class PreferencesTab(QWidget):
         defaults_header.setObjectName("subsectionHeader")
         main_layout.addWidget(defaults_header)
 
-        self._conversion_form = ConversionSettingsForm(config)
+        self._conversion_form = ConversionSettingsForm(config, allow_training=True)
+        self._conversion_form.training_requested.connect(self.training_requested.emit)
         main_layout.addWidget(self._conversion_form)
 
         # ── LLM Providers ────────────────────────────────────────────────
@@ -487,6 +490,10 @@ class PreferencesTab(QWidget):
         self._conversion_form.set_segmentation_model(path)
         self._save()
         self.log_message.emit(f"[GUI] Segmentation model set to {path}")
+
+    def set_training_running(self, running: bool):
+        """Show on the Train button whether a model training is running."""
+        self._conversion_form.set_training_running(running)
 
     def _save(self):
         """Save current settings to config."""
