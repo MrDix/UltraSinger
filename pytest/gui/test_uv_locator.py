@@ -25,6 +25,7 @@ def _install_uv(home):
     uv = home / ".local" / "bin" / UV_NAME
     uv.parent.mkdir(parents=True)
     uv.write_text("", encoding="utf-8")
+    uv.chmod(0o755)
     return uv
 
 
@@ -41,6 +42,12 @@ class TestFindUv:
     def test_none_without_any_uv(self, home):
         with patch("shutil.which", return_value=None):
             assert uv_locator.find_uv() is None
+
+    @pytest.mark.skipif(os.name == "nt", reason="Windows has no execute permission")
+    def test_ignores_an_installed_uv_that_cannot_be_run(self, home):
+        _install_uv(home).chmod(0o644)
+        with patch("shutil.which", return_value="/usr/bin/uv"):
+            assert uv_locator.find_uv() == "/usr/bin/uv"
 
     def test_ignores_a_folder_named_like_uv(self, home):
         (home / ".local" / "bin" / UV_NAME).mkdir(parents=True)

@@ -14,9 +14,9 @@ def find_uv() -> str | None:
     that folder first on PATH. Another uv found earlier on PATH, e.g. an old
     one installed with pip into a Python ``Scripts`` folder, may fail to read
     the project's ``uv.lock`` or rewrite it in an older format, so the copy in
-    ``~/.local/bin`` is preferred whenever it exists.
+    ``~/.local/bin`` is preferred whenever it exists and can be run.
     """
     local = Path.home() / ".local" / "bin" / ("uv.exe" if os.name == "nt" else "uv")
-    if local.is_file():
+    if local.is_file() and os.access(local, os.X_OK):
         return str(local)
     return shutil.which("uv")
