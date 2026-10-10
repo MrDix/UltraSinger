@@ -2,6 +2,9 @@
 
 import unittest
 from unittest.mock import patch
+
+import yt_dlp
+
 from src.modules.Audio import video_platform
 from src.modules.Audio.video_platform import get_video_title, strip_unmatched_suffixes
 from src.modules.Audio.video_platform import download_and_convert_thumbnail
@@ -334,6 +337,31 @@ class TestDownloadRetries(unittest.TestCase):
             logger.debug(retry)
             logger.debug("[download]  42.0% of 10.00MiB")
         mock_print.assert_called_once_with(f"WARNING: {retry}")
+
+
+_AUDIO = {"format_id": "251", "ext": "webm", "vcodec": "none", "acodec": "opus", "url": "https://a"}
+_VIDEO = {"format_id": "614", "ext": "mp4", "vcodec": "vp09.00.40.08", "acodec": "none",
+          "height": 1080, "url": "https://v"}
+_PREMIUM = {**_VIDEO, "format_id": "616", "format_note": "Premium"}
+
+
+class TestVideoFormat(unittest.TestCase):
+    """The video is taken from a premium format only when no other mp4 video is offered."""
+
+    @staticmethod
+    def _pick(formats):
+        """Format ids that the download's format string picks (formats sorted worst to best)."""
+        selector = yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}).build_format_selector(
+            video_platform._VIDEO_FORMAT)
+        picked = next(iter(selector({"formats": formats, "has_merged_format": False,
+                                     "incomplete_formats": False})))
+        return [f["format_id"] for f in picked.get("requested_formats") or [picked]]
+
+    def test_premium_video_is_skipped(self):
+        self.assertEqual(self._pick([_AUDIO, _VIDEO, _PREMIUM]), ["614", "251"])
+
+    def test_premium_video_is_taken_when_it_is_the_only_one(self):
+        self.assertEqual(self._pick([_AUDIO, _PREMIUM]), ["616", "251"])
 
 
 if __name__ == "__main__":
