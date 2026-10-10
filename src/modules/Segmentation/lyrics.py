@@ -4,7 +4,8 @@ The existing word segments (lyrics source + forced alignment) provide the
 text and its timing. Words are split into syllables, then a monotonic dynamic
 programme gives every note either a new syllable or a "~" continuation of the
 previous one. Syllables without a matching note are merged, in order, into the
-note before or after them, never across the start of a line.
+note before or after them, never across the start of a line. Lines after the
+last note, which the model has no note for, are left out.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ MAX_SKIP = 3              # syllables that may be merged in one step
 BAND_MS = 8000.0          # only syllables this close to a note are candidates
 
 _WORD_RE = re.compile(r"[\w'’-]+", re.UNICODE)
+_EDGES_RE = re.compile(r"(\W*)(.*?)(\W*)", re.DOTALL)  # punctuation before, word, punctuation after
 
 
 @dataclass
@@ -64,10 +66,14 @@ def _hyphen_chain(core: str) -> list[str]:
 
 
 def _syllable_parts(core: str, hyph) -> list[str]:
-    """Syllables of a word: hyphen chains split at their hyphens, then each piece hyphenated."""
+    """Syllables of a word: hyphen chains split at their hyphens, then each piece hyphenated.
+
+    Punctuation around a piece ("dancing," or "(oh") and its hyphen stay with
+    its first and last syllable.
+    """
     parts: list[str] = []
     for piece in _hyphen_chain(core):
-        word = piece.rstrip("-")
+        lead, word, trail = _EDGES_RE.fullmatch(piece).groups()
         sub = None
         if hyph and len(word) > 3 and "-" not in word and _WORD_RE.fullmatch(word):
             try:
@@ -75,7 +81,7 @@ def _syllable_parts(core: str, hyph) -> list[str]:
             except Exception:  # noqa: BLE001
                 sub = None
         if sub and len(sub) >= 2 and "".join(sub) == word:
-            parts.extend(sub[:-1] + [sub[-1] + piece[len(word):]])
+            parts.extend([lead + sub[0]] + sub[1:-1] + [sub[-1] + trail])
         else:
             parts.append(piece)
     return parts
@@ -228,8 +234,13 @@ def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[
         else:
             texts.append("~")
         prev_end_ms = notes[i].end * 1000
-    if prev_j < len(syllables) - 1:
-        tail = "".join(s.text for s in syllables[prev_j + 1:])
+    # The rest of the last line joins its last note. The lines after it have no
+    # note of the model and are left out instead of being appended to the line
+    # before (mostly lyrics that the recording does not sing at all).
+    rest = syllables[prev_j + 1:]
+    rest = rest[:next((k for k, s in enumerate(rest) if s.line_start), len(rest))]
+    if rest:
+        tail = "".join(s.text for s in rest)
         last = max((i for i, t in enumerate(texts) if t != "~"), default=len(texts) - 1)
         texts[last] = (texts[last].rstrip() + " " + tail.lstrip()) if texts[last] != "~" else tail
     # The trailing space marks a word boundary and belongs to the LAST note of
