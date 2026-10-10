@@ -450,6 +450,18 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
             seg.start, seg.end = seg.start + 2.0, seg.end + 2.0
         self.assertEqual(self._get_midis(correct_octave_outliers(segs, phrase_aware=True))[a:b], [66] * 8)
 
+    def test_phrase_aware_joins_a_phrase_to_the_moved_phrase_before(self):
+        """C5 and right after it C6 after a C4 line: the C5 phrase moves to C4,
+        and the C6 phrase joins it there (a rest follows it), although it does
+        not join the C5 that was detected."""
+        line = ["C4"] * 24
+        notes = line + ["C5"] * 8 + ["C6"] * 8 + line
+        a, b = len(line), len(line) + 16
+        segs = self._make_segs(notes)
+        for seg in segs[b:]:  # a rest of 2 s after the C6 phrase
+            seg.start, seg.end = seg.start + 2.0, seg.end + 2.0
+        self.assertEqual(self._get_midis(correct_octave_outliers(segs, phrase_aware=True))[a:b], [60] * 16)
+
     def test_phrase_aware_keeps_a_high_phrase_between_rests(self):
         """A part sung an octave above the rest of the song, with rests before
         and after it, shows no octave error and keeps its octave; without the

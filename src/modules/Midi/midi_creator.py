@@ -621,9 +621,10 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
     it to a note right before or after it (one without a rest in between is
     then at most a phrase step away).  That octave-size jump into or out of
     the phrase marks a tracker error; a part sung an octave higher or lower
-    after a rest keeps its octave.  Applies only when most notes lie near
-    the song's median, like the per-note phase 2.  Returns the number of
-    notes moved.
+    after a rest keeps its octave.  The phrases are taken in order, so the
+    note before a phrase counts where an earlier move put it.  Applies only
+    when most notes lie near the song's median, like the per-note phase 2.
+    Returns the number of notes moved.
     """
     midis: list[int | None] = []
     for seg in midi_segments:
@@ -656,15 +657,16 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
         phrase_median = float(np.median(midis[i:j + 1]))
         if abs(phrase_median - global_median) >= 12:
             # Of the shifts that bring the phrase within an octave of the
-            # median, the closest one that joins it to a detected note next to
-            # it (also when that note belongs to a phrase moved as well)
+            # median, the closest one that joins it to a note next to it: the
+            # note before as moved so far, the note after as detected
             shifts = [k for k in (-12, 12, -24, 24)
                       if abs(phrase_median + k - global_median) <= 11
                       and (joined(i - 1, i, shift_b=k) or joined(j, j + 1, shift_a=k))]
             if shifts:
                 shift = min(shifts, key=lambda k: abs(phrase_median + k - global_median))
                 for k in range(i, j + 1):
-                    midi_segments[k].note = librosa.midi_to_note(midis[k] + shift)
+                    midis[k] += shift
+                    midi_segments[k].note = librosa.midi_to_note(midis[k])
                 moved += j + 1 - i
         i = j + 1
     return moved
