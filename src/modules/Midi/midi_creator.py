@@ -545,6 +545,9 @@ def enforce_octave_consistency(
       * fidelity — each note pays ``fidelity_weight`` per octave moved away
         from what the tracker detected.
 
+    A note whose move costs exactly as much as keeping it stays in the
+    octave it was detected in.
+
     The balance makes the pass self-limiting: folding a short 1-3 note
     octave error is cheaper than paying its two ~12-semitone boundary
     jumps, while a genuine octave passage of >= ~5 notes is cheaper to KEEP
@@ -565,7 +568,7 @@ def enforce_octave_consistency(
     if len(voiced) < 3:
         return midi_segments
 
-    octave_ks = (-1, 0, 1)
+    octave_ks = (0, -1, 1)  # the detected octave first, so it wins ties
     prev_cost = {k: fidelity_weight * abs(k) for k in octave_ks}
     backptr: list[dict[int, int]] = []
     for t in range(1, len(voiced)):

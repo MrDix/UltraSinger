@@ -32,6 +32,14 @@ def test_alternating_scatter_unified():
     assert max(vals) - min(vals) == 0
 
 
+def test_detected_octave_wins_a_tie():
+    # a leap of a major sixth: moving the note an octave costs as much as its
+    # two 9-semitone jumps, so it stays where it was detected
+    line = [60, 60, 69, 60, 60]
+    out = enforce_octave_consistency(_segs(line))
+    assert _midis(out) == line
+
+
 def test_long_genuine_octave_passage_kept():
     # >= 5-note octave passage: keeping (2 boundary jumps) is cheaper than
     # folding (fidelity per note) -> genuine chorus jumps survive
