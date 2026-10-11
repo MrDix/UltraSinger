@@ -1274,9 +1274,11 @@ class ConversionSettingsForm(QWidget):
                      "line does not change. 'YASS style' (default): in a pause of 2 s "
                      "or more the sung line stays 1-2 s after its last note, so you "
                      "can still see how well you hit its notes; in shorter pauses the "
-                     "next line appears 2-4 beats before it starts. 'USDX style': "
-                     "2 beats after the line. 'After last note': right after the "
-                     "line's last note, so the next line is shown as early as possible.",
+                     "next line appears 2-4 beats before it starts (10 beats after the "
+                     "line in pauses of more than 16 beats). 'USDX style': 2 beats after "
+                     "the line (1 beat in a pause of 2 beats, at the next line's start "
+                     "in shorter pauses). 'After last note': right after the line's last "
+                     "note, so the next line is shown as early as possible.",
                      reset_callback=lambda: self._set_linebreak_timing(
                          _DEFAULTS["linebreak_timing"]))
 

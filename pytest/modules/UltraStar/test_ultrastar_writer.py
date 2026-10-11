@@ -754,6 +754,13 @@ class TestNoteBeats(unittest.TestCase):
                 written = self._written(segments, timing)
                 self.assertEqual(written[written.index(": 0 56 21 one \n") + 1], line)
 
+    def test_unknown_timing_is_rejected_before_writing(self):
+        segments = [_seg("one ", 0.5, 2.5, line_break_after=True), _seg("two ", 5.5, 6.5)]
+        with patch("builtins.open", mock_open()) as mock_file:
+            with self.assertRaises(ValueError):
+                create_ultrastar_txt(segments, "output.txt", UltrastarTxtValue(), _BPM, "sometimes")
+        mock_file.assert_not_called()
+
     def test_yass_is_the_default(self):
         segments = [_seg("one ", 0.5, 2.5, line_break_after=True), _seg("two ", 5.5, 6.5)]
         self.assertIn("- 84\n", self._written(segments))
@@ -800,6 +807,10 @@ class TestLinebreakBeat(unittest.TestCase):
     def test_after_last_note(self):
         for pause in (0, 5, 200):
             self.assertEqual(self._beat(pause, "after_last_note"), 100)
+
+    def test_unknown_timing(self):
+        with self.assertRaises(ValueError):
+            self._beat(10, "YASS")
 
     def test_never_outside_the_pause(self):
         # a slow song: 1 s is more beats than the pause has left

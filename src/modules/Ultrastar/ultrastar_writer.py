@@ -80,8 +80,10 @@ def linebreak_beat(last_end: int, next_start: int, timing: str, seconds_per_beat
     - ``after_last_note``: right when the last note of the line ends.
 
     The beat is never before the end of the line nor after the start of the
-    next one.
+    next one. Any other ``timing`` raises ``ValueError``.
     """
+    if timing not in LINEBREAK_TIMINGS:
+        raise ValueError(f"unknown line break timing {timing!r}, use one of {', '.join(LINEBREAK_TIMINGS)}")
     pause = next_start - last_end
     if timing == "yass":
         pause_s = pause * seconds_per_beat
@@ -126,8 +128,12 @@ def create_ultrastar_txt(
     """Creates an Ultrastar txt file from the automation data.
 
     ``linebreak_timing`` sets when the view changes to the next line (see
-    ``linebreak_beat``).
+    ``linebreak_beat``); an unknown value raises ``ValueError`` before anything
+    is written.
     """
+    if linebreak_timing not in LINEBREAK_TIMINGS:
+        raise ValueError(
+            f"unknown line break timing {linebreak_timing!r}, use one of {', '.join(LINEBREAK_TIMINGS)}")
 
     print(f"{ULTRASINGER_HEAD} Creating UltraStar file {ultrastar_file_output}")
 
