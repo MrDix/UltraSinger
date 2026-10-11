@@ -26,8 +26,10 @@ QUALIFIER_WORDS = frozenset(
 )
 _BRACKETS_RE = re.compile(r"[(\[{][^)\]}]*[)\]}]")
 _LEADING_BRACKETS_RE = re.compile(r"^\s*[(\[{][^)\]}]*[)\]}]\s*")
-# A leading article is often left out: "Some Band" is "The Some Band"
-_LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an|der|die|das|le|la|les|los|las|el)\s+(?=\S)")
+# A leading article is often left out: "Some Band" is "The Some Band". In
+# titles only the English ones: "Die" or "Las" may be a word of the title.
+_LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+(?=\S)")
+_LEADING_ARTIST_ARTICLE_RE = re.compile(r"^(?:the|a|an|der|die|das|le|la|les|los|las|el)\s+(?=\S)")
 _FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
 # What video titles and releases add to a song title, in brackets or after a
 # dash: the kind of upload, a version, a featured guest. Such a part starts
@@ -45,12 +47,12 @@ _ADDITION_START = (
 _AMBIGUOUS_START = r"live|us|uk|radio|single|album|extended|original|clean|vid[eé]o|music|audio|clip|from"
 _AMBIGUOUS_FOLLOW = (
     rf"version|edit|mix|cut|vid[eé]o|single|release|recording|performance|sessions?|{_OFFICIAL}"
-    r"|at|in|on|from|for|@|&|only|acoustic|unplugged|studio|concert|tour|lounge|\d{4}"
+    r"|at|in|on|from|@|only|acoustic|unplugged|studio|concert|tour|lounge|\d{4}"
     r"|(?:the\s+)?(?:album|movie|film|motion\s+picture|soundtrack|series|musical|show|game)"
 )
 _ADDITION_END = (
     r"version|edit|mix|remix|remaster(?:ed)?|cut|vid[eé]o|audio|lyrics?|visuali[sz]er|hd|4k"
-    r"|edition|demo|karaoke|instrumental|sessions?|soundtrack|recording"
+    r"|edition|demo|karaoke|instrumental|sessions?|soundtrack|recording|acoustic"
 )
 
 
@@ -90,7 +92,8 @@ def normalize_name(s: str, artist: bool) -> str:
     s = _BRACKETS_RE.sub(" ", s or "")
     if artist:
         s = _FEATURING_RE.sub("", s)
-    return _LEADING_ARTICLE_RE.sub("", " ".join(_clean(s).split()))
+    s = " ".join(_clean(s).split())
+    return (_LEADING_ARTIST_ARTICLE_RE if artist else _LEADING_ARTICLE_RE).sub("", s)
 
 
 def similarity(a: str, b: str, artist: bool = False) -> float:

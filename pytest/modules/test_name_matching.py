@@ -63,7 +63,8 @@ class TestStripTitleAdditions(unittest.TestCase):
                       "Song Title - Us Placeholder", "Song Title - From Placeholder Words",
                       "Song Title (Video Placeholder)", "Song Title (Live Placeholder)",
                       "Song Title (Original Placeholder)", "Song Title - Radio Placeholder",
-                      "Song Title - With Placeholder"):
+                      "Song Title - With Placeholder", "Song Title - Us & Placeholder",
+                      "Song Title (Live for Placeholder)"):
             with self.subTest(title=title):
                 self.assertEqual(strip_title_additions(title), title)
 
@@ -101,6 +102,8 @@ class TestTitlesMatch(unittest.TestCase):
         self.assertEqual(similarity("Die Some Band", "Some Band", artist=True), 1.0)
         self.assertTrue(titles_match("The Some Song Title", "Some Song Title"))
         self.assertEqual(similarity("The", "The", artist=True), 1.0)
+        # in titles, "Die" or "Las" can be a word of the title
+        self.assertFalse(titles_match("Die Some Words", "Some Words"))
 
     def test_title_of_brackets_only(self):
         self.assertTrue(titles_match("(Untitled)", "(Untitled)"))
