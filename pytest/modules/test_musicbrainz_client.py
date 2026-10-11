@@ -221,11 +221,11 @@ class TestCoverArt404Detection(unittest.TestCase):
         mb, get_image = self._get_image_fn()
         cause = HTTPError("u", http_status, "msg", None, None)
         exc = musicbrainzngs.ResponseError(cause=cause)
-        recording = {"release-list": [{"id": "r1"}]}
+        releases = [{"id": "r1"}]
         buf = _io.StringIO()
         with patch.object(mb.musicbrainzngs, "get_image_front",
                           side_effect=exc), redirect_stdout(buf):
-            result = get_image(recording)
+            result = get_image(releases)
         return result, buf.getvalue()
 
     def test_404_cause_is_silent(self):
@@ -395,6 +395,57 @@ class TestCoverRelease(unittest.TestCase):
                     {'id': 'd', 'status': 'Official', 'date': '1989-03'},
                     {'id': 'e', 'date': '1990'}]
         self.assertEqual([r['id'] for r in _preferred_releases(releases)], ['d', 'c', 'b', 'a', 'e'])
+
+    def test_original_release_before_a_compilation_of_the_same_year(self):
+        # A compilation dated only "1994" sorts before "1994-01-10" by date alone
+        from src.modules.musicbrainz_client import _preferred_releases
+        releases = [{'id': 'hits', 'status': 'Official', 'date': '1994',
+                     'release-group': {'type': 'Compilation', 'secondary-type-list': ['Compilation']}},
+                    {'id': 'live', 'status': 'Official', 'date': '1993', 'release-group': {'type': 'Live'}},
+                    {'id': 'single', 'status': 'Official', 'date': '1994-01-10', 'release-group': {'type': 'Single'}},
+                    {'id': 'album', 'status': 'Official', 'date': '1994-01-31', 'release-group': {'type': 'Album'}}]
+        self.assertEqual([r['id'] for r in _preferred_releases(releases)], ['single', 'album', 'live', 'hits'])
+
+
+class TestTitleAdditions(unittest.TestCase):
+    """Additions of a video title neither prevent the match nor pick a version of the song."""
+
+    @staticmethod
+    def _recording(title, rec_id, *releases):
+        rec = _recording(title, 'Wanted Artist')
+        rec['id'] = rec_id
+        rec['release-list'] = [{'id': f'{rec_id}-{i}', 'status': status, 'date': date,
+                                'release-group': {'id': f'{rec_id}-g{i}', 'type': kind}}
+                               for i, (status, date, kind) in enumerate(releases)]
+        return rec
+
+    def _search(self, title, *recordings):
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': len(recordings), 'recording-list': list(recordings)}) as search, \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz(title, 'Wanted Artist')
+        return info, search
+
+    def test_additions_do_not_prevent_the_match(self):
+        info, search = self._search('Wanted Title - US Version (Official Video)',
+                                    self._recording('Wanted Title', 'r1', ('Official', '2006', 'Single')))
+        self.assertEqual((info.title, info.year), ('Wanted Title', '2006'))
+        self.assertEqual(search.call_args_list[0].kwargs['recording'], 'wanted title')
+
+    def test_title_without_additions_and_year_of_all_recordings(self):
+        # The search lists a video recording first; the song came out years before
+        info, _ = self._search('Wanted Title (US Version) (Official Music Video)',
+                               self._recording('Wanted Title (US)', 'video', ('Official', '2006-02-14', 'Video')),
+                               self._recording('Wanted Title', 'live', ('Bootleg', '1994-05', 'Live')),
+                               self._recording('Wanted Title', 'studio', ('Official', '1994-01-31', 'Album')))
+        self.assertEqual((info.title, info.year), ('Wanted Title', '1994'))
+
+    def test_releases_of_all_recordings_once(self):
+        from src.modules.musicbrainz_client import _releases_of
+        shared = {'id': 'album'}
+        recordings = [{'release-list': [shared, {'id': 'single'}]}, {'release-list': [dict(shared)]}, {}]
+        self.assertEqual([r['id'] for r in _releases_of(recordings)], ['album', 'single'])
 
 
 class TestSimilarity(unittest.TestCase):

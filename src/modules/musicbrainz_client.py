@@ -7,7 +7,7 @@ from typing import Optional
 from Settings import Settings
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted
-from modules.name_matching import MIN_MATCH_SIMILARITY, similarity
+from modules.name_matching import MIN_MATCH_SIMILARITY, similarity, strip_title_additions, titles_match
 
 
 @dataclass
@@ -28,6 +28,12 @@ title_filter = [
 
 
 MAX_RETRIES = 3
+# Recordings asked for per artist+title search. A well-known song has dozens
+# of recordings with the same title (album, single, live, demos, videos) that
+# the search ranks alike, and the year and cover come from all that match.
+RECORDINGS_PER_SEARCH = 100
+# At most this many releases are asked for a cover, the preferred ones first
+MAX_COVER_RELEASES = 15
 
 
 def __clean_string(s: str) -> str:
@@ -62,11 +68,11 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
             artist = artist.lower().replace(filter.lower(), "").strip()
 
     if artist is None:
-        recording = __single_line_search(title)
+        recordings = [r for r in [__single_line_search(title)] if r is not None]
     else:
-        recording = __multi_line_search(artist, title)
+        recordings = __multi_line_search(artist, title)
 
-    if recording is None:
+    if not recordings:
         print(f"{ULTRASINGER_HEAD} {red_highlighted('No match found')}")
         # Keep what we were given: a known artist is better than "Unknown Artist"
         # (the lyrics lookup and the output name depend on it).
@@ -74,16 +80,33 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
             return SongInfo(title=origin_title, artist=origin_artist)
         return SongInfo(title=origin_title, artist="Unknown Artist")
 
+    recording = recordings[0]
     artist = recording['artist-credit-phrase']
     title = recording['title']
     print(
         f"{ULTRASINGER_HEAD} Found data on Musicbrainz: Artist={blue_highlighted(artist)} Title={blue_highlighted(title)}")
 
-    year = __get_year(recording)
+    # The year and the cover come from the releases of all matching
+    # recordings: which recording of a song the search lists first (a live
+    # one, a video) is chance, and its releases can all be later ones.
+    releases = _releases_of(recordings)
+    year = __get_year(releases)
     genres = __get_genres(recording)
-    image_data, image_url = __get_image(recording)
+    image_data, image_url = __get_image(releases)
 
     return SongInfo(title=title, artist=artist, year=year, genres=genres, cover_image_data=image_data, cover_url=image_url)
+
+
+def _releases_of(recordings) -> list:
+    """The releases of the recordings, each once."""
+    releases, seen = [], set()
+    for recording in recordings:
+        for release in recording.get('release-list') or []:
+            key = release.get('id') or id(release)
+            if key not in seen:
+                seen.add(key)
+                releases.append(release)
+    return releases
 
 
 def __single_line_search(search_string):
@@ -135,13 +158,22 @@ def __filter_words(search_string):
     return search_string
 
 
-def __multi_line_search(artist: str, title: str):
+def __multi_line_search(artist: str, title: str) -> list:
+    """The recordings that match the artist and the title, the best first.
+
+    The title is searched without its additions (see strip_title_additions):
+    with "(US Version)" or "- Live" in the search, a version of the song was
+    found first, or no recording at all.
+    """
+    title = strip_title_additions(title)
     # Try both combinations since we don't know which one is the artist and which one is the title
     artist1, title1 = artist, title
-    artist2, title2 = title, artist
+    artist2, title2 = title, strip_title_additions(artist)
 
-    result1 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(recording=title1, limit=10, artist=artist1, artistname=artist1))
-    result2 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(recording=title2, limit=10, artist=artist2, artistname=artist2))
+    result1 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(
+        recording=title1, limit=RECORDINGS_PER_SEARCH, artist=artist1, artistname=artist1))
+    result2 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(
+        recording=title2, limit=RECORDINGS_PER_SEARCH, artist=artist2, artistname=artist2))
 
     if result1 is None:
         result1 = {'recording-count': 0, 'recording-list': []}
@@ -149,29 +181,39 @@ def __multi_line_search(artist: str, title: str):
         result2 = {'recording-count': 0, 'recording-list': []}
 
     # Only accept a recording whose artist AND title match what we searched
-    # for; the best-matching one wins. Previously the first search hit was
+    # for, the best-matching first. Previously the first search hit was
     # taken even when neither matched, replacing a correct "Artist - Title"
     # with an unrelated song (and the lyrics lookup then fetched that song).
-    best, best_score = None, 0.0
+    # Of equally good ones, a title without additions comes first: "Title"
+    # rather than "Title (Live)".
+    matches = []
     for result, wanted_artist, wanted_title in ((result1, artist1, title1), (result2, artist2, title2)):
         for record in result.get('recording-list', []):
+            record_title = record.get('title', '')
             artist_sim = similarity(record.get('artist-credit-phrase', ''), wanted_artist, artist=True)
-            title_sim = similarity(record.get('title', ''), wanted_title)
-            if artist_sim < MIN_MATCH_SIMILARITY or title_sim < MIN_MATCH_SIMILARITY:
+            if artist_sim < MIN_MATCH_SIMILARITY or not titles_match(record_title, wanted_title):
                 continue
-            if artist_sim + title_sim > best_score:
-                best, best_score = record, artist_sim + title_sim
-    return best
+            plain = strip_title_additions(record_title) == record_title.strip()
+            matches.append(((artist_sim + similarity(record_title, wanted_title), plain), record))
+    # Stable: equally good recordings keep the order of the search
+    matches.sort(key=lambda match: match[0], reverse=True)
+    recordings, seen = [], set()
+    for _, record in matches:
+        key = record.get('id') or id(record)
+        if key not in seen:
+            seen.add(key)
+            recordings.append(record)
+    return recordings
 
 
-def __get_image(recording) -> (bytes, str):
+def __get_image(releases) -> (bytes, str):
     image_data = None
     image_url = None
-    if 'release-list' in recording:
+    if releases:
         # The cover of the earliest official release (the original single or
         # album), not of the first listed one, which is often a compilation or
         # a bootleg
-        for release in _preferred_releases(recording['release-list']):
+        for release in _preferred_releases(releases)[:MAX_COVER_RELEASES]:
             try:
                 image_data = __musicbrainz_request(lambda: musicbrainzngs.get_image_front(release['id']))
                 if image_data is None:
@@ -204,11 +246,11 @@ def __get_image(recording) -> (bytes, str):
                 continue
     if image_data is not None:
         print(f"{ULTRASINGER_HEAD} Found cover image")
-    elif 'release-list' in recording:
+    elif releases:
         # Informational only: for URL input the video thumbnail is used as
         # the cover instead; local files simply get no MusicBrainz cover.
         print(
-            f"{ULTRASINGER_HEAD} No cover art on MusicBrainz for this recording."
+            f"{ULTRASINGER_HEAD} No cover art on MusicBrainz for this song."
         )
 
     return image_data, image_url
@@ -224,22 +266,34 @@ def _is_official(release) -> bool:
     return (release.get('status') or '').strip().lower() == 'official'
 
 
+# Kinds of release groups where a song rarely came out first; their releases
+# come after the albums, singles and EPs (e.g. for the cover)
+_LATER_KINDS = frozenset({"compilation", "live", "remix", "dj-mix", "mixtape/street", "demo"})
+
+
+def _is_later_kind(release) -> bool:
+    group = release.get('release-group') or {}
+    kinds = [group.get('type') or ''] + list(group.get('secondary-type-list') or [])
+    return any(kind.strip().lower() in _LATER_KINDS for kind in kinds)
+
+
 def _preferred_releases(releases):
-    """The releases of a recording, official ones first, each from the earliest
-    date on (undated ones last). MusicBrainz does not list them by date."""
-    return sorted(releases, key=lambda r: (not _is_official(r), not _year_of(r.get('date')),
+    """The releases of a song: official ones first, of those the albums,
+    singles and EPs before compilations, live and remix releases, each from
+    the earliest date on (undated ones last). MusicBrainz does not list them
+    by date."""
+    return sorted(releases, key=lambda r: (not _is_official(r), _is_later_kind(r), not _year_of(r.get('date')),
                                            (r.get('date') or '').strip()))
 
 
-def __get_year(recording):
-    """Year of the earliest official release of the recording (of the earliest
-    release, when none is official).
+def __get_year(releases):
+    """Year of the earliest official one of the song's releases (of the
+    earliest release, when none is official).
 
     The releases are not listed by date, and the first one is often a later
     compilation. The release group of the earliest release can know a still
     earlier date (a reissue's group starts with the original release).
     """
-    releases = recording.get('release-list') or []
     # Recordings without any release (empty list) have no year either
     if not releases:
         return None
