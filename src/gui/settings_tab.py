@@ -87,6 +87,13 @@ class _NoScrollComboBox(QComboBox):
         event.ignore()
 
 
+# "Line Break Timing" choices: (shown text, config value)
+_LINEBREAK_TIMING_CHOICES = (
+    ("YASS style", "yass"),
+    ("USDX style", "usdx"),
+    ("After last note", "after_last_note"),
+)
+
 # "Octave Consistency" choices: (shown text, config value)
 _OCTAVE_CONSISTENCY_CHOICES = (
     ("Segmentation-model notes", "model"),
@@ -1258,6 +1265,21 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._format_version.setCurrentText(
                          _DEFAULTS["format_version"]))
 
+        self._linebreak_timing = _NoScrollComboBox()
+        for text, value in _LINEBREAK_TIMING_CHOICES:
+            self._linebreak_timing.addItem(text, value)
+        self._set_linebreak_timing(self._config.get("linebreak_timing"))
+        card.add_row("Line Break Timing", self._linebreak_timing,
+                     "When the view changes to the next line; which words make up a "
+                     "line does not change. 'YASS style' (default): in a pause of 2 s "
+                     "or more the sung line stays 1-2 s after its last note, so you "
+                     "can still see how well you hit its notes; in shorter pauses the "
+                     "next line appears 2-4 beats before it starts. 'USDX style': "
+                     "2 beats after the line. 'After last note': right after the "
+                     "line's last note, so the next line is shown as early as possible.",
+                     reset_callback=lambda: self._set_linebreak_timing(
+                         _DEFAULTS["linebreak_timing"]))
+
         self._create_plot = ToggleSwitch(
             checked=self._config.get("create_plot", False)
         )
@@ -1584,6 +1606,10 @@ class ConversionSettingsForm(QWidget):
                 "Train a segmentation model on your own UltraStar song library. "
                 "The finished model is set here automatically.")
 
+    def _set_linebreak_timing(self, value) -> None:
+        index = self._linebreak_timing.findData(value)
+        self._linebreak_timing.setCurrentIndex(index if index >= 0 else 0)
+
     def _set_octave_consistency(self, value) -> None:
         self._octave_consistency.setCurrentIndex(
             self._octave_consistency.findData(octave_consistency_choice(value)))
@@ -1650,6 +1676,7 @@ class ConversionSettingsForm(QWidget):
             "remote_stt_retry_max": self._remote_stt_retry_max.value(),
             "calculate_score": self._calculate_score.isChecked(),
             "format_version": self._format_version.currentText(),
+            "linebreak_timing": self._linebreak_timing.currentData(),
             "create_plot": self._create_plot.isChecked(),
             "create_midi": self._create_midi.isChecked(),
             "create_audio_chunks": self._create_chunks.isChecked(),

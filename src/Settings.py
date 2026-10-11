@@ -85,6 +85,7 @@ class Settings:
     
     language = None
     format_version = FormatVersion.V1_2_0
+    linebreak_timing = "yass"  # When the view changes to the next line: "yass", "usdx" or "after_last_note"
 
     # Vocal separation
     separator_backend = SeparatorBackend.AUDIO_SEPARATOR  # audio_separator (default, deterministic) | demucs

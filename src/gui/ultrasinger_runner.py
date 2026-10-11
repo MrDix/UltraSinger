@@ -335,6 +335,8 @@ class UltraSingerRunner(QObject):
         # Format version
         if config.get("format_version"):
             args.extend(["--format_version", config["format_version"]])
+        if config.get("linebreak_timing"):
+            args.extend(["--linebreak_timing", config["linebreak_timing"]])
 
         # Vocal separation backend — only forward backend-relevant model arg
         separator = config.get("separator_backend", "audio_separator")

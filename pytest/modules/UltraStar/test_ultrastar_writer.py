@@ -11,6 +11,7 @@ from src.modules.Ultrastar.ultrastar_writer import (
     format_separated_string, add_score_to_ultrastar_txt,
     add_game_score_to_ultrastar_txt,
     _compute_linebreak_indices, _enforce_max_line_length, note_beats,
+    linebreak_beat,
 )
 from src.modules.Midi.MidiSegment import MidiSegment
 from src.modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag
@@ -730,15 +731,32 @@ class TestNoteBeats(unittest.TestCase):
         segments = [_seg("a ", 2.0, 2.5), _seg("b ", 3.0, 3.5)]
         self.assertEqual(note_beats(segments, 2.0, _BPM, _MULT), [(0, 14), (28, 14)])
 
+    @staticmethod
+    def _written(segments, *timing):
+        with patch("builtins.open", mock_open()) as mock_file:
+            create_ultrastar_txt(segments, "output.txt", UltrastarTxtValue(), _BPM, *timing)
+        return [c.args[0] for c in mock_file.return_value.__enter__.return_value.write.call_args_list]
+
     def test_linebreak_at_end_of_last_note_of_the_line(self):
         # the note ends 56.6 beats after the gap and is written up to beat 57
         segments = [_seg("one ", 0.5, 2.5 + 0.6 / _BEATS_PER_S, line_break_after=True),
                     _seg("two ", 3.0, 4.5)]
-        with patch("builtins.open", mock_open()) as mock_file:
-            create_ultrastar_txt(segments, "output.txt", UltrastarTxtValue(), _BPM)
-        written = [c.args[0] for c in mock_file.return_value.__enter__.return_value.write.call_args_list]
+        written = self._written(segments, "after_last_note")
         self.assertIn(": 0 57 21 one \n", written)
         self.assertEqual(written[written.index(": 0 57 21 one \n") + 1], "- 57\n")
+
+    def test_linebreak_timing_in_a_long_pause(self):
+        # line ends on beat 56, the next starts 3 s later on beat 140
+        segments = [_seg("one ", 0.5, 2.5, line_break_after=True), _seg("two ", 5.5, 6.5)]
+        expected = {"yass": "- 84\n", "usdx": "- 58\n", "after_last_note": "- 56\n"}
+        for timing, line in expected.items():
+            with self.subTest(timing=timing):
+                written = self._written(segments, timing)
+                self.assertEqual(written[written.index(": 0 56 21 one \n") + 1], line)
+
+    def test_yass_is_the_default(self):
+        segments = [_seg("one ", 0.5, 2.5, line_break_after=True), _seg("two ", 5.5, 6.5)]
+        self.assertIn("- 84\n", self._written(segments))
 
     def test_temp_chart_for_scoring_uses_the_same_grid(self):
         from src.modules.Refinement.refine_from_vocal import _write_temp_ultrastar_txt
@@ -751,6 +769,47 @@ class TestNoteBeats(unittest.TestCase):
         finally:
             os.remove(path)
         self.assertEqual([(int(s), int(d)) for s, d in notes], note_beats(segments, 1.0, _BPM, _MULT))
+
+
+class TestLinebreakBeat(unittest.TestCase):
+    """When the view changes to the next line; 28 beats per second as above."""
+
+    SPB = 1 / _BEATS_PER_S
+
+    def _beat(self, pause, timing):
+        return linebreak_beat(100, 100 + pause, timing, self.SPB)
+
+    def test_yass(self):
+        cases = {0: 100, 1: 100,                 # lines (almost) touch: at the line's end
+                 2: 100, 8: 106,                 # 2 beats before the next line
+                 9: 106, 12: 109,                # 3 beats before
+                 13: 109, 16: 112,               # 4 beats before
+                 17: 110, 55: 110,               # 10 beats after the line (pause under 2 s)
+                 56: 128, 111: 128,              # pause of 2 s or more: 1 s after the line
+                 112: 156, 400: 156}             # pause of 4 s or more: 2 s after the line
+        for pause, beat in cases.items():
+            with self.subTest(pause=pause):
+                self.assertEqual(self._beat(pause, "yass"), beat)
+
+    def test_usdx(self):
+        cases = {0: 100, 1: 101, 2: 101, 3: 102, 50: 102}
+        for pause, beat in cases.items():
+            with self.subTest(pause=pause):
+                self.assertEqual(self._beat(pause, "usdx"), beat)
+
+    def test_after_last_note(self):
+        for pause in (0, 5, 200):
+            self.assertEqual(self._beat(pause, "after_last_note"), 100)
+
+    def test_never_outside_the_pause(self):
+        # a slow song: 1 s is more beats than the pause has left
+        self.assertEqual(linebreak_beat(100, 103, "yass", 0.5), 101)   # 1.5 s pause: 3 - 2 beats
+        self.assertEqual(linebreak_beat(100, 104, "yass", 0.5), 102)   # 2 s pause: 1 s = 2 beats
+        self.assertEqual(linebreak_beat(100, 100, "usdx", self.SPB), 100)
+        for timing in ("yass", "usdx", "after_last_note"):
+            for pause in range(0, 200, 7):
+                beat = self._beat(pause, timing)
+                self.assertTrue(100 <= beat <= 100 + pause, (timing, pause, beat))
 
 
 if __name__ == "__main__":

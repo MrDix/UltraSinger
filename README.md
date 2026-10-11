@@ -63,6 +63,7 @@ This will help me a lot to keep this project alive and improve it.
     - [🎵 Octave Shift](#-octave-shift)
     - [Sheet Music](#sheet-music)
     - [Format Version](#format-version)
+    - [Line Break Timing](#line-break-timing)
     - [Cache Folder](#cache-folder)
     - [🧪 Experimental Features](#-experimental-features)
       - [Library Triage Tool](#library-triage-tool)
@@ -392,6 +393,10 @@ _Not all options working now!_
 
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
+    --linebreak_timing      yass|usdx|after_last_note: when the view changes to the next line >> ((default) is yass)
+                            yass: in a pause of 2 s or more the sung line stays 1-2 s after its last note,
+                            in shorter pauses the next line comes 2-4 beats before it starts;
+                            usdx: 2 beats after the line; after_last_note: right after the line's last note
     --disable_karaoke       Disable creation of karaoke txt file. Karaoke is enabled by default.
     --create_audio_chunks   Enable creation of audio chunks. Disabled by default.
     --disable_midi          Disable MIDI file creation. MIDI is created by default.
@@ -603,6 +608,18 @@ You can choose between different format versions. The default is `1.2.0`.
 
 ```commandline
 -i XYZ --format_version 1.2.0
+```
+
+### Line Break Timing
+
+`--linebreak_timing` (GUI: **Line Break Timing**) sets when the view changes from a line to the next one. Which words make up a line does not change.
+
+- `yass` (default), as the YASS editor does it: in a pause of 2 s or more, the sung line stays 1 s after its last note (2 s from a pause of 4 s on), so you can still see how well you hit its notes. In shorter pauses the next line appears 2 to 4 beats before it starts.
+- `usdx`, as the UltraStar Deluxe editor does it: 2 beats after the line.
+- `after_last_note`: right after the line's last note, so the next line is shown as early as possible.
+
+```commandline
+-i XYZ --linebreak_timing after_last_note
 ```
 
 ### Cache Folder

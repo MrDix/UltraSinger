@@ -96,6 +96,7 @@ _DEFAULTS = {
     "calculate_score": True,
     # Output options
     "format_version": "1.2.0",
+    "linebreak_timing": "yass",
     "create_plot": False,
     "create_midi": True,
     "create_audio_chunks": False,

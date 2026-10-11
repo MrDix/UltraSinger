@@ -59,6 +59,58 @@ def note_beats(
     return beats
 
 
+# When the view changes to the next line (see linebreak_beat)
+LINEBREAK_TIMINGS = ("yass", "usdx", "after_last_note")
+DEFAULT_LINEBREAK_TIMING = "yass"
+
+
+def linebreak_beat(last_end: int, next_start: int, timing: str, seconds_per_beat: float) -> int:
+    """Beat of the line break between a line whose last note ends on ``last_end``
+    and the next line, which starts on ``next_start``: the view changes to the
+    next line on this beat.
+
+    - ``yass``: as the auto-correction of the YASS editor does it. In a pause
+      of 2 s or more the sung line stays 1 s after its last note (2 s from a
+      pause of 4 s on), so the singer can still see how well it was sung. In
+      shorter pauses the view changes 2 to 4 beats before the next line (10
+      beats after the line in a pause of more than 16 beats).
+    - ``usdx``: as the line break correction of the UltraStar Deluxe editor
+      does it: 2 beats after the line, 1 beat in a pause of 2 beats, and on
+      the next line's start when the lines are closer.
+    - ``after_last_note``: right when the last note of the line ends.
+
+    The beat is never before the end of the line nor after the start of the
+    next one.
+    """
+    pause = next_start - last_end
+    if timing == "yass":
+        pause_s = pause * seconds_per_beat
+        if pause_s >= 4.0:
+            beat = last_end + int(2.0 / seconds_per_beat)
+        elif pause_s >= 2.0:
+            beat = last_end + int(1.0 / seconds_per_beat)
+        elif pause <= 1:
+            beat = last_end
+        elif pause <= 8:
+            beat = next_start - 2
+        elif pause <= 12:
+            beat = next_start - 3
+        elif pause <= 16:
+            beat = next_start - 4
+        else:
+            beat = last_end + 10
+    elif timing == "usdx":
+        if pause < 2:
+            beat = next_start
+        elif pause == 2:
+            beat = last_end + 1
+        else:
+            beat = last_end + 2
+    else:
+        beat = last_end
+    return min(max(beat, last_end), max(next_start, last_end))
+
+
 def get_language_name(language: str) -> str:
     """Creates the language name from the language code"""
 
@@ -69,8 +121,13 @@ def create_ultrastar_txt(
         midi_segments: list[MidiSegment],
         ultrastar_file_output: str,
         ultrastar_class: UltrastarTxtValue,
-        real_bpm: float) -> None:
-    """Creates an Ultrastar txt file from the automation data"""
+        real_bpm: float,
+        linebreak_timing: str = DEFAULT_LINEBREAK_TIMING) -> None:
+    """Creates an Ultrastar txt file from the automation data.
+
+    ``linebreak_timing`` sets when the view changes to the next line (see
+    ``linebreak_beat``).
+    """
 
     print(f"{ULTRASINGER_HEAD} Creating UltraStar file {ultrastar_file_output}")
 
@@ -128,6 +185,7 @@ def create_ultrastar_txt(
 
         # Write the singing part
         beats = note_beats(midi_segments, gap, real_bpm, multiplication)
+        seconds_per_beat = 60 / (real_bpm * multiplication)
 
         for i, midi_segment in enumerate(midi_segments):
             start_beat, duration = beats[i]
@@ -150,11 +208,12 @@ def create_ultrastar_txt(
             file.write(line)
 
             if i in break_indices:
-                # At the written end of the line's last note, so the line
-                # stays visible until that note is sung
-                linebreak = f"{UltrastarTxtTag.LINEBREAK.value} " \
-                            f"{str(start_beat + duration)}\n"
-                file.write(linebreak)
+                # Never before the written end of the line's last note, so the
+                # line stays visible until that note is sung
+                end_beat = start_beat + duration
+                next_beat = beats[i + 1][0] if i + 1 < len(beats) else end_beat
+                break_beat = linebreak_beat(end_beat, next_beat, linebreak_timing, seconds_per_beat)
+                file.write(f"{UltrastarTxtTag.LINEBREAK.value} {break_beat}\n")
         file.write(f"{UltrastarTxtTag.FILE_END.value}")
 
 

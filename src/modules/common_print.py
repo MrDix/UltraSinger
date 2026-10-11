@@ -234,6 +234,10 @@ def print_help() -> None:
 
     [output]
     --format_version        0.3.0|1.0.0|1.1.0|1.2.0 >> ((default) is 1.2.0)
+    --linebreak_timing      yass|usdx|after_last_note: when the view changes to the next line >> ((default) is yass)
+                            yass: in a pause of 2 s or more the sung line stays 1-2 s after its last note,
+                            in shorter pauses the next line comes 2-4 beats before it starts;
+                            usdx: 2 beats after the line; after_last_note: right after the line's last note
     --create_audio_chunks   Enable creation of audio chunks. Audio chunks are disabled by default.
     --disable_midi          Disable MIDI file creation. MIDI is created by default.
     --no_metadata_tags      Skip writing ID3/Vorbis tags (title/artist/year/genre/cover) to output
