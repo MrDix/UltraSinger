@@ -227,7 +227,10 @@ def __get_image(recording) -> (bytes, str):
     image_data = None
     image_url = None
     if 'release-list' in recording:
-        for release in recording['release-list']:
+        # The cover of the earliest official release (the original single or
+        # album), not of the first listed one, which is often a compilation or
+        # a bootleg
+        for release in _preferred_releases(recording['release-list']):
             try:
                 image_data = __musicbrainz_request(lambda: musicbrainzngs.get_image_front(release['id']))
                 if image_data is None:
@@ -276,8 +279,20 @@ def _year_of(date) -> Optional[str]:
     return year if len(year) == 4 and year.isdigit() else None
 
 
+def _is_official(release) -> bool:
+    return (release.get('status') or '').strip().lower() == 'official'
+
+
+def _preferred_releases(releases):
+    """The releases of a recording, official ones first, each from the earliest
+    date on (undated ones last). MusicBrainz does not list them by date."""
+    return sorted(releases, key=lambda r: (not _is_official(r), not _year_of(r.get('date')),
+                                           (r.get('date') or '').strip()))
+
+
 def __get_year(recording):
-    """Year of the earliest release of the recording.
+    """Year of the earliest official release of the recording (of the earliest
+    release, when none is official).
 
     The releases are not listed by date, and the first one is often a later
     compilation. The release group of the earliest release can know a still
@@ -288,9 +303,12 @@ def __get_year(recording):
     if not releases:
         return None
 
-    dated = [r for r in releases if _year_of(r.get('date'))]
-    years = [_year_of(r['date']) for r in dated]
-    earliest = min(dated, key=lambda r: r['date'].strip()) if dated else releases[0]
+    ordered = _preferred_releases(releases)
+    dated = [r for r in ordered if _year_of(r.get('date'))]
+    # A bootleg or promotional copy does not date the song when an official release does
+    candidates = [r for r in dated if _is_official(r)] or dated
+    years = [_year_of(r['date']) for r in candidates]
+    earliest = candidates[0] if candidates else ordered[0]
 
     release_group_id = (earliest.get('release-group') or {}).get('id')
     if release_group_id:
