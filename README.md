@@ -63,6 +63,7 @@ This will help me a lot to keep this project alive and improve it.
     - [🎵 Octave Shift](#-octave-shift)
     - [Sheet Music](#sheet-music)
     - [Format Version](#format-version)
+    - [Cache Folder](#cache-folder)
     - [🧪 Experimental Features](#-experimental-features)
       - [Library Triage Tool](#library-triage-tool)
       - [Chart Benchmark Tool](#chart-benchmark-tool)
@@ -399,7 +400,9 @@ _Not all options working now!_
     --keep_audio_in_video   Keep full audio (vocals+instrumental) in the output video. Disabled by default.
     --write_settings_info   Write ultrasinger_parameter.info with all settings and scores to output dir.
     --plot                  Enable creation of plots. Disabled by default.
-    --keep_cache            Keep cache folder after creation. Removed by default.
+    --keep_cache            Keep the cache folder (intermediate files) in the song folder. Removed by default.
+    --cache_folder          Folder for the cache folders of the conversions, never the song folder
+                            >> ((default) is %LOCALAPPDATA%\UltraSinger\cache, on Linux/macOS ~/.cache/ultrasinger/cache)
 
     [denoise]
     --denoise_nr            Noise reduction in dB (0.01-97). Lower preserves more vocal detail. >> ((default) is 20)
@@ -600,6 +603,19 @@ You can choose between different format versions. The default is `1.2.0`.
 
 ```commandline
 -i XYZ --format_version 1.2.0
+```
+
+### Cache Folder
+
+While a song is converted, its intermediate files (separated vocals and instrumental, denoised and mono audio, transcription and pitch data; several hundred MB) are kept in a cache folder of their own, outside the song folder. A song folder in a folder that a file-sync client watches thus does not get these files uploaded while the conversion still uses them.
+
+- The cache folders are made in `%LOCALAPPDATA%\UltraSinger\cache` on Windows and in `~/.cache/ultrasinger/cache` on Linux and macOS. The log names the folder of each conversion.
+- When the conversion is done, its cache folder is deleted. With `--keep_cache` (GUI: **Keep Cache**) it is moved into the song folder as `cache` instead.
+- `--cache_folder <folder>` (GUI: **Cache Folder**) makes the cache folders somewhere else, for example on a drive with more free space. Choose a local folder that no file-sync client watches.
+- A conversion that is cancelled or crashes leaves its cache folder behind. Such folders are removed by a later conversion once they have not changed for a day; only folders whose name ends with `.ultrasinger` are removed.
+
+```commandline
+-i XYZ --cache_folder D:\UltraSinger\cache
 ```
 
 ### Settings Info File

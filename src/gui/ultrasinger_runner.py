@@ -414,6 +414,8 @@ class UltraSingerRunner(QObject):
         # Boolean flags (enabled by CLI flag)
         if config.get("keep_cache"):
             args.append("--keep_cache")
+        if config.get("cache_folder", "").strip():
+            args.extend(["--cache_folder", config["cache_folder"].strip()])
         if config.get("create_plot"):
             args.append("--plot")
         if config.get("create_audio_chunks"):

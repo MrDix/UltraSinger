@@ -1332,11 +1332,25 @@ class ConversionSettingsForm(QWidget):
             checked=self._config.get("keep_cache", False)
         )
         card.add_toggle_row("Keep Cache", self._keep_cache,
-                           "Keep intermediate processing files (separated audio, "
-                           "raw transcription data) after conversion. "
-                           "Speeds up re-processing but uses more disk space.",
+                           "Keep the intermediate files of a conversion (separated audio, "
+                           "transcription and pitch data): the cache folder is moved into "
+                           "the song folder as 'cache' when the conversion is done, instead "
+                           "of being deleted. Useful for inspecting them; uses more disk space.",
                            reset_callback=lambda: self._keep_cache.setChecked(
                                _DEFAULTS["keep_cache"]))
+
+        self._cache_folder = QLineEdit()
+        self._cache_folder.setPlaceholderText("Automatic (local app data folder)")
+        self._cache_folder.setText(self._config.get("cache_folder", ""))
+        card.add_row("Cache Folder",
+                     self._path_field(self._cache_folder, "", "Pick the folder for the cache folders.",
+                                      folder=True),
+                     "Where the intermediate files of a conversion are kept while it runs "
+                     "(several hundred MB per song, deleted at the end). Leave empty for a "
+                     "folder in your local app data, which no file-sync client watches. "
+                     "Choose another local folder, for example on a drive with more free "
+                     "space; never a synced folder.",
+                     reset_callback=lambda: self._cache_folder.setText(_DEFAULTS["cache_folder"]))
 
         self._main_layout.addWidget(card)
 
@@ -1427,20 +1441,29 @@ class ConversionSettingsForm(QWidget):
 
         self._main_layout.addWidget(card)
 
-    def _path_field(self, line_edit: QLineEdit, filter_text: str, browse_tooltip: str) -> QWidget:
-        """A path field with a Browse button, as one row widget."""
+    def _path_field(self, line_edit: QLineEdit, filter_text: str, browse_tooltip: str,
+                    folder: bool = False) -> QWidget:
+        """A path field with a Browse button (for a file, or with ``folder`` a folder), as one row widget."""
         container = QWidget()
         row = QHBoxLayout(container)
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(line_edit, 1)
         browse = QPushButton("Browse")
         browse.setToolTip(browse_tooltip)
-        browse.clicked.connect(lambda: self._browse_file(line_edit, filter_text))
+        if folder:
+            browse.clicked.connect(lambda: self._browse_folder(line_edit))
+        else:
+            browse.clicked.connect(lambda: self._browse_file(line_edit, filter_text))
         row.addWidget(browse)
         return container
 
     def _browse_file(self, line_edit: QLineEdit, filter_text: str):
         path, _ = QFileDialog.getOpenFileName(self, "Select File", "", filter_text)
+        if path:
+            line_edit.setText(path)
+
+    def _browse_folder(self, line_edit: QLineEdit):
+        path = QFileDialog.getExistingDirectory(self, "Select Folder", line_edit.text())
         if path:
             line_edit.setText(path)
 
@@ -1635,6 +1658,7 @@ class ConversionSettingsForm(QWidget):
             "keep_audio_in_video": self._keep_audio_in_video.isChecked(),
             "write_settings_info": self._write_settings_info.isChecked(),
             "keep_cache": self._keep_cache.isChecked(),
+            "cache_folder": self._cache_folder.text().strip(),
             "force_cpu": self._force_cpu.isChecked(),
             "force_whisper_cpu": self._force_whisper_cpu.isChecked(),
             "bpm_override": self._bpm_override.text(),
