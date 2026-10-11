@@ -177,7 +177,7 @@ def align_lyrics_to_audio(
     import whisperx
 
     print(f"{ULTRASINGER_HEAD} Loading alignment model for reference lyrics")
-    align_model = None
+    align_model = audio = None
     try:
         try:
             align_model, align_metadata = whisperx.load_align_model(
@@ -237,12 +237,12 @@ def align_lyrics_to_audio(
             return_char_alignments=False,
         )
     finally:
-        # Drop the model before going on: the first call imports libraries,
-        # one of which keeps the traceback of a failed optional import - and
-        # with it this call's frame and all its variables (see
+        # Drop the model (and the audio) before going on: the first call imports
+        # libraries, one of which keeps the traceback of a failed optional
+        # import - and with it this call's frame and all its variables (see
         # transcribe_with_whisper). The model would stay on the GPU for the
         # rest of the run.
-        align_model = None
+        align_model = audio = None
         release_gpu_memory()
 
     # Map aligned words back to original word list to restore backing-vocal
