@@ -7,6 +7,7 @@ by artist and title. No API key required.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -32,6 +33,10 @@ _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 # Found versions of a song at most this much further off the length of the
 # audio than the closest one count as just as close (see _best_version)
 _SAME_LENGTH_S = 5.0
+# What separates the artists of one credit: "A & B", "A, B", "A and B", "A feat. B"
+_CREDIT_SEPARATOR_RE = re.compile(
+    r"\s*(?:[&+,/]|\b(?:and|und|with|vs\.?|feat\.?|ft\.?|featuring)(?=\s))\s*", re.IGNORECASE)
+_LEADING_THE_RE = re.compile(r"^the\s+")
 
 
 @dataclass
@@ -233,13 +238,22 @@ def _names_match(entry: dict, artist: str, title: str) -> bool:
 
 
 def _artist_matches(found: str, wanted: str) -> bool:
-    """The same artist, also when one credit names more than the other
-    ("Artist" and "Artist & Guest", "Band" and "The Band")."""
+    """The same artist, also when one credit names more artists than the
+    other ("Artist" and "Artist & Guest" or "Artist, Guest") or a leading
+    "The". Not a longer name: "Band" is not "Band Tribute"."""
     if similarity(found, wanted, artist=True) >= MIN_MATCH_SIMILARITY:
         return True
-    shorter, longer = sorted((normalize_name(found, artist=True).split(),
-                              normalize_name(wanted, artist=True).split()), key=len)
-    return bool(shorter) and all(word in longer for word in shorter)
+    return bool(_credited_artists(found) & _credited_artists(wanted))
+
+
+def _credited_artists(credit: str) -> set[str]:
+    """The artists one credit names, each normalized and without a leading "The"."""
+    names = set()
+    for name in _CREDIT_SEPARATOR_RE.split(credit or ""):
+        name = _LEADING_THE_RE.sub("", normalize_name(name, artist=True))
+        if name:
+            names.add(name)
+    return names
 
 
 def _best_version(entries: list[dict], duration: Optional[float]) -> dict:

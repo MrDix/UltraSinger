@@ -57,9 +57,13 @@ class TestTitlesMatch(unittest.TestCase):
 
     def test_other_part_is_another_song(self):
         for a, b in (("Intro (Part 1)", "Intro (Part 2)"), ("Song Title - Part 1", "Song Title - Part 2"),
-                     ("Song Title", "Song Title Goes On")):
+                     ("Song Title", "Song Title Goes On"), ("Intro", "Intro (Part 2)"),
+                     ("Song Title", "Song Title (Reprise)"), ("Song Title [Some Words]", "Song Title")):
             with self.subTest(a=a, b=b):
                 self.assertFalse(titles_match(a, b))
+
+    def test_title_of_brackets_only(self):
+        self.assertTrue(titles_match("(Untitled)", "(Untitled)"))
 
 
 if __name__ == "__main__":

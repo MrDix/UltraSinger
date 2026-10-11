@@ -254,10 +254,15 @@ class TestFindLyrics(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_artist_credits_written_differently(self):
-        for credit in ("SOME ARTIST", "Some Artist & Guest Name", "The Some Artist", "Some Artist feat. Guest"):
+        for credit in ("SOME ARTIST", "Some Artist & Guest Name", "The Some Artist", "Some Artist feat. Guest",
+                       "Guest Name, Some Artist", "Some Artist and Guest Name"):
             with self.subTest(credit=credit):
                 result, _ = self._find(lambda params: [_version(200.0, artist=credit)])
                 self.assertIsNotNone(result)
+
+    def test_other_artist_with_a_longer_name_is_not_taken(self):
+        result, _ = self._find(lambda params: [_version(200.0, artist="Some Artist Tribute")])
+        self.assertIsNone(result)
 
     def test_song_named_before_the_artist(self):
         # Video title "Song Title - Some Artist": artist and title come swapped

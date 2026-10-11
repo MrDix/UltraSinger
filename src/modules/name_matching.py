@@ -25,6 +25,7 @@ QUALIFIER_WORDS = frozenset(
     "album remaster remastered mix remix explicit clean acoustic original extended mono stereo".split()
 )
 _BRACKETS_RE = re.compile(r"[(\[{][^)\]}]*[)\]}]")
+_LEADING_BRACKETS_RE = re.compile(r"^\s*[(\[{][^)\]}]*[)\]}]\s*")
 _FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
 # What video titles and releases add to a song title, in brackets or after a
 # dash: the kind of upload, a version, a featured guest. Such a part starts or
@@ -121,14 +122,25 @@ def strip_title_additions(title: str) -> str:
     return " ".join(s.split()) or (title or "").strip()
 
 
+def _title_words(title: str) -> str:
+    """The title for comparing songs: without its additions and without a
+    bracketed part it starts with (often left out: "(Some Words) Title" is
+    also called "Title"); other bracketed parts stay, as plain words, since
+    "Title (Part 2)" or "Title (Reprise)" is another song than "Title"."""
+    s = strip_title_additions(title)
+    s = _LEADING_BRACKETS_RE.sub("", s) or s
+    return " ".join(re.sub(r"[()\[\]{}]", " ", s).split())
+
+
 def titles_match(a: str, b: str) -> bool:
     """Whether two song titles name the same song.
 
     They are compared without their additions (see strip_title_additions)
-    by ``similarity``. Numbers left in both titles must be the same, also
-    in brackets: "Intro (Part 1)" is not "Intro (Part 2)".
+    by ``similarity``; a bracketed part that is not an addition counts like
+    any other word, except at the start of a title. Numbers left in both
+    titles must be the same: "Intro (Part 1)" is not "Intro (Part 2)".
     """
-    a, b = strip_title_additions(a), strip_title_additions(b)
+    a, b = _title_words(a), _title_words(b)
     numbers_a, numbers_b = sorted(re.findall(r"\d+", a)), sorted(re.findall(r"\d+", b))
     if numbers_a and numbers_b and numbers_a != numbers_b:
         return False
