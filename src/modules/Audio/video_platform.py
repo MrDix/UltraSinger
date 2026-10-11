@@ -13,6 +13,7 @@ from modules.Audio.bpm import get_bpm_from_file
 from modules.console_colors import ULTRASINGER_HEAD, red_highlighted
 from modules.Image.image_helper import save_image
 from modules.musicbrainz_client import search_musicbrainz
+from modules.name_matching import artist_from_channel
 from modules.ffmpeg_helper import separate_audio_video
 
 
@@ -128,7 +129,8 @@ def get_video_title(url: str, cookiefile: str | None = None,
     if "-" in video_title:
         parts = video_title.split("-", 1)
         return parts[0].strip(), parts[1].strip(), video_title, language
-    return channel, video_title, video_title, language
+    # "ArtistVEVO" or "Artist - Topic" is no artist name the lookups would find
+    return artist_from_channel(channel), video_title, video_title, language
 
 
 def __download_video_with_audio(url: str, clear_filename: str, output_path: str, cookiefile: str = None,

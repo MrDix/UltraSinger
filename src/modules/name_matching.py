@@ -28,17 +28,42 @@ _BRACKETS_RE = re.compile(r"[(\[{][^)\]}]*[)\]}]")
 _LEADING_BRACKETS_RE = re.compile(r"^\s*[(\[{][^)\]}]*[)\]}]\s*")
 _FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
 # What video titles and releases add to a song title, in brackets or after a
-# dash: the kind of upload, a version, a featured guest. Such a part starts or
-# ends with one of these words; any other part ("(Part 2)", "(Reprise)",
+# dash: the kind of upload, a version, a featured guest. Such a part starts
+# with one of _ADDITION_START (whatever follows), is one of _AMBIGUOUS_START -
+# words that are common in song titles too - alone or followed by one of
+# _AMBIGUOUS_FOLLOW ("Live at ...", "Radio Edit", but not "Live Forever"), or
+# ends with one of _ADDITION_END. Any other part ("(Part 2)", "(Reprise)",
 # "(I Can't Get No)") can tell two songs apart and is kept.
 _ADDITION_START = (
-    r"official|offizielles|oficial|officiel|music|video|videoclip|clip|audio|lyrics?|visuali[sz]er"
-    r"|hd|hq|4k|8k|\d{3,4}p|mv|m/v|live|acoustic|unplugged|explicit|clean|mono|stereo"
-    r"|remaster(?:ed)?|\d{4}|feat\.?|ft\.?|featuring|from|us|uk|single|album|radio|extended|original"
+    r"official|offizielles?|oficial|officiel(?:le)?|lyrics?|visuali[sz]er|videoclip|hd|hq|4k|8k|\d{3,4}p"
+    r"|mv|m/v|explicit|acoustic|unplugged|mono|stereo|remaster(?:ed)?|\d{4}|feat\.?|ft\.?|featuring"
+    r"|recorded|bonus|deluxe|demo|karaoke|slowed|sped"
 )
-_ADDITION_END = r"version|edit|mix|remix|remaster(?:ed)?|cut|video|audio|lyrics?|visuali[sz]er|hd|4k"
-_ADDITION_RE = re.compile(rf"(?:{_ADDITION_START})(?:\W.*)?|(?:.*\W)?(?:{_ADDITION_END})",
-                          re.IGNORECASE | re.DOTALL)
+_AMBIGUOUS_START = r"live|us|uk|radio|single|album|extended|original|clean|vid[eé]o|music|audio|clip|from"
+_AMBIGUOUS_FOLLOW = (
+    r"version|edit|mix|cut|video|single|release|recording|performance|sessions?|officiel(?:le)?|oficial"
+    r"|at|in|on|@|\d{4}|(?:the\s+)?(?:album|movie|film|motion\s+picture|soundtrack|series|musical|show|game)"
+)
+_ADDITION_END = (
+    r"version|edit|mix|remix|remaster(?:ed)?|cut|video|audio|lyrics?|visuali[sz]er|hd|4k"
+    r"|edition|demo|karaoke|instrumental|sessions?"
+)
+
+
+def _addition_re(start: str) -> re.Pattern:
+    return re.compile(
+        rf"(?:{start})(?:\W.*)?"
+        rf"|(?:{_AMBIGUOUS_START})(?:\s+(?:{_AMBIGUOUS_FOLLOW})(?:\W.*)?|\s*[\"“'‘].*)?"
+        rf"|(?:.*\W)?(?:{_ADDITION_END})",
+        re.IGNORECASE | re.DOTALL)
+
+
+_ADDITION_RE = _addition_re(_ADDITION_START)
+# In brackets, a guest also comes with "with": "(with Guest)"
+_BRACKET_ADDITION_RE = _addition_re(_ADDITION_START + r"|with|w/")
+# What channel names add to an artist's name: "ArtistVEVO", "Artist - Topic"
+_CHANNEL_ADDITION_RE = re.compile(r"(?:\s*-\s*topic|\s*vevo|\s+official(?:\s+(?:channel|music))?)\s*$",
+                                  re.IGNORECASE)
 # Video titles put more after the song title: "Title - US Version",
 # "Title | Label Name", "Title // Live"
 _SEPARATOR_RE = re.compile(r"\s+(-|–|—|\||//)\s+")
@@ -92,26 +117,32 @@ def similarity(a: str, b: str, artist: bool = False) -> float:
             return score
         extra.remove(w)
     if all(w in QUALIFIER_WORDS or w.isdigit() for w in extra):
-        score = max(score, CONTAINED_SIMILARITY)
-    return score
+        return max(score, CONTAINED_SIMILARITY)
+    # One name is the other plus a word that is no qualifier ("Nova Lights",
+    # "Some Long Title Reprise"): another artist or song, however long the
+    # shared part (the character similarity alone would pass long names)
+    return min(score, MIN_MATCH_SIMILARITY / 2)
 
 
-def _is_addition(part: str) -> bool:
-    return _ADDITION_RE.fullmatch(part.strip()) is not None
+def _is_addition(part: str, in_brackets: bool = False) -> bool:
+    part = part.strip()
+    return not part or (_BRACKET_ADDITION_RE if in_brackets else _ADDITION_RE).fullmatch(part) is not None
 
 
 def strip_title_additions(title: str) -> str:
     """The song title without the additions video titles often carry.
 
     Drops bracketed additions ("(Official Video)", "[HD]", "(US Version)",
-    "(feat. Guest)", "(2011 Remaster)"), an addition after a dash
-    (" - US Version", " - Live at Some Place"), everything after " | " or
-    " // " (" | Label Name"), a featured guest ("feat. Guest"), a trailing
-    "Official Video" and a trailing quality mark ("HD", "4K"). Other
-    bracketed or dashed parts ("(Part 2)", "- Reprise") stay, they can tell
-    two songs apart. A title that would be left empty is returned unchanged.
+    "(feat. Guest)", "(with Guest)", "(2011 Remaster)") and empty brackets,
+    an addition after a dash (" - US Version", " - Live at Some Place"),
+    everything after " | " or " // " (" | Label Name"), a featured guest
+    ("feat. Guest"), a trailing "Official Video" and a trailing quality mark
+    ("HD", "4K"). Other bracketed or dashed parts ("(Part 2)", "- Reprise",
+    "(Live Forever)") stay, they can tell two songs apart. A title that would
+    be left empty is returned unchanged.
     """
-    s = _BRACKETS_RE.sub(lambda m: " " if _is_addition(m.group(0)[1:-1]) else m.group(0), title or "")
+    s = _BRACKETS_RE.sub(lambda m: " " if _is_addition(m.group(0)[1:-1], in_brackets=True) else m.group(0),
+                         title or "")
     for separator in _SEPARATOR_RE.finditer(s):
         if separator.group(1) in ("|", "//") or _is_addition(s[separator.end():]):
             s = s[:separator.start()]
@@ -145,3 +176,9 @@ def titles_match(a: str, b: str) -> bool:
     if numbers_a and numbers_b and numbers_a != numbers_b:
         return False
     return similarity(a, b) >= MIN_MATCH_SIMILARITY
+
+
+def artist_from_channel(channel: str) -> str:
+    """The artist's name in a channel name: without "VEVO", " - Topic" or
+    " Official" at its end. Unchanged when nothing would be left."""
+    return _CHANNEL_ADDITION_RE.sub("", channel or "").strip() or (channel or "").strip()

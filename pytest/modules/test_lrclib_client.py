@@ -263,6 +263,28 @@ class TestFindLyrics(unittest.TestCase):
     def test_other_artist_with_a_longer_name_is_not_taken(self):
         result, _ = self._find(lambda params: [_version(200.0, artist="Some Artist Tribute")])
         self.assertIsNone(result)
+        result, _ = self._find(lambda params: [_version(200.0, artist="Some Much Longer Artist Name Tribute")],
+                               artist="Some Much Longer Artist Name")
+        self.assertIsNone(result)
+
+    def test_credits_split_only_at_list_separators(self):
+        from src.modules.lrclib_client import _artist_matches
+        self.assertTrue(_artist_matches("Some Artist / Guest Name", "Some Artist"))
+        self.assertFalse(_artist_matches("Ab/Cd", "Cd"))           # a slash inside a name
+        self.assertFalse(_artist_matches("And Some", "Some"))      # a name that starts with "And"
+
+    def test_empty_artist_or_title_finds_nothing(self):
+        for artist, title in (("", "Song Title"), ("Some Artist", ""), (None, "Song Title")):
+            with self.subTest(artist=artist, title=title):
+                result, requests = self._find(lambda params: [_version(200.0)], artist=artist, title=title)
+                self.assertIsNone(result)
+                self.assertEqual(requests, [])
+
+    def test_whitespace_synced_lyrics_count_as_none(self):
+        from src.modules.lrclib_client import _best_version
+        blank = {"duration": 200.0, "syncedLyrics": "  ", "plainLyrics": "blank"}
+        synced = {"duration": 200.0, "syncedLyrics": "[00:01.00] la", "plainLyrics": "synced"}
+        self.assertIs(_best_version([blank, synced], 200.0), synced)
 
     def test_song_named_before_the_artist(self):
         # Video title "Song Title - Some Artist": artist and title come swapped

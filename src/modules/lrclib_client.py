@@ -33,9 +33,10 @@ _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 # Found versions of a song at most this much further off the length of the
 # audio than the closest one count as just as close (see _best_version)
 _SAME_LENGTH_S = 5.0
-# What separates the artists of one credit: "A & B", "A, B", "A and B", "A feat. B"
+# What separates the artists of one credit: "A & B", "A, B", "A / B", "A and B",
+# "A feat. B" - not a slash or a comma inside a name ("A/B", "A,B")
 _CREDIT_SEPARATOR_RE = re.compile(
-    r"\s*(?:[&+,/]|\b(?:and|und|with|vs\.?|feat\.?|ft\.?|featuring)(?=\s))\s*", re.IGNORECASE)
+    r"\s*[&+]\s*|\s+/\s+|,\s+|\s+(?:and|und|with|vs\.?|feat\.?|ft\.?|featuring)\s+", re.IGNORECASE)
 _LEADING_THE_RE = re.compile(r"^the\s+")
 
 
@@ -85,7 +86,7 @@ def search_lyrics(artist: str, title: str, duration: Optional[float] = None) -> 
 
     info_str = ", ".join(parts) if parts else "no lyrics content"
     length = ""
-    if result.duration and duration:
+    if isinstance(result.duration, (int, float)) and result.duration > 0 and duration:
         length = f", {result.duration:.0f} s long (the audio: {duration:.0f} s)"
     print(f"{ULTRASINGER_HEAD} Found lyrics on LRCLIB: "
           f"{blue_highlighted(result.artist_name)} - {blue_highlighted(result.track_name)} "
@@ -109,8 +110,11 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     (``duration``, in seconds) wins, preferably one with synced lyrics,
     see ``_best_version``. The length never rules a version out.
     """
+    if not artist or not title:
+        return None
     stripped = strip_title_additions(title)
-    titles = [title] if stripped.casefold() == title.strip().casefold() else [title, stripped]
+    same = " ".join(stripped.split()).casefold() == " ".join(title.split()).casefold()
+    titles = [title] if same else [title, stripped]
     found = None
     for i, wanted in enumerate(titles):
         if i and verbose:
@@ -268,7 +272,7 @@ def _best_version(entries: list[dict], duration: Optional[float]) -> dict:
     """
     offs = [_length_off(entry, duration) for entry in entries]
     closest = min(offs)
-    ranked = [(not entry.get("syncedLyrics"), off, index)
+    ranked = [(not _has_text(entry.get("syncedLyrics")), off, index)
               for index, (entry, off) in enumerate(zip(entries, offs))
               if off <= closest + _SAME_LENGTH_S]
     return entries[min(ranked)[2]]

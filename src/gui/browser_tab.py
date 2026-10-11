@@ -130,7 +130,8 @@ class _FormatProbeWorker(QObject):
                         "", track, flags=re.IGNORECASE,
                     ).strip()
                 elif not artist:
-                    artist = info.get("uploader") or info.get("channel") or ""
+                    from modules.name_matching import artist_from_channel
+                    artist = artist_from_channel(info.get("uploader") or info.get("channel") or "")
                     track = track or video_title
             lyrics_status = self._check_lrclib(artist, track, duration or None)
 
