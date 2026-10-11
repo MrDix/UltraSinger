@@ -298,6 +298,55 @@ class TestMultiLineMatchValidation(unittest.TestCase):
         self.assertEqual((info.artist, info.title), ('Wanted Artist', 'Wanted Title'))
 
 
+class TestYear(unittest.TestCase):
+    """The year comes from the earliest release of the recording, not from its first listed one."""
+
+    @staticmethod
+    def _recording(*releases):
+        rec = _recording('Wanted Title', 'Wanted Artist')
+        rec['release-list'] = [{'id': f'r{i}', 'title': t, 'date': d, 'release-group': {'id': f'g{i}'}}
+                               for i, (t, d) in enumerate(releases)]
+        return rec
+
+    def _year(self, recording, group_dates):
+        groups = {f'g{i}': d for i, d in enumerate(group_dates)}
+
+        def group(group_id):
+            date = groups.get(group_id)
+            return {'release-group': {'first-release-date': date} if date else {}}
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [recording]}), \
+                patch('musicbrainzngs.get_release_group_by_id', side_effect=group) as mock_group, \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        return info.year, [c.args[0] for c in mock_group.call_args_list]
+
+    def test_earliest_release_not_first_listed(self):
+        # The first listed release is a later box set (its group starts then, too)
+        recording = self._recording(('Box Set', '1994'), ('Album', '1989-03-21'), ('Best Of', '1992'))
+        year, groups = self._year(recording, ['1994', '1989-03-21', '1990'])
+        self.assertEqual(year, '1989')
+        self.assertEqual(groups, ['g1'])  # the group of the earliest release
+
+    def test_release_group_knows_an_earlier_date(self):
+        # Only a reissue is listed; its release group starts with the original
+        year, _ = self._year(self._recording(('Reissue', '2005-06')), ['1989'])
+        self.assertEqual(year, '1989')
+
+    def test_undated_releases_use_the_first_release_group(self):
+        year, groups = self._year(self._recording(('A', ''), ('B', None)), ['2001-01-01', '1999'])
+        self.assertEqual((year, groups), ('2001', ['g0']))
+
+    def test_no_date_anywhere(self):
+        year, _ = self._year(self._recording(('A', '')), [None])
+        self.assertIsNone(year)
+
+    def test_year_of(self):
+        from src.modules.musicbrainz_client import _year_of
+        self.assertEqual([_year_of(d) for d in ('1989', '1989-03', ' 1989-03-21 ', '', None, '19xx')],
+                         ['1989', '1989', '1989', None, None, None])
+
+
 class TestSimilarity(unittest.TestCase):
     def test_values(self):
         from src.modules.musicbrainz_client import _similarity

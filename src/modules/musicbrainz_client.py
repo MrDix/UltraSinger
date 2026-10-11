@@ -270,28 +270,40 @@ def __get_image(recording) -> (bytes, str):
     return image_data, image_url
 
 
+def _year_of(date) -> Optional[str]:
+    """The year of a MusicBrainz date ("1989", "1989-03" or "1989-03-21"), or None."""
+    year = (date or "").strip()[:4]
+    return year if len(year) == 4 and year.isdigit() else None
+
+
 def __get_year(recording):
-    year = None
+    """Year of the earliest release of the recording.
 
+    The releases are not listed by date, and the first one is often a later
+    compilation. The release group of the earliest release can know a still
+    earlier date (a reissue's group starts with the original release).
+    """
+    releases = recording.get('release-list') or []
     # Recordings without any release (empty list) have no year either
-    if not recording.get('release-list'):
-        return year
+    if not releases:
+        return None
 
-    release_group_id = recording['release-list'][0]['release-group']['id']
-    release_group = __musicbrainz_request(lambda: musicbrainzngs.get_release_group_by_id(release_group_id))
+    dated = [r for r in releases if _year_of(r.get('date'))]
+    years = [_year_of(r['date']) for r in dated]
+    earliest = min(dated, key=lambda r: r['date'].strip()) if dated else releases[0]
 
-    if release_group is None:
-        return year
+    release_group_id = (earliest.get('release-group') or {}).get('id')
+    if release_group_id:
+        release_group = __musicbrainz_request(lambda: musicbrainzngs.get_release_group_by_id(release_group_id))
+        if release_group is not None:
+            group_year = _year_of(release_group.get('release-group', {}).get('first-release-date'))
+            if group_year:
+                years.append(group_year)
 
-    if 'first-release-date' not in release_group['release-group']:
-        return year
-
-    year = release_group['release-group']['first-release-date'].strip()
-    year = year.split('-')[0]
-
-    if year is not None:
-        print(f"{ULTRASINGER_HEAD} Found year: {blue_highlighted(year)}")
-
+    if not years:
+        return None
+    year = min(years)
+    print(f"{ULTRASINGER_HEAD} Found year: {blue_highlighted(year)}")
     return year
 
 
