@@ -26,9 +26,21 @@ QUALIFIER_WORDS = frozenset(
 )
 _BRACKETS_RE = re.compile(r"[(\[{][^)\]}]*[)\]}]")
 _FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
+# What video titles and releases add to a song title, in brackets or after a
+# dash: the kind of upload, a version, a featured guest. Such a part starts or
+# ends with one of these words; any other part ("(Part 2)", "(Reprise)",
+# "(I Can't Get No)") can tell two songs apart and is kept.
+_ADDITION_START = (
+    r"official|offizielles|oficial|officiel|music|video|videoclip|clip|audio|lyrics?|visuali[sz]er"
+    r"|hd|hq|4k|8k|\d{3,4}p|mv|m/v|live|acoustic|unplugged|explicit|clean|mono|stereo"
+    r"|remaster(?:ed)?|\d{4}|feat\.?|ft\.?|featuring|from|us|uk|single|album|radio|extended|original"
+)
+_ADDITION_END = r"version|edit|mix|remix|remaster(?:ed)?|cut|video|audio|lyrics?|visuali[sz]er|hd|4k"
+_ADDITION_RE = re.compile(rf"(?:{_ADDITION_START})(?:\W.*)?|(?:.*\W)?(?:{_ADDITION_END})",
+                          re.IGNORECASE | re.DOTALL)
 # Video titles put more after the song title: "Title - US Version",
 # "Title | Label Name", "Title // Live"
-_SEPARATOR_RE = re.compile(r"\s+(?:-|–|—|\||//)\s+")
+_SEPARATOR_RE = re.compile(r"\s+(-|–|—|\||//)\s+")
 # A trailing "Official Video", "Official Music Video", ... without brackets
 _OFFICIAL_RE = re.compile(
     r"\s+official(?:\s+(?:music|lyrics?|hd|hq|4k|video|audio|visuali[sz]er|clip|videoclip))*\s*$",
@@ -83,18 +95,41 @@ def similarity(a: str, b: str, artist: bool = False) -> float:
     return score
 
 
+def _is_addition(part: str) -> bool:
+    return _ADDITION_RE.fullmatch(part.strip()) is not None
+
+
 def strip_title_additions(title: str) -> str:
     """The song title without the additions video titles often carry.
 
-    Drops bracketed parts ("(Official Video)", "[HD]", "(feat. Guest)"),
-    everything after a separator (" - US Version", " | Label Name"), a
-    featured guest ("feat. Guest"), a trailing "Official Video" and a
-    trailing quality mark ("HD", "4K"). A title that would be left empty
-    is returned unchanged.
+    Drops bracketed additions ("(Official Video)", "[HD]", "(US Version)",
+    "(feat. Guest)", "(2011 Remaster)"), an addition after a dash
+    (" - US Version", " - Live at Some Place"), everything after " | " or
+    " // " (" | Label Name"), a featured guest ("feat. Guest"), a trailing
+    "Official Video" and a trailing quality mark ("HD", "4K"). Other
+    bracketed or dashed parts ("(Part 2)", "- Reprise") stay, they can tell
+    two songs apart. A title that would be left empty is returned unchanged.
     """
-    s = _BRACKETS_RE.sub(" ", title or "")
-    s = _SEPARATOR_RE.split(s, maxsplit=1)[0]
+    s = _BRACKETS_RE.sub(lambda m: " " if _is_addition(m.group(0)[1:-1]) else m.group(0), title or "")
+    for separator in _SEPARATOR_RE.finditer(s):
+        if separator.group(1) in ("|", "//") or _is_addition(s[separator.end():]):
+            s = s[:separator.start()]
+            break
     s = _FEATURING_RE.sub("", s)
     s = _OFFICIAL_RE.sub("", s)
     s = _QUALITY_RE.sub("", s)
     return " ".join(s.split()) or (title or "").strip()
+
+
+def titles_match(a: str, b: str) -> bool:
+    """Whether two song titles name the same song.
+
+    They are compared without their additions (see strip_title_additions)
+    by ``similarity``. Numbers left in both titles must be the same, also
+    in brackets: "Intro (Part 1)" is not "Intro (Part 2)".
+    """
+    a, b = strip_title_additions(a), strip_title_additions(b)
+    numbers_a, numbers_b = sorted(re.findall(r"\d+", a)), sorted(re.findall(r"\d+", b))
+    if numbers_a and numbers_b and numbers_a != numbers_b:
+        return False
+    return similarity(a, b) >= MIN_MATCH_SIMILARITY

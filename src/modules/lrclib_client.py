@@ -16,7 +16,13 @@ from typing import Optional
 
 from Settings import Settings
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted
-from modules.name_matching import MIN_MATCH_SIMILARITY, normalize_name, similarity, strip_title_additions
+from modules.name_matching import (
+    MIN_MATCH_SIMILARITY,
+    normalize_name,
+    similarity,
+    strip_title_additions,
+    titles_match,
+)
 
 _BASE_URL = "https://lrclib.net/api"
 _REQUEST_TIMEOUT_S = 15
@@ -87,8 +93,8 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
                 verbose: bool = False) -> Optional[LyricsInfo]:
     """Find the lyrics of a song on LRCLIB.
 
-    Tries an artist+title search first, then falls back to a combined
-    query string search if no results are found. When the title carries
+    Runs an artist+title search and a combined query string search; they
+    can list different versions of the song. When the title carries
     additions from a video title ("(Official Video)", "- US Version",
     "[HD]", "feat. Guest") and nothing is found with them, both searches are
     repeated without (``verbose`` reports that).
@@ -105,18 +111,22 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
         if i and verbose:
             print(f"{ULTRASINGER_HEAD} Searching LRCLIB again without the additions to the title: "
                   f"{blue_highlighted(wanted)}")
-        for result in _searches(artist, wanted, duration):
-            if result is not None and result.has_lyrics:
-                return result
-            # Only an instrumental entry so far: lyrics may still come with the next search
-            found = found or result
+        results = [result for result in (_search_by_fields(artist, wanted, duration),
+                                         _search_by_query(f"{artist} {wanted}", artist, wanted, duration))
+                   if result is not None]
+        with_lyrics = [result for result in results if result.has_lyrics]
+        if with_lyrics:
+            return _best_result(with_lyrics, duration)
+        # Only instrumental entries so far: lyrics may still come with the next title
+        found = found or next(iter(results), None)
     return found
 
 
-def _searches(artist: str, title: str, duration: Optional[float]):
-    """The results of the artist+title search, then of the combined query (run only when asked for)."""
-    yield _search_by_fields(artist, title, duration)
-    yield _search_by_query(f"{artist} {title}", artist, title, duration)
+def _best_result(results: list[LyricsInfo], duration: Optional[float]) -> LyricsInfo:
+    """The best of the results of both searches, chosen like ``_best_version``."""
+    versions = [{"duration": result.duration, "syncedLyrics": result.synced_lyrics} for result in results]
+    best = _best_version(versions, duration)
+    return next(result for result, version in zip(results, versions) if version is best)
 
 
 def _search_by_fields(artist: str, title: str, duration: Optional[float] = None) -> Optional[LyricsInfo]:
@@ -214,14 +224,12 @@ def _names_match(entry: dict, artist: str, title: str) -> bool:
     other way round, for video titles that name the song before the artist.
     """
     found_artist = entry.get("artistName") or ""
-    found_title = strip_title_additions(entry.get("trackName") or "")
-    wanted_title = strip_title_additions(title)
+    found_title = entry.get("trackName") or ""
 
     def match(wanted_artist: str, wanted_track: str) -> bool:
-        return (_artist_matches(found_artist, wanted_artist)
-                and similarity(found_title, wanted_track) >= MIN_MATCH_SIMILARITY)
+        return _artist_matches(found_artist, wanted_artist) and titles_match(found_title, wanted_track)
 
-    return match(artist, wanted_title) or match(wanted_title, artist)
+    return match(artist, title) or match(strip_title_additions(title), artist)
 
 
 def _artist_matches(found: str, wanted: str) -> bool:

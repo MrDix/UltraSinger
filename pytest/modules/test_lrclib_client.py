@@ -55,10 +55,10 @@ class TestSearchLyrics(unittest.TestCase):
         mock_fields.return_value = LyricsInfo(
             track_name="Song", artist_name="Artist", plain_lyrics="lyrics"
         )
+        mock_query.return_value = None
         result = search_lyrics("Artist", "Song")
         self.assertIsNotNone(result)
         self.assertEqual(result.plain_lyrics, "lyrics")
-        mock_query.assert_not_called()
 
     @patch("src.modules.lrclib_client._search_by_query")
     @patch("src.modules.lrclib_client._search_by_fields")
@@ -190,13 +190,26 @@ class TestFindLyrics(unittest.TestCase):
             "Song Title - US Version (Official Video)",
             "Some Artist Song Title - US Version (Official Video)",
             "Song Title",
+            "Some Artist Song Title",
         ])
 
     def test_full_title_is_searched_first(self):
         result, requests = self._find(lambda params: [_version(200.0, track="Song Title (Live)")],
                                       title="Song Title (Live)")
         self.assertIsNotNone(result)
-        self.assertEqual(len(requests), 1)
+        self.assertEqual([p.get("track_name") or p.get("q") for p in requests],
+                         ["Song Title (Live)", "Some Artist Song Title (Live)"])
+
+    def test_closer_version_of_the_combined_query_wins(self):
+        def answer(params):
+            return [_version(306.0)] if "track_name" in params else [_version(234.0)]
+        result, _ = self._find(answer, duration=235.0)
+        self.assertEqual(result.duration, 234.0)
+
+    def test_other_part_is_not_taken(self):
+        result, _ = self._find(lambda params: [_version(200.0, track="Song Title (Part 2)")],
+                               title="Song Title (Part 1)")
+        self.assertIsNone(result)
 
     def test_version_closest_in_length_wins(self):
         versions = [_version(392.0), _version(306.0), _version(234.0)]
@@ -224,9 +237,8 @@ class TestFindLyrics(unittest.TestCase):
     def test_synced_lyrics_alone_are_enough(self):
         synced_only = _lrclib_entry(track="Song Title", artist="Some Artist", plain=None,
                                     synced="[00:01.00] la la")
-        result, requests = self._find(lambda params: [synced_only])
+        result, _ = self._find(lambda params: [synced_only])
         self.assertEqual(result.synced_lyrics, "[00:01.00] la la")
-        self.assertEqual(len(requests), 1)
 
     def test_without_a_length_synced_lyrics_first(self):
         versions = [_version(200.0, synced=False), _version(300.0)]
