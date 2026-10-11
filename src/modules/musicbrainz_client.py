@@ -227,7 +227,10 @@ def __get_image(recording) -> (bytes, str):
     image_data = None
     image_url = None
     if 'release-list' in recording:
-        for release in recording['release-list']:
+        # The cover of the earliest official release (the original single or
+        # album), not of the first listed one, which is often a compilation or
+        # a bootleg
+        for release in _preferred_releases(recording['release-list']):
             try:
                 image_data = __musicbrainz_request(lambda: musicbrainzngs.get_image_front(release['id']))
                 if image_data is None:
@@ -270,28 +273,56 @@ def __get_image(recording) -> (bytes, str):
     return image_data, image_url
 
 
+def _year_of(date) -> Optional[str]:
+    """The year of a MusicBrainz date ("1989", "1989-03" or "1989-03-21"), or None."""
+    year = (date or "").strip()[:4]
+    return year if len(year) == 4 and year.isdigit() else None
+
+
+def _is_official(release) -> bool:
+    return (release.get('status') or '').strip().lower() == 'official'
+
+
+def _preferred_releases(releases):
+    """The releases of a recording, official ones first, each from the earliest
+    date on (undated ones last). MusicBrainz does not list them by date."""
+    return sorted(releases, key=lambda r: (not _is_official(r), not _year_of(r.get('date')),
+                                           (r.get('date') or '').strip()))
+
+
 def __get_year(recording):
-    year = None
+    """Year of the earliest official release of the recording (of the earliest
+    release, when none is official).
 
+    The releases are not listed by date, and the first one is often a later
+    compilation. The release group of the earliest release can know a still
+    earlier date (a reissue's group starts with the original release).
+    """
+    releases = recording.get('release-list') or []
     # Recordings without any release (empty list) have no year either
-    if not recording.get('release-list'):
-        return year
+    if not releases:
+        return None
 
-    release_group_id = recording['release-list'][0]['release-group']['id']
-    release_group = __musicbrainz_request(lambda: musicbrainzngs.get_release_group_by_id(release_group_id))
+    ordered = _preferred_releases(releases)
+    # Bootlegs and promotional copies do not date a song that has an official
+    # release, even an undated one (its release group may know the date)
+    pool = [r for r in ordered if _is_official(r)] or ordered
+    dated = [r for r in pool if _year_of(r.get('date'))]
+    years = [_year_of(r['date']) for r in dated]
+    earliest = dated[0] if dated else pool[0]
 
-    if release_group is None:
-        return year
+    release_group_id = (earliest.get('release-group') or {}).get('id')
+    if release_group_id:
+        release_group = __musicbrainz_request(lambda: musicbrainzngs.get_release_group_by_id(release_group_id))
+        if release_group is not None:
+            group_year = _year_of(release_group.get('release-group', {}).get('first-release-date'))
+            if group_year:
+                years.append(group_year)
 
-    if 'first-release-date' not in release_group['release-group']:
-        return year
-
-    year = release_group['release-group']['first-release-date'].strip()
-    year = year.split('-')[0]
-
-    if year is not None:
-        print(f"{ULTRASINGER_HEAD} Found year: {blue_highlighted(year)}")
-
+    if not years:
+        return None
+    year = min(years)
+    print(f"{ULTRASINGER_HEAD} Found year: {blue_highlighted(year)}")
     return year
 
 

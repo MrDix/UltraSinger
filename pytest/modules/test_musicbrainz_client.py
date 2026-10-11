@@ -298,6 +298,105 @@ class TestMultiLineMatchValidation(unittest.TestCase):
         self.assertEqual((info.artist, info.title), ('Wanted Artist', 'Wanted Title'))
 
 
+class TestYear(unittest.TestCase):
+    """The year comes from the earliest release of the recording, not from its first listed one."""
+
+    @staticmethod
+    def _recording(*releases):
+        rec = _recording('Wanted Title', 'Wanted Artist')
+        rec['release-list'] = [{'id': f'r{i}', 'title': t, 'date': d, 'release-group': {'id': f'g{i}'}}
+                               for i, (t, d) in enumerate(releases)]
+        return rec
+
+    def _year(self, recording, group_dates):
+        groups = {f'g{i}': d for i, d in enumerate(group_dates)}
+
+        def group(group_id):
+            date = groups.get(group_id)
+            return {'release-group': {'first-release-date': date} if date else {}}
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [recording]}), \
+                patch('musicbrainzngs.get_release_group_by_id', side_effect=group) as mock_group, \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        return info.year, [c.args[0] for c in mock_group.call_args_list]
+
+    def test_earliest_release_not_first_listed(self):
+        # The first listed release is a later box set (its group starts then, too)
+        recording = self._recording(('Box Set', '1994'), ('Album', '1989-03-21'), ('Best Of', '1992'))
+        year, groups = self._year(recording, ['1994', '1989-03-21', '1990'])
+        self.assertEqual(year, '1989')
+        self.assertEqual(groups, ['g1'])  # the group of the earliest release
+
+    def test_release_group_knows_an_earlier_date(self):
+        # Only a reissue is listed; its release group starts with the original
+        year, _ = self._year(self._recording(('Reissue', '2005-06')), ['1989'])
+        self.assertEqual(year, '1989')
+
+    def test_undated_releases_use_the_first_release_group(self):
+        year, groups = self._year(self._recording(('A', ''), ('B', None)), ['2001-01-01', '1999'])
+        self.assertEqual((year, groups), ('2001', ['g0']))
+
+    def test_no_date_anywhere(self):
+        year, _ = self._year(self._recording(('A', '')), [None])
+        self.assertIsNone(year)
+
+    def test_official_release_dates_the_song(self):
+        recording = self._recording(('Leaked Demo', '1988'), ('Album', '1989-03-21'), ('Box Set', '1994'))
+        recording['release-list'][0]['status'] = 'Bootleg'
+        recording['release-list'][1]['status'] = 'Official'
+        recording['release-list'][2]['status'] = 'Bootleg'
+        year, groups = self._year(recording, ['1988', '1989-03-21', '1994'])
+        self.assertEqual((year, groups), ('1989', ['g1']))
+
+    def test_undated_official_release_beats_a_dated_bootleg(self):
+        recording = self._recording(('Bootleg', '1985'), ('Album', ''))
+        recording['release-list'][0]['status'] = 'Bootleg'
+        recording['release-list'][1]['status'] = 'Official'
+        year, groups = self._year(recording, ['1985', '1989-03-21'])
+        self.assertEqual((year, groups), ('1989', ['g1']))  # the official release's group
+
+    def test_year_of(self):
+        from src.modules.musicbrainz_client import _year_of
+        self.assertEqual([_year_of(d) for d in ('1989', '1989-03', ' 1989-03-21 ', '', None, '19xx')],
+                         ['1989', '1989', '1989', None, None, None])
+
+
+class TestCoverRelease(unittest.TestCase):
+    """The cover comes from the earliest official release, not from the first listed one."""
+
+    def test_cover_of_the_earliest_official_release(self):
+        rec = _recording('Wanted Title', 'Wanted Artist')
+        rec['release-list'] = [
+            {'id': 'box', 'status': 'Bootleg', 'date': '1994', 'release-group': {'id': 'g0'}},
+            {'id': 'reissue', 'status': 'Official', 'date': '2021-03-05', 'release-group': {'id': 'g1'}},
+            {'id': 'single', 'status': 'Official', 'date': '1989-03', 'release-group': {'id': 'g2'}},
+        ]
+        tried = []
+
+        def front(release_id):
+            tried.append(release_id)
+            return f'image of {release_id}'.encode()
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [rec]}), \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
+                patch('musicbrainzngs.get_image_front', side_effect=front), \
+                patch('musicbrainzngs.get_image_list',
+                      return_value={'images': [{'front': True, 'image': 'https://example.com/c.jpg'}]}):
+            info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual(info.cover_image_data, b'image of single')
+        self.assertEqual(tried, ['single'])
+
+    def test_preferred_order(self):
+        from src.modules.musicbrainz_client import _preferred_releases
+        releases = [{'id': 'a', 'status': 'Bootleg', 'date': '1980'},
+                    {'id': 'b', 'status': 'Official'},
+                    {'id': 'c', 'status': 'Official', 'date': '1995'},
+                    {'id': 'd', 'status': 'Official', 'date': '1989-03'},
+                    {'id': 'e', 'date': '1990'}]
+        self.assertEqual([r['id'] for r in _preferred_releases(releases)], ['d', 'c', 'b', 'a', 'e'])
+
+
 class TestSimilarity(unittest.TestCase):
     def test_values(self):
         from src.modules.musicbrainz_client import _similarity
