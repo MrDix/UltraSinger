@@ -98,7 +98,7 @@ def segment_with_model(
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} segmentation model not found: "
               f"{blue_highlighted(str(model_path))} - keeping word-based notes")
         return None
-    if not vocals_path or not os.path.isfile(vocals_path):
+    if not vocals_path:
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} no separated vocal for model "
               f"segmentation - keeping word-based notes")
         return None
@@ -108,9 +108,17 @@ def segment_with_model(
         from modules.Segmentation.lyrics import place_lyrics, syllables_from_segments
         from modules.Segmentation.model import predict
 
+        # Read the vocal without checking first that it exists: such a check once
+        # reported a vocal as missing that the steps before and after it read.
+        try:
+            vocal = load_vocal(vocals_path)
+        except Exception as e:  # noqa: BLE001 - name the file and the reason, keep the chart
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} could not read the separated vocal "
+                  f"{blue_highlighted(vocals_path)} ({e!r}) - keeping word-based notes")
+            return None
         print(f"{ULTRASINGER_HEAD} Segmenting notes with model {blue_highlighted(os.path.basename(model_path))}")
         model, decode_cfg = _get_model(model_path, device)
-        analysis = analyse_vocal(load_vocal(vocals_path))
+        analysis = analyse_vocal(vocal)
         probs, onset = predict(model, model_input(analysis), device)
         lead = _lead_pitch(analysis, vocals_path, cache_folder) if lead_vocal_pitch else None
         use_lead = lead is not None and lead.reliable

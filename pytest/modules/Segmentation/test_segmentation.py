@@ -6,6 +6,8 @@ model is needed (an untrained network is enough for shape/IO checks).
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 import torch
@@ -381,11 +383,46 @@ class TestSegmenter:
         assert segmenter.segment_with_model([_seg("a ", 0, 1)], str(tmp_path / "v.wav"),
                                             str(tmp_path / "none.pt"), "en") is None
 
-    def test_missing_vocal_keeps_segments(self, tmp_path):
+    def test_missing_vocal_keeps_segments(self, tmp_path, capsys):
         model = tmp_path / "m.pt"
         save_model(model, SegNet())
-        assert segmenter.segment_with_model([_seg("a ", 0, 1)], str(tmp_path / "missing.wav"),
+        missing = str(tmp_path / "missing.wav")
+        assert segmenter.segment_with_model([_seg("a ", 0, 1)], missing, str(model), "en") is None
+        out = capsys.readouterr().out
+        assert "could not read the separated vocal" in out and "missing.wav" in out
+
+    def test_no_vocal_keeps_segments(self, tmp_path, capsys):
+        model = tmp_path / "m.pt"
+        save_model(model, SegNet())
+        assert segmenter.segment_with_model([_seg("a ", 0, 1)], "", str(model), "en") is None
+        assert "no separated vocal" in capsys.readouterr().out
+
+    def test_unreadable_vocal_names_file_and_reason(self, tmp_path, monkeypatch, capsys):
+        model = tmp_path / "m.pt"
+        save_model(model, SegNet())
+        import modules.Segmentation.features as feats
+
+        def locked(path):
+            raise PermissionError(13, "Permission denied")
+        monkeypatch.setattr(feats, "load_vocal", locked)
+        assert segmenter.segment_with_model([_seg("a ", 0, 1)], str(tmp_path / "vocals.wav"),
                                             str(model), "en") is None
+        out = capsys.readouterr().out
+        assert "vocals.wav" in out and "Permission denied" in out
+
+    def test_vocal_is_read_even_when_an_existence_check_misses_it(self, tmp_path, monkeypatch, fake_hyphen):
+        model = tmp_path / "m.pt"
+        save_model(model, SegNet())
+        vocal = str(tmp_path / "v.wav")
+        import modules.Segmentation.decode as dec
+        import modules.Segmentation.features as feats
+        isfile = os.path.isfile
+        monkeypatch.setattr(os.path, "isfile", lambda p: False if p == vocal else isfile(p))
+        monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(16000, np.float32))
+        monkeypatch.setattr(feats, "analyse_vocal", lambda y: _analysis(200))
+        monkeypatch.setattr(dec, "decode_notes", lambda *a, **k: _notes((0.0, 0.5), (0.6, 1.0)))
+        result = segmenter.segment_with_model([_seg("hello ", 0, 1)], vocal, str(model), "en")
+        assert result is not None and result.pitch_audio_path == vocal
 
     def test_errors_fail_open(self, tmp_path, monkeypatch):
         model = tmp_path / "m.pt"
