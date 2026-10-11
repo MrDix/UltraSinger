@@ -25,6 +25,7 @@ if sys.platform == "win32":
                 pass
 
 import librosa
+import soundfile as sf
 
 from packaging import version
 
@@ -158,6 +159,14 @@ def remove_unecessary_punctuations(transcribed_data: list[TranscribedData]) -> N
         data.word = data.word.translate({ord(i): None for i in punctuation})
 
 
+def audio_length(path: str) -> float | None:
+    """Length of an audio file in seconds, or None when it cannot be read."""
+    try:
+        return float(sf.info(path).duration)
+    except Exception:  # noqa: BLE001 - the length only picks among found lyrics
+        return None
+
+
 def run() -> tuple[str, Score, Score]:
     """The processing function of this program"""
     #List selected options (can add more later)
@@ -273,6 +282,7 @@ def run() -> tuple[str, Score, Score]:
             from modules.lrclib_client import search_lyrics
             early_lyrics_info = search_lyrics(
                 process_data.media_info.artist, process_data.media_info.title,
+                duration=audio_length(process_data.process_data_paths.whisper_audio_path),
             )
             if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
                 # Detect language if not explicitly set and no video platform hint.
@@ -1734,7 +1744,10 @@ def TranscribeAudio(process_data):
         try:
             from modules.lrclib_client import search_lyrics
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
-            lyrics_info = search_lyrics(process_data.media_info.artist, process_data.media_info.title)
+            lyrics_info = search_lyrics(
+                process_data.media_info.artist, process_data.media_info.title,
+                duration=audio_length(process_data.process_data_paths.whisper_audio_path),
+            )
             synced_lyrics = lyrics_info.synced_lyrics if lyrics_info is not None else None
             plain_lyrics = lyrics_info.plain_lyrics if lyrics_info is not None else None
             # The language here normally comes from the full transcription (or

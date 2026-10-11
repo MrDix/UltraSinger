@@ -399,7 +399,7 @@ class TestCoverRelease(unittest.TestCase):
 
 class TestSimilarity(unittest.TestCase):
     def test_values(self):
-        from src.modules.musicbrainz_client import _similarity
+        from src.modules.name_matching import similarity as _similarity
         self.assertEqual(_similarity('Some Title', 'some title!'), 1.0)
         self.assertGreaterEqual(_similarity('Title', 'Title (Live) Full HD'), 0.8)
         self.assertLess(_similarity('Long Artist Name', 'Short'), 0.8)
@@ -417,7 +417,7 @@ class TestDistinctNamesSharingAWord(unittest.TestCase):
         self.assertEqual((info.artist, info.title), ('Nova', 'Wanted Title'))
 
     def test_similarity_rules(self):
-        from src.modules.musicbrainz_client import _similarity
+        from src.modules.name_matching import similarity as _similarity
         self.assertLess(_similarity('Nova Lights', 'Nova', artist=True), 0.8)
         self.assertLess(_similarity('Love', 'Love Me Tender'), 0.8)
         self.assertGreaterEqual(_similarity('Title', 'Title Full HD 2023'), 0.8)        # qualifiers only
@@ -428,7 +428,7 @@ class TestDistinctNamesSharingAWord(unittest.TestCase):
 
 class TestNumberedTitles(unittest.TestCase):
     def test_different_numbers_are_different_songs(self):
-        from src.modules.musicbrainz_client import _similarity
+        from src.modules.name_matching import similarity as _similarity
         self.assertEqual(_similarity('Song 2', 'Song 3'), 0.0)
         self.assertEqual(_similarity('Part 1', 'Part 10'), 0.0)
         self.assertGreaterEqual(_similarity('Title', 'Title 3'), 0.8)   # one-sided number still a match

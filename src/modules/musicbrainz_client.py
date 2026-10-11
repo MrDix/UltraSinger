@@ -1,14 +1,13 @@
 import musicbrainzngs
-import re
 import string
 import time
 from urllib.error import URLError
-from Levenshtein import ratio
 from dataclasses import dataclass
 from typing import Optional
 from Settings import Settings
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted
+from modules.name_matching import MIN_MATCH_SIMILARITY, similarity
 
 
 @dataclass
@@ -30,67 +29,9 @@ title_filter = [
 
 MAX_RETRIES = 3
 
-# A MusicBrainz recording is only trusted when both its artist and its title
-# are at least this similar to what we searched for. Below that, the search
-# hit is a different song and must not replace the input metadata.
-MIN_MATCH_SIMILARITY = 0.8
-# Similarity assigned when one name is the other plus only qualifier words
-# (e.g. "Title" vs. "Title Full HD"): a match, but ranked below exact or
-# near-exact matches.
-CONTAINED_SIMILARITY = 0.85
-# Words that only describe a release/upload and never distinguish songs or
-# artists. Extra words outside this set (e.g. a second name) prevent a match.
-QUALIFIER_WORDS = frozenset(
-    "official video music audio lyric lyrics visualizer hd hq 4k full live version edit radio single "
-    "album remaster remastered mix remix explicit clean acoustic original extended mono stereo".split()
-)
-_BRACKETS_RE = re.compile(r"[(\[{][^)\]}]*[)\]}]")
-_FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
-
 
 def __clean_string(s: str) -> str:
     return s.translate(str.maketrans('', '', string.punctuation)).lower().strip()
-
-
-def _normalize_name(s: str, artist: bool) -> str:
-    """Drop bracketed additions and, for artists, a featured-guest suffix."""
-    s = _BRACKETS_RE.sub(" ", s or "")
-    if artist:
-        s = _FEATURING_RE.sub("", s)
-    return " ".join(__clean_string(s).split())
-
-
-def _similarity(a: str, b: str, artist: bool = False) -> float:
-    """Similarity of two titles (or artist names) in [0, 1].
-
-    Case, punctuation, bracketed additions ("(Official Video)", "(Live 2023)")
-    and, for artists, "feat. X" are ignored. If one name is the other plus
-    only qualifier words (see QUALIFIER_WORDS, plus numbers), it still counts
-    as a match; any other extra word does not - "Nova" is not "Nova Lights".
-    """
-    a, b = _normalize_name(a, artist), _normalize_name(b, artist)
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
-    words_a, words_b = a.split(), b.split()
-    # Different numbers on both sides mean different songs ("Part 1" vs.
-    # "Part 2"), however similar the rest; a number on one side only (e.g. a
-    # year) is fine and handled below.
-    numbers_a = sorted(w for w in words_a if w.isdigit())
-    numbers_b = sorted(w for w in words_b if w.isdigit())
-    if numbers_a and numbers_b and numbers_a != numbers_b:
-        return 0.0
-    score = ratio(a, b)
-    shorter, longer = (words_a, words_b) if len(words_a) <= len(words_b) else (words_b, words_a)
-    extra = list(longer)
-    for w in shorter:
-        if w not in extra:
-            return score
-        extra.remove(w)
-    if all(w in QUALIFIER_WORDS or w.isdigit() for w in extra):
-        score = max(score, CONTAINED_SIMILARITY)
-    return score
 
 
 def __musicbrainz_request(func):
@@ -214,8 +155,8 @@ def __multi_line_search(artist: str, title: str):
     best, best_score = None, 0.0
     for result, wanted_artist, wanted_title in ((result1, artist1, title1), (result2, artist2, title2)):
         for record in result.get('recording-list', []):
-            artist_sim = _similarity(record.get('artist-credit-phrase', ''), wanted_artist, artist=True)
-            title_sim = _similarity(record.get('title', ''), wanted_title)
+            artist_sim = similarity(record.get('artist-credit-phrase', ''), wanted_artist, artist=True)
+            title_sim = similarity(record.get('title', ''), wanted_title)
             if artist_sim < MIN_MATCH_SIMILARITY or title_sim < MIN_MATCH_SIMILARITY:
                 continue
             if artist_sim + title_sim > best_score:
