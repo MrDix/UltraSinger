@@ -202,7 +202,7 @@ def __multi_line_search(artist: str, title: str) -> list:
     # before: video titles carry more additions than any list knows. Not
     # when such a part holds a part or volume number (a year is fine).
     recordings = _matching_recordings(searches, strict=True)
-    if recordings or any(_NUMBER_RE.search(part) for part in bracketed_parts(title1)):
+    if recordings or any(_NUMBER_RE.search(part) for part in bracketed_parts(title1) + bracketed_parts(title2)):
         return recordings
     return _matching_recordings(searches, strict=False)
 
@@ -349,8 +349,12 @@ def __get_year(releases):
     # single or EP. A group of releases that knows no date at all gives way
     # to the next one.
     official = [r for r in ordered if _is_official(r)]
+    tried = []
     for pool in ([r for r in official if not _is_later_kind(r)], official, ordered):
-        year = _earliest_year(pool) if pool else None
+        if not pool or pool in tried:
+            continue
+        tried.append(pool)
+        year = _earliest_year(pool)
         if year:
             print(f"{ULTRASINGER_HEAD} Found year: {blue_highlighted(year)}")
             return year

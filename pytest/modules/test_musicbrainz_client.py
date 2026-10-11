@@ -468,6 +468,26 @@ class TestTitleAdditions(unittest.TestCase):
                 info, _ = self._search(wanted, self._recording(listed, 'r1', ('Official', '1999', 'Single')))
                 self.assertEqual((info.title, info.year), (wanted, None))
 
+    def test_other_part_is_no_match_with_artist_and_title_swapped(self):
+        # File "Some Song (Part 2) - Wanted Artist": the song comes as the artist
+        recording = self._recording('Some Song', 'r1', ('Official', '1999', 'Single'))
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [recording]}), \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz('Wanted Artist', 'Some Song (Part 2)')
+        self.assertIsNone(info.year)
+
+    def test_each_release_group_asked_once(self):
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [
+                       self._recording('Wanted Title', 'r1', ('Official', '', 'Album'))]}), \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None) as group, \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertIsNone(info.year)
+        self.assertEqual(group.call_count, 1)
+
     def test_year_of_a_compilation_when_the_album_has_no_date(self):
         info, _ = self._search('Wanted Title',
                                self._recording('Wanted Title', 'album', ('Official', '', 'Album')),
