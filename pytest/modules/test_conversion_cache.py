@@ -176,6 +176,16 @@ class TestFinish:
         _age(folder)
         assert cc.remove_stale_folders(folder.parent) == 0 and (folder / "pitch.json").exists()
 
+    def test_kept_cache_made_in_the_song_folder_still_moves_to_cache(self, tmp_path):
+        # --cache_folder pointing at the song folder: the marked cache folder is made there
+        song = tmp_path / "Song"
+        folder = Path(cc.create("Song", str(song)))
+        (folder / "pitch.json").write_text("{}")
+        assert folder.parent == song
+        assert cc.finish(str(folder), str(song), keep=True) == str(song / "cache")
+        assert (song / "cache" / "pitch.json").exists() and not (song / "cache" / cc.MARKER).exists()
+        assert not folder.exists()
+
     def test_marker_outlives_a_partial_delete(self, tmp_path, monkeypatch):
         folder, song = self._cache(tmp_path)
         rmtree = shutil.rmtree

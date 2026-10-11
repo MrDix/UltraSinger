@@ -100,11 +100,12 @@ def finish(folder: str, song_folder: str, keep: bool) -> str | None:
         except OSError:
             pass  # what is left keeps its marker and is removed as a leftover later
         return None
-    if os.path.dirname(os.path.abspath(folder)) == os.path.abspath(song_folder):
-        return folder
+    marker = Path(folder) / MARKER
+    if not marker.exists() and os.path.dirname(os.path.abspath(folder)) == os.path.abspath(song_folder):
+        return folder  # a fallback cache (no marker) is in the song folder already
     # A kept cache is no leftover: without the marker it is never removed
     try:
-        (Path(folder) / MARKER).unlink(missing_ok=True)
+        marker.unlink(missing_ok=True)
     except OSError:
         pass
     target = _unused_path(os.path.join(song_folder, "cache"))
