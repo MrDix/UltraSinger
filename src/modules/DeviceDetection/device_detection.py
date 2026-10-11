@@ -127,7 +127,12 @@ def release_gpu_memory() -> None:
     """
     gc.collect()
     if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+        try:
+            torch.cuda.empty_cache()
+        except RuntimeError:
+            # A GPU in an error state must not hide the error of the step
+            # that called this from a finally block
+            pass
 
 
 def free_gpu_memory() -> int | None:

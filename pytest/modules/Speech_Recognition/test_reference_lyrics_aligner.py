@@ -445,3 +445,39 @@ class TestAlignLyricsToAudioLanguageModel:
         mock_load_align_model.assert_called_once_with(
             language_code="xx", device="cpu", model_name="some/custom-model"
         )
+
+    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
+    @patch("whisperx.load_audio")
+    def test_model_dropped_although_the_frame_is_kept(self, mock_load_audio, mock_librosa):
+        """The alignment model is dropped when the alignment is done, also when
+        a library keeps the call's frame alive (as a stored traceback of a
+        failed optional import does)."""
+        import sys
+        import weakref
+
+        kept_frames, models = [], []
+
+        class Model:
+            pass
+
+        def load_align_model(*args, **kwargs):
+            frame = sys._getframe(1)
+            while frame.f_code.co_name != "align_lyrics_to_audio":
+                frame = frame.f_back
+            kept_frames.append(frame)
+            model = Model()
+            models.append(weakref.ref(model))
+            return model, {}
+
+        def align(*args, **kwargs):  # a plain function: a mock would keep the model in its call list
+            return {"segments": [{"words": [{"word": "hello", "start": 0.0, "end": 0.5}]}]}
+
+        mock_librosa.get_duration.return_value = 5.0
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+
+        with patch("whisperx.load_align_model", new=load_align_model), patch("whisperx.align", new=align):
+            words = align_lyrics_to_audio([{"text": "hello", "start": 0.0, "end": 5.0}], "/fake/audio.wav", "en")
+
+        assert len(words) == 1
+        assert kept_frames[0].f_locals["align_model"] is None
+        assert models[0]() is None

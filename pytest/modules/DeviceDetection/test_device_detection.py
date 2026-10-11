@@ -90,3 +90,9 @@ class TestFreeGpuMemory:
              patch("torch.cuda.empty_cache") as empty_cache:
             release_gpu_memory()
         empty_cache.assert_called_once()
+
+    def test_release_on_a_gpu_in_an_error_state(self):
+        # Called from finally blocks: it must not replace the error being raised
+        with patch("torch.cuda.is_available", return_value=True), \
+             patch("torch.cuda.empty_cache", side_effect=RuntimeError("CUDA error: an illegal memory access")):
+            release_gpu_memory()

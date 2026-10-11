@@ -186,7 +186,7 @@ def transcribe_with_whisper(
     if compute_type is None:
         compute_type = "float16" if device == "cuda" else "int8"
 
-    loaded_whisper_model = model_a = None
+    loaded_whisper_model = model_a = audio = None
     try:
         torch.cuda.empty_cache()
 
@@ -330,13 +330,14 @@ def transcribe_with_whisper(
         # Restore original torch.load after models are loaded
         # This ensures other modules (like pitch detection) are not affected by the monkey-patch
         torch.load = _original_torch_load
-        # Drop the models before leaving. The first call imports libraries,
-        # one of which keeps the traceback of a failed optional import - and
-        # with it this call's frame and all its variables. The models would
-        # then stay on the GPU for the rest of the run (about 4 GB with
-        # large-v2), and later GPU steps, like the lead-vocal separation,
-        # spilled into shared system memory and became many times slower.
-        loaded_whisper_model = model_a = None
+        # Drop the models (and the audio) before leaving. The first call
+        # imports libraries, one of which keeps the traceback of a failed
+        # optional import - and with it this call's frame and all its
+        # variables. The models would then stay on the GPU for the rest of
+        # the run (about 4 GB with large-v2), and later GPU steps, like the
+        # lead-vocal separation, spilled into shared system memory and became
+        # many times slower.
+        loaded_whisper_model = model_a = audio = None
         release_gpu_memory()
 
 

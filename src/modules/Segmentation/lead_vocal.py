@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 
+from modules.console_colors import ULTRASINGER_HEAD
 from modules.DeviceDetection.device_detection import free_gpu_memory, release_gpu_memory
 from modules.Segmentation.features import VOICED_CONFIDENCE, VocalAnalysis
 
@@ -21,9 +22,10 @@ KARAOKE_MODEL = "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"
 # The lead stem must keep at least this share of the vocal stem's voiced time
 MIN_VOICED_RATIO = 0.8
 # Free GPU memory the karaoke separation needs: it peaked at 1.7 GB, plus
-# room for PyTorch's memory cache. With less, the driver moves it into shared
-# system memory, where it ran some 30 times slower (49 instead of 2 minutes).
-MIN_FREE_GPU_BYTES = int(2.5 * 2 ** 30)
+# room for PyTorch's memory cache. With much less, the driver moves it into
+# shared system memory, where it ran some 30 times slower (49 instead of 2
+# minutes).
+MIN_FREE_GPU_BYTES = int(2.2 * 2 ** 30)
 
 
 class NotEnoughGpuMemory(RuntimeError):
@@ -66,9 +68,11 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
         return lead_path
     release_gpu_memory()
     free = free_gpu_memory()
-    if free is not None and free < MIN_FREE_GPU_BYTES:
-        raise NotEnoughGpuMemory(f"only {free / 2 ** 30:.1f} GB of GPU memory free, the separation needs "
-                                 f"about {MIN_FREE_GPU_BYTES / 2 ** 30:.1f} GB")
+    if free is not None:
+        if free < MIN_FREE_GPU_BYTES:
+            raise NotEnoughGpuMemory(f"only {free / 2 ** 30:.1f} GB of GPU memory free, the separation needs "
+                                     f"about {MIN_FREE_GPU_BYTES / 2 ** 30:.1f} GB")
+        print(f"{ULTRASINGER_HEAD} Lead-vocal separation with {free / 2 ** 30:.1f} GB of GPU memory free")
     from audio_separator.separator import Separator  # type: ignore[import-untyped]
 
     os.makedirs(out_dir, exist_ok=True)
