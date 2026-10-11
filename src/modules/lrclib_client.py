@@ -37,7 +37,6 @@ _SAME_LENGTH_S = 5.0
 # "A feat. B" - not a slash or a comma inside a name ("A/B", "A,B")
 _CREDIT_SEPARATOR_RE = re.compile(
     r"\s*[&+]\s*|\s+/\s+|,\s+|\s+(?:and|und|with|vs\.?|feat\.?|ft\.?|featuring)\s+", re.IGNORECASE)
-_LEADING_THE_RE = re.compile(r"^the\s+")
 
 
 @dataclass
@@ -251,10 +250,10 @@ def _artist_matches(found: str, wanted: str) -> bool:
 
 
 def _credited_artists(credit: str) -> set[str]:
-    """The artists one credit names, each normalized and without a leading "The"."""
+    """The artists one credit names, each normalized (see ``normalize_name``)."""
     names = set()
     for name in _CREDIT_SEPARATOR_RE.split(credit or ""):
-        name = _LEADING_THE_RE.sub("", normalize_name(name, artist=True))
+        name = normalize_name(name, artist=True)
         if name:
             names.add(name)
     return names

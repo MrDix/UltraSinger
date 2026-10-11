@@ -41,6 +41,15 @@ class TestStripTitleAdditions(unittest.TestCase):
             "Song Title - From the Album Some Album": "Song Title",
             "Song Title (From \"Some Film\")": "Song Title",
             "Song Title ()": "Song Title",
+            "Song Title (Live from Some Place)": "Song Title",
+            "Song Title - Live from Some Place": "Song Title",
+            "Song Title (Music from the Motion Picture)": "Song Title",
+            "Song Title (From the Original Motion Picture Soundtrack)": "Song Title",
+            "Song Title (Live & Acoustic)": "Song Title",
+            "Song Title (Audio Only)": "Song Title",
+            "Song Title (Clip Vidéo)": "Song Title",
+            "Song Title (Video Official)": "Song Title",
+            "Song Title (Letra Oficial)": "Song Title",
         }
         for title, expected in cases.items():
             with self.subTest(title=title):
@@ -86,6 +95,12 @@ class TestTitlesMatch(unittest.TestCase):
     def test_longer_artist_name_is_another_artist(self):
         self.assertLess(similarity("Some Much Longer Artist Name Tribute", "Some Much Longer Artist Name",
                                    artist=True), 0.8)
+
+    def test_leading_article_left_out(self):
+        self.assertEqual(similarity("The Some Band", "Some Band", artist=True), 1.0)
+        self.assertEqual(similarity("Die Some Band", "Some Band", artist=True), 1.0)
+        self.assertTrue(titles_match("The Some Song Title", "Some Song Title"))
+        self.assertEqual(similarity("The", "The", artist=True), 1.0)
 
     def test_title_of_brackets_only(self):
         self.assertTrue(titles_match("(Untitled)", "(Untitled)"))

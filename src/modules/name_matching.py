@@ -26,6 +26,8 @@ QUALIFIER_WORDS = frozenset(
 )
 _BRACKETS_RE = re.compile(r"[(\[{][^)\]}]*[)\]}]")
 _LEADING_BRACKETS_RE = re.compile(r"^\s*[(\[{][^)\]}]*[)\]}]\s*")
+# A leading article is often left out: "Some Band" is "The Some Band"
+_LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an|der|die|das|le|la|les|los|las|el)\s+(?=\S)")
 _FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
 # What video titles and releases add to a song title, in brackets or after a
 # dash: the kind of upload, a version, a featured guest. Such a part starts
@@ -34,19 +36,21 @@ _FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECAS
 # _AMBIGUOUS_FOLLOW ("Live at ...", "Radio Edit", but not "Live Forever"), or
 # ends with one of _ADDITION_END. Any other part ("(Part 2)", "(Reprise)",
 # "(I Can't Get No)") can tell two songs apart and is kept.
+_OFFICIAL = r"official|offizielles?|oficial|officiel(?:le)?"
 _ADDITION_START = (
-    r"official|offizielles?|oficial|officiel(?:le)?|lyrics?|visuali[sz]er|videoclip|hd|hq|4k|8k|\d{3,4}p"
+    rf"{_OFFICIAL}|lyrics?|letra|legendad[oa]|subtitulad[oa]|visuali[sz]er|videoclip|hd|hq|4k|8k|\d{{3,4}}p"
     r"|mv|m/v|explicit|acoustic|unplugged|mono|stereo|remaster(?:ed)?|\d{4}|feat\.?|ft\.?|featuring"
-    r"|recorded|bonus|deluxe|demo|karaoke|slowed|sped"
+    r"|recorded|bonus|deluxe|demo|karaoke|slowed|sped|nightcore"
 )
 _AMBIGUOUS_START = r"live|us|uk|radio|single|album|extended|original|clean|vid[eé]o|music|audio|clip|from"
 _AMBIGUOUS_FOLLOW = (
-    r"version|edit|mix|cut|video|single|release|recording|performance|sessions?|officiel(?:le)?|oficial"
-    r"|at|in|on|@|\d{4}|(?:the\s+)?(?:album|movie|film|motion\s+picture|soundtrack|series|musical|show|game)"
+    rf"version|edit|mix|cut|vid[eé]o|single|release|recording|performance|sessions?|{_OFFICIAL}"
+    r"|at|in|on|from|for|@|&|only|acoustic|unplugged|studio|concert|tour|lounge|\d{4}"
+    r"|(?:the\s+)?(?:album|movie|film|motion\s+picture|soundtrack|series|musical|show|game)"
 )
 _ADDITION_END = (
-    r"version|edit|mix|remix|remaster(?:ed)?|cut|video|audio|lyrics?|visuali[sz]er|hd|4k"
-    r"|edition|demo|karaoke|instrumental|sessions?"
+    r"version|edit|mix|remix|remaster(?:ed)?|cut|vid[eé]o|audio|lyrics?|visuali[sz]er|hd|4k"
+    r"|edition|demo|karaoke|instrumental|sessions?|soundtrack|recording"
 )
 
 
@@ -81,11 +85,12 @@ def _clean(s: str) -> str:
 
 
 def normalize_name(s: str, artist: bool) -> str:
-    """Drop bracketed additions and, for artists, a featured-guest suffix."""
+    """Drop bracketed additions, a leading article and, for artists, a
+    featured-guest suffix."""
     s = _BRACKETS_RE.sub(" ", s or "")
     if artist:
         s = _FEATURING_RE.sub("", s)
-    return " ".join(_clean(s).split())
+    return _LEADING_ARTICLE_RE.sub("", " ".join(_clean(s).split()))
 
 
 def similarity(a: str, b: str, artist: bool = False) -> float:
