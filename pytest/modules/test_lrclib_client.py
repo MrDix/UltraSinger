@@ -276,6 +276,9 @@ class TestFindLyrics(unittest.TestCase):
         self.assertFalse(_artist_matches("Singer and the Band Name", "Singer"))
         self.assertFalse(_artist_matches("Singer & the Band Name", "Singer"))
         self.assertTrue(_artist_matches("Singer and the Band Name", "Singer and the Band Name"))
+        # the same band name with another connector
+        self.assertTrue(_artist_matches("Singer & the Band Name", "Singer and the Band Name"))
+        self.assertTrue(_artist_matches("Singer + the Band Name", "Singer and the Band Name"))
 
     def test_empty_artist_or_title_finds_nothing(self):
         for artist, title in (("", "Song Title"), ("Some Artist", ""), (None, "Song Title"),

@@ -31,6 +31,7 @@ _LEADING_BRACKETS_RE = re.compile(r"^\s*[(\[{][^)\]}]*[)\]}]\s*")
 _LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+(?=\S)")
 _LEADING_ARTIST_ARTICLE_RE = re.compile(r"^(?:the|a|an|der|die|das|le|la|les|los|las|el)\s+(?=\S)")
 _FEATURING_RE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
+_AMPERSAND_RE = re.compile(r"\s*[&+]\s*")
 # What video titles and releases add to a song title, in brackets or after a
 # dash: the kind of upload, a version, a featured guest. Such a part starts
 # with one of _ADDITION_START (whatever follows), is one of _AMBIGUOUS_START -
@@ -92,6 +93,8 @@ def normalize_name(s: str, artist: bool) -> str:
     s = _BRACKETS_RE.sub(" ", s or "")
     if artist:
         s = _FEATURING_RE.sub("", s)
+        # "A & B", "A + B" and "A and B" are the same name
+        s = _AMPERSAND_RE.sub(" and ", s)
     s = " ".join(_clean(s).split())
     return (_LEADING_ARTIST_ARTICLE_RE if artist else _LEADING_ARTICLE_RE).sub("", s)
 
