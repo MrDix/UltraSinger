@@ -37,6 +37,7 @@ _SAME_LENGTH_S = 5.0
 # "A feat. B" - not a slash or a comma inside a name ("A/B", "A,B")
 _CREDIT_SEPARATOR_RE = re.compile(
     r"\s*[&+]\s*|\s+/\s+|,\s+|\s+(?:and|und|with|vs\.?|feat\.?|ft\.?|featuring)\s+", re.IGNORECASE)
+_ARTICLE_RE = re.compile(r"(?:the|a|an|der|die|das|le|la|les|los|las|el)\s", re.IGNORECASE)
 
 
 @dataclass
@@ -109,7 +110,7 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     (``duration``, in seconds) wins, preferably one with synced lyrics,
     see ``_best_version``. The length never rules a version out.
     """
-    if not artist or not title:
+    if not (artist or "").strip() or not (title or "").strip():
         return None
     stripped = strip_title_additions(title)
     same = " ".join(stripped.split()).casefold() == " ".join(title.split()).casefold()
@@ -250,13 +251,20 @@ def _artist_matches(found: str, wanted: str) -> bool:
 
 
 def _credited_artists(credit: str) -> set[str]:
-    """The artists one credit names, each normalized (see ``normalize_name``)."""
-    names = set()
-    for name in _CREDIT_SEPARATOR_RE.split(credit or ""):
-        name = normalize_name(name, artist=True)
-        if name:
-            names.add(name)
-    return names
+    """The artists one credit names, each normalized (see ``normalize_name``).
+
+    A separator followed by an article is part of a band name, not a list:
+    "Artist and the Band" or "Artist & the Band" is one artist.
+    """
+    credit = credit or ""
+    parts, start = [], 0
+    for separator in _CREDIT_SEPARATOR_RE.finditer(credit):
+        if _ARTICLE_RE.match(credit, separator.end()):
+            continue
+        parts.append(credit[start:separator.start()])
+        start = separator.end()
+    parts.append(credit[start:])
+    return {name for name in (normalize_name(part, artist=True) for part in parts) if name}
 
 
 def _best_version(entries: list[dict], duration: Optional[float]) -> dict:

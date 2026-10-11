@@ -272,9 +272,14 @@ class TestFindLyrics(unittest.TestCase):
         self.assertTrue(_artist_matches("Some Artist / Guest Name", "Some Artist"))
         self.assertFalse(_artist_matches("Ab/Cd", "Cd"))           # a slash inside a name
         self.assertFalse(_artist_matches("And Some", "Some"))      # a name that starts with "And"
+        # a separator before an article belongs to a band name
+        self.assertFalse(_artist_matches("Singer and the Band Name", "Singer"))
+        self.assertFalse(_artist_matches("Singer & the Band Name", "Singer"))
+        self.assertTrue(_artist_matches("Singer and the Band Name", "Singer and the Band Name"))
 
     def test_empty_artist_or_title_finds_nothing(self):
-        for artist, title in (("", "Song Title"), ("Some Artist", ""), (None, "Song Title")):
+        for artist, title in (("", "Song Title"), ("Some Artist", ""), (None, "Song Title"),
+                              ("   ", "Song Title"), ("Some Artist", "  ")):
             with self.subTest(artist=artist, title=title):
                 result, requests = self._find(lambda params: [_version(200.0)], artist=artist, title=title)
                 self.assertIsNone(result)
