@@ -58,6 +58,14 @@ def create(song_name: str, root: str | None = None) -> str:
     raise FileExistsError(f"no unused cache folder name in {base}")
 
 
+def create_in_song_folder(song_folder: str) -> str:
+    """A new cache folder in the song folder (``cache``, or ``cache (1)`` ...
+    when that exists), for when no cache folder can be made elsewhere."""
+    folder = _unused_path(os.path.join(song_folder, "cache"))
+    os.makedirs(folder)
+    return folder
+
+
 def remove_stale_folders(base: Path, now: float | None = None) -> int:
     """Remove the cache folders in ``base`` that conversions left behind: those
     with the marker in which nothing changed for longer than ``STALE_AFTER_S``.
@@ -70,7 +78,7 @@ def remove_stale_folders(base: Path, now: float | None = None) -> int:
         return 0
     for child in children:
         try:
-            if (child.name.endswith(FOLDER_SUFFIX) and child.is_dir() and not child.is_symlink()
+            if (child.name.endswith(FOLDER_SUFFIX) and child.is_dir() and not _is_link(child)
                     and (child / MARKER).is_file()
                     and now - _last_change(child) > STALE_AFTER_S):
                 _remove(child)
@@ -84,13 +92,16 @@ def finish(folder: str, song_folder: str, keep: bool) -> str | None:
     """End of a conversion: delete the cache ``folder``, or with ``keep`` move it
     into ``song_folder`` as ``cache`` (``cache (1)`` ... when that exists).
     Returns where a kept cache is: in the song folder, or still in ``folder``
-    when the move failed."""
+    when the move failed. A cache folder made in the song folder (see
+    :func:`create_in_song_folder`) stays where it is when it is kept."""
     if not keep:
         try:
             _remove(Path(folder))
         except OSError:
             pass  # what is left keeps its marker and is removed as a leftover later
         return None
+    if os.path.dirname(os.path.abspath(folder)) == os.path.abspath(song_folder):
+        return folder
     # A kept cache is no leftover: without the marker it is never removed
     try:
         (Path(folder) / MARKER).unlink(missing_ok=True)
@@ -104,10 +115,23 @@ def finish(folder: str, song_folder: str, keep: bool) -> str | None:
     return target
 
 
+def _is_link(path: Path) -> bool:
+    """A symbolic link or a Windows junction: never followed, only removed itself."""
+    return path.is_symlink() or os.path.isjunction(path)
+
+
+def _remove_link(path: Path) -> None:
+    try:
+        path.unlink()
+    except (IsADirectoryError, PermissionError):
+        os.rmdir(path)  # a link to a folder on Windows (symbolic link or junction)
+
+
 def _last_change(folder: Path) -> float:
-    """Newest modification time of the folder and anything in it."""
+    """Newest modification time of the folder and anything in it (links are not followed)."""
     newest = folder.stat().st_mtime
     for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = [d for d in dirnames if not _is_link(Path(dirpath, d))]
         for name in dirnames + filenames:
             try:
                 newest = max(newest, os.stat(os.path.join(dirpath, name), follow_symlinks=False).st_mtime)
@@ -119,10 +143,14 @@ def _last_change(folder: Path) -> float:
 def _remove(folder: Path) -> None:
     """Delete a cache folder, its marker last: a folder that could not be deleted
     completely is still recognised as a leftover by a later conversion."""
+    if _is_link(folder):
+        raise IsADirectoryError(f"not removing a linked folder: {folder}")
     for child in folder.iterdir():
         if child.name == MARKER:
             continue
-        if child.is_dir() and not child.is_symlink():
+        if _is_link(child):
+            _remove_link(child)
+        elif child.is_dir():
             shutil.rmtree(child)
         else:
             child.unlink()

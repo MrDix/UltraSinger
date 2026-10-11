@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -19,6 +20,15 @@ def _age(path: Path) -> None:
     """Make ``path`` and everything in it look a day old."""
     for p in [*path.rglob("*"), path] if path.is_dir() else [path]:
         os.utime(p, (_DAY_AGO, _DAY_AGO))
+
+
+def _make_dir_link(link: Path, target: Path) -> None:
+    """A link to a folder: a junction on Windows (no rights needed), else a symbolic link."""
+    if sys.platform == "win32":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
 
 
 def _leftover(root: Path, name: str, marked: bool = True) -> Path:
@@ -95,6 +105,30 @@ class TestLeftovers:
 
     def test_missing_root(self, tmp_path):
         assert cc.remove_stale_folders(tmp_path / "missing") == 0
+
+    def test_linked_folder_is_not_entered(self, tmp_path):
+        # A link (junction on Windows) named like a cache folder, to a folder with the marker
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        (target / cc.MARKER).touch()
+        (target / "precious.txt").write_text("x")
+        root = tmp_path / "root"
+        root.mkdir()
+        link = root / f"Linked 0a1b2c3d{cc.FOLDER_SUFFIX}"
+        _make_dir_link(link, target)
+        _age(target)
+        assert cc.remove_stale_folders(root) == 0
+        assert (target / "precious.txt").exists() and (target / cc.MARKER).exists()
+
+    def test_link_inside_a_leftover_is_removed_not_followed(self, tmp_path):
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        (target / "precious.txt").write_text("x")
+        old = _leftover(tmp_path / "root", "Old")
+        _make_dir_link(old / "link", target)
+        _age(old)
+        assert cc.remove_stale_folders(tmp_path / "root") == 1
+        assert not old.exists() and (target / "precious.txt").exists()
 
 
 class TestFinish:
@@ -196,10 +230,35 @@ class TestConversion:
             raise PermissionError(13, "Permission denied")
         monkeypatch.setattr(cc, "create", fail)
         cache = us.setup_cache_folder()
-        assert cache == str(folder / "cache") and "Permission denied" in capsys.readouterr().out
-        os.makedirs(cache)
+        assert cache == str(folder / "cache") and os.path.isdir(cache)
+        assert "Permission denied" in capsys.readouterr().out
         us.finish_cache_folder(cache)
         assert not os.path.exists(cache)
+
+    def test_fallback_never_takes_an_existing_folder(self, song, monkeypatch):
+        settings, folder = song
+        (folder / "cache").mkdir()
+        (folder / "cache" / "kept.json").write_text("{}")  # e.g. a cache kept before
+
+        def fail(song_name, root=None):
+            raise PermissionError(13, "Permission denied")
+        monkeypatch.setattr(cc, "create", fail)
+        cache = us.setup_cache_folder()
+        assert cache == str(folder / "cache (1)")
+        us.finish_cache_folder(cache)
+        assert not os.path.exists(cache) and (folder / "cache" / "kept.json").exists()
+
+    def test_kept_fallback_cache_stays_in_place(self, song, monkeypatch):
+        settings, folder = song
+        monkeypatch.setattr(settings, "keep_cache", True)
+
+        def fail(song_name, root=None):
+            raise PermissionError(13, "Permission denied")
+        monkeypatch.setattr(cc, "create", fail)
+        cache = us.setup_cache_folder()
+        (Path(cache) / "pitch.json").write_text("{}")
+        us.finish_cache_folder(cache)
+        assert (folder / "cache" / "pitch.json").exists() and not (folder / "cache (1)").exists()
 
     def test_fixed_cache_folder_is_used_as_is(self, song, monkeypatch, tmp_path):
         settings, _ = song

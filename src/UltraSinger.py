@@ -2130,8 +2130,8 @@ def setup_cache_folder() -> str:
     try:
         folder = conversion_cache.create(song_name, settings.cache_folder)
     except OSError as e:
-        # Never fail a conversion over the cache: fall back to the song folder
-        folder = os.path.join(settings.output_folder_path, "cache")
+        # Never fail a conversion over the cache: fall back to a new folder in the song folder
+        folder = conversion_cache.create_in_song_folder(settings.output_folder_path)
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} could not make a cache folder ({e!r}) "
               f"- using {blue_highlighted(folder)}")
         return folder
