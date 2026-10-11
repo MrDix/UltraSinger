@@ -760,7 +760,9 @@ class ConversionSettingsForm(QWidget):
                             "and backing vocals and take the note pitches from the lead vocal, so "
                             "harmonies and backing singers are not charted. Used only when the lead "
                             "stem kept at least 80% of the singing. Costs one extra separation "
-                            "(a few seconds on a GPU, noticeably longer on a CPU).",
+                            "(a few seconds on a GPU, noticeably longer on a CPU). Skipped when "
+                            "the GPU has less than about 2.5 GB free, since it would then run in "
+                            "shared system memory and take very long.",
                             reset_callback=lambda: self._lead_vocal_pitch.setChecked(
                                 _DEFAULTS["lead_vocal_pitch"]))
 

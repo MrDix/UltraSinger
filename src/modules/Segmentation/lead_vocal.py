@@ -14,11 +14,20 @@ from __future__ import annotations
 import hashlib
 import os
 
+from modules.DeviceDetection.device_detection import free_gpu_memory, release_gpu_memory
 from modules.Segmentation.features import VOICED_CONFIDENCE, VocalAnalysis
 
 KARAOKE_MODEL = "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"
 # The lead stem must keep at least this share of the vocal stem's voiced time
 MIN_VOICED_RATIO = 0.8
+# Free GPU memory the karaoke separation needs: it peaked at 1.7 GB, plus
+# room for PyTorch's memory cache. With less, the driver moves it into shared
+# system memory, where it ran some 30 times slower (49 instead of 2 minutes).
+MIN_FREE_GPU_BYTES = int(2.5 * 2 ** 30)
+
+
+class NotEnoughGpuMemory(RuntimeError):
+    """The GPU has too little free memory for the lead-vocal separation."""
 
 
 def voiced_ratio(lead: VocalAnalysis, vocals: VocalAnalysis) -> float:
@@ -47,12 +56,19 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
     """Path of the lead-vocal stem of ``vocals_path`` (separated once, then cached).
 
     The cache entry is keyed to the vocal file, so a cache folder shared by
-    several songs never hands one song's lead stem to another.
+    several songs never hands one song's lead stem to another. Raises
+    ``NotEnoughGpuMemory`` instead of separating when the GPU has less than
+    ``MIN_FREE_GPU_BYTES`` free.
     """
     out_dir = os.path.join(cache_folder, "lead_vocal", os.path.splitext(model)[0], _source_key(vocals_path))
     lead_path = os.path.join(out_dir, "lead.wav")
     if os.path.isfile(lead_path):
         return lead_path
+    release_gpu_memory()
+    free = free_gpu_memory()
+    if free is not None and free < MIN_FREE_GPU_BYTES:
+        raise NotEnoughGpuMemory(f"only {free / 2 ** 30:.1f} GB of GPU memory free, the separation needs "
+                                 f"about {MIN_FREE_GPU_BYTES / 2 ** 30:.1f} GB")
     from audio_separator.separator import Separator  # type: ignore[import-untyped]
 
     os.makedirs(out_dir, exist_ok=True)

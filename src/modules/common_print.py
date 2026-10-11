@@ -137,6 +137,7 @@ def print_help() -> None:
                             karaoke separation of the vocal stem) whenever that stem kept at least 80 % of the
                             singing; this avoids charting harmonies or backing vocals. Use this flag to take the
                             pitches from the full vocal stem instead (saves the extra separation, e.g. on a CPU).
+                            The separation is skipped when the GPU has less than about 2.5 GB free.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced

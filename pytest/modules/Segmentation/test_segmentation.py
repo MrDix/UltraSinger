@@ -521,6 +521,7 @@ class TestLeadVocalPitch:
         import os
         import audio_separator.separator as sepmod
         monkeypatch.setattr(sepmod, "Separator", FakeSeparator)
+        monkeypatch.setattr(lead_vocal, "free_gpu_memory", lambda: None)
         vocals = tmp_path / "vocals.wav"
         vocals.write_bytes(b"one")
         p1 = lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path))
@@ -532,6 +533,28 @@ class TestLeadVocalPitch:
         other.write_bytes(b"two")
         p3 = lead_vocal.separate_lead_vocal(str(other), str(tmp_path))
         assert p3 != p1 and len(calls) == 2
+
+    def test_too_little_gpu_memory(self, tmp_path, monkeypatch):
+        import audio_separator.separator as sepmod
+
+        def separator(*args, **kwargs):
+            raise AssertionError("must not separate")
+        monkeypatch.setattr(sepmod, "Separator", separator)
+        monkeypatch.setattr(lead_vocal, "free_gpu_memory", lambda: 2 * 2 ** 30)
+        vocals = tmp_path / "vocals.wav"
+        vocals.write_bytes(b"one")
+        with pytest.raises(lead_vocal.NotEnoughGpuMemory, match="only 2.0 GB"):
+            lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path))
+
+    def test_cached_stem_needs_no_gpu_memory(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(lead_vocal, "free_gpu_memory", lambda: 0)
+        vocals = tmp_path / "vocals.wav"
+        vocals.write_bytes(b"one")
+        out_dir = tmp_path / "lead_vocal" / lead_vocal.KARAOKE_MODEL[:-len(".ckpt")] / lead_vocal._source_key(
+            str(vocals))
+        out_dir.mkdir(parents=True)
+        (out_dir / "lead.wav").write_bytes(b"lead")
+        assert lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path)) == str(out_dir / "lead.wav")
 
     def test_analysis_comes_with_the_stem_path(self, monkeypatch):
         import modules.Segmentation.features as feats
@@ -582,3 +605,10 @@ class TestSegmenterLeadPitch:
         result, seen = self._run(tmp_path, monkeypatch, boom)
         assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is None
         assert result.pitch_audio_path == str(tmp_path / "v.wav")
+
+    def test_too_little_gpu_memory_falls_back(self, tmp_path, monkeypatch, capsys):
+        def no_memory(p, c):
+            raise lead_vocal.NotEnoughGpuMemory("only 1.0 GB of GPU memory free, the separation needs about 2.5 GB")
+        result, seen = self._run(tmp_path, monkeypatch, no_memory)
+        assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is None
+        assert "lead-vocal pitch skipped: only 1.0 GB" in capsys.readouterr().out
