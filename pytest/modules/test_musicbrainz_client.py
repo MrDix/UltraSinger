@@ -349,6 +349,13 @@ class TestYear(unittest.TestCase):
         year, groups = self._year(recording, ['1988', '1989-03-21', '1994'])
         self.assertEqual((year, groups), ('1989', ['g1']))
 
+    def test_undated_official_release_beats_a_dated_bootleg(self):
+        recording = self._recording(('Bootleg', '1985'), ('Album', ''))
+        recording['release-list'][0]['status'] = 'Bootleg'
+        recording['release-list'][1]['status'] = 'Official'
+        year, groups = self._year(recording, ['1985', '1989-03-21'])
+        self.assertEqual((year, groups), ('1989', ['g1']))  # the official release's group
+
     def test_year_of(self):
         from src.modules.musicbrainz_client import _year_of
         self.assertEqual([_year_of(d) for d in ('1989', '1989-03', ' 1989-03-21 ', '', None, '19xx')],

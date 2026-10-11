@@ -304,11 +304,12 @@ def __get_year(recording):
         return None
 
     ordered = _preferred_releases(releases)
-    dated = [r for r in ordered if _year_of(r.get('date'))]
-    # A bootleg or promotional copy does not date the song when an official release does
-    candidates = [r for r in dated if _is_official(r)] or dated
-    years = [_year_of(r['date']) for r in candidates]
-    earliest = candidates[0] if candidates else ordered[0]
+    # Bootlegs and promotional copies do not date a song that has an official
+    # release, even an undated one (its release group may know the date)
+    pool = [r for r in ordered if _is_official(r)] or ordered
+    dated = [r for r in pool if _year_of(r.get('date'))]
+    years = [_year_of(r['date']) for r in dated]
+    earliest = dated[0] if dated else pool[0]
 
     release_group_id = (earliest.get('release-group') or {}).get('id')
     if release_group_id:
