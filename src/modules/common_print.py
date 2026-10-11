@@ -238,7 +238,9 @@ def print_help() -> None:
     --disable_midi          Disable MIDI file creation. MIDI is created by default.
     --no_metadata_tags      Skip writing ID3/Vorbis tags (title/artist/year/genre/cover) to output
                             audio. Tags are written by default.
-    --keep_cache            Keep cache folder after creation. Cache folder is removed by default.
+    --keep_cache            Keep the cache folder (intermediate files) in the song folder. Removed by default.
+    --cache_folder          Folder for the cache folders of the conversions, never the song folder
+                            >> ((default) is %LOCALAPPDATA%\\UltraSinger\\cache, on Linux/macOS ~/.cache/ultrasinger/cache)
     --keep_audio_in_video   Keep full audio (vocals+instrumental) in the output video. Disabled by default.
     --write_settings_info   Write ultrasinger_parameter.info with all settings and scores to output dir. Disabled by default.
     --plot                  Enable creation of plots. Plots are disabled by default.

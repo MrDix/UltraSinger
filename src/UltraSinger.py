@@ -93,6 +93,7 @@ from modules.Ultrastar.coverter.ultrastar_txt_converter import from_ultrastar_tx
     create_ultrastar_txt_from_midi_segments, create_ultrastar_txt_from_automation
 from modules.Ultrastar.ultrastar_parser import parse_ultrastar_txt
 from modules.common_print import print_support, print_help, print_version
+from modules import conversion_cache
 from modules.os_helper import check_file_exists, get_unused_song_output_dir
 from modules.plot import create_plots
 from modules.musicbrainz_client import search_musicbrainz
@@ -165,7 +166,9 @@ def run() -> tuple[str, Score, Score]:
     if settings.create_plot:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Plot will be created')}")
     if settings.keep_cache:
-        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Cache folder will not be deleted')}")
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Cache folder will be kept in the song folder')}")
+    if settings.cache_folder:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Cache folders are made in {settings.cache_folder}')}")
     if settings.create_audio_chunks:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Audio chunks will be created')}")
     if not settings.create_karaoke:
@@ -207,11 +210,7 @@ def run() -> tuple[str, Score, Score]:
 
     process_data = InitProcessData()
 
-    process_data.process_data_paths.cache_folder_path = (
-        os.path.join(settings.output_folder_path, "cache")
-        if settings.cache_override_path is None
-        else settings.cache_override_path
-    )
+    process_data.process_data_paths.cache_folder_path = setup_cache_folder()
 
     # Create process audio — two separate paths:
     # whisper_audio_path: un-muted mono for Whisper, BPM, key detection
@@ -945,8 +944,7 @@ def run() -> tuple[str, Score, Score]:
         )
 
     # Cleanup
-    if not settings.keep_cache:
-        remove_cache_folder(process_data.process_data_paths.cache_folder_path)
+    finish_cache_folder(process_data.process_data_paths.cache_folder_path)
 
     # Print Support
     print_support()
@@ -1211,6 +1209,7 @@ def _write_settings_info_file(
             f.write(f"  Write metadata tags:      {settings.write_metadata_tags}\n")
             f.write(f"  Keep audio in video:      {settings.keep_audio_in_video}\n")
             f.write(f"  Keep cache:               {settings.keep_cache}\n")
+            f.write(f"  Cache folder:             {settings.cache_folder or 'default'}\n")
             f.write("\n")
 
             # Device
@@ -1876,7 +1875,7 @@ def CreateProcessAudio(process_data) -> tuple[str, str]:
     Muting zeroes silent sections which helps pitch detection focus on singing,
     but destroys onset information that WhisperX's forced alignment needs.
     """
-    os_helper.create_folder(process_data.process_data_paths.cache_folder_path)
+    os.makedirs(process_data.process_data_paths.cache_folder_path, exist_ok=True)
 
     # Separate vocal from audio
     # Choose model based on backend
@@ -2121,6 +2120,36 @@ def remove_cache_folder(cache_folder_path: str) -> None:
     os_helper.remove_folder(cache_folder_path)
 
 
+def setup_cache_folder() -> str:
+    """Cache folder for the intermediate files of this conversion: a new one
+    outside the song folder (see modules.conversion_cache), unless a fixed one
+    is set with ``cache_override_path``."""
+    if settings.cache_override_path is not None:
+        return settings.cache_override_path
+    song_name = os.path.basename(os.path.normpath(settings.output_folder_path))
+    try:
+        folder = conversion_cache.create(song_name, settings.cache_folder)
+    except OSError as e:
+        # Never fail a conversion over the cache: fall back to a new folder in the song folder
+        folder = conversion_cache.create_in_song_folder(settings.output_folder_path)
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} could not make a cache folder ({e!r}) "
+              f"- using {blue_highlighted(folder)}")
+        return folder
+    print(f"{ULTRASINGER_HEAD} Cache folder: {blue_highlighted(folder)}")
+    return folder
+
+
+def finish_cache_folder(cache_folder_path: str) -> None:
+    """Delete the cache folder, or with --keep_cache move it into the song folder."""
+    if settings.cache_override_path is not None:
+        if not settings.keep_cache:
+            remove_cache_folder(cache_folder_path)
+        return
+    kept = conversion_cache.finish(cache_folder_path, settings.output_folder_path, settings.keep_cache)
+    if kept:
+        print(f"{ULTRASINGER_HEAD} Kept the cache folder: {blue_highlighted(kept)}")
+
+
 def init_settings(argv: list[str]) -> Settings:
     """Init settings"""
     # Reset per-run resolution state (settings is a reused module singleton).
@@ -2132,6 +2161,7 @@ def init_settings(argv: list[str]) -> Settings:
     settings.lead_vocal_pitch = True
     settings.refine_gap = True
     settings.octave_consistency = None
+    settings.cache_folder = None
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2245,6 +2275,8 @@ def init_settings(argv: list[str]) -> Settings:
                 sys.exit(1)
         elif opt in ("--keep_cache"):
             settings.keep_cache = True
+        elif opt == "--cache_folder":
+            settings.cache_folder = arg or None
         elif opt in ("--musescore_path"):
             settings.musescore_path = arg
         elif opt in ("--separator"):
@@ -2495,6 +2527,7 @@ def arg_options():
         "force_whisper_cpu",
         "format_version=",
         "keep_cache",
+        "cache_folder=",
         "musescore_path=",
         "keep_numbers",
         "disable_quantization",

@@ -27,7 +27,8 @@ class Settings:
     create_karaoke = True
     ignore_audio = False
     input_file_is_ultrastar_txt = False # todo: to process_data
-    keep_cache = False
+    keep_cache = False  # Move the cache folder into the song folder at the end instead of deleting it
+    cache_folder = None  # Folder for the cache folders of the conversions; None = the user's local cache folder
     interactive_mode = False
     user_ffmpeg_path = ""
     quantize_to_key = True  # Quantize notes to the detected key of the song

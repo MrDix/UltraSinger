@@ -786,8 +786,10 @@ def convert_song(song: dict, run_dir: Path, extra_args: list[str], python: str,
         shutil.copy2(media, inp)
     out = run_dir / "out"
     t0 = time.time()
+    # The cache folder is made next to the song folder, so the kept cache is
+    # moved within one drive at the end.
     cmd = [python, str(REPO / "src" / "UltraSinger.py"), "-i", str(inp), "-o", str(out), "--keep_cache",
-           *extra_args]
+           "--cache_folder", str(out), *extra_args]
     timed_out = False
     try:
         proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",

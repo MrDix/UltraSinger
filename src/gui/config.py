@@ -108,6 +108,7 @@ _DEFAULTS = {
     "force_whisper_cpu": False,
     # Cache / Misc
     "keep_cache": False,
+    "cache_folder": "",
     # BPM / Octave overrides
     "bpm_override": "",
     "octave_shift": "",

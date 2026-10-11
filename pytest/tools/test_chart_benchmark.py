@@ -607,6 +607,7 @@ class TestConvertSong:
         res = cb.convert_song(self._song(tmp_path), run_dir, ["--x"], "python")
         assert res["returncode"] == 0 and res["txt"].endswith("Artist - Title.txt")
         assert "--keep_cache" in calls[0] and "--x" in calls[0]
+        assert calls[0][calls[0].index("--cache_folder") + 1] == calls[0][calls[0].index("-o") + 1]
         assert not list(run_dir.rglob("*.mp3"))  # pruned
         cb.convert_song(self._song(tmp_path), run_dir, [], "python")
         assert len(calls) == 1  # second call resumed from result.json
