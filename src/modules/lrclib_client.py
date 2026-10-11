@@ -38,6 +38,11 @@ class LyricsInfo:
     duration: Optional[float] = None
     instrumental: bool = False
 
+    @property
+    def has_lyrics(self) -> bool:
+        """Whether plain or synced lyrics with text came along."""
+        return _has_text(self.plain_lyrics) or _has_text(self.synced_lyrics)
+
 
 def search_lyrics(artist: str, title: str, duration: Optional[float] = None) -> Optional[LyricsInfo]:
     """Search LRCLIB for lyrics matching the given artist and title.
@@ -56,8 +61,8 @@ def search_lyrics(artist: str, title: str, duration: Optional[float] = None) -> 
         print(f"{ULTRASINGER_HEAD} {red_highlighted('No lyrics found on LRCLIB')}")
         return None
 
-    has_plain = result.plain_lyrics is not None
-    has_synced = result.synced_lyrics is not None
+    has_plain = _has_text(result.plain_lyrics)
+    has_synced = _has_text(result.synced_lyrics)
     parts = []
     if has_plain:
         word_count = len(result.plain_lyrics.split())
@@ -101,7 +106,7 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
             print(f"{ULTRASINGER_HEAD} Searching LRCLIB again without the additions to the title: "
                   f"{blue_highlighted(wanted)}")
         for result in _searches(artist, wanted, duration):
-            if result is not None and result.plain_lyrics:
+            if result is not None and result.has_lyrics:
                 return result
             # Only an instrumental entry so far: lyrics may still come with the next search
             found = found or result
@@ -132,7 +137,7 @@ def _search_by_query(query: str, artist: str = "", title: str = "",
 
 def _do_search(url: str, artist: str = "", title: str = "",
                duration: Optional[float] = None) -> Optional[LyricsInfo]:
-    """Execute a search request and return the best result with plain lyrics.
+    """Execute a search request and return the best result with lyrics.
 
     With ``artist`` and ``title`` given, only results of that song count
     (see ``_names_match``). A song that LRCLIB only knows as instrumental is
@@ -192,9 +197,15 @@ def _get_json(url: str):
     return None
 
 
+def _has_text(lyrics) -> bool:
+    return isinstance(lyrics, str) and bool(lyrics.strip())
+
+
 def _has_lyrics(entry: dict) -> bool:
-    plain = entry.get("plainLyrics")
-    return not entry.get("instrumental", False) and isinstance(plain, str) and bool(plain.strip())
+    """Not instrumental, with plain or synced lyrics (synced ones alone are
+    enough for the reference-lyrics pipeline)."""
+    return not entry.get("instrumental", False) and (
+        _has_text(entry.get("plainLyrics")) or _has_text(entry.get("syncedLyrics")))
 
 
 def _names_match(entry: dict, artist: str, title: str) -> bool:

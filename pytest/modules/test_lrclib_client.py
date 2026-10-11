@@ -221,6 +221,13 @@ class TestFindLyrics(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertIsNotNone(result.synced_lyrics)
 
+    def test_synced_lyrics_alone_are_enough(self):
+        synced_only = _lrclib_entry(track="Song Title", artist="Some Artist", plain=None,
+                                    synced="[00:01.00] la la")
+        result, requests = self._find(lambda params: [synced_only])
+        self.assertEqual(result.synced_lyrics, "[00:01.00] la la")
+        self.assertEqual(len(requests), 1)
+
     def test_without_a_length_synced_lyrics_first(self):
         versions = [_version(200.0, synced=False), _version(300.0)]
         result, _ = self._find(lambda params: versions)
@@ -270,6 +277,15 @@ class TestSearchLyricsReport(unittest.TestCase):
             search_lyrics("Some Artist", "Song Title", duration=235.2)
         report = " ".join(str(call.args[0]) for call in mock_print.call_args_list)
         self.assertIn("[plain (3 words), synced], 234 s long (the audio: 235 s)", report)
+
+    def test_reports_synced_lyrics_alone(self):
+        found = LyricsInfo(track_name="Song Title", artist_name="Some Artist",
+                           plain_lyrics="", synced_lyrics="[00:01.00] la la la")
+        with patch("src.modules.lrclib_client.find_lyrics", return_value=found), \
+                patch("builtins.print") as mock_print:
+            search_lyrics("Some Artist", "Song Title")
+        report = " ".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn("[synced]", report)
 
 
 if __name__ == "__main__":
