@@ -289,7 +289,7 @@ class TestMultiLineMatchValidation(unittest.TestCase):
     @patch('musicbrainzngs.search_recordings')
     def test_swapped_artist_and_title(self, mock_search):
         # file named "Title - Artist": the second ordering must find it
-        def search(recording=None, limit=None, artist=None, artistname=None):
+        def search(recording=None, limit=None, artist=None, artistname=None, **fields):
             if artist == 'wanted artist':
                 return {'recording-count': 1, 'recording-list': [_recording('Wanted Title', 'Wanted Artist')]}
             return {'recording-count': 0, 'recording-list': []}
@@ -432,6 +432,8 @@ class TestTitleAdditions(unittest.TestCase):
                                     self._recording('Wanted Title', 'r1', ('Official', '2006', 'Single')))
         self.assertEqual((info.title, info.year), ('Wanted Title', '2006'))
         self.assertEqual(search.call_args_list[0].kwargs['recording'], 'wanted title')
+        # recordings on official releases rank higher among the many of a famous song
+        self.assertEqual(search.call_args_list[0].kwargs['status'], 'official')
 
     def test_title_without_additions_and_year_of_all_recordings(self):
         # The search lists a video recording first; the song came out years before
