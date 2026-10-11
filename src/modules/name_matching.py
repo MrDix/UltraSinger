@@ -189,6 +189,13 @@ def titles_match(a: str, b: str) -> bool:
     return similarity(a, b) >= MIN_MATCH_SIMILARITY
 
 
+def title_key(title: str) -> str:
+    """The title as ``titles_match`` compares it, to tell equal titles: its
+    additions and a leading bracketed part dropped, case and punctuation
+    ignored; "Title (Live)" and "Title" are equal, "Title (Part 2)" is not."""
+    return " ".join(_clean(_title_words(title)).split())
+
+
 def artist_from_channel(channel: str) -> str:
     """The artist's name in a channel name: without "VEVO", " - Topic" or
     " Official" at its end. Unchanged when nothing would be left."""

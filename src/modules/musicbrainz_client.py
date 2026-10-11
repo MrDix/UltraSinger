@@ -7,7 +7,13 @@ from typing import Optional
 from Settings import Settings
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted
-from modules.name_matching import MIN_MATCH_SIMILARITY, similarity, strip_title_additions, titles_match
+from modules.name_matching import (
+    MIN_MATCH_SIMILARITY,
+    similarity,
+    strip_title_additions,
+    title_key,
+    titles_match,
+)
 
 
 @dataclass
@@ -86,10 +92,10 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
     print(
         f"{ULTRASINGER_HEAD} Found data on Musicbrainz: Artist={blue_highlighted(artist)} Title={blue_highlighted(title)}")
 
-    # The year and the cover come from the releases of all matching
-    # recordings: which recording of a song the search lists first (a live
-    # one, a video) is chance, and its releases can all be later ones.
-    releases = _releases_of(recordings)
+    # The year and the cover come from the releases of all recordings of the
+    # song: which one the search lists first (a live one, a video) is chance,
+    # and its releases can all be later ones.
+    releases = _releases_of(_same_song(recordings))
     year = __get_year(releases)
     genres = __get_genres(recording)
     image_data, image_url = __get_image(releases)
@@ -170,31 +176,50 @@ def __multi_line_search(artist: str, title: str) -> list:
     artist1, title1 = artist, title
     artist2, title2 = title, strip_title_additions(artist)
 
+    # "status" only ranks recordings on official releases higher (the search
+    # fields are alternatives): a famous song has hundreds of equally ranked
+    # recordings, mostly live bootlegs, and without it the hundred listed can
+    # miss the original recording entirely
     result1 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(
-        recording=title1, limit=RECORDINGS_PER_SEARCH, artist=artist1, artistname=artist1))
+        recording=title1, limit=RECORDINGS_PER_SEARCH, artist=artist1, artistname=artist1, status="official"))
     result2 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(
-        recording=title2, limit=RECORDINGS_PER_SEARCH, artist=artist2, artistname=artist2))
+        recording=title2, limit=RECORDINGS_PER_SEARCH, artist=artist2, artistname=artist2, status="official"))
 
     if result1 is None:
         result1 = {'recording-count': 0, 'recording-list': []}
     if result2 is None:
         result2 = {'recording-count': 0, 'recording-list': []}
 
-    # Only accept a recording whose artist AND title match what we searched
-    # for, the best-matching first. Previously the first search hit was
-    # taken even when neither matched, replacing a correct "Artist - Title"
-    # with an unrelated song (and the lyrics lookup then fetched that song).
-    # Of equally good ones, a title without additions comes first: "Title"
-    # rather than "Title (Live)".
+    searches = ((result1, artist1, title1), (result2, artist2, title2))
+    # A bracketed part of the wanted title that is no known addition can
+    # name another song ("(Part 2)"), so it has to match first; only when no
+    # recording does, the title is compared without it, as all titles were
+    # before: video titles carry more additions than any list knows.
+    return _matching_recordings(searches, strict=True) or _matching_recordings(searches, strict=False)
+
+
+def _matching_recordings(searches, strict: bool) -> list:
+    """The recordings of the search results whose artist AND title match what
+    we searched for, the best-matching first.
+
+    Previously the first search hit was taken even when neither matched,
+    replacing a correct "Artist - Title" with an unrelated song (and the
+    lyrics lookup then fetched that song). Of equally good ones, a title
+    without additions comes first: "Title" rather than "Title (Live)".
+    ``strict`` compares the titles with ``titles_match``, else by
+    ``similarity`` alone, which ignores every bracketed part.
+    """
     matches = []
-    for result, wanted_artist, wanted_title in ((result1, artist1, title1), (result2, artist2, title2)):
+    for result, wanted_artist, wanted_title in searches:
         for record in result.get('recording-list', []):
             record_title = record.get('title', '')
             artist_sim = similarity(record.get('artist-credit-phrase', ''), wanted_artist, artist=True)
-            if artist_sim < MIN_MATCH_SIMILARITY or not titles_match(record_title, wanted_title):
+            title_sim = similarity(record_title, wanted_title)
+            title_ok = titles_match(record_title, wanted_title) if strict else title_sim >= MIN_MATCH_SIMILARITY
+            if artist_sim < MIN_MATCH_SIMILARITY or not title_ok:
                 continue
             plain = strip_title_additions(record_title) == record_title.strip()
-            matches.append(((artist_sim + similarity(record_title, wanted_title), plain), record))
+            matches.append(((artist_sim + title_sim, plain), record))
     # Stable: equally good recordings keep the order of the search
     matches.sort(key=lambda match: match[0], reverse=True)
     recordings, seen = [], set()
@@ -204,6 +229,14 @@ def __multi_line_search(artist: str, title: str) -> list:
             seen.add(key)
             recordings.append(record)
     return recordings
+
+
+def _same_song(recordings) -> list:
+    """The recordings with the title of the first one, its additions aside
+    ("Title" and "Title (Live)", not "Titles" or "Title (Part 2)"): only
+    those date the song."""
+    first = title_key(recordings[0].get('title', ''))
+    return [r for r in recordings if title_key(r.get('title', '')) == first]
 
 
 def __get_image(releases) -> (bytes, str):
@@ -287,8 +320,9 @@ def _preferred_releases(releases):
 
 
 def __get_year(releases):
-    """Year of the earliest official one of the song's releases (of the
-    earliest release, when none is official).
+    """Year of the earliest official album, single or EP among the song's
+    releases (of the earliest official release, when there is none of these;
+    of the earliest release, when none is official).
 
     The releases are not listed by date, and the first one is often a later
     compilation. The release group of the earliest release can know a still
@@ -300,8 +334,11 @@ def __get_year(releases):
 
     ordered = _preferred_releases(releases)
     # Bootlegs and promotional copies do not date a song that has an official
-    # release, even an undated one (its release group may know the date)
-    pool = [r for r in ordered if _is_official(r)] or ordered
+    # release, even an undated one (its release group may know the date);
+    # nor do compilations and live releases one that has an official album,
+    # single or EP
+    official = [r for r in ordered if _is_official(r)]
+    pool = [r for r in official if not _is_later_kind(r)] or official or ordered
     dated = [r for r in pool if _year_of(r.get('date'))]
     years = [_year_of(r['date']) for r in dated]
     earliest = dated[0] if dated else pool[0]
