@@ -1,6 +1,7 @@
 """Tests for the cache folder of a conversion (modules.conversion_cache) and its use in UltraSinger.py."""
 
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -15,7 +16,20 @@ _DAY_AGO = time.time() - cc.STALE_AFTER_S - 60
 
 
 def _age(path: Path) -> None:
-    os.utime(path, (_DAY_AGO, _DAY_AGO))
+    """Make ``path`` and everything in it look a day old."""
+    for p in [*path.rglob("*"), path] if path.is_dir() else [path]:
+        os.utime(p, (_DAY_AGO, _DAY_AGO))
+
+
+def _leftover(root: Path, name: str, marked: bool = True) -> Path:
+    """A cache folder as a cancelled conversion leaves it (made a day ago)."""
+    folder = root / f"{name} 0a1b2c3d{cc.FOLDER_SUFFIX}"
+    (folder / "separated").mkdir(parents=True)
+    (folder / "separated" / "vocals.wav").write_bytes(b"v")
+    if marked:
+        (folder / cc.MARKER).touch()
+    _age(folder)
+    return folder
 
 
 class TestDefaultRoot:
@@ -37,6 +51,7 @@ class TestCreate:
         assert a != b and os.path.isdir(a) and os.path.isdir(b)
         assert Path(a).parent == tmp_path
         assert Path(a).name.startswith("Artist - Title ") and Path(a).name.endswith(cc.FOLDER_SUFFIX)
+        assert (Path(a) / cc.MARKER).is_file()  # marks it as made by UltraSinger
 
     def test_long_song_names_are_cut(self, tmp_path):
         name = Path(cc.create("x" * 200, str(tmp_path))).name
@@ -47,28 +62,36 @@ class TestCreate:
         assert Path(cc.create("Song")).parent == tmp_path / "local" / "cache"
 
     def test_leftovers_are_removed_first(self, tmp_path):
-        old = tmp_path / f"Old 0a1b2c3d{cc.FOLDER_SUFFIX}"
-        old.mkdir()
-        _age(old)
+        old = _leftover(tmp_path, "Old")
         cc.create("Song", str(tmp_path))
         assert not old.exists()
 
 
 class TestLeftovers:
     def test_only_old_cache_folders_are_removed(self, tmp_path):
-        old = tmp_path / f"Old 0a1b2c3d{cc.FOLDER_SUFFIX}"
-        fresh = tmp_path / f"Fresh 0a1b2c3e{cc.FOLDER_SUFFIX}"
+        fresh = Path(cc.create("Fresh", str(tmp_path)))  # (cleans up itself: make the leftover after it)
+        old = _leftover(tmp_path, "Old")
         other = tmp_path / "Holiday photos"
-        for folder in (old, fresh, other):
-            (folder / "separated").mkdir(parents=True)
-            (folder / "separated" / "vocals.wav").write_bytes(b"v")
+        (other / "2024").mkdir(parents=True)
+        _age(other)
         a_file = tmp_path / f"notes{cc.FOLDER_SUFFIX}"
         a_file.write_text("x")
-        for path in (old, other, a_file):
-            _age(path)
+        _age(a_file)
         assert cc.remove_stale_folders(tmp_path) == 1
         assert not old.exists()
         assert fresh.exists() and other.exists() and a_file.exists()
+
+    def test_folder_without_marker_is_not_removed(self, tmp_path):
+        # Same name ending, but not made by UltraSinger (e.g. in a chosen --cache_folder)
+        foreign = _leftover(tmp_path, "Foreign", marked=False)
+        assert cc.remove_stale_folders(tmp_path) == 0 and foreign.exists()
+
+    def test_recent_change_deep_inside_keeps_the_folder(self, tmp_path):
+        # A long conversion writes into a subfolder: the folder's own time stays old
+        busy = _leftover(tmp_path, "Busy")
+        (busy / "separated" / "vocals.wav").write_bytes(b"newer")
+        os.utime(busy, (_DAY_AGO, _DAY_AGO))
+        assert cc.remove_stale_folders(tmp_path) == 0 and busy.exists()
 
     def test_missing_root(self, tmp_path):
         assert cc.remove_stale_folders(tmp_path / "missing") == 0
@@ -97,11 +120,43 @@ class TestFinish:
         assert (song / "cache" / "separated" / "vocals.wav").read_bytes() == b"v"
         assert (song / "cache" / "pitch.json").exists()
 
-    def test_kept_cache_stays_when_the_song_folder_has_one(self, tmp_path):
+    def test_kept_cache_is_never_a_leftover(self, tmp_path):
+        folder, song = self._cache(tmp_path)
+        kept = Path(cc.finish(str(folder), str(song), keep=True))
+        assert not (kept / cc.MARKER).exists()
+
+    def test_kept_cache_gets_an_unused_name(self, tmp_path):
         folder, song = self._cache(tmp_path)
         (song / "cache").mkdir()
+        (song / "cache (1)").mkdir()
+        assert cc.finish(str(folder), str(song), keep=True) == str(song / "cache (2)")
+        assert (song / "cache (2)" / "pitch.json").exists() and not folder.exists()
+
+    def test_kept_cache_that_cannot_be_moved_stays_and_is_not_removed(self, tmp_path, monkeypatch):
+        folder, song = self._cache(tmp_path)
+
+        def fail(src, dst):
+            raise PermissionError(13, "Permission denied")
+        monkeypatch.setattr(cc.shutil, "move", fail)
         assert cc.finish(str(folder), str(song), keep=True) == str(folder)
-        assert (folder / "pitch.json").exists()
+        _age(folder)
+        assert cc.remove_stale_folders(folder.parent) == 0 and (folder / "pitch.json").exists()
+
+    def test_marker_outlives_a_partial_delete(self, tmp_path, monkeypatch):
+        folder, song = self._cache(tmp_path)
+        rmtree = shutil.rmtree
+
+        def in_use(path, *args, **kwargs):
+            if os.path.basename(path) == "separated":
+                raise PermissionError(13, "in use")
+            return rmtree(path, *args, **kwargs)
+        monkeypatch.setattr(cc.shutil, "rmtree", in_use)
+        assert cc.finish(str(folder), str(song), keep=False) is None
+        # what is left is still marked, so a later conversion removes it
+        assert (folder / cc.MARKER).is_file() and (folder / "separated").exists()
+        monkeypatch.setattr(cc.shutil, "rmtree", rmtree)
+        _age(folder)
+        assert cc.remove_stale_folders(folder.parent) == 1 and not folder.exists()
 
 
 class TestConversion:

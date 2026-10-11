@@ -610,9 +610,9 @@ You can choose between different format versions. The default is `1.2.0`.
 While a song is converted, its intermediate files (separated vocals and instrumental, denoised and mono audio, transcription and pitch data; several hundred MB) are kept in a cache folder of their own, outside the song folder. A song folder in a folder that a file-sync client watches thus does not get these files uploaded while the conversion still uses them.
 
 - The cache folders are made in `%LOCALAPPDATA%\UltraSinger\cache` on Windows and in `~/.cache/ultrasinger/cache` on Linux and macOS. The log names the folder of each conversion.
-- When the conversion is done, its cache folder is deleted. With `--keep_cache` (GUI: **Keep Cache**) it is moved into the song folder as `cache` instead.
+- When the conversion is done, its cache folder is deleted. With `--keep_cache` (GUI: **Keep Cache**) it is moved into the song folder as `cache` instead (`cache (1)` ... if the song folder has one already).
 - `--cache_folder <folder>` (GUI: **Cache Folder**) makes the cache folders somewhere else, for example on a drive with more free space. Choose a local folder that no file-sync client watches.
-- A conversion that is cancelled or crashes leaves its cache folder behind. Such folders are removed by a later conversion once they have not changed for a day; only folders whose name ends with `.ultrasinger` are removed.
+- A conversion that is cancelled or crashes leaves its cache folder behind. Such folders are removed by a later conversion once nothing in them has changed for a day. Only folders that UltraSinger made are removed: their name ends with `.ultrasinger` and they contain a `.ultrasinger-cache` marker file (a kept cache has none).
 
 ```commandline
 -i XYZ --cache_folder D:\UltraSinger\cache
