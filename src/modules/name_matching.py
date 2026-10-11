@@ -191,9 +191,20 @@ def titles_match(a: str, b: str) -> bool:
 
 def title_key(title: str) -> str:
     """The title as ``titles_match`` compares it, to tell equal titles: its
-    additions and a leading bracketed part dropped, case and punctuation
-    ignored; "Title (Live)" and "Title" are equal, "Title (Part 2)" is not."""
-    return " ".join(_clean(_title_words(title)).split())
+    additions, a leading bracketed part and a leading article dropped, case
+    and punctuation ignored; "Title (Live)" and "Title" are equal, "Title
+    (Part 2)" is not."""
+    return normalize_name(_title_words(title), artist=False)
+
+
+def bracketed_parts(title: str) -> list[str]:
+    """The contents of the bracketed parts of a title."""
+    return [m.group(0)[1:-1] for m in _BRACKETS_RE.finditer(title or "")]
+
+
+def without_brackets(title: str) -> str:
+    """The title without any bracketed part."""
+    return " ".join(_BRACKETS_RE.sub(" ", title or "").split())
 
 
 def artist_from_channel(channel: str) -> str:

@@ -455,11 +455,24 @@ class TestTitleAdditions(unittest.TestCase):
         self.assertEqual((info.title, info.year), ('Some Song (Part 2)', '2005'))
 
     def test_other_part_does_not_date_the_song(self):
-        # Without a match of the part, both are taken without brackets - but only the first dates the song
+        # Without a match of the unknown bracketed part, the wanted title is compared without it;
+        # the recordings keep their parts, so "(Part 2)" (listed first) is no match
         info, _ = self._search('Some Song (Some Channel Words)',
-                               self._recording('Some Song', 'one', ('Official', '2001', 'Single')),
-                               self._recording('Some Song (Part 2)', 'two', ('Official', '1999', 'Single')))
+                               self._recording('Some Song (Part 2)', 'two', ('Official', '1999', 'Single')),
+                               self._recording('Some Song', 'one', ('Official', '2001', 'Single')))
         self.assertEqual((info.title, info.year), ('Some Song', '2001'))
+
+    def test_other_part_is_no_match(self):
+        for wanted, listed in (('Some Song (Part 1)', 'Some Song (Part 2)'), ('Some Song (Part 2)', 'Some Song')):
+            with self.subTest(wanted=wanted, listed=listed):
+                info, _ = self._search(wanted, self._recording(listed, 'r1', ('Official', '1999', 'Single')))
+                self.assertEqual((info.title, info.year), (wanted, None))
+
+    def test_year_of_a_compilation_when_the_album_has_no_date(self):
+        info, _ = self._search('Wanted Title',
+                               self._recording('Wanted Title', 'album', ('Official', '', 'Album')),
+                               self._recording('Wanted Title', 'hits', ('Official', '1990', 'Compilation')))
+        self.assertEqual(info.year, '1990')
 
     def test_only_recordings_of_the_same_title_date_the_song(self):
         # A similar title of the same artist is another song: it must not lend its year

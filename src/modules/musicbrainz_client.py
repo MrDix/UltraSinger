@@ -1,4 +1,5 @@
 import musicbrainzngs
+import re
 import string
 import time
 from urllib.error import URLError
@@ -9,10 +10,12 @@ from Settings import Settings
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted
 from modules.name_matching import (
     MIN_MATCH_SIMILARITY,
+    bracketed_parts,
     similarity,
     strip_title_additions,
     title_key,
     titles_match,
+    without_brackets,
 )
 
 
@@ -40,6 +43,8 @@ MAX_RETRIES = 3
 RECORDINGS_PER_SEARCH = 100
 # At most this many releases are asked for a cover, the preferred ones first
 MAX_COVER_RELEASES = 15
+# A part or volume number ("Part 2", "Vol. 3"), not a year
+_NUMBER_RE = re.compile(r"(?<!\d)\d{1,3}(?!\d)")
 
 
 def __clean_string(s: str) -> str:
@@ -194,8 +199,12 @@ def __multi_line_search(artist: str, title: str) -> list:
     # A bracketed part of the wanted title that is no known addition can
     # name another song ("(Part 2)"), so it has to match first; only when no
     # recording does, the title is compared without it, as all titles were
-    # before: video titles carry more additions than any list knows.
-    return _matching_recordings(searches, strict=True) or _matching_recordings(searches, strict=False)
+    # before: video titles carry more additions than any list knows. Not
+    # when such a part holds a part or volume number (a year is fine).
+    recordings = _matching_recordings(searches, strict=True)
+    if recordings or any(_NUMBER_RE.search(part) for part in bracketed_parts(title1)):
+        return recordings
+    return _matching_recordings(searches, strict=False)
 
 
 def _matching_recordings(searches, strict: bool) -> list:
@@ -206,18 +215,19 @@ def _matching_recordings(searches, strict: bool) -> list:
     replacing a correct "Artist - Title" with an unrelated song (and the
     lyrics lookup then fetched that song). Of equally good ones, a title
     without additions comes first: "Title" rather than "Title (Live)".
-    ``strict`` compares the titles with ``titles_match``, else by
-    ``similarity`` alone, which ignores every bracketed part.
+    The titles are compared with ``titles_match``; unless ``strict``, the
+    wanted title without its bracketed parts (the recording's title keeps
+    them: "Title (Part 2)" still is another song than "Title").
     """
     matches = []
     for result, wanted_artist, wanted_title in searches:
+        compared_title = wanted_title if strict else without_brackets(wanted_title)
         for record in result.get('recording-list', []):
             record_title = record.get('title', '')
             artist_sim = similarity(record.get('artist-credit-phrase', ''), wanted_artist, artist=True)
-            title_sim = similarity(record_title, wanted_title)
-            title_ok = titles_match(record_title, wanted_title) if strict else title_sim >= MIN_MATCH_SIMILARITY
-            if artist_sim < MIN_MATCH_SIMILARITY or not title_ok:
+            if artist_sim < MIN_MATCH_SIMILARITY or not titles_match(record_title, compared_title):
                 continue
+            title_sim = similarity(record_title, wanted_title)
             plain = strip_title_additions(record_title) == record_title.strip()
             matches.append(((artist_sim + title_sim, plain), record))
     # Stable: equally good recordings keep the order of the search
@@ -336,9 +346,20 @@ def __get_year(releases):
     # Bootlegs and promotional copies do not date a song that has an official
     # release, even an undated one (its release group may know the date);
     # nor do compilations and live releases one that has an official album,
-    # single or EP
+    # single or EP. A group of releases that knows no date at all gives way
+    # to the next one.
     official = [r for r in ordered if _is_official(r)]
-    pool = [r for r in official if not _is_later_kind(r)] or official or ordered
+    for pool in ([r for r in official if not _is_later_kind(r)], official, ordered):
+        year = _earliest_year(pool) if pool else None
+        if year:
+            print(f"{ULTRASINGER_HEAD} Found year: {blue_highlighted(year)}")
+            return year
+    return None
+
+
+def _earliest_year(pool) -> Optional[str]:
+    """The earliest year of the dated releases in ``pool`` (in preferred
+    order) and of the release group of the first of them."""
     dated = [r for r in pool if _year_of(r.get('date'))]
     years = [_year_of(r['date']) for r in dated]
     earliest = dated[0] if dated else pool[0]
@@ -350,12 +371,7 @@ def __get_year(releases):
             group_year = _year_of(release_group.get('release-group', {}).get('first-release-date'))
             if group_year:
                 years.append(group_year)
-
-    if not years:
-        return None
-    year = min(years)
-    print(f"{ULTRASINGER_HEAD} Found year: {blue_highlighted(year)}")
-    return year
+    return min(years) if years else None
 
 
 def __get_genres(recording) -> str:
