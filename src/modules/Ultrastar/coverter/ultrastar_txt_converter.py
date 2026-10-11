@@ -11,7 +11,7 @@ from modules.Ultrastar.coverter.ultrastar_midi_converter import ultrastar_to_mid
     convert_midi_notes_to_ultrastar_notes
 from modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, FormatVersion
 from modules.Ultrastar.ultrastar_writer import create_repitched_txt_from_ultrastar_data, format_separated_string, \
-    create_ultrastar_txt
+    create_ultrastar_txt, DEFAULT_LINEBREAK_TIMING
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 
 
@@ -60,6 +60,7 @@ def create_ultrastar_txt_from_automation(
         format_version: FormatVersion,
         create_karaoke: bool,
         app_version: str,
+        linebreak_timing: str = DEFAULT_LINEBREAK_TIMING,
 ):
     """Create Ultrastar txt from automation"""
     print(f"{ULTRASINGER_HEAD} Using UltraStar {blue_highlighted(f'Format Version {format_version.value}')}")
@@ -102,6 +103,7 @@ def create_ultrastar_txt_from_automation(
         ultrastar_file_output_path,
         ultrastar_txt,
         media_info.bpm,
+        linebreak_timing,
     )
     if create_karaoke and version.parse(format_version.value) < version.parse(FormatVersion.V1_1_0.value):
         title = basename + " [Karaoke]"
@@ -114,6 +116,7 @@ def create_ultrastar_txt_from_automation(
             karaoke_txt_output_path,
             ultrastar_txt,
             media_info.bpm,
+            linebreak_timing,
         )
     if version.parse(format_version.value) < version.parse(FormatVersion.V1_2_0.value):
         ultrastar_txt.videoUrl = media_info.video_url

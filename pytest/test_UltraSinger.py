@@ -177,6 +177,23 @@ class TestSegmentationModelRepoFlags(unittest.TestCase):
         settings = init_settings(["-i", "test.mp3"])
         self.assertIsNone(settings.segmentation_model_repo)
         self.assertIsNone(settings.segmentation_model_token)
+class TestLinebreakTimingFlag(unittest.TestCase):
+    def test_default_yass(self):
+        self.assertEqual(Settings().linebreak_timing, "yass")
+        self.assertEqual(init_settings(["-i", "test.mp3"]).linebreak_timing, "yass")
+
+    def test_values_and_reset(self):
+        for value in ("usdx", "after_last_note", "yass"):
+            self.assertEqual(init_settings(["-i", "test.mp3", "--linebreak_timing", value]).linebreak_timing, value)
+        init_settings(["-i", "test.mp3", "--linebreak_timing", "usdx"])
+        self.assertEqual(init_settings(["-i", "test.mp3"]).linebreak_timing, "yass")
+
+    def test_unknown_value_stops(self):
+        with self.assertRaises(SystemExit):
+            init_settings(["-i", "test.mp3", "--linebreak_timing", "sometimes"])
+        init_settings(["-i", "test.mp3"])  # reset the shared settings
+
+
 class TestLeadVocalPitchFlag(unittest.TestCase):
     def test_default_on(self):
         self.assertTrue(Settings().lead_vocal_pitch)

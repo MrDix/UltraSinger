@@ -195,6 +195,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocal gap fill enabled')}")
     if settings.pitch_change_split:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Pitch-change split enabled')}")
+    if settings.linebreak_timing != ultrastar_writer.DEFAULT_LINEBREAK_TIMING:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Line break timing: {settings.linebreak_timing}')}")
     if settings.disable_reference_lyrics:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Reference-lyrics-first pipeline disabled')}")
     if settings.pitch_notes:
@@ -1073,6 +1075,7 @@ def _write_settings_info_file(
             f.write(f"  Input:                    {settings.input_file_path}\n")
             f.write(f"  Output folder:            {settings.output_folder_path}\n")
             f.write(f"  Format version:           {settings.format_version.value}\n")
+            f.write(f"  Line break timing:        {settings.linebreak_timing}\n")
             f.write(f"  PO token used:            {bool(settings.yt_po_token)}\n")
             f.write("\n")
 
@@ -1837,7 +1840,8 @@ def CreateUltraStarTxt(process_data: ProcessData):
             process_data.media_info,
             settings.format_version,
             settings.create_karaoke,
-            settings.APP_VERSION
+            settings.APP_VERSION,
+            linebreak_timing=settings.linebreak_timing,
         )
     else:
         ultrastar_file_output = create_ultrastar_txt_from_midi_segments(
@@ -2162,6 +2166,7 @@ def init_settings(argv: list[str]) -> Settings:
     settings.refine_gap = True
     settings.octave_consistency = None
     settings.cache_folder = None
+    settings.linebreak_timing = ultrastar_writer.DEFAULT_LINEBREAK_TIMING
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2259,6 +2264,14 @@ def init_settings(argv: list[str]) -> Settings:
             os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
         elif opt in ("--force_whisper_cpu"):
             settings.force_whisper_cpu = True
+        elif opt == "--linebreak_timing":
+            if arg not in ultrastar_writer.LINEBREAK_TIMINGS:
+                print(
+                    f"{ULTRASINGER_HEAD} {red_highlighted('Error: Line break timing')} {blue_highlighted(arg)} "
+                    f"{red_highlighted('is not supported, use one of: ' + ', '.join(ultrastar_writer.LINEBREAK_TIMINGS))}"
+                )
+                sys.exit(1)
+            settings.linebreak_timing = arg
         elif opt in ("--format_version"):
             if arg == FormatVersion.V0_3_0.value:
                 settings.format_version = FormatVersion.V0_3_0
@@ -2526,6 +2539,7 @@ def arg_options():
         "force_cpu",
         "force_whisper_cpu",
         "format_version=",
+        "linebreak_timing=",
         "keep_cache",
         "cache_folder=",
         "musescore_path=",
