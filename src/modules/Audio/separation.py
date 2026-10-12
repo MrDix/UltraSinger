@@ -99,7 +99,8 @@ def _separate_with_demucs(
         "--float32",
         "-n", model.value,
         "--out", os.path.join(output_folder, "separated"),
-        "--filename", f"{track}/{{stem}}.{{ext}}",
+        # One argument: a value of its own that starts with "-" would be read as an option
+        f"--filename={track}/{{stem}}.{{ext}}",
         input_file_path,
     ])
     # The next model (the transcription) gets the separation's GPU memory

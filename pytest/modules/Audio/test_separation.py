@@ -102,9 +102,10 @@ class TestSeparationCache:
         assert os.path.basename(folder).startswith("Artist - Long Title")
         assert Path(folder, "vocals.wav").read_bytes() == b"vocals of mix"
 
-    @pytest.mark.parametrize("name", ["Artist - " + "Long Title " * 10, "Artist - Title {Live}"])
+    @pytest.mark.parametrize("name", ["Artist - " + "Long Title " * 10, "Artist - Title {Live}", "-intro"])
     def test_demucs_stem_folder(self, tmp_path, monkeypatch, name):
-        # A long file name gets a short stem folder with Demucs too; braces are no pattern
+        # A long file name gets a short stem folder with Demucs too; braces are no
+        # pattern, and a leading "-" no option
         import demucs.separate as demucs_separate
         song = tmp_path / (name + ".mp3")
         song.write_bytes(b"mix")
