@@ -906,6 +906,17 @@ class TestRepitchedTxt(unittest.TestCase):
         self.assertEqual(self._repitch(b"#TITLE:Title\n#COVER:c.jpg\n: 0 2 0 a\nE\n", [1]),
                          "#TITLE:Title\n#COVER:c.jpg\n: 0 2 1 a\nE\n")
 
+    def test_cover_goes_after_the_last_header_tag(self):
+        cover = "Artist - Title [CO].jpg"
+        # a blank line inside the header, and one before it
+        self.assertEqual(self._repitch(b"#TITLE:Title\n\n#BPM:300\n: 0 2 0 a\nE\n", [1], cover=cover),
+                         f"#TITLE:Title\n\n#BPM:300\n#COVER:{cover}\n: 0 2 1 a\nE\n")
+        self.assertEqual(self._repitch(b"\n#TITLE:Title\n#BPM:300\n: 0 2 0 a\nE\n", [1], cover=cover),
+                         f"\n#TITLE:Title\n#BPM:300\n#COVER:{cover}\n: 0 2 1 a\nE\n")
+        # the body may start with a duet player or a line break
+        self.assertEqual(self._repitch(b"#TITLE:Title\n\nP1\n: 0 2 0 a\nE\n", [1], cover=cover),
+                         f"#TITLE:Title\n#COVER:{cover}\n\nP1\n: 0 2 1 a\nE\n")
+
 
 if __name__ == "__main__":
     unittest.main()

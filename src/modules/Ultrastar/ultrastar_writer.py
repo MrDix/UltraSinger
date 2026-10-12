@@ -428,13 +428,19 @@ def create_repitched_txt_from_ultrastar_data(
 
     txt = read_chart_lines(input_file)
     add_cover = cover is not None and UltrastarTxtTag.COVER.value not in map(header_tag, txt)
+    cover_at = 0
+    if add_cover:
+        # Right after the last header tag before the song body, so a blank line
+        # inside the header does not put it in the middle of the header
+        body = next((k for k, line in enumerate(txt) if _is_body_line(line)), len(txt))
+        cover_at = 1 + max((k for k in range(body) if txt[k].startswith("#")), default=-1)
 
     i = 0
     relative = False
     line_start_beat = 0.0  # #RELATIVE:YES: the beat the current line's beats count from
     with open(output_repitched_ultrastar, "w", encoding=FILE_ENCODING) as file:
-        for line in txt:
-            if add_cover and not line.startswith("#"):
+        for k, line in enumerate(txt):
+            if add_cover and k == cover_at:
                 file.write(f"#{UltrastarTxtTag.COVER.value}:{cover}\n")
                 add_cover = False
             tag = header_tag(line)
@@ -472,6 +478,11 @@ def create_repitched_txt_from_ultrastar_data(
             if txt and not txt[-1].endswith("\n"):
                 file.write("\n")
             file.write(f"#{UltrastarTxtTag.COVER.value}:{cover}\n")
+
+
+def _is_body_line(line: str) -> bool:
+    """A line of the song body: a note, a line break ("-"), a duet player ("P") or the end ("E")."""
+    return is_note_line(line) or line.startswith(("E", "-", "P"))
 
 
 def _beat_text(beat: float) -> str:

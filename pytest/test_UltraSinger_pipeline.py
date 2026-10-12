@@ -213,13 +213,12 @@ class TestPipelineInInfoFile(unittest.TestCase):
         self.assertNotIn("alignment failed", info)
 
     def test_repitch(self):
-        info = self._info(ignore_audio=True, llm_correct_lyrics=True, lang_source="txt", detected_language="de")
+        info = self._info(ignore_audio=True, llm_correct_lyrics=True)
         self.assertIn("Pipeline:                 Re-pitch (notes and lyrics of the UltraStar txt)", info)
         self.assertNotIn("Standard transcription", info)
         # no transcription ran: nothing about what it was given or corrected
         self.assertNotIn("Transcriber language hint", info)
         self.assertIn("Status:                   not run (no local transcription to correct)", info)
-        self.assertIn("Language detection:        language tag of the UltraStar txt -> de", info)
 
     def test_language_hint_only_with_language_option(self):
         info = self._info(lang_source="video_platform", detected_language="en")
@@ -479,20 +478,33 @@ class TestVideoUrlNaming(unittest.TestCase):
 
 
 class TestRepitchRun(unittest.TestCase):
-    """A re-pitch of an UltraStar txt: the info file names the txt's language and no transcription."""
+    """A re-pitch of a real UltraStar txt input: no transcription, and nothing in the info file about one."""
 
     def test_info_file(self):
-        process_data = _process_data(language="de")
-        repitched = [us.MidiSegment("C4", 1.0, 1.4, "eins ")]
-        mocks = {}
-        with patch.object(us, "create_repitched_midi_segments_from_ultrastar_txt", return_value=repitched):
+        with tempfile.TemporaryDirectory() as folder:
+            chart = os.path.join(folder, "chart.txt")
+            with open(chart, "w", encoding="utf-8") as file:
+                file.writelines(f"{line}\n" for line in (
+                    "#TITLE:Song Title", "#ARTIST:Artist", "#LANGUAGE:German", "#MP3:song.mp3",
+                    "#BPM:300", "#GAP:1000", ": 0 4 60 eins ", "E"))
+            open(os.path.join(folder, "song.mp3"), "wb").close()
+            # what InitProcessData makes of the txt (the chart's language tag is not read)
+            with patch.object(us.settings, "input_file_path", chart), \
+                    patch.object(us.settings, "output_folder_path", os.path.join(folder, "out")), \
+                    patch.object(us.settings, "ignore_audio", False), \
+                    patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                process_data = us.InitProcessData()
+            mocks = {}
             notes, _, files = _run(process_data, _pitch_track([(1.0, 1.4, "C4")], length=2.5),
                                    _transcription([], "en"), mocks=mocks, ignore_audio=True,
+                                   input_file_is_ultrastar_txt=True, bpm_override=None,
                                    write_settings_info=True)
         mocks["TranscribeAudio"].assert_not_called()
-        self.assertEqual([n[0] for n in notes], ["eins "])
+        self.assertEqual([n[0].strip() for n in notes], ["eins"])
         info = files["ultrasinger_parameter.info"]
-        self.assertIn("Language detection:        language tag of the UltraStar txt -> de", info)
+        self.assertIn("Language detection:        unknown", info)
+        self.assertIn("Language used:             (none)", info)
         self.assertNotIn("Transcriber language hint", info)
 
 

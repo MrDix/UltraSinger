@@ -292,7 +292,6 @@ def run() -> tuple[str, Score, Score]:
     # Track language source for info file
     _lang_source = (
         "manual" if settings.language is not None
-        else "txt" if settings.ignore_audio and process_data.media_info.language  # the re-pitched txt's tag
         else "video_platform" if process_data.media_info.language
         else "pending"  # will be set to "whisper_fast" or "transcription" later
     )
@@ -1270,7 +1269,6 @@ def _write_settings_info_file(
             # Language detection method
             _LANG_SOURCE_LABELS = {
                 "manual": f"manual (--language {settings.language})",
-                "txt": f"language tag of the UltraStar txt -> {detected_language}",
                 "video_platform": f"video platform metadata -> {detected_language}",
                 "whisper_fast": f"Whisper tiny (fast) -> {detected_language}",
                 "transcription": f"full transcription -> {detected_language}",
