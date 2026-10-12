@@ -42,6 +42,8 @@ def extract_audio(input_video_path: str, output_audio_path: str) -> None:
         "-vn",  # No video
         "-acodec",
         "copy",  # Copy audio codec without re-encoding
+        "-fflags",
+        "+bitexact",  # Same bytes every time (the cache keys of the steps after it follow the bytes)
         "-y",  # Overwrite output file if exists
         output_audio_path,
     ]
@@ -182,6 +184,7 @@ def convert_to_ultrastar_format(audio_file_path: str, basename_without_ext: str,
         "-loglevel", "error",
         "-codec:a", "libvorbis",
         "-q:a", "6",  # High quality VBR (~192 kbps)
+        "-fflags", "+bitexact",  # Same bytes every time, as in extract_audio
         target_path,
     ]
 
