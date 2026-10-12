@@ -63,8 +63,10 @@ def test_copy_and_stale_copies(tmp_path):
     assert copy.read_text(encoding="utf-8") == "cookies"
     half_written = tmp_path / ".cookies-abc.tmp"  # a write a crash interrupted
     half_written.write_text("cook", encoding="utf-8")
+    options = cookie_file.write_private_options(tmp_path, "--extractor-args x")
     cookie_file.remove_stale_copies(tmp_path)
-    assert not copy.exists() and not half_written.exists() and target.exists()
+    assert not copy.exists() and not half_written.exists() and not options.exists()
+    assert target.exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
@@ -75,6 +77,7 @@ def test_files_are_private(tmp_path):
     assert target.stat().st_mode & 0o777 == 0o600
     assert cookie_file.copy_cookie_file(target).stat().st_mode & 0o777 == 0o600
     assert cookie_file.write_private_copy(directory, "x").stat().st_mode & 0o777 == 0o600
+    assert cookie_file.write_private_options(directory, "x").stat().st_mode & 0o777 == 0o600
 
 
 def _cookie_manager():
@@ -142,6 +145,30 @@ def test_probe_uses_a_private_copy_and_removes_it(tmp_path):
     assert Path(seen["cookie_file"]).parent == tmp_path
     assert Path(seen["cookie_file"]).name != "cookies.txt"  # the shared file is not touched
     assert list(tmp_path.iterdir()) == []  # the copy is gone
+
+
+def test_probe_gets_the_po_token_in_a_private_option_file(tmp_path):
+    """Not on yt-dlp's command line, which other local users can read."""
+    host = _ProbeHost(tmp_path)
+    host.media_interceptor.get_po_token.return_value = "pot-value"
+    seen = {}
+
+    def fake_popen(cmd, **kwargs):
+        options = Path(cmd[cmd.index("--config-locations") + 1])
+        seen["cmd"] = cmd
+        seen["options"] = options
+        seen["text"] = options.read_text(encoding="utf-8")
+        return MagicMock(returncode=1, communicate=MagicMock(return_value=("", "")))
+
+    with patch("src.gui.browser_tab.shutil.which", return_value="yt-dlp"), \
+            patch("src.gui.browser_tab.subprocess.Popen", side_effect=fake_popen):
+        BrowserTab._probe_formats(host, "vid")
+        for thread, _worker in host._probes:
+            thread.join(5)
+    assert not any("pot-value" in part for part in seen["cmd"])
+    assert seen["text"].split() == ["--extractor-args", "youtube:po_token=web.gvs+pot-value"]
+    assert seen["options"].parent == tmp_path
+    assert list(tmp_path.iterdir()) == []  # option file and cookie copy are gone
 
 
 def test_shutdown_stops_running_probes(tmp_path):

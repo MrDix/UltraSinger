@@ -8,6 +8,8 @@ sees a half-written file.
 yt-dlp writes its cookies back into the cookie file it was given when it
 ends. Each yt-dlp run therefore gets a private copy: it can neither clobber
 the shared file nor bring back cookies that a bot-detection reset deleted.
+A format probe also gets its PO token in a private yt-dlp option file
+instead of on its command line, which other local users can read.
 """
 
 from __future__ import annotations
@@ -23,9 +25,11 @@ logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 
-# Name prefixes of the private copies and of the temporary files of a write;
-# files a crash left behind are removed on the next start (remove_stale_copies)
+# Name prefixes of the private copies, of the private yt-dlp option files and
+# of the temporary files of a write; files a crash left behind are removed on
+# the next start (remove_stale_copies)
 _COPY_PREFIX = "cookies-copy-"
+_OPTIONS_PREFIX = "ytdlp-options-"
 _TEMP_PREFIX = ".cookies-"
 
 
@@ -73,6 +77,12 @@ def write_private_copy(directory: str | Path, text: str) -> Path:
     return _new_private_file(Path(directory), text.encode("utf-8"), _COPY_PREFIX, ".txt")
 
 
+def write_private_options(directory: str | Path, text: str) -> Path:
+    """A new private yt-dlp option file (for --config-locations) with ``text``;
+    the caller removes it."""
+    return _new_private_file(Path(directory), text.encode("utf-8"), _OPTIONS_PREFIX, ".conf")
+
+
 def copy_cookie_file(path: str | Path) -> Path:
     """A private copy of the cookie file ``path``, next to it; the caller removes it."""
     path = Path(path)
@@ -94,6 +104,7 @@ def remove_stale_copies(directory: str | Path) -> None:
     """Delete the cookie copies an earlier, crashed session left in ``directory``."""
     try:
         leftovers = (list(Path(directory).glob(f"{_COPY_PREFIX}*.txt"))
+                     + list(Path(directory).glob(f"{_OPTIONS_PREFIX}*.conf"))
                      + list(Path(directory).glob(f"{_TEMP_PREFIX}*.tmp")))
     except OSError:
         return

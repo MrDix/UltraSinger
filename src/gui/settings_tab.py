@@ -335,8 +335,10 @@ class ConversionSettingsForm(QWidget):
         self._lang_mode_group = QButtonGroup(self)
         self._lang_auto = QRadioButton("Auto-detect")
         self._lang_auto.setToolTip(
-            "Detect the language of the lyrics: from the video platform's metadata "
-            "for video URLs, otherwise by Whisper from the singing.")
+            "Detect the language from the singing: the transcription detects it, or a "
+            "quick detection when the transcription is skipped. Only when found synced "
+            "lyrics let the transcription be skipped (without remote speech-to-text), "
+            "the video platform's language of a video URL is used.")
         self._lang_manual = QRadioButton("Manual selection")
         self._lang_manual.setToolTip(
             "Always use the language chosen below (useful when the detection picks "
@@ -371,9 +373,10 @@ class ConversionSettingsForm(QWidget):
         )
 
         card.add_info(
-            "Language priority: Manual selection > video platform metadata > "
-            "Whisper auto-detect. For video URLs, the video language is used "
-            "automatically when set to Auto-detect."
+            "Manual selection always wins. With Auto-detect the language detected from "
+            "the singing is used. The video platform's language of a video URL is only "
+            "used when found synced lyrics let the transcription be skipped (without "
+            "remote speech-to-text)."
         )
 
         self._main_layout.addWidget(card)
@@ -1180,15 +1183,15 @@ class ConversionSettingsForm(QWidget):
         if not url or self._remote_stt_fetching:
             return
 
-        self._remote_stt_fetching = True
-        self._remote_stt_model_fetch_btn.setEnabled(False)
-        self._remote_stt_model_fetch_btn.setToolTip("Fetching models...")
-
         fetcher = _ModelFetcher(url, self._remote_stt_api_key.text())
         fetcher.finished_raw.connect(self._on_remote_stt_models_fetched)
         fetcher.error.connect(self._on_remote_stt_fetch_error)
         fetcher.done.connect(self._cleanup_remote_stt_fetch)
-        start_model_fetch(fetcher)
+        if not start_model_fetch(fetcher):
+            return  # the application is quitting
+        self._remote_stt_fetching = True
+        self._remote_stt_model_fetch_btn.setEnabled(False)
+        self._remote_stt_model_fetch_btn.setToolTip("Fetching models...")
 
     def _on_remote_stt_models_fetched(self, raw_models: list[dict]):
         """Populate the model combobox with the filtered speech-to-text models."""

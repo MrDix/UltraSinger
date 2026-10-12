@@ -98,6 +98,19 @@ class TestWrongValueTypes:
         assert form._whisper_batch_size.value() == _DEFAULTS["whisper_batch_size"]
         assert form._bpm_override.text() == "120"
 
+    def test_whole_numbers_outside_the_spin_box_range(self, config_dir, caplog):
+        """QSpinBox takes a C int; a bigger number raised OverflowError and stopped the GUI start."""
+        (config_dir / "config.json").write_text(
+            json.dumps({"whisper_batch_size": 99999999999, "denoise_nf": -1e12,
+                        "llm_retry_max": 2**31 - 1}), encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            config = load_config()
+        assert config["whisper_batch_size"] == _DEFAULTS["whisper_batch_size"]
+        assert config["denoise_nf"] == _DEFAULTS["denoise_nf"]
+        assert config["llm_retry_max"] == 2**31 - 1  # in range: the spin box clamps it
+        assert "whisper_batch_size" in caplog.text and "99999999999" not in caplog.text
+        ConversionSettingsForm(config)
+
     def test_unknown_choices_select_the_default(self, caplog):
         with caplog.at_level(logging.WARNING):
             form = ConversionSettingsForm({"whisper_model": "huge", "format_version": "9.9.9",
@@ -167,6 +180,31 @@ class TestLegacyPlainTextKey:
         save_config(config)
         stored = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
         assert "llm_api_key" not in stored
+
+    def test_migrated_provider_uses_the_kept_key(self, config_dir):
+        """The provider made from the old settings uses the key the keyring could not take."""
+        from src.gui.ultrasinger_runner import LLM_KEY_ENV, UltraSingerRunner
+
+        (config_dir / "config.json").write_text(json.dumps({
+            "llm_api_key": "legacy-key", "llm_api_base_url": "https://llm.invalid/v1",
+            "llm_model": "m"}), encoding="utf-8")
+        config = load_config()
+        pid = config["llm_providers"][0]["id"]
+        assert config[f"llm_api_key_{pid}"] == "legacy-key"
+        env = UltraSingerRunner().build_env({**config, "llm_correct": True, "llm_provider_id": pid})
+        assert env[LLM_KEY_ENV] == "legacy-key"
+
+        # A provider for another service never gets this key
+        config["llm_providers"].append({"id": "other", "name": "Other",
+                                        "api_base_url": "https://other.invalid/v1",
+                                        "default_model": "x", "is_default": False})
+        save_config(config)
+        stored = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
+        assert stored["llm_api_key"] == "legacy-key"
+        assert not any(k.startswith("llm_api_key_") for k in stored)  # no new key in the file
+        again = load_config()  # the next start: no migration any more
+        assert again[f"llm_api_key_{pid}"] == "legacy-key"
+        assert not again.get("llm_api_key_other")
 
     def test_stripped_after_the_keyring_took_it(self, config_dir, monkeypatch):
         stored_keys = {}

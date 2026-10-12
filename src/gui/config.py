@@ -373,9 +373,12 @@ def _fit_type(value, default):
         return value if isinstance(value, bool) else _INVALID
     if isinstance(default, (int, float)):
         # bool is an int subclass, but no number setting
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return value
-        return _INVALID
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return _INVALID
+        # The spin boxes of whole-number settings take a C int (else OverflowError)
+        if isinstance(default, int) and not -2**31 <= value <= 2**31 - 1:
+            return _INVALID
+        return value
     if isinstance(default, str):
         if value is None:
             # Older versions saved "auto" Compute Type as null
@@ -457,6 +460,17 @@ def load_config() -> dict:
             config[key] = get_secret(key, config)
     except ImportError:
         logger.debug("secrets module not available, skipping keyring integration")
+
+    # Without a keyring the migration cannot store the key of an older version
+    # under its provider; the key stays in config.json under its old name
+    # (save_config). The provider for its URL uses it while it has no own key.
+    legacy_key = config.get("llm_api_key")
+    if legacy_key:
+        for provider in config.get("llm_providers", []):
+            pid = provider.get("id", "") if isinstance(provider, dict) else ""
+            if (pid and not config.get(f"llm_api_key_{pid}")
+                    and provider.get("api_base_url") == config.get("llm_api_base_url")):
+                config[f"llm_api_key_{pid}"] = legacy_key
 
     return config
 

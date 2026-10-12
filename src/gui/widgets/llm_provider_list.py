@@ -67,10 +67,18 @@ class _ModelFetcher(QObject):
 # aborts the application, so each fetch stays referenced here until its
 # thread has finished, also when the widget that started it is gone.
 _running_fetches: list[tuple[QThread, _ModelFetcher]] = []
+# Set when the application quits: no fetch may start after the final join
+# (e.g. a queued re-fetch, or editingFinished when the closing window hides)
+_shutting_down = False
 
 
-def start_model_fetch(fetcher: _ModelFetcher) -> None:
-    """Run ``fetcher`` in a background thread; connect to its signals before."""
+def start_model_fetch(fetcher: _ModelFetcher) -> bool:
+    """Run ``fetcher`` in a background thread; connect to its signals before.
+
+    Returns False, without starting it, once the application is quitting.
+    """
+    if _shutting_down:
+        return False
     _running_fetches[:] = [(t, f) for t, f in _running_fetches if not t.isFinished()]
     thread = QThread()
     fetcher.moveToThread(thread)
@@ -78,14 +86,22 @@ def start_model_fetch(fetcher: _ModelFetcher) -> None:
     fetcher.done.connect(thread.quit)
     _running_fetches.append((thread, fetcher))
     thread.start()
+    return True
 
 
 def wait_for_model_fetches() -> None:
-    """Wait until all model fetches have ended (before the application quits)."""
+    """Wait until all running model fetches have ended."""
     for thread, _fetcher in _running_fetches:
         thread.quit()
         thread.wait()  # bounded by the request timeout
     _running_fetches.clear()
+
+
+def shut_down_model_fetches() -> None:
+    """Start no more model fetches and wait for the running ones (the application quits)."""
+    global _shutting_down
+    _shutting_down = True
+    wait_for_model_fetches()
 
 
 def filter_stt_models(raw_models: list[dict]) -> list[str]:
@@ -384,15 +400,15 @@ class LLMProviderRow(QWidget):
             self._fetch_again = True
             return
 
-        self._fetching = True
-        self._fetch_btn.setEnabled(False)
-        self._fetch_btn.setToolTip("Fetching models...")
-
         fetcher = _ModelFetcher(url, self._key_edit.text())
         fetcher.finished.connect(self._on_models_fetched)
         fetcher.error.connect(self._on_fetch_error)
         fetcher.done.connect(self._on_fetch_done)
-        start_model_fetch(fetcher)
+        if not start_model_fetch(fetcher):
+            return  # the application is quitting
+        self._fetching = True
+        self._fetch_btn.setEnabled(False)
+        self._fetch_btn.setToolTip("Fetching models...")
 
     _FALLBACK_MODEL = "qwen/qwen3-32b"
 
@@ -432,7 +448,7 @@ class LLMProviderRow(QWidget):
     def _on_fetch_done(self):
         self._fetching = False
         self._fetch_btn.setEnabled(True)
-        if self._fetch_again:
+        if self._fetch_again and not _shutting_down:
             self._fetch_again = False
             self._fetch_models()
 

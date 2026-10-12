@@ -228,9 +228,12 @@ class _FakeBrowserTab(QWidget):
 
 
 @pytest.fixture
-def window():
+def window(monkeypatch):
     from src.gui import main_window
+    from src.gui.widgets import llm_provider_list
 
+    # Closing the window stops model fetches for good; later tests start them again
+    monkeypatch.setattr(llm_provider_list, "_shutting_down", False)
     # Plain functions: PySide crashes on mocks in the class while connecting slots
     with patch.object(main_window, "BrowserTab", _FakeBrowserTab), \
             patch.object(main_window.MainWindow, "_start_potoken_provider", lambda self: None), \
@@ -278,3 +281,24 @@ class TestCloseWindow:
         event, question, _ = self._close(window)
         question.assert_not_called()
         assert event.isAccepted()
+
+    def test_closing_stops_model_fetches(self, window):
+        from src.gui.widgets import llm_provider_list
+
+        self._close(window)
+        assert llm_provider_list._shutting_down
+
+    def test_quitting_the_application_stops_model_fetches(self, window):
+        """Second line of defence: a fetch started after closeEvent is joined on quit."""
+        from src.gui.widgets import llm_provider_list
+
+        release = threading.Event()
+        fetcher = llm_provider_list._ModelFetcher("https://one.invalid/v1", "")
+        with patch.object(llm_provider_list._ModelFetcher, "run",
+                          lambda self: (release.wait(5), self.done.emit())):
+            assert llm_provider_list.start_model_fetch(fetcher)
+            thread = llm_provider_list._running_fetches[-1][0]
+            threading.Timer(0.2, release.set).start()
+            _app.aboutToQuit.emit()
+        assert thread.isFinished()
+        assert llm_provider_list._shutting_down

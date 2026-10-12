@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QMainWindow,
@@ -23,7 +24,7 @@ from .queue_manager import QueueManager
 from .queue_tab import QueueTab
 from .settings_dialog import PerSongSettingsDialog, ReadOnlySettingsDialog
 from .training_dialog import TrainingDialog
-from .widgets.llm_provider_list import wait_for_model_fetches
+from .widgets.llm_provider_list import shut_down_model_fetches
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
@@ -245,6 +246,12 @@ class MainWindow(QMainWindow):
         self._ytdlp_check_worker = None
         self._ytdlp_check_cancel = None
         self._start_ytdlp_update_check()
+
+        # Second line of defence besides closeEvent: model list fetches are
+        # joined before the application ends, however it quits
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(shut_down_model_fetches)
 
     # ── PO-token provider ─────────────────────────────────────────────
 
@@ -740,8 +747,9 @@ class MainWindow(QMainWindow):
         # Cancel the conversion queue (runner and pre-download) and join its threads
         self._queue_mgr.shutdown()
 
-        # Let model list fetches end (they time out after a few seconds)
-        wait_for_model_fetches()
+        # Let model list fetches end (they time out after a few seconds) and
+        # start no new ones, e.g. when the hiding window ends a field edit
+        shut_down_model_fetches()
 
         # Stop a pending provider start / the server we launched
         self._shutdown_potoken_provider()

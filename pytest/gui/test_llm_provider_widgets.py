@@ -104,6 +104,51 @@ class TestModelFetch:
         assert _process_events_until(lambda: form._remote_stt_model_fetch_btn.isEnabled())
 
 
+class TestNoFetchAfterShutdown:
+    """A fetch that starts after the close-time join would be a running QThread at exit."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_flag(self, monkeypatch):
+        monkeypatch.setattr(llm_provider_list, "_shutting_down", False)
+
+    def _running(self):
+        return [t for t, _ in llm_provider_list._running_fetches if t.isRunning()]
+
+    def test_queued_refetch_is_dropped(self, blocking_fetch):
+        release, urls = blocking_fetch
+        row = _row()
+        row._fetch_models()
+        row._url_edit.setText("https://two.invalid/v1")
+        row._fetch_models()  # merged into a re-fetch
+        release.set()
+        llm_provider_list.shut_down_model_fetches()  # what closeEvent does
+        for _ in range(30):  # the queued 'done' of the joined fetch arrives now
+            _app.processEvents()
+            time.sleep(0.01)
+        assert self._running() == []
+        assert urls == ["https://one.invalid/v1"]
+        assert row._fetch_btn.isEnabled()
+
+    def test_field_edit_ending_after_close_starts_no_fetch(self, blocking_fetch):
+        release, urls = blocking_fetch
+        row = _row()
+        row._key_edit.setText("key")
+        llm_provider_list.shut_down_model_fetches()
+        row._url_edit.setText("https://two.invalid/v1")
+        row._url_edit.editingFinished.emit()  # focus leaves the field as the window hides
+        row._fetch_models()
+        assert self._running() == [] and urls == []
+        assert not row._fetching and row._fetch_btn.isEnabled()
+
+    def test_remote_stt_fetch_after_close(self, blocking_fetch):
+        release, urls = blocking_fetch
+        form = ConversionSettingsForm({**_DEFAULTS, "remote_stt": True})
+        llm_provider_list.shut_down_model_fetches()
+        form._fetch_remote_stt_models()
+        assert self._running() == [] and urls == []
+        assert not form._remote_stt_fetching
+
+
 def _preferences(config):
     # No model fetch over the network (a plain function: PySide trips over mocks in a QObject class)
     with patch.object(LLMProviderRow, "fetch_models_if_ready", lambda self: None):

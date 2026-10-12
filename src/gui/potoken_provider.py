@@ -42,7 +42,7 @@ DEFAULT_BASE_URL = "http://127.0.0.1:4416"
 _DEFAULT_PORT = 4416
 _DOCKER_IMAGE = "brainicism/bgutil-ytdlp-pot-provider"
 # Image version when the plugin's version cannot be read (the one uv.lock pins)
-_DOCKER_FALLBACK_VERSION = "1.3.1"
+_DOCKER_FALLBACK_VERSION = "2.0.2"
 _CONTAINER_PREFIX = "ultrasinger-bgutil-pot"
 _PING_TIMEOUT = 2.0
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -317,32 +317,49 @@ def _docker_image() -> str:
     return f"{_DOCKER_IMAGE}:{version}"
 
 
-def _start_docker_provider(docker: str, port: int) -> str:
+def _start_docker_provider(docker: str, port: int,
+                           cancel: threading.Event | None = None) -> str:
     """Best-effort: launch the provider container.
 
     Returns the container id on success, "" on failure.  Uses a
     process-unique container name and captures the id so cleanup only ever
     touches the container this process started.  The port is published on
     the loopback address only, so other machines cannot use the provider.
+    ``cancel`` ends a slow start (the first one pulls the image), e.g. when
+    the GUI closes.
     """
+    import time
+
     name = f"{_CONTAINER_PREFIX}-{os.getpid()}"
     try:
-        r = subprocess.run(
+        proc = subprocess.Popen(
             [docker, "run", "-d", "--rm", "--name", name,
              "-p", f"127.0.0.1:{port}:4416", _docker_image()],
-            capture_output=True, timeout=60,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=_CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to start bgutil provider via Docker: %s", e)
         return ""
-    if r.returncode != 0:
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=0.5)
+            break
+        except subprocess.TimeoutExpired:
+            if (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline:
+                proc.kill()
+                proc.communicate()
+                # A container that came up meanwhile must not outlive us
+                _stop_container(docker, name)
+                return ""
+    if proc.returncode != 0:
         logger.warning(
             "docker run for bgutil provider failed: %s",
-            r.stderr.decode("utf-8", "replace").strip()[:300],
+            stderr.decode("utf-8", "replace").strip()[:300],
         )
         return ""
-    return r.stdout.decode("utf-8", "replace").strip()
+    return stdout.decode("utf-8", "replace").strip()
 
 
 def _wait_until_running(
@@ -463,7 +480,7 @@ def ensure_provider(
     docker = _docker_exe() if auto_start_docker else None
     if docker and _docker_available(docker):
         logger.info("Starting bgutil PO-token provider via Docker ...")
-        container_id = _start_docker_provider(docker, port)
+        container_id = _start_docker_provider(docker, port, cancel)
         if container_id and _wait_until_running(normalized, cancel=cancel):
             return ProviderStatus(
                 running=True, started_by_us=True, base_url=normalized,

@@ -30,6 +30,7 @@ from src.gui.ultrasinger_runner import (
     redact_secrets,
 )
 from src.UltraSinger import init_settings
+from src.UltraSinger import settings as cli_settings
 
 _app = QApplication.instance() or QApplication([])
 
@@ -41,10 +42,12 @@ def _cli(args: list[str]):
 
 
 @pytest.fixture(autouse=True)
-def _reset_cli_settings():
+def _restore_cli_settings():
+    # init_settings works on a shared settings object that later test modules use too
+    saved = dict(vars(cli_settings))
     yield
-    # init_settings works on a shared settings object
-    init_settings(["-i", "test.mp3", "--refine_from_vocal"])
+    vars(cli_settings).clear()
+    vars(cli_settings).update(saved)
 
 
 class TestWhisperModels:

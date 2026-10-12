@@ -3,8 +3,10 @@
 import json
 import logging
 import re
+import shlex
 import subprocess
 import shutil
+import tempfile
 import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -27,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .cookie_file import remove_cookie_file
+from .cookie_file import remove_cookie_file, write_private_options
 from .cookie_manager import CookieManager
 from .media_interceptor import MediaInterceptor
 
@@ -51,12 +53,14 @@ class _FormatProbeWorker(QObject):
     finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
 
     def __init__(self, video_id: str, cookie_file: str = "",
-                 po_token: str = "", parent: QObject | None = None):
-        """``cookie_file`` is a private copy for this probe, which removes it."""
+                 options_file: str = "", parent: QObject | None = None):
+        """``cookie_file`` (a private copy) and ``options_file`` (a private
+        yt-dlp option file with the PO token) are for this probe only; it
+        removes them."""
         super().__init__(parent)
         self._video_id = video_id
         self._cookie_file = cookie_file
-        self._po_token = po_token
+        self._options_file = options_file
         self._process: subprocess.Popen | None = None
         self._cancelled = False
 
@@ -86,10 +90,8 @@ class _FormatProbeWorker(QObject):
         # The platform reports only a limited fallback set, e.g. 360p H.264).
         if self._cookie_file:
             cmd[1:1] = ["--cookies", self._cookie_file]
-        if self._po_token:
-            cmd[1:1] = [
-                "--extractor-args", f"youtube:po_token=web.gvs+{self._po_token}"
-            ]
+        if self._options_file:
+            cmd[1:1] = ["--config-locations", self._options_file]
 
         try:
             self._process = subprocess.Popen(
@@ -116,9 +118,11 @@ class _FormatProbeWorker(QObject):
         try:
             output = self._dump_json()
         finally:
-            # yt-dlp has written its cookies back into the copy; it is not needed any more
-            if self._cookie_file:
-                remove_cookie_file(self._cookie_file)
+            # yt-dlp has written its cookies back into the copy; neither private
+            # file is needed any more
+            for private_file in (self._cookie_file, self._options_file):
+                if private_file:
+                    remove_cookie_file(private_file)
         if output is None:
             self.finished.emit(self._video_id, "", "")
             return
@@ -669,17 +673,28 @@ class BrowserTab(QWidget):
         # Export fresh browser cookies for the probe so it sees the same
         # formats as the authenticated download (badge accuracy). The probe
         # gets its own copy, which its yt-dlp may write back to.
+        private_dir = (Path(self.probe_cookie_file).parent if self.probe_cookie_file
+                       else Path(tempfile.gettempdir()))
         cookie_file = ""
         if self.probe_cookie_file and self.cookie_manager.has_video_cookies:
             try:
-                cookie_file = str(self.cookie_manager.export_private_copy(
-                    Path(self.probe_cookie_file).parent))
+                cookie_file = str(self.cookie_manager.export_private_copy(private_dir))
             except OSError as e:
                 logger.warning("Cookie export for format probe failed: %s", e)
+        # The PO token goes to yt-dlp in a private option file: a command line
+        # can be read by other local users
+        options_file = ""
+        po_token = self.media_interceptor.get_po_token()
+        if po_token:
+            try:
+                options_file = str(write_private_options(
+                    private_dir,
+                    "--extractor-args "
+                    + shlex.quote(f"youtube:po_token=web.gvs+{po_token}") + "\n"))
+            except OSError as e:
+                logger.warning("PO token file for format probe failed: %s", e)
 
-        worker = _FormatProbeWorker(
-            video_id, cookie_file, self.media_interceptor.get_po_token()
-        )
+        worker = _FormatProbeWorker(video_id, cookie_file, options_file)
         worker.finished.connect(self._on_format_probed)
         # A daemon thread, not a QThread: closing the window must not wait for
         # a slow lyrics lookup, and a QThread destroyed while running aborts

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.metadata
+import subprocess
+import threading
 from unittest.mock import MagicMock, patch
 
 from src.gui import potoken_provider as pp
@@ -323,14 +325,15 @@ class TestStopProvider:
 
 class TestStartDockerProvider:
     def _docker_command(self, version):
-        result = MagicMock(returncode=0, stdout=b"abc123\n", stderr=b"")
-        with patch("subprocess.run", return_value=result) as run, \
+        proc = MagicMock(returncode=0)
+        proc.communicate.return_value = (b"abc123\n", b"")
+        with patch("subprocess.Popen", return_value=proc) as popen, \
              patch("importlib.metadata.version", version):
             assert pp._start_docker_provider("/usr/bin/docker", 4416) == "abc123"
-        return run.call_args[0][0]
+        return popen.call_args[0][0]
 
     def test_port_is_published_on_loopback_only(self):
-        cmd = self._docker_command(MagicMock(return_value="1.3.1"))
+        cmd = self._docker_command(MagicMock(return_value="2.0.2"))
         assert cmd[cmd.index("-p") + 1] == "127.0.0.1:4416:4416"
 
     def test_image_has_the_plugin_version(self):
@@ -338,4 +341,27 @@ class TestStartDockerProvider:
         image = "brainicism/bgutil-ytdlp-pot-provider"
         assert self._docker_command(MagicMock(return_value="2.0.2"))[-1] == f"{image}:2.0.2"
         missing = MagicMock(side_effect=importlib.metadata.PackageNotFoundError)
-        assert self._docker_command(missing)[-1] == f"{image}:{pp._DOCKER_FALLBACK_VERSION}"
+        assert self._docker_command(missing)[-1] == f"{image}:2.0.2"
+
+    def test_cancel_ends_a_slow_start(self):
+        """Closing the GUI while the image is pulled must not wait for the 60 s limit."""
+        cancel = threading.Event()
+        cancel.set()
+        proc = MagicMock(returncode=None)
+        proc.communicate.side_effect = [subprocess.TimeoutExpired("docker", 0.5), (b"", b"")]
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("importlib.metadata.version", return_value="2.0.2"), \
+             patch.object(pp, "_stop_container") as stop:
+            assert pp._start_docker_provider("/usr/bin/docker", 4416, cancel) == ""
+        proc.kill.assert_called_once()
+        stop.assert_called_once()  # in case the container came up meanwhile
+
+    def test_ensure_provider_passes_the_cancel(self, tmp_path):
+        cancel = threading.Event()
+        with patch.object(pp, "is_provider_running", return_value=False), \
+             patch.object(pp, "_node_exe", return_value=None), \
+             patch.object(pp, "_docker_exe", return_value="/usr/bin/docker"), \
+             patch.object(pp, "_docker_available", return_value=True), \
+             patch.object(pp, "_start_docker_provider", return_value="") as start:
+            pp.ensure_provider(node_entry=tmp_path / "nope.js", cancel=cancel)
+        assert start.call_args[0][2] is cancel
