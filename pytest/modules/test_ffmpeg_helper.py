@@ -12,7 +12,12 @@ import subprocess
 
 import pytest
 
-from modules.ffmpeg_helper import _has_real_video_stream, is_video_file
+from modules.ffmpeg_helper import (
+    _has_real_video_stream,
+    convert_to_ultrastar_format,
+    extract_audio,
+    is_video_file,
+)
 
 
 class TestHasRealVideoStream:
@@ -68,3 +73,29 @@ class TestIsVideoFile:
 
     def test_missing_file(self, tmp_path):
         assert is_video_file(str(tmp_path / "missing.mp4")) is False
+
+
+@needs_ffmpeg
+class TestSameBytesEveryTime:
+    """The song audio is written with the same bytes in every conversion: the cache keys
+    of the steps after it (see conversion_cache.content_key) follow its bytes."""
+
+    def test_conversion_to_ogg(self, tmp_path):
+        source = tmp_path / "source.m4a"
+        _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac", str(source))
+        outputs = []
+        for run in ("a", "b"):
+            song = tmp_path / run
+            song.mkdir()
+            shutil.copy(source, song / "Song.m4a")  # the conversion removes its input
+            _, ext = convert_to_ultrastar_format(str(song / "Song.m4a"), "Song", str(song), "m4a")
+            assert ext == "ogg"
+            outputs.append((song / "Song.ogg").read_bytes())
+        assert outputs[0] == outputs[1]
+
+    def test_extracted_audio(self, tmp_path):
+        source = tmp_path / "source.ogg"
+        _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "libvorbis", str(source))
+        for run in ("a", "b"):
+            extract_audio(str(source), str(tmp_path / f"{run}.ogg"))
+        assert (tmp_path / "a.ogg").read_bytes() == (tmp_path / "b.ogg").read_bytes()
