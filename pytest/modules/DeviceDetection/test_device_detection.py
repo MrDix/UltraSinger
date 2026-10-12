@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from modules.DeviceDetection.device_detection import auto_whisper_batch_size, free_gpu_memory, release_gpu_memory
 
 
@@ -80,10 +82,12 @@ class TestFreeGpuMemory:
              patch("torch.cuda.memory_allocated", return_value=200):
             assert free_gpu_memory() == 1500
 
-    def test_query_failure(self):
+    def test_query_failure_is_no_missing_gpu(self):
+        # A GPU whose memory cannot be read must not look like "no GPU" (which skips the check)
         with patch("torch.cuda.is_available", return_value=True), \
              patch("torch.cuda.mem_get_info", side_effect=RuntimeError("driver in a bad state")):
-            assert free_gpu_memory() is None
+            with pytest.raises(RuntimeError):
+                free_gpu_memory()
 
     def test_release_hands_back_the_cache(self):
         with patch("torch.cuda.is_available", return_value=True), \

@@ -48,8 +48,8 @@ def _lead_pitch(vocal_analysis, vocals_path: str, cache_folder: str | None) -> L
         lead_path, lead_analysis = lead_vocal_analysis(vocals_path, folder)
         lead, ratio = choose_pitch_source(vocal_analysis, lead_analysis)
     except NotEnoughGpuMemory as e:
-        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} lead-vocal pitch skipped: {e}; with less it "
-              f"would run in shared system memory and take very long - note pitches from the full vocal")
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} lead-vocal pitch skipped: {e} "
+              f"- note pitches from the full vocal")
         return None
     except Exception as e:  # noqa: BLE001 - lead pitch is an improvement, never a requirement
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} lead-vocal separation failed ({e!r}) "

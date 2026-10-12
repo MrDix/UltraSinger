@@ -60,18 +60,23 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
     The cache entry is keyed to the vocal file, so a cache folder shared by
     several songs never hands one song's lead stem to another. Raises
     ``NotEnoughGpuMemory`` instead of separating when the GPU has less than
-    ``MIN_FREE_GPU_BYTES`` free.
+    ``MIN_FREE_GPU_BYTES`` free, or its free memory cannot be read.
     """
     out_dir = os.path.join(cache_folder, "lead_vocal", os.path.splitext(model)[0], _source_key(vocals_path))
     lead_path = os.path.join(out_dir, "lead.wav")
     if os.path.isfile(lead_path):
         return lead_path
     release_gpu_memory()
-    free = free_gpu_memory()
+    try:
+        free = free_gpu_memory()
+    except RuntimeError as e:
+        # A GPU whose memory cannot be read may well be short of it
+        raise NotEnoughGpuMemory(f"the free GPU memory could not be read ({e})") from e
     if free is not None:
         if free < MIN_FREE_GPU_BYTES:
             raise NotEnoughGpuMemory(f"only {free / 2 ** 30:.1f} GB of GPU memory free, the separation needs "
-                                     f"about {MIN_FREE_GPU_BYTES / 2 ** 30:.1f} GB")
+                                     f"about {MIN_FREE_GPU_BYTES / 2 ** 30:.1f} GB; with less it would run in "
+                                     f"shared system memory and take very long")
         print(f"{ULTRASINGER_HEAD} Lead-vocal separation with {free / 2 ** 30:.1f} GB of GPU memory free")
     from audio_separator.separator import Separator  # type: ignore[import-untyped]
 

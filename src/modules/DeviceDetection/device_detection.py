@@ -139,14 +139,12 @@ def free_gpu_memory() -> int | None:
     """Bytes of GPU memory a new PyTorch model can use, or None without a GPU.
 
     The memory the driver reports free plus what PyTorch keeps cached but
-    unused.
+    unused. Raises ``RuntimeError`` when there is a GPU but its memory cannot
+    be read.
     """
     if not torch.cuda.is_available():
         return None
-    try:
-        free, _total = torch.cuda.mem_get_info()
-    except RuntimeError:
-        return None
+    free, _total = torch.cuda.mem_get_info()
     return free + torch.cuda.memory_reserved() - torch.cuda.memory_allocated()
 
 

@@ -546,6 +546,21 @@ class TestLeadVocalPitch:
         with pytest.raises(lead_vocal.NotEnoughGpuMemory, match="only 2.0 GB"):
             lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path))
 
+    def test_unreadable_gpu_memory(self, tmp_path, monkeypatch):
+        import audio_separator.separator as sepmod
+
+        def separator(*args, **kwargs):
+            raise AssertionError("must not separate")
+
+        def unreadable():
+            raise RuntimeError("CUDA error: unknown error")
+        monkeypatch.setattr(sepmod, "Separator", separator)
+        monkeypatch.setattr(lead_vocal, "free_gpu_memory", unreadable)
+        vocals = tmp_path / "vocals.wav"
+        vocals.write_bytes(b"one")
+        with pytest.raises(lead_vocal.NotEnoughGpuMemory, match="could not be read"):
+            lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path))
+
     def test_free_gpu_memory_is_reported(self, tmp_path, monkeypatch, capsys):
         import os
         import audio_separator.separator as sepmod
