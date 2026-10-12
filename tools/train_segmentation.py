@@ -68,6 +68,12 @@ def require_outside_repo(path: Path, what: str) -> Path:
     raise SystemExit(f"the {what} must be outside the repository (it holds data derived from your library)")
 
 
+def folder_key(folder: str) -> str:
+    """Comparable form of a song folder path, so the same folder matches however
+    it was written (``d:`` / ``D:``, ``/`` / ``\\``, ``..`` segments)."""
+    return os.path.normcase(str(Path(folder).resolve()))
+
+
 # ---------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------
@@ -123,21 +129,21 @@ def cmd_extract(args) -> int:
     songs_path = workdir / "songs.json"
     excluded = set()
     for f in args.exclude or []:
-        excluded |= {s["folder"] for s in json.loads(Path(f).read_text(encoding="utf-8"))}
+        excluded |= {folder_key(s["folder"]) for s in json.loads(Path(f).read_text(encoding="utf-8"))}
     if songs_path.exists():
         # Resuming: apply --exclude here too, and drop examples already extracted
         # for excluded songs - otherwise a benchmark could silently be trained on.
         songs = json.loads(songs_path.read_text(encoding="utf-8"))
-        dropped = [s for s in songs if s["folder"] in excluded]
+        dropped = [s for s in songs if folder_key(s["folder"]) in excluded]
         if dropped:
             for s in dropped:
                 (data / f"{s['id']}.npz").unlink(missing_ok=True)
-            songs = [s for s in songs if s["folder"] not in excluded]
+            songs = [s for s in songs if folder_key(s["folder"]) not in excluded]
             songs_path.write_text(json.dumps(songs, indent=1, ensure_ascii=False), encoding="utf-8")
             print(f"removed {len(dropped)} excluded songs (and their extracted data) from {songs_path}",
                   flush=True)
     else:
-        cands = [c for c in cb.find_candidates(library) if c["folder"] not in excluded]
+        cands = [c for c in cb.find_candidates(library) if folder_key(c["folder"]) not in excluded]
         songs = [{"id": f"tr_{i:05d}", **c} for i, c in enumerate(cands)]
         songs_path.write_text(json.dumps(songs, indent=1, ensure_ascii=False), encoding="utf-8")
         print(f"{len(songs)} training songs ({len(excluded)} excluded folders)", flush=True)
