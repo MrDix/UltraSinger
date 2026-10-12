@@ -455,6 +455,13 @@ def _is_same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def _tag_names_file(af: AudioFileInfo, path: Path) -> bool:
+    """Whether the tag *af* names the file *path* itself. A file that was only
+    found as a stand-in for a missing one (the single file with the same
+    extension, see :func:`_resolve_audio_file`) does not count."""
+    return af.full_path.name.lower() == Path(af.filename).name.lower() and _is_same_file(af.full_path, path)
+
+
 def _unused_path(path: Path) -> Path:
     """*path*, or *path* with a number appended if that name is taken."""
     candidate, n = path, 1
@@ -709,6 +716,16 @@ def process_song(
                 result.status = "error"
                 result.error_msg = f"{other.filename} and {af.filename} would both become {new_basename}"
                 return result
+            users = [o.tag for o in song_info.audio_files if _tag_names_file(o, new_path)]
+            if users:
+                # The chart already plays this OGG as other audio (e.g. an
+                # instrumental): it is no conversion of this file.
+                result.status = "error"
+                result.error_msg = (
+                    f"{new_basename} already exists and is used by {users[0].rstrip(':')}; "
+                    f"convert {af.filename} by hand"
+                )
+                return result
             ogg_sources[new_path] = af
             conversions_to_do.append((af, new_path))
 
@@ -730,14 +747,6 @@ def process_song(
         # Perform FFmpeg conversions first — resolve ffmpeg lazily on first need
         for af, ogg_path in conversions_to_do:
             if ogg_path.is_file():
-                users = [o.tag for o in song_info.audio_files if _is_same_file(o.full_path, ogg_path)]
-                if users:
-                    # The chart already plays this OGG as other audio (e.g. an
-                    # instrumental): it is no conversion of this file.
-                    raise RuntimeError(
-                        f"{ogg_path.name} already exists and is used by {users[0].rstrip(':')}; "
-                        f"convert {af.filename} by hand"
-                    )
                 if ogg_is_complete(ogg_path, af.full_path, find_ffprobe(ffmpeg_path)):
                     # OGG already exists (previous run?) — skip conversion but still update TXT
                     result.warnings.append(
