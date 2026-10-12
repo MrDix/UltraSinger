@@ -706,6 +706,30 @@ class TestStage1ErrorsNeverMove:
         assert song_dir.exists() and summary.moved == 0
         assert "txt_changed" in summary.all_rows["Song"]["reason"]
 
+    def test_chart_half_written_after_scanning_is_an_error(self, tmp_path, monkeypatch):
+        """Headers written, notes not yet: it still looks like a chart, but it
+        is not the file the scan saw, so it is not judged as "no notes"."""
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Song")
+        real_find = lt.find_song_folders
+
+        def find(*a, **k):
+            folders = real_find(*a, **k)
+            (song_dir / "Song.txt").write_text("#TITLE:Song\n#BPM:120\n#GAP:0\n", encoding="utf-8")
+            return folders
+        monkeypatch.setattr(lt, "find_song_folders", find)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert song_dir.exists() and summary.moved == 0
+        assert "txt_changed: Song.txt changed since the scan" in summary.all_rows["Song"]["reason"]
+
+    def test_unchanged_chart_without_notes_is_still_corrupt(self, tmp_path):
+        source = tmp_path / "source"
+        _make_song(source, "No Notes", notes=False)
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+        assert summary.moved == 1 and summary.all_rows["No Notes"]["reason"] == "no_notes"
+
     def test_folder_whose_only_txt_cannot_be_read_is_reported(self, tmp_path, monkeypatch):
         source = tmp_path / "source"
         song_dir = source / "Locked Song"

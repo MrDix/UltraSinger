@@ -101,6 +101,18 @@ class SongFolder:
     # scanned (read error, ...): stage 1 then reports the folder as an
     # error instead of judging it by the other files.
     unchecked_txt: Path | None = None
+    # Size and modification time of txt_path when it was scanned (see
+    # _stat_key); stage 1 does not judge a chart that changed since then.
+    txt_stat: tuple[int, int] | None = None
+
+
+def _stat_key(path: Path) -> tuple[int, int] | None:
+    """Size and modification time of *path* (None if it can't be read)."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns
 
 
 def _read_text_lenient(path: Path) -> str:
@@ -200,9 +212,12 @@ def find_song_folders(source_dir: Path, *, skip_dir: Path | None = None) -> list
             continue
 
         primary, unchecked = _pick_primary_txt(candidates)
+        txt_stat = _stat_key(primary)
+        if txt_stat is None:
+            unchecked = unchecked or primary
         rel = current.relative_to(source_dir)
         folders.append(SongFolder(dir_path=current, rel_path=str(rel), txt_path=primary,
-                                  unchecked_txt=unchecked))
+                                  unchecked_txt=unchecked, txt_stat=txt_stat))
 
     return folders
 
@@ -356,23 +371,30 @@ def evaluate_stage1(song: SongFolder, *, ffprobe_path: str | None) -> Stage1Resu
     Only a ValueError -- all the parser raises for a malformed chart (a
     non-numeric ``#BPM``, text it cannot decode) -- means corrupt. The
     folder is not judged either when a .txt of it could not be checked
-    while the library was scanned, or when the chart no longer looks like
-    one (e.g. emptied while an editor saves it): both are errors that the
-    next run checks again.
+    while the library was scanned, or when the chart changed since then
+    or no longer looks like one (e.g. half-written while an editor saves
+    it): both are errors that the next run checks again.
     """
     if song.unchecked_txt is not None:
         return Stage1Result(
             "error", f"txt_unchecked: {song.unchecked_txt.name} could not be read during the scan")
     if not _looks_like_ultrastar_txt(song.txt_path):
         return Stage1Result("error", f"txt_changed: {song.txt_path.name} no longer looks like a chart")
+    parse_error = None
     try:
         parsed = parse_score_song(song.txt_path)
     except OSError as e:
         return Stage1Result("error", f"txt_unreadable: {e}")
     except ValueError as e:
-        return Stage1Result("corrupt", f"unparsable_txt: {e}")
+        parse_error = e
     except Exception as e:  # noqa: BLE001 - e.g. a missing package or no memory: nothing against the chart
         return Stage1Result("error", f"parse_failed: {e!r}")
+    # What was just parsed must be the file the scan saw, or a chart that is
+    # being saved right now could be judged half-written.
+    if song.txt_stat is not None and _stat_key(song.txt_path) != song.txt_stat:
+        return Stage1Result("error", f"txt_changed: {song.txt_path.name} changed since the scan")
+    if parse_error is not None:
+        return Stage1Result("corrupt", f"unparsable_txt: {parse_error}")
 
     if len(parsed.all_notes) == 0:
         return Stage1Result("corrupt", "no_notes")
