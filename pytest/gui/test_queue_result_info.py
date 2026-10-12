@@ -114,12 +114,13 @@ class TestParseOutputLine:
         assert item.result_info["lrclib_result"] == "none"
 
     def test_synced_lyrics_skip_whisper(self, queue_manager):
-        item = _make_item()
-        queue_manager._current_item = item
-        queue_manager._parse_output_line(
-            "[UltraSinger] Synced lyrics found — skipping Whisper transcription"
-        )
-        assert item.result_info["whisper_skipped"] is True
+        # the current wording and the one of older versions
+        for line in ("[UltraSinger] Synced lyrics found — skipping the transcription",
+                     "[UltraSinger] Synced lyrics found — skipping Whisper transcription"):
+            item = _make_item()
+            queue_manager._current_item = item
+            queue_manager._parse_output_line(line)
+            assert item.result_info["whisper_skipped"] is True
 
     def test_reference_pipeline_detected(self, queue_manager):
         item = _make_item()

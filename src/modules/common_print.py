@@ -51,16 +51,21 @@ def print_help() -> None:
     --demucs              Model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
 
     [transcription]
-    # Default is whisper
+    --transcriber           auto|qwen3|whisper >> ((default) is auto)
+                            auto: Qwen3-ASR 1.7B on a GPU with at least 5 GB free, for the 30 languages
+                            it knows, else Whisper; qwen3: the same, with a note when Whisper has to
+                            take over; whisper: always Whisper. Qwen3-ASR recognizes sung lyrics better
+                            and is downloaded once (about 4.4 GB).
     --whisper               Multilingual model > tiny|base|small|medium|large-v1|large-v2|large-v3  >> ((default) is large-v2)
                             English-only model > tiny.en|base.en|small.en|medium.en
+                            Choosing a Whisper model chooses Whisper, unless --transcriber is given too.
     --whisper_align_model   Custom wav2vec2 forced-alignment model from HuggingFace.
                             Useful for languages where the default model performs poorly.
                             Example: --whisper_align_model gigant/romanian-wav2vec2
     --language              Override language for alignment and hyphenation.
-                            Priority: --language flag > video platform metadata > Whisper auto-detect.
+                            Priority: --language flag > video platform metadata > auto-detect.
                             For video URLs, yt-dlp language metadata is used automatically
-                            when no --language flag is set, avoiding Whisper misdetection.
+                            when no --language flag is set, avoiding misdetection.
                             When LRCLIB synced lyrics are found, language is detected quickly
                             via Whisper tiny (~2-3s) instead of full transcription.
                             WARNING: setting this for non-matching songs will degrade
@@ -266,7 +271,8 @@ def print_help() -> None:
 
     [device]
     --force_cpu             Force all steps to be processed on CPU.
-    --force_whisper_cpu     Force whisper transcription to be processed on CPU.
+    --force_whisper_cpu     Force the transcription to be processed on CPU (so Whisper transcribes:
+                            Qwen3-ASR needs the GPU).
     """
     print(help_string)
 

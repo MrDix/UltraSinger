@@ -39,6 +39,8 @@ dependencies = [
     "torchvision==0.23.0",
     "torchfcpe>=0.0.4",
     "audio-separator>=0.25",
+    # Qwen3-ASR transcriber (--transcriber)
+    "qwen-asr==0.0.6",
     # chardet 6+/7+ breaks an implicit dependency of requests and can prevent
     # UltraSinger from starting (upstream fix, rakuri255/UltraSinger#324)
     "chardet<6.0.0",
@@ -88,4 +90,9 @@ torchvision = [{ index = "pytorch" }]
 # torchcodec (pulled in by pyannote-audio) is incompatible with PyTorch 2.8.x
 # on Windows (DLL init crash at shutdown). pyannote-audio gracefully falls back
 # to torchaudio when torchcodec is absent, so no functionality is lost.
-override-dependencies = ["torchcodec; python_version < '0'"]
+override-dependencies = [
+    "torchcodec; python_version < '0'",
+    # qwen-asr needs these only for its demo programs, not for transcribing
+    "gradio; python_version < '0'",
+    "flask; python_version < '0'",
+]

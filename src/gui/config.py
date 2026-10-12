@@ -24,6 +24,8 @@ _CONFIG_FILE = _CONFIG_DIR / "config.json"
 _DEFAULTS = {
     # Output
     "output_folder": "",
+    # Transcription: auto = Qwen3-ASR on a GPU with enough free memory, else Whisper
+    "transcriber": "auto",
     # Whisper
     "whisper_model": "large-v2",
     "whisper_batch_size": 0,  # 0 = Auto: UltraSinger scales it to GPU VRAM

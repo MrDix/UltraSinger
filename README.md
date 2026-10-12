@@ -174,7 +174,7 @@ groups onto the pinned icon.
 - **Video Browser** — Browse video platforms, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads. A **quality badge** next to the Queue button shows the best available download resolution, audio codec, duration, and LRCLIB lyrics availability — so you can evaluate video quality even when the embedded browser cannot play certain codecs.
 - **Settings Panel** — All CLI parameters available as form controls: Whisper model, language, post-processing options, experimental features, LLM lyric correction, and more.
 - **Conversion Queue** — Real-time color-coded log output with stage detection (Separating Vocals → Transcribing → Pitching → …), elapsed timer, and cancel support. After conversion, each song shows an **info line** with:
-  - **Language badge** — detected language code with color-coded background: green = synced lyrics (best quality), orange = plain lyrics or fallback, red = transcribed only (Whisper)
+  - **Language badge** — detected language code with color-coded background: green = synced lyrics (best quality), orange = plain lyrics or fallback, red = transcribed only
   - **Lyrics source** — "Synced lyrics", "Plain lyrics", or "Transcribed"
   - **Info button** — view the settings used for this conversion
   - **Folder button** — open the output folder in your system file manager (hover to see the path)
@@ -257,13 +257,18 @@ _Not all options working now!_
     --demucs              Demucs model name htdemucs|htdemucs_ft|htdemucs_6s|hdemucs_mmi|mdx|mdx_extra|mdx_q|mdx_extra_q >> ((default) is htdemucs)
 
     [transcription]
-    # Default is whisper
+    --transcriber           auto|qwen3|whisper >> ((default) is auto)
+                            auto: Qwen3-ASR 1.7B on a GPU with at least 5 GB free, for the 30 languages
+                            it knows, else Whisper; qwen3: the same, with a note when Whisper has to
+                            take over; whisper: always Whisper. Qwen3-ASR recognizes sung lyrics better
+                            and is downloaded once (about 4.4 GB).
     --whisper               Multilingual model > tiny|base|small|medium|large-v1|large-v2|large-v3  >> ((default) is large-v2)
                             English-only model > tiny.en|base.en|small.en|medium.en
+                            Choosing a Whisper model chooses Whisper, unless --transcriber is given too.
     --whisper_align_model   Custom wav2vec2 forced-alignment model from HuggingFace
                             (e.g. --whisper_align_model gigant/romanian-wav2vec2)
     --language              Override language for alignment and hyphenation.
-                            Priority: --language > video platform metadata > Whisper auto-detect.
+                            Priority: --language > video platform metadata > auto-detect.
                             For video URLs, the video language is used automatically.
                             WARNING: setting this for non-matching songs will degrade
                             alignment quality (e.g. --language en for German songs).
@@ -442,7 +447,8 @@ _Not all options working now!_
 
     [device]
     --force_cpu             Force all steps to be processed on CPU.
-    --force_whisper_cpu     Only whisper will be forced to cpu
+    --force_whisper_cpu     Only the transcription will be forced to cpu (so Whisper transcribes:
+                            Qwen3-ASR needs the GPU)
 
     [paths]
     --musescore_path        Path to MuseScore executable
@@ -488,9 +494,25 @@ This re-pitch the audio and creates a new txt file.
 
 ### 🗣 Transcriber
 
-Keep in mind that while a larger model is more accurate, it also takes longer to transcribe.
+By default (`--transcriber auto`) the lyrics are transcribed by **Qwen3-ASR** when a GPU with enough free memory is available and the song is in one of its languages, otherwise by **Whisper**. `--transcriber qwen3` asks for Qwen3-ASR (with a note when Whisper has to take over), `--transcriber whisper` or a Whisper model (`--whisper large-v2`) for Whisper.
+
+#### Qwen3-ASR
+
+Qwen3-ASR 1.7B is an audio language model that is trained on singing as well. On 100 separated vocal tracks with hand-made charts it made 26.9 % word errors with the song's language given (27.7 % when it found the language itself), against 30.0 % for Whisper large-v2, mostly because it invents fewer words.
+
+- It needs a GPU with at least 5 GB of free memory; with less, without a GPU, or with `--force_whisper_cpu`, Whisper transcribes. The variants that would fit less memory were less accurate than Whisper on the same tracks (the 0.6B model 31.9 %, the 1.7B model quantized to 4 bit 33.4 %), so they are not used.
+- The vocal track is transcribed in pieces of about half a minute, cut at quiet points (given a whole song at once, the model leaves out repeated parts). The language comes from `--language`, else from a quick detection when that is sure, else the model finds it; the word timings come from the same forced alignment as Whisper's text.
+- It knows 30 languages, among them English, German, French, Spanish, Italian, Portuguese, Dutch, Swedish, Danish, Finnish, Polish, Czech, Russian, Chinese, Japanese and Korean; for a song in another language (for example Norwegian or Ukrainian), Whisper transcribes.
+- When Qwen3-ASR fails (for example when the first download of the model fails), Whisper transcribes, with a note.
+- The model (about 4.4 GB) is downloaded on the first use.
+
+```commandline
+-i XYZ --transcriber qwen3
+```
 
 #### Whisper
+
+Keep in mind that while a larger model is more accurate, it also takes longer to transcribe.
 
 For the first test run, use the `tiny`, to be accurate use the `large-v2` model.
 
@@ -641,10 +663,10 @@ While a song is converted, its intermediate files (separated vocals and instrume
 
 When enabled, UltraSinger writes a `ultrasinger_parameter.info` file to the output directory containing all conversion settings and a detailed pipeline trace. The `[Pipeline]` section shows exactly how the song was processed:
 
-- Which pipeline was used (Reference-Lyrics-First vs Standard Whisper)
-- How the language was determined (manual / video platform metadata / Whisper fast-detect / Whisper full)
-- Whether Whisper received an explicit language hint or used auto-detect
-- Language correction history (if fast-detect was wrong and Whisper corrected it)
+- Which pipeline was used (Reference-Lyrics-First vs standard transcription)
+- How the language was determined (manual / video platform metadata / Whisper fast-detect / full transcription)
+- Whether the transcriber received an explicit language hint or used auto-detect
+- Language correction history (if fast-detect was wrong and the full transcription corrected it)
 - Whether the reference pipeline was recovered after language correction
 - LRCLIB lyrics availability (synced / plain / none)
 - LLM correction results and score breakdown
@@ -665,17 +687,17 @@ When LRCLIB provides **synced (timestamped) lyrics** for a song, UltraSinger use
   1. `--language` CLI flag (highest priority, manual override)
   2. Video platform metadata (yt-dlp extracts the video's language automatically)
   3. Whisper tiny fast-detect (~2-3 seconds)
-  4. Whisper full transcription (fallback)
+  4. Full transcription (fallback)
 
-The pipeline is **enabled by default** and falls back to standard Whisper transcription when no synced lyrics are available on LRCLIB. Use `--disable_reference_lyrics` to force the Whisper path.
+The pipeline is **enabled by default** and falls back to the standard transcription (Qwen3-ASR or Whisper, see [Transcriber](#-transcriber)) when no synced lyrics are available on LRCLIB. Use `--disable_reference_lyrics` to force the transcription path.
 
 **Finding the lyrics:** UltraSinger searches LRCLIB by artist and title. Titles taken from a video often carry additions like `(Official Video)`, `- US Version`, `[HD]` or `feat. …`; when nothing is found with them, the search is repeated without them. Other parts of a title, like `(Part 2)`, are kept, since they can tell two songs apart. A found song is only used when its artist and its title match (also in the other order, for video titles that name the song first). When LRCLIB has several versions of the song (album, single, live), the one closest in length to the audio is taken, since versions of a different length often differ in their lyrics too. Of the versions about as close as that one (up to 5 s further off), one with synced lyrics is preferred. The length never rules a version out: when none has the length of the audio, the closest one is still used.
 
-**Lyrics in another language are ignored:** LRCLIB sometimes returns another language version of a song (e.g. the English lyrics of a song sung in German). UltraSinger identifies the language of the found lyrics text and ignores them when it clearly differs from a reliably known sung language — set with `--language`, detected by a full Whisper transcription, or detected by the fast detection with at least 80 % confidence. Video platform metadata alone does not count, since it reflects upload settings and is often a default. When the language comes from the metadata or from a less certain detection, the lyrics are kept (and used for the alignment) and a note suggests setting `--language`.
+**Lyrics in another language are ignored:** LRCLIB sometimes returns another language version of a song (e.g. the English lyrics of a song sung in German). UltraSinger identifies the language of the found lyrics text and ignores them when it clearly differs from a reliably known sung language — set with `--language`, detected by the full transcription, or detected by the fast detection with at least 80 % confidence. Video platform metadata alone does not count, since it reflects upload settings and is often a default. When the language comes from the metadata or from a less certain detection, the lyrics are kept (and used for the alignment) and a note suggests setting `--language`.
 
-**Auto-recovery from wrong language detection:** If the fast language detection (Whisper tiny, ~2-3s) misidentifies the language (e.g. "cy" instead of "en"), the reference pipeline may fail because no alignment model exists for that language. In this case, UltraSinger automatically runs full Whisper transcription which detects the correct language, then **retries the reference pipeline** with the corrected language — recovering to full synced-lyrics quality without user intervention.
+**Auto-recovery from wrong language detection:** If the fast language detection (Whisper tiny, ~2-3s) misidentifies the language (e.g. "cy" instead of "en"), the reference pipeline may fail because no alignment model exists for that language. In this case, UltraSinger automatically runs the full transcription, which detects the correct language, then **retries the reference pipeline** with the corrected language — recovering to full synced-lyrics quality without user intervention.
 
-**Plain lyrics** from LRCLIB (without timestamps) do not enable the reference pipeline. They are used to **post-correct** Whisper transcription by comparing words against the verified lyrics text, improving recall by ~5 percentage points. Timing still comes from Whisper in this case.
+**Plain lyrics** from LRCLIB (without timestamps) do not enable the reference pipeline. They are used to **post-correct** the transcription by comparing words against the verified lyrics text, improving recall by ~5 percentage points. Timing still comes from the transcription in this case.
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used.
 
@@ -758,9 +780,9 @@ Sends the song's audio to an external OpenAI-compatible speech-to-text API (e.g.
 1. LRCLIB synced lyrics (unchanged, highest priority)
 2. LRCLIB plain lyrics + local alignment (unchanged)
 3. **Remote STT text + local alignment** (new — only if enabled and no LRCLIB lyrics found)
-4. Local Whisper transcription (default fallback, and still the default when remote STT is disabled)
+4. Local transcription, Qwen3-ASR or Whisper (default fallback, and still the default when remote STT is disabled)
 
-Any remote STT failure (network error, timeout, auth error, oversized file, empty response) fails open to local Whisper — a conversion never aborts because of it.
+Any remote STT failure (network error, timeout, auth error, oversized file, empty response) fails open to the local transcription — a conversion never aborts because of it.
 
 **Privacy note:** enabling this sends the song's audio to a third-party service. Only enable it if you accept your audio leaving your machine, and review the provider's data-retention policy.
 
@@ -810,9 +832,9 @@ Detects unrecognized vocal segments between transcribed words -- such as ad-libs
 
 #### Pitch-Based Note Generation (`--pitch_notes`)
 
-Generates notes directly from the pitch contour (SwiftF0) instead of Whisper word-level timing boundaries. This is best for melismatic songs with runs, slides, and ornaments where Whisper's word-level timing produces flat, unusable notes (e.g. R&B runs, opera, yodel passages).
+Generates notes directly from the pitch contour (SwiftF0) instead of the word-level timing boundaries of the transcription. This is best for melismatic songs with runs, slides, and ornaments where word-level timing produces flat, unusable notes (e.g. R&B runs, opera, yodel passages).
 
-Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones held for 80ms+), then split at word boundaries. Whisper lyrics are overlaid by time alignment, and when lyrics lookup is active, LRCLIB reference lyrics fill remaining placeholder notes.
+Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones held for 80ms+), then split at word boundaries. The transcribed lyrics are overlaid by time alignment, and when lyrics lookup is active, LRCLIB reference lyrics fill remaining placeholder notes.
 
 ```commandline
 -i XYZ --pitch_notes

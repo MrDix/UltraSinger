@@ -263,8 +263,8 @@ class QueueItemWidget(QWidget):
 
         # Lyrics source determines badge color:
         #   Green  = synced lyrics (reference pipeline, best quality)
-        #   Orange = plain lyrics (Whisper + correction, medium quality)
-        #   Red    = transcribed only (Whisper, lowest quality)
+        #   Orange = plain lyrics (transcription + correction, medium quality)
+        #   Red    = transcribed only (lowest quality)
         source = info.get("lyrics_source", "")
         # Combine source + fallback flag into display key
         if source == "synced" and info.get("whisper_fallback"):
@@ -278,7 +278,7 @@ class QueueItemWidget(QWidget):
         }
         _SOURCE_LABELS = {
             "synced": "Synced lyrics",
-            "synced (fallback)": "Synced lyrics (Whisper fallback)",
+            "synced (fallback)": "Synced lyrics (transcription fallback)",
             "plain": "Plain lyrics",
             "transcribed": "Transcribed",
             "instrumental": "Instrumental",
@@ -319,19 +319,19 @@ class QueueItemWidget(QWidget):
                 f"padding: 0px 4px; margin: 0px;"
             )
             lang_name = _lang_display_name(lang)
-            pipeline_name = "Reference" if info.get("pipeline") == "reference" else "Whisper"
+            pipeline_name = "Reference" if info.get("pipeline") == "reference" else "Transcription"
             tooltip = f"Language: {lang.upper()} ({lang_name}) — Pipeline: {pipeline_name}"
             initial = info.get("initial_language", "")
             if initial and initial != lang:
                 initial_name = _lang_display_name(initial)
                 tooltip += (
                     f"\nInitial detection: {initial.upper()} ({initial_name}) (wrong)"
-                    f" \u2192 Whisper corrected to {lang.upper()} ({lang_name})"
+                    f" \u2192 corrected by the transcription to {lang.upper()} ({lang_name})"
                 )
             if info.get("reference_recovered"):
                 tooltip += "\nReference pipeline recovered after correction"
             if info.get("whisper_fallback"):
-                tooltip += "\nReference pipeline fell back to Whisper"
+                tooltip += "\nReference pipeline fell back to the transcription"
             self._lang_badge.setToolTip(tooltip)
             self._lang_badge.setVisible(True)
 
