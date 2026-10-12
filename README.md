@@ -444,6 +444,8 @@ _Not all options working now!_
                             with the cookies, restoring full-quality downloads. For manual CLI
                             use see yt-dlp's PO token guide
                             (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
+                            Can also be given as ULTRASINGER_YT_PO_TOKEN environment
+                            variable, which keeps it out of the process list.
 
     [device]
     --force_cpu             Force all steps to be processed on CPU.

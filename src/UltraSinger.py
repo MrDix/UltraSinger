@@ -2570,6 +2570,9 @@ def init_settings(argv: list[str]) -> Settings:
             settings.golden_notes = True
         elif opt in ("--disable_score"):
             settings.calculate_score = False
+    if not any(opt == "--yt_po_token" for opt, _ in opts):
+        # Also taken from the environment, which keeps it out of the process list
+        settings.yt_po_token = os.environ.get("ULTRASINGER_YT_PO_TOKEN") or None
     if transcriber_option is not None:
         settings.transcriber = transcriber_option
     # Resolve the chart style into the ptAKF refit switch. An explicit

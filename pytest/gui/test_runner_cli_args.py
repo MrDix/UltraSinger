@@ -23,6 +23,7 @@ from src.gui.config import _DEFAULTS
 from src.gui.settings_tab import ConversionSettingsForm
 from src.gui.ultrasinger_runner import (
     LLM_KEY_ENV,
+    PO_TOKEN_ENV,
     REMOTE_STT_KEY_ENV,
     ConversionWorker,
     UltraSingerRunner,
@@ -137,6 +138,33 @@ class TestApiKeysGoThroughTheEnvironment:
         child_env = popen.call_args.kwargs["env"]
         assert child_env[LLM_KEY_ENV] == "llm-secret"
         assert child_env[REMOTE_STT_KEY_ENV] == "stt-secret"
+
+
+class TestPoTokenGoesThroughTheEnvironment:
+    """Other local users can read a command line (e.g. /proc/<pid>/cmdline), not the environment."""
+
+    def test_not_on_the_command_line(self):
+        runner = UltraSingerRunner()
+        args = runner.build_args({"yt_po_token": "pot-value"}, "https://video.invalid/watch?v=x")
+        assert "--yt_po_token" not in args and "pot-value" not in args
+        assert runner.build_env({"yt_po_token": "pot-value"})[PO_TOKEN_ENV] == "pot-value"
+        assert PO_TOKEN_ENV not in runner.build_env({})
+
+    def test_child_process_gets_it(self):
+        runner = UltraSingerRunner()
+        config = {"yt_po_token": "pot-value"}
+        proc = MagicMock(stdout=iter([]), returncode=0)
+        with patch("src.gui.ultrasinger_runner.subprocess.Popen", return_value=proc) as popen:
+            ConversionWorker(runner.build_args(config, "x.mp3"), extra_env=runner.build_env(config)).run()
+        assert "pot-value" not in popen.call_args.args[0]
+        assert popen.call_args.kwargs["env"][PO_TOKEN_ENV] == "pot-value"
+
+    def test_the_cli_reads_the_variable(self, monkeypatch):
+        monkeypatch.setenv(PO_TOKEN_ENV, "pot-value")
+        assert _cli([]).yt_po_token == "pot-value"
+        assert _cli(["--yt_po_token", "given"]).yt_po_token == "given"  # the option wins
+        monkeypatch.delenv(PO_TOKEN_ENV)
+        assert _cli([]).yt_po_token is None
 
 
 class TestPoTokenIsMasked:

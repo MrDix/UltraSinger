@@ -37,10 +37,12 @@ SECRET_OPTIONS = ("--llm_api_key", "--remote_stt_api_key", "--segmentation_model
 # way so that it never appears in the child's command line, which other local
 # processes can read.
 MODEL_TOKEN_ENV = "ULTRASINGER_MODEL_TOKEN"
-# Likewise the API keys: the CLI falls back to these environment variables
-# when --llm_api_key / --remote_stt_api_key are not given (UltraSinger.py).
+# Likewise the API keys and the PO token: the CLI falls back to these
+# environment variables when --llm_api_key / --remote_stt_api_key /
+# --yt_po_token are not given (UltraSinger.py).
 LLM_KEY_ENV = "LLM_API_KEY"
 REMOTE_STT_KEY_ENV = "ULTRASINGER_REMOTE_STT_API_KEY"
+PO_TOKEN_ENV = "ULTRASINGER_YT_PO_TOKEN"
 
 
 def redact_secrets(cmd: list[str]) -> list[str]:
@@ -381,6 +383,9 @@ class UltraSingerRunner(QObject):
                 env[LLM_KEY_ENV] = api_key
         if config.get("remote_stt") and config.get("remote_stt_api_key"):
             env[REMOTE_STT_KEY_ENV] = config["remote_stt_api_key"]
+        # Browser-captured GVS PO token (full yt-dlp format list)
+        if config.get("yt_po_token"):
+            env[PO_TOKEN_ENV] = config["yt_po_token"]
         return env
 
     @staticmethod
@@ -659,9 +664,7 @@ class UltraSingerRunner(QObject):
         if config.get("video_url"):
             args.extend(["--video_url", config["video_url"]])
 
-        # Browser-captured GVS PO token (full yt-dlp format list)
-        if config.get("yt_po_token"):
-            args.extend(["--yt_po_token", config["yt_po_token"]])
+        # The browser-captured GVS PO token goes through the environment (build_env)
 
         # Paths
         if config.get("musescore_path"):
