@@ -297,7 +297,8 @@ def _version_ge(version: str, threshold: str) -> bool:
 
 _NOTE_TYPES = {":", "*", "F", "R", "G"}
 
-_ENCODING_TAG_RE = re.compile(rb"(?:^|(?<=\r))[ \t]*#ENCODING:[ \t]*([^\r\n]*)", re.IGNORECASE | re.MULTILINE)
+_ENCODING_TAG_RE = re.compile(rb"(?:^|(?<=\r))(?:\xef\xbb\xbf)?[ \t]*#ENCODING:[ \t]*([^\r\n]*)",
+                              re.IGNORECASE | re.MULTILINE)
 
 
 def declared_encoding(raw: bytes) -> str | None:
@@ -393,6 +394,19 @@ def absolute_chart_text(text: str) -> str:
 
 
 _EMPTY_GAP_RE = re.compile(r"(?:^|(?<=\r))[ \t]*#GAP:[ \t]*(?:\r\n|\n|\r|$)", re.IGNORECASE | re.MULTILINE)
+
+
+def require_score_library() -> None:
+    """Raise ValueError if the optional ``ultrastar-score`` package cannot be
+    imported. Tools that read every chart with it must check this before they
+    start: without it every chart would look unparsable."""
+    try:
+        import ultrastar_score.parser  # noqa: F401
+    except ImportError as e:
+        raise ValueError(
+            "the optional scoring package (ultrastar-score) is not installed. Install the "
+            "'scoring' extra: the install scripts include it, or run 'uv sync --extra scoring'."
+        ) from e
 
 
 def parse_score_song(path: str | Path):

@@ -64,7 +64,7 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from compare_ultrastar import parse_score_song  # noqa: E402
+from compare_ultrastar import parse_score_song, read_chart_text, require_score_library  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -100,17 +100,14 @@ class SongFolder:
 
 
 def _read_text_lenient(path: Path) -> str:
-    """Best-effort text decode: try common encodings, then never fail."""
-    raw = path.read_bytes()
-    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
-        try:
-            return raw.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return raw.decode("utf-8", errors="replace")
+    """Best-effort text decode that never fails on the content, the same way
+    the chart parser decodes it (UTF-8 and UTF-16 byte order marks,
+    ``#ENCODING``, Windows-1252), so discovery and parser agree on what a
+    chart is."""
+    return read_chart_text(path)
 
 
-def _looks_like_ultrastar_txt(path: Path, *, unreadable: bool = False) -> bool:
+def _looks_like_ultrastar_txt(path: Path) -> bool:
     """Lenient content sniff: is this .txt plausibly an UltraStar chart?
 
     Only used to tell song folders apart from "collection" folders that
@@ -118,13 +115,14 @@ def _looks_like_ultrastar_txt(path: Path, *, unreadable: bool = False) -> bool:
     validity is judged later by :func:`evaluate_stage1` via the real
     parser -- a chart that fails *that* check still counts as a song
     folder here, so it can be flagged as stage-1-corrupt rather than
-    silently ignored. *unreadable* is the answer for a file that can't
-    be read.
+    silently ignored. A .txt that can't be read counts as a chart too:
+    its folder is then reported as an error instead of being skipped,
+    judged by another chart in it, or moved along with a parent folder.
     """
     try:
         text = _read_text_lenient(path)
     except OSError:
-        return unreadable
+        return True
     if not text.strip():
         return False
     upper = text.upper()
@@ -137,7 +135,10 @@ def _pick_primary_txt(candidates: list[Path]) -> Path:
     Folders normally have exactly one qualifying .txt; this only matters
     for the rare folder with several. Ties broken alphabetically. If none
     of the candidates parse cleanly, the first (alphabetically) is kept
-    so stage 1 still has something to flag as corrupt.
+    so stage 1 still has something to flag as corrupt. A candidate that
+    can't be checked at all (read error, ...) is picked right away: it
+    may be the real chart, so stage 1 must report that error rather than
+    judge the folder by another chart.
     """
     ordered = sorted(candidates, key=lambda p: p.name)
     best = ordered[0]
@@ -146,8 +147,10 @@ def _pick_primary_txt(candidates: list[Path]) -> Path:
         try:
             song = parse_score_song(candidate)
             notes = len(song.all_notes)
-        except Exception:
+        except ValueError:
             notes = -1
+        except Exception:  # noqa: BLE001 - not checkable now; stage 1 reports it as an error
+            return candidate
         if notes > best_notes:
             best_notes = notes
             best = candidate
@@ -198,9 +201,9 @@ def find_song_folders(source_dir: Path, *, skip_dir: Path | None = None) -> list
 def _nested_song_folders(dir_path: Path) -> list[Path]:
     """Song folders anywhere below *dir_path* (not counting itself).
 
-    Uses the same test as :func:`find_song_folders`, except that a .txt
-    which can't be read counts as a chart: a move must never take a song
-    along by mistake. Raises OSError if a subfolder can't be listed.
+    Uses the same test as :func:`find_song_folders` (a .txt that can't be
+    read counts as a chart): a move must never take a song along by
+    mistake. Raises OSError if a subfolder can't be listed.
     """
     def _raise(error: OSError) -> None:
         raise error
@@ -210,8 +213,7 @@ def _nested_song_folders(dir_path: Path) -> list[Path]:
         current = Path(dirpath)
         if current == dir_path:
             continue
-        if any(f.lower().endswith(".txt") and _looks_like_ultrastar_txt(current / f, unreadable=True)
-               for f in filenames):
+        if any(f.lower().endswith(".txt") and _looks_like_ultrastar_txt(current / f) for f in filenames):
             nested.append(current)
     return nested
 
@@ -339,16 +341,20 @@ def evaluate_stage1(song: SongFolder, *, ffprobe_path: str | None) -> Stage1Resu
     song still plays, only the lyric text looks wrong. An empty ``#GAP``
     is read as 0, like the games do.
 
-    Read errors (a locked or vanished file, no permission) and ffprobe
-    failures are no evidence of corruption: they give an "error" verdict,
-    which never moves the song.
+    Read errors (a locked or vanished file, no permission), ffprobe
+    failures and any other unexpected exception are no evidence of
+    corruption: they give an "error" verdict, which never moves the song.
+    Only a ValueError -- all the parser raises for a malformed chart (a
+    non-numeric ``#BPM``, text it cannot decode) -- means corrupt.
     """
     try:
         parsed = parse_score_song(song.txt_path)
     except OSError as e:
         return Stage1Result("error", f"txt_unreadable: {e}")
-    except Exception as e:
+    except ValueError as e:
         return Stage1Result("corrupt", f"unparsable_txt: {e}")
+    except Exception as e:  # noqa: BLE001 - e.g. a missing package or no memory: nothing against the chart
+        return Stage1Result("error", f"parse_failed: {e!r}")
 
     if len(parsed.all_notes) == 0:
         return Stage1Result("corrupt", "no_notes")
@@ -667,12 +673,16 @@ def run(
     """Discover, triage, and (maybe) move songs in one library pass.
 
     Raises ``ValueError`` if ``corrupt_dir``/``source_dir`` violate the
-    safety guards (see :func:`_validate_dirs`) -- callers must not catch
-    this and continue; it means the run must not proceed at all.
+    safety guards (see :func:`_validate_dirs`), if the optional scoring
+    package is missing, or if ffprobe does not work -- callers must not
+    catch this and continue; it means the run must not proceed at all.
     """
     source_dir = Path(source_dir).resolve()
     corrupt_dir = Path(corrupt_dir).resolve()
     _validate_dirs(source_dir, corrupt_dir)
+    # Every chart is read with the optional score library: without it each
+    # one would look unparsable and be moved.
+    require_score_library()
 
     if log_path is None:
         log_path = corrupt_dir / "triage_log.csv"
