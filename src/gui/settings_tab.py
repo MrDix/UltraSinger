@@ -338,10 +338,8 @@ class ConversionSettingsForm(QWidget):
         self._lang_mode_group = QButtonGroup(self)
         self._lang_auto = QRadioButton("Auto-detect")
         self._lang_auto.setToolTip(
-            "Detect the language of the singing: the transcription detects it, or a "
-            "quick detection by Whisper when the transcription is skipped. Only when "
-            "synced lyrics let it be skipped (without remote speech-to-text), the video "
-            "platform's metadata is used for video URLs.")
+            "Detect the language of the lyrics: from the video platform's metadata "
+            "for video URLs, otherwise by Whisper from the singing.")
         self._lang_manual = QRadioButton("Manual selection")
         self._lang_manual.setToolTip(
             "Always use the language chosen below (useful when the detection picks "

@@ -99,10 +99,10 @@ def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_lang
         ):
             mocks[name] = stack.enter_context(patch.object(us, name, side_effect=fake))
         stack.enter_context(patch("modules.lrclib_client.search_lyrics", return_value=early_lyrics))
-        stack.enter_context(patch("modules.Speech_Recognition.Whisper.detect_language_with_confidence",
-                                  return_value=fast_language))
-        stack.enter_context(patch("modules.Speech_Recognition.Whisper.detect_language_from_audio",
-                                  return_value=fast_language[0]))
+        mocks["detect_confident"] = stack.enter_context(patch(
+            "modules.Speech_Recognition.Whisper.detect_language_with_confidence", return_value=fast_language))
+        mocks["detect"] = stack.enter_context(patch(
+            "modules.Speech_Recognition.Whisper.detect_language_from_audio", return_value=fast_language[0]))
         stack.enter_context(patch(
             "modules.Speech_Recognition.reference_lyrics_aligner.create_midi_segments_from_reference_lyrics",
             side_effect=align))
@@ -282,13 +282,16 @@ class TestRemoteSpeechToText(unittest.TestCase):
                                       (SimpleNamespace(synced_lyrics=None, plain_lyrics="hallo welt"), "plain_align")):
             with self.subTest(aligner=aligner):
                 mocks = {}
-                _, _, files = _run(
+                _, out, files = _run(
                     _process_data(language="en"), _pitch_track([(1.0, 1.4, "C4")], length=2.5),
                     _transcription([("eins ", 1.0, 1.24)], "de"), early_lyrics=early_lyrics,
                     fast_language=("de", 0.95), plain_align=_aligned, remote=lambda **kwargs: "hallo welt",
                     mocks=mocks, remote_stt=True, write_settings_info=True,
                 )
                 self.assertEqual(mocks[aligner].call_args.kwargs["language"], "de")
+                self.assertEqual(mocks["detect_confident"].call_count + mocks["detect"].call_count, 1)
+                # (the GUI reads a language change from a "Using video platform language metadata" line)
+                self.assertNotIn("Using video platform language metadata", out)
                 self.assertIn("Language detection:        Whisper tiny (fast) -> de",
                               files["ultrasinger_parameter.info"])
 

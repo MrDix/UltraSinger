@@ -395,7 +395,8 @@ class TestLyricsSourceDerivation:
     def test_plain_lyrics_made_the_notes(self, queue_manager):
         """Synced lyrics were found but did not align; the plain lyrics made the notes."""
         for info, expected in (({"lrclib_result": "synced", "pipeline": "plain"}, "plain"),
-                               ({"lrclib_result": "none", "pipeline": "remote"}, "transcribed")):
+                               ({"lrclib_result": "none", "pipeline": "remote"}, "transcribed"),
+                               ({"lrclib_result": "synced", "pipeline": "remote"}, "synced (fallback)")):
             item = _make_item()
             item.result_info = dict(info, language="en")
             queue_manager._items = [item]

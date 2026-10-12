@@ -690,9 +690,9 @@ When LRCLIB provides **synced (timestamped) lyrics** for a song, UltraSinger use
 - **~2 minutes faster** — the expensive Whisper transcription step is skipped entirely
 - **Automatic language detection** — language is resolved in this order:
   1. `--language` CLI flag (highest priority, manual override)
-  2. Video platform metadata (yt-dlp extracts the video's language automatically)
+  2. Video platform metadata (yt-dlp extracts the video's language automatically; not used with `--remote_stt`)
   3. Whisper tiny fast-detect (~2-3 seconds)
-  4. Full transcription (fallback)
+  4. Full transcription, when the pipeline falls back to it: its detection then replaces 2. and 3.
 
 The pipeline is **enabled by default** and falls back to the standard transcription (Qwen3-ASR or Whisper, see [Transcriber](#-transcriber)) when LRCLIB has no lyrics for the song or they cannot be aligned. Use `--disable_reference_lyrics` to force the transcription path.
 

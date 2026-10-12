@@ -572,8 +572,10 @@ class QueueManager(QObject):
             elif info.get("pipeline") == "plain":
                 info["lyrics_source"] = "plain"
             elif info.get("pipeline") == "remote":
-                # A speech-to-text text, like the transcription's
-                info["lyrics_source"] = "transcribed"
+                # A speech-to-text text, like the transcription's (after found
+                # synced lyrics failed to align: as for the local fallback)
+                info["lyrics_source"] = ("synced (fallback)" if info.get("lrclib_result") == "synced"
+                                         else "transcribed")
             elif info.get("lrclib_result") == "synced" and info.get("whisper_fallback"):
                 info["lyrics_source"] = "synced (fallback)"
                 if info.get("language_changed"):

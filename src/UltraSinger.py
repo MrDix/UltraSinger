@@ -257,6 +257,12 @@ def run() -> tuple[str, Score, Score]:
     if process_data.media_info.music_key is None:
         process_data.media_info.music_key = f"{detected_key} {detected_mode}"
 
+    # Remote speech-to-text replaces the local transcription: that only runs
+    # (as the fallback below) when neither found lyrics nor the remote text
+    # could be aligned
+    remote_first = (not settings.ignore_audio and settings.remote_stt
+                    and not settings.disable_reference_lyrics)
+
     # Audio transcription
     # Language: --language, else the one the transcription detects (when it
     # runs); until then, and when it is skipped, a fast detection with Whisper
@@ -267,6 +273,12 @@ def run() -> tuple[str, Score, Score]:
         print(
             f"{ULTRASINGER_HEAD} Language set: "
             f"{blue_highlighted(settings.language)} (--language)"
+        )
+    elif process_data.media_info.language and remote_first:
+        print(
+            f"{ULTRASINGER_HEAD} Video platform language metadata "
+            f"{blue_highlighted(process_data.media_info.language)} is not used with remote "
+            f"speech-to-text: the language is detected from the singing"
         )
     elif process_data.media_info.language:
         # Video platform metadata language already set by download_from_video_platform()
@@ -287,12 +299,6 @@ def run() -> tuple[str, Score, Score]:
     _reference_recovered = False  # tracks recovery after language correction
     _remote_stt_used = False  # tracks whether remote STT supplied the lyrics text
     _plain_lyrics_used = False  # tracks whether aligned plain lyrics made the notes
-
-    # Remote speech-to-text replaces the local transcription: that only runs
-    # (as the fallback below) when neither found lyrics nor the remote text
-    # could be aligned
-    remote_first = (not settings.ignore_audio and settings.remote_stt
-                    and not settings.disable_reference_lyrics)
 
     # Early LRCLIB lookup: if synced lyrics are available, we can skip the
     # expensive Whisper transcription entirely (~2 min saved per song).
