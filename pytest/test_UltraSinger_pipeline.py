@@ -488,13 +488,16 @@ class TestRepitchRun(unittest.TestCase):
                     "#TITLE:Song Title", "#ARTIST:Artist", "#LANGUAGE:German", "#MP3:song.mp3",
                     "#BPM:300", "#GAP:1000", ": 0 4 60 eins ", "E"))
             open(os.path.join(folder, "song.mp3"), "wb").close()
-            # what InitProcessData makes of the txt (the chart's language tag is not read)
+            # what InitProcessData makes of the txt (the chart's language tag is not read);
+            # no online cover lookup for the chart without a cover
             with patch.object(us.settings, "input_file_path", chart), \
                     patch.object(us.settings, "output_folder_path", os.path.join(folder, "out")), \
                     patch.object(us.settings, "ignore_audio", False), \
                     patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                    patch("modules.Ultrastar.ultrastar_parser._fetch_musicbrainz_cover") as cover_lookup, \
                     contextlib.redirect_stdout(io.StringIO()):
                 process_data = us.InitProcessData()
+            cover_lookup.assert_called_once()
             mocks = {}
             notes, _, files = _run(process_data, _pitch_track([(1.0, 1.4, "C4")], length=2.5),
                                    _transcription([], "en"), mocks=mocks, ignore_audio=True,
