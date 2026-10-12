@@ -5,7 +5,7 @@ platforms change often, so the pinned yt-dlp soon fails to download) and fall
 back to the pinned version when that is not possible. update.sh, the Linux
 install scripts, auto_install.sh and the shell helpers are also run for real
 against throw-away git repositories with stubs for uv, nvidia-smi, node and npm;
-on Windows, so are update.bat and the batch helper.
+on Windows, so are update.bat, the Windows install scripts and the batch helper.
 """
 
 import hashlib
@@ -615,6 +615,19 @@ def test_linux_install_drops_the_backup_left_by_an_interrupted_clean_up(linux_in
     assert not (app / ".venv.old").exists()
 
 
+@needs_bash
+@pytest.mark.parametrize("script", ["CPU/linux_cpu.sh", "CUDA/linux_cuda_gpu.sh"])
+def test_linux_install_removes_its_incomplete_environment_when_there_was_none(linux_install, script):
+    """A first installation that fails leaves no half-built .venv behind for the launchers to start."""
+    app, run = linux_install
+    shutil.rmtree(app / ".venv")
+    result, calls = run(script, UV_STUB_FAIL_SYNC="1")
+    assert result.returncode != 0
+    assert "restoring the previous installation" in result.stdout
+    assert not (app / ".venv").exists() and not (app / ".venv.old").exists()
+    assert "whl/cpu" in (app / "pyproject.toml").read_text(encoding="utf-8")
+
+
 def test_macos_install_matches_the_linux_install():
     """macos_cpu.sh is linux_cpu.sh with BSD sed and its own name; keep the two in step."""
     linux = (INSTALL / "CPU/linux_cpu.sh").read_text(encoding="utf-8")
@@ -1180,9 +1193,9 @@ def test_bat_provider_needs_a_recent_node(bat_provider):
 
 
 # --------------------------------------------------------------------------
-# update.bat, run for real with cmd.exe (Windows only). uv is a small
-# compiled program here: a batch file called without "call" would end the
-# script that calls it.
+# update.bat and the Windows install scripts, run for real with cmd.exe
+# (Windows only). uv is a small compiled program here: a batch file called
+# without "call" would end the script that calls it.
 # --------------------------------------------------------------------------
 
 STUB_UV_CS = r"""
@@ -1308,3 +1321,63 @@ def test_bat_update_reports_no_incomplete_update_when_the_pull_fails(bat_update,
     assert calls == []
     assert _protected(app) and "whl/cu128" in (app / "pyproject.toml").read_text(encoding="utf-8")
     assert not list((tmp_path / "tmp").glob("ultrasinger_update_*"))  # no copy kept
+
+
+@pytest.fixture
+def bat_install(tmp_path, stub_uv_exe):
+    """A CPU installation with a working .venv for the Windows install scripts; uv and the provider are stubs."""
+    app = tmp_path / "app"
+    for rel in WINDOWS_INSTALL_SCRIPTS:
+        script = app / "install" / rel
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_bytes((INSTALL / rel).read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    helper = app / "install" / "helpers" / "setup_potoken_provider.bat"
+    helper.parent.mkdir(parents=True)
+    helper.write_bytes(b"@echo off\r\necho stub provider\r\nexit /b 2\r\n")
+    (app / "pyproject.toml").write_text('url = "https://download.pytorch.org/whl/cpu"\n', encoding="utf-8")
+    (app / "uv.lock").write_text("lock cpu\n", encoding="utf-8")
+    _git(tmp_path, "init", "-q", str(app))
+    _git(app, "add", "-A")
+    _git(app, "commit", "-qm", "init")
+    (app / ".venv").mkdir()
+    (app / ".venv" / "marker-old").write_text("old", encoding="utf-8")
+    run = _bat_runner(tmp_path, stub_uv_exe, tmp_path)
+    return app, lambda script, **extra: run(app / "install" / script, **extra)
+
+
+@needs_cmd
+@pytest.mark.parametrize("script", WINDOWS_INSTALL_SCRIPTS)
+def test_bat_install_removes_its_incomplete_environment_when_there_was_none(bat_install, script):
+    """A first installation that fails leaves no half-built .venv behind for the launcher to start."""
+    app, run = bat_install
+    shutil.rmtree(app / ".venv")
+    result, calls = run(script, UV_STUB_FAIL_SYNC="1")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "restoring the previous installation" in result.stdout
+    assert not (app / ".venv").exists() and not (app / ".venv.old").exists()
+    assert "whl/cpu" in (app / "pyproject.toml").read_text(encoding="utf-8")
+
+
+@needs_cmd
+def test_bat_install_keeps_the_previous_environment_when_syncing_fails(bat_install):
+    """The environment put back is not taken for an incomplete one of this run."""
+    app, run = bat_install
+    result, calls = run("CPU/windows_cpu.bat", UV_STUB_FAIL_SYNC="1")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert _venv(app) == ["marker-old"]
+    assert not (app / ".venv.old").exists()
+
+
+@needs_cmd
+def test_bat_install_names_a_leftover_backup_that_is_in_use(bat_install):
+    """A stale .venv.old that cannot be removed is reported as such, not as .venv being in use."""
+    app, run = bat_install
+    (app / ".venv" / COMPLETE_MARKER).write_text("", encoding="utf-8")
+    (app / ".venv.old").mkdir()
+    with open(app / ".venv.old" / "held", "wb"):
+        result, calls = run("CPU/windows_cpu.bat")
+    assert result.returncode == 1
+    assert ".venv.old, the backup of an environment left behind" in result.stdout
+    assert "(.venv) is in use" not in result.stdout
+    assert _venv(app) == ["marker-old"] and (app / ".venv" / COMPLETE_MARKER).exists()
+    assert not any(call.startswith("sync") for call in calls)

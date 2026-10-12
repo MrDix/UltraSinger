@@ -132,6 +132,7 @@ set "WAS_PROTECTED="
 git ls-files -v pyproject.toml 2>nul | findstr /b /c:"S" >nul 2>&1
 if !errorlevel! equ 0 set "WAS_PROTECTED=1"
 set "VENV_MOVED="
+set "NEW_VENV="
 
 :: Set PyTorch index to CUDA in pyproject.toml
 :: (uv.toml cannot override named indexes used by [tool.uv.sources])
@@ -170,12 +171,23 @@ if exist ".venv\" (
     if not exist ".venv.old\" move ".venv" ".venv.old" >nul 2>&1
     if exist ".venv\" (
         echo.
+        if exist ".venv.old\" if exist ".venv\.ultrasinger-complete" (
+            echo Error: .venv.old, the backup of an environment left behind by an
+            echo interrupted installation, is in use and cannot be removed. Close
+            echo UltraSinger and any terminal or editor that uses it, then run the
+            echo installer again.
+            goto :restore_and_fail
+        )
         echo Error: the existing virtual environment ^(.venv^) is in use and cannot
         echo be replaced. Close UltraSinger and any terminal or editor that uses
         echo it, then run the installer again.
         goto :restore_and_fail
     )
     set "VENV_MOVED=1"
+) else (
+    REM No environment to put back if this run fails: the incomplete one it
+    REM leaves behind is removed instead
+    set "NEW_VENV=1"
 )
 
 echo Syncing dependencies (core + GUI + scoring + PO-token plugin)...
@@ -224,6 +236,14 @@ if defined VENV_MOVED (
     if exist ".venv.old\" (
         echo The previous environment could not be put back and is kept in
         echo .venv.old - rename it to .venv once no program uses the folder.
+    )
+)
+REM A first installation: the launchers would try to use a half-built .venv
+if defined NEW_VENV if exist ".venv\" (
+    rmdir /s /q ".venv"
+    if exist ".venv\" (
+        echo The incomplete environment could not be removed - delete the .venv
+        echo folder once no program uses it.
     )
 )
 copy /y "!BACKUP_DIR!\pyproject.toml" pyproject.toml >nul 2>&1

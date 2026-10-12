@@ -41,6 +41,7 @@ if git ls-files -v pyproject.toml 2>/dev/null | grep -q '^S'; then
     WAS_PROTECTED=1
 fi
 VENV_MOVED=""
+NEW_VENV=""
 restore_previous_install() {
     rc=$?
     set +e  # every restore step is best effort, none may end it early
@@ -53,6 +54,9 @@ restore_previous_install() {
                 echo "The previous environment could not be put back and is kept in"
                 echo ".venv.old - rename it to .venv once no program uses the folder."
             fi
+        elif [ -n "$NEW_VENV" ]; then
+            # a first installation: the launchers would try to use a half-built .venv
+            rm -rf .venv
         fi
         cp -f "$BACKUP_DIR/pyproject.toml" "$BACKUP_DIR/uv.lock" .
         if [ -n "$WAS_PROTECTED" ]; then
@@ -94,6 +98,10 @@ fi
 if [ -d .venv ]; then
     mv .venv .venv.old
     VENV_MOVED=1
+else
+    # no environment to put back if this run fails: the incomplete one it
+    # leaves behind is removed instead
+    NEW_VENV=1
 fi
 echo "Syncing dependencies (core + GUI + scoring + PO-token plugin)..."
 uv sync --extra gui --extra scoring --extra potoken
