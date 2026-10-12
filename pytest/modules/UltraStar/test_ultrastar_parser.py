@@ -150,6 +150,11 @@ class TestParse(unittest.TestCase):
         self.assertEqual([n.startBeat for n in chart.UltrastarNoteLines], [0, 4, 12, 16, 24])
         self.assertAlmostEqual(chart.UltrastarNoteLines[4].startTime, 24 * 0.05)
 
+    def test_note_line_with_a_tab_after_its_type(self):
+        chart = self._parse(b"#RELATIVE:YES\n#BPM:300\n: 0 4 5 one\n- 8\n:\t2 4 7 tab\n")
+        self.assertEqual([(n.startBeat, n.pitch, n.word) for n in chart.UltrastarNoteLines],
+                         [(0, 5, "one"), (10, 7, "tab")])
+
     def test_line_breaks_of_absolute_charts_do_not_move_the_beats(self):
         chart = self._parse(b"#BPM:300\n: 0 4 5 one\n- 10 12\n: 20 4 5 two\n")
         self.assertEqual([n.startBeat for n in chart.UltrastarNoteLines], [0, 20])

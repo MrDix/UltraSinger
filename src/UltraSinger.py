@@ -1883,9 +1883,13 @@ def CreateUltraStarTxt(process_data: ProcessData):
             linebreak_timing=settings.linebreak_timing,
         )
     else:
+        # The cover in the song folder: the original's, or one found online when it was missing
+        chart = process_data.parsed_file
         ultrastar_file_output = create_ultrastar_txt_from_midi_segments(
             settings.output_folder_path, settings.input_file_path, process_data.basename,
-            process_data.midi_segments
+            process_data.midi_segments,
+            cover=chart.cover if chart else None,
+            cover_url=chart.coverUrl if chart else None,
         )
 
     # Calc Points

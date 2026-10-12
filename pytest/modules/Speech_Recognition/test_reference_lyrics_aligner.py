@@ -119,6 +119,13 @@ class TestParseLrcSyncedLyrics:
         assert [s["text"] for s in segs] == [
             "\x00oh \x00yeah Hello world", "\x00Hey come on", "\x00ooh la"]
 
+    def test_labels_after_a_backing_vocal_are_not_sung(self):
+        lrc = "[00:12.00] [oh yeah] [Chorus] text\n[00:14.00] (la) [Intro]\n" \
+              "[00:16.00] [oh] [ar:Artist] [Verse 2] (ooh) go"
+        segs = parse_lrc_synced_lyrics(lrc)
+        assert [s["text"] for s in segs] == [
+            "\x00oh \x00yeah text", "\x00la", "\x00oh \x00ooh go"]
+
 
 # ---------------------------------------------------------------------------
 # Pitch assignment

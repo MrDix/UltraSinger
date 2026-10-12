@@ -21,13 +21,13 @@ from modules.Ultrastar.ultrastar_txt import (
 )
 from modules.os_helper import get_unused_song_output_dir
 
-NOTE_LINE_PREFIXES = (
-    f"{UltrastarTxtNoteTypeTag.FREESTYLE.value} ",
-    f"{UltrastarTxtNoteTypeTag.NORMAL.value} ",
-    f"{UltrastarTxtNoteTypeTag.GOLDEN.value} ",
-    f"{UltrastarTxtNoteTypeTag.RAP.value} ",
-    f"{UltrastarTxtNoteTypeTag.RAP_GOLDEN.value} ",
-)
+# A note line: its type (F : * R G), then a space or a tab
+_NOTE_LINE_RE = re.compile("[" + re.escape("".join(t.value for t in UltrastarTxtNoteTypeTag)) + "][ \t]")
+
+
+def is_note_line(line: str) -> bool:
+    """Whether the line of a chart is a note: ``": 12 4 5 word"`` (also with a tab after the type)."""
+    return _NOTE_LINE_RE.match(line) is not None
 
 _ENCODING_TAG_RE = re.compile(rb"^#ENCODING:([^\r\n]*)", re.IGNORECASE | re.MULTILINE)
 
@@ -83,6 +83,14 @@ def read_chart_lines(input_file: str) -> list[str]:
     """The lines of an UltraStar txt file (decoded as ``chart_encoding`` says)."""
     with open(input_file, "r", encoding=chart_encoding(input_file), errors="replace") as file:
         return file.readlines()
+
+
+def header_tag(line: str) -> str | None:
+    """The tag of a header line in upper case (``"#Cover:x.jpg"`` -> ``"COVER"``), else None."""
+    if not line.startswith("#"):
+        return None
+    tag, separator, _ = line[1:].partition(":")
+    return tag.strip().upper() if separator else None
 
 
 def is_relative_tag(line: str) -> bool:
@@ -150,7 +158,7 @@ def parse(input_file: str) -> UltrastarTxtValue:
                 ultrastar_class.videoUrl = value
             elif tag == UltrastarTxtTag.RELATIVE.value:
                 relative = is_relative_tag(line)
-        elif line.startswith(NOTE_LINE_PREFIXES):
+        elif is_note_line(line):
             parts = line.split()
             # [0] F : * R G
             # [1] start beat

@@ -39,9 +39,12 @@ def create_ultrastar_txt_from_midi_segments(
         input_file_path: str,
         basename: str,
         midi_segments: list[MidiSegment],
+        cover: str | None = None,
+        cover_url: str | None = None,
 ) -> str:
     """Create Ultrastar txt from Ultrastar data, as ``<basename>.txt`` (a name
-    that is valid as a file name, like the song folder's)"""
+    that is valid as a file name, like the song folder's); ``cover`` and
+    ``cover_url`` (the cover in the song folder) are written into its header"""
     output_repitched_ultrastar = os.path.join(song_folder_output_path, basename + ".txt")
     ultrastar_note_numbers = convert_midi_notes_to_ultrastar_notes(midi_segments)
 
@@ -49,6 +52,8 @@ def create_ultrastar_txt_from_midi_segments(
         input_file_path,
         ultrastar_note_numbers,
         output_repitched_ultrastar,
+        cover,
+        cover_url,
     )
     return output_repitched_ultrastar
 

@@ -827,7 +827,7 @@ class TestLinebreakBeat(unittest.TestCase):
 class TestRepitchedTxt(unittest.TestCase):
     """The re-pitched chart: the original with the new pitches (one per note line)."""
 
-    def _repitch(self, original: bytes, pitches: list[int]) -> str:
+    def _repitch(self, original: bytes, pitches: list[int], **cover) -> str:
         from src.modules.Ultrastar.coverter.ultrastar_txt_converter import create_ultrastar_txt_from_midi_segments
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -835,7 +835,7 @@ class TestRepitchedTxt(unittest.TestCase):
             with open(input_file, "wb") as f:
                 f.write(original)
             segments = [MidiSegment(librosa.midi_to_note(48 + p), 0.0, 1.0, "w") for p in pitches]
-            output = create_ultrastar_txt_from_midi_segments(tmp, input_file, "Artist - Title", segments)
+            output = create_ultrastar_txt_from_midi_segments(tmp, input_file, "Artist - Title", segments, **cover)
             with open(output, "r", encoding="utf-8") as f:
                 return f.read()
 
@@ -875,6 +875,36 @@ class TestRepitchedTxt(unittest.TestCase):
             beats = [[n.startBeat for n in parse(os.path.join(tmp, name)).UltrastarNoteLines]
                      for name in ("original.txt", "new.txt")]
         self.assertEqual(beats[0], beats[1])
+
+    def test_note_line_with_a_tab_after_its_type(self):
+        from src.modules.Ultrastar.ultrastar_parser import parse
+
+        original = b"#RELATIVE:YES\n#BPM:300\n: 0 4 0 one\n- 8\n:\t2 4 0 tab\n*\t6 2 0 gold\nE\n"
+        text = self._repitch(original, [1, 2, 3])
+        self.assertEqual(text, "#BPM:300\n: 0 4 1 one\n- 8\n:\t10 4 2 tab\n*\t14 2 3 gold\nE\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "new.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            notes = parse(path).UltrastarNoteLines
+        self.assertEqual([(n.startBeat, n.pitch, n.word) for n in notes],
+                         [(0, 1, "one"), (10, 2, "tab"), (14, 3, "gold")])
+
+    def test_cover_found_online_replaces_the_missing_one(self):
+        original = (b"#TITLE:Title\n#COVER:missing.jpg\n#COVERURL:https://example.com/old.jpg\n#BPM:300\n"
+                    b": 0 2 0 a\nE\n")
+        text = self._repitch(original, [1], cover="Artist - Title [CO].jpg",
+                             cover_url="https://example.com/new.jpg")
+        self.assertEqual(text, "#TITLE:Title\n#COVER:Artist - Title [CO].jpg\n"
+                               "#COVERURL:https://example.com/new.jpg\n#BPM:300\n: 0 2 1 a\nE\n")
+
+    def test_cover_is_added_to_a_chart_without_one(self):
+        text = self._repitch(b"#TITLE:Title\n#BPM:300\n\n: 0 2 0 a\nE\n", [1],
+                             cover="Artist - Title [CO].jpg", cover_url="https://example.com/new.jpg")
+        # at the end of the header; a cover URL is only replaced, never added
+        self.assertEqual(text, "#TITLE:Title\n#BPM:300\n#COVER:Artist - Title [CO].jpg\n\n: 0 2 1 a\nE\n")
+        self.assertEqual(self._repitch(b"#TITLE:Title\n#COVER:c.jpg\n: 0 2 0 a\nE\n", [1]),
+                         "#TITLE:Title\n#COVER:c.jpg\n: 0 2 1 a\nE\n")
 
 
 if __name__ == "__main__":

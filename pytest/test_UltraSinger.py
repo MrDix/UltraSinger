@@ -534,28 +534,46 @@ class TestRepitchedChart(unittest.TestCase):
         self.assertFalse(wanted(calculate_score=False))
         self.assertFalse(wanted(use_separated_vocal=False, ignore_audio=True, input_file_is_ultrastar_txt=True))
 
-    def test_chart_is_named_after_the_song_folder(self):
+    def _repitched_chart(self, folder, parsed_file=None):
+        """CreateUltraStarTxt for a chart with the title "What?" as input; returns the new chart's path."""
         import os
-        import tempfile
         from unittest.mock import patch
 
         import src.UltraSinger as us
 
+        input_file = os.path.join(folder, "input.txt")
+        with open(input_file, "w", encoding="utf-8") as file:
+            file.write("#TITLE:What?\n#ARTIST:Artist\n#BPM:300\n: 0 2 0 a\nE\n")
+        process_data = us.ProcessData()
+        process_data.basename = "Artist - What"  # the title, made valid as a file name
+        process_data.media_info = us.MediaInfo(title="What?", artist="Artist", audio_extension="mp3")
+        process_data.midi_segments = [us.MidiSegment("C4", 0.0, 0.1, "a")]
+        process_data.parsed_file = parsed_file
+        with patch.object(us.settings, "ignore_audio", True), \
+                patch.object(us.settings, "input_file_path", input_file), \
+                patch.object(us.settings, "output_folder_path", folder), \
+                patch.object(us.settings, "create_karaoke", False), \
+                patch.object(us.settings, "write_metadata_tags", False), \
+                patch.object(us.settings, "calculate_score", False), \
+                patch.object(us, "convert_audio_format"):
+            return us.CreateUltraStarTxt(process_data)[2]
+
+    def test_chart_is_named_after_the_song_folder(self):
+        import os
+        import tempfile
+
         with tempfile.TemporaryDirectory() as folder:
-            input_file = os.path.join(folder, "input.txt")
-            with open(input_file, "w", encoding="utf-8") as file:
-                file.write("#TITLE:What?\n#ARTIST:Artist\n#BPM:300\n: 0 2 0 a\nE\n")
-            process_data = us.ProcessData()
-            process_data.basename = "Artist - What"  # the title, made valid as a file name
-            process_data.media_info = us.MediaInfo(title="What?", artist="Artist", audio_extension="mp3")
-            process_data.midi_segments = [us.MidiSegment("C4", 0.0, 0.1, "a")]
-            with patch.object(us.settings, "ignore_audio", True), \
-                    patch.object(us.settings, "input_file_path", input_file), \
-                    patch.object(us.settings, "output_folder_path", folder), \
-                    patch.object(us.settings, "create_karaoke", False), \
-                    patch.object(us.settings, "write_metadata_tags", False), \
-                    patch.object(us.settings, "calculate_score", False), \
-                    patch.object(us, "convert_audio_format"):
-                _, _, output = us.CreateUltraStarTxt(process_data)
+            output = self._repitched_chart(folder)
             self.assertEqual(output, os.path.join(folder, "Artist - What.txt"))
             self.assertTrue(os.path.isfile(output))
+
+    def test_cover_found_online_is_written_into_the_chart(self):
+        import tempfile
+
+        from src.modules.Ultrastar.ultrastar_txt import UltrastarTxtValue
+
+        chart = UltrastarTxtValue()
+        chart.cover = "Artist - What [CO].jpg"  # as the cover lookup sets it for a chart without one
+        with tempfile.TemporaryDirectory() as folder:
+            with open(self._repitched_chart(folder, chart), encoding="utf-8") as file:
+                self.assertIn("#BPM:300\n#COVER:Artist - What [CO].jpg\n: 0 2 12 a\n", file.read())
