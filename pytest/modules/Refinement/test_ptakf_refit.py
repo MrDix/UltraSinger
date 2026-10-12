@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import random
+import time
+
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Refinement import ptakf_refit
 from modules.Refinement.ptakf_refit import (
@@ -109,6 +112,69 @@ class TestSegmentBeatTones:
     def test_short_run_kept_as_single_note(self):
         segments = _segment_beat_tones([10])
         assert segments == [(0, 1, 46)]
+
+    def test_same_result_as_the_former_cubic_dp(self):
+        rng = random.Random(7)
+        for _ in range(300):
+            n = rng.randint(1, 60)
+            tones = rng.choice([[10, 12, 17, 22], list(range(24)), [-1, -2, 5, 6, 7, 17]])
+            beat_tones = [rng.choice(tones + [-1]) for _ in range(n)]
+            assert _segment_beat_tones(beat_tones) == _former_segment_beat_tones(beat_tones), beat_tones
+
+    def test_long_voiced_run_is_fast(self):
+        # a minute of uncharted singing for the fill: about 1800 beats in one run
+        rng = random.Random(3)
+        beat_tones = [rng.choice([10, 12, 14, 15, 17]) for _ in range(1800)]
+        started = time.perf_counter()
+        segments = _segment_beat_tones(beat_tones)
+        assert time.perf_counter() - started < 10.0
+        assert sum(length for _, length, _ in segments) == 1800
+
+
+def _former_segment_beat_tones(beat_tones: list[int]) -> list[tuple[int, int, int]]:
+    """_segment_beat_tones as it was, with a DP cubic in the run length."""
+    runs = []
+    cur_start = None
+    for i, bt in enumerate(beat_tones + [-1]):
+        if bt >= 0 and cur_start is None:
+            cur_start = i
+        elif bt < 0 and cur_start is not None:
+            runs.append((cur_start, i))
+            cur_start = None
+    if not runs:
+        return []
+
+    segments: list[tuple[int, int, int]] = []
+    for run_start, run_end in runs:
+        run = beat_tones[run_start:run_end]
+        n = len(run)
+        neg = float("-inf")
+        dp = [neg] * (n + 1)
+        back: list[int | None] = [None] * (n + 1)
+        dp[0] = 0.0
+        for i in range(1, n + 1):
+            for j in range(i):
+                if dp[j] == neg:
+                    continue
+                if i - j < ptakf_refit._MIN_SEG_BEATS and i != n:
+                    continue
+                _, best_h = _best_class(run[j:i])
+                val = dp[j] + best_h - ptakf_refit._SPLIT_PENALTY
+                if val > dp[i]:
+                    dp[i] = val
+                    back[i] = j
+        cuts = []
+        i = n
+        while i > 0:
+            j = back[i]
+            cuts.append((j, i))
+            i = j
+        cuts.reverse()
+        for j, i in cuts:
+            seg = run[j:i]
+            cls, _ = _best_class(seg)
+            segments.append((run_start + j, i - j, _segment_midi(seg, cls)))
+    return segments
 
 
 # ---------------------------------------------------------------------------

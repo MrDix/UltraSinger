@@ -4,6 +4,8 @@ A repository is given as ``owner/repo`` or ``owner/repo/path/to/model.pt``
 (default file: ``segmentation.pt``). The file is downloaded through the
 GitHub REST API - with an access token for private repositories - and cached
 locally; it is only downloaded again when its content (git blob SHA) changed.
+A download is only kept when its content matches that SHA and it loads as a
+model; a cached copy that no longer matches its SHA is downloaded again.
 Without network access the cached copy is used.
 """
 
@@ -75,19 +77,47 @@ def _request(url: str, token: str | None, accept: str) -> urllib.request.Request
     return urllib.request.Request(url, headers=headers)
 
 
-def _remote_sha(owner: str, repo: str, path: str, token: str | None) -> str:
+def _remote_file(owner: str, repo: str, path: str, token: str | None) -> tuple[str, int | None]:
+    """SHA and size in bytes (None when not reported) of the file in the repository."""
     url = f"{API_ROOT}/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}"
     # The object media type is documented for files up to 100 MB (the default
     # one only up to 1 MB). Above 1 MB the content is left out, which is fine
-    # as only the SHA is needed here.
+    # as only the SHA and the size are needed here.
     with urllib.request.urlopen(_request(url, token, OBJECT_MEDIA_TYPE), timeout=TIMEOUT_S) as r:
         meta = json.loads(r.read().decode("utf-8"))
     if not isinstance(meta, dict) or meta.get("type") != "file":
         raise ValueError(f"{path} is not a file in {owner}/{repo}")
-    return str(meta["sha"])
+    size = meta.get("size")
+    return str(meta["sha"]), size if isinstance(size, int) else None
 
 
-def _download(owner: str, repo: str, path: str, token: str | None, target: Path) -> None:
+def _matches_sha(file: Path, sha: str) -> bool:
+    """Whether the file's content has the git blob SHA ``sha`` (the SHA GitHub
+    reports for it). A SHA that is neither SHA-1 nor SHA-256 cannot be checked
+    and counts as matching."""
+    hash_type = {40: hashlib.sha1, 64: hashlib.sha256}.get(len(sha))
+    if hash_type is None or not re.fullmatch(r"[0-9a-f]+", sha):
+        return True
+    digest = hash_type(f"blob {file.stat().st_size}\0".encode("ascii"))
+    with open(file, "rb") as f:
+        while chunk := f.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest() == sha
+
+
+def _check_loads(file: Path) -> None:
+    """Raise ``ValueError`` when the file does not load as a segmentation model."""
+    from modules.Segmentation.model import load_model
+
+    try:
+        load_model(file, "cpu")
+    except Exception as e:  # noqa: BLE001 - any failure means the file is no usable model
+        raise ValueError(f"the downloaded file is not a segmentation model ({type(e).__name__})") from e
+
+
+def _download(owner: str, repo: str, path: str, token: str | None, target: Path,
+              sha: str, size: int | None) -> None:
+    """Download the file to ``target``; only a complete copy that loads replaces it."""
     url = f"{API_ROOT}/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}"
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(target.parent), suffix=".part")
@@ -96,6 +126,13 @@ def _download(owner: str, repo: str, path: str, token: str | None, target: Path)
                 urllib.request.urlopen(_request(url, token, RAW_MEDIA_TYPE), timeout=TIMEOUT_S) as r:
             while chunk := r.read(1 << 20):
                 out.write(chunk)
+        # read() also just ends when the connection breaks off: check what arrived
+        received = os.path.getsize(tmp)
+        if size is not None and received != size:
+            raise ValueError(f"incomplete download ({received} of {size} bytes)")
+        if not _matches_sha(Path(tmp), sha):
+            raise ValueError("the downloaded file does not match its SHA")
+        _check_loads(Path(tmp))
         os.replace(tmp, target)  # atomic: never leave a half-written model behind
     finally:
         if os.path.exists(tmp):
@@ -115,7 +152,9 @@ def _describe_error(e: Exception) -> str:
 def fetch_model(spec: str, token: str | None = None, cache: Path | None = None) -> str | None:
     """Local path of the (cached) model from repository ``spec``, or ``None``.
 
-    Downloads the file when it is not cached yet or its SHA changed. On any
+    Downloads the file when it is not cached yet, its SHA changed or the cached
+    copy does not match its SHA (cut short, damaged). The SHA is noted next to
+    the copy only once the downloaded file was complete and loaded. On any
     network or access error the cached copy is used if there is one.
     """
     token = token or os.environ.get(TOKEN_ENV) or None
@@ -127,11 +166,15 @@ def fetch_model(spec: str, token: str | None = None, cache: Path | None = None) 
     target = cache_path(cache or cache_dir(), owner, repo, path)
     sha_file = target.with_name(target.name + ".sha")
     cached_sha = sha_file.read_text(encoding="utf-8").strip() if sha_file.exists() and target.exists() else None
+    if cached_sha is not None and not _matches_sha(target, cached_sha):
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the cached segmentation model is incomplete "
+              f"or damaged - downloading it again")
+        cached_sha = None
     try:
-        sha = _remote_sha(owner, repo, path, token)
+        sha, size = _remote_file(owner, repo, path, token)
         if sha != cached_sha:
             print(f"{ULTRASINGER_HEAD} Downloading segmentation model {blue_highlighted(f'{owner}/{repo}/{path}')}")
-            _download(owner, repo, path, token, target)
+            _download(owner, repo, path, token, target, sha, size)
             sha_file.write_text(sha, encoding="utf-8")
         return str(target)
     except Exception as e:  # noqa: BLE001 - fall back to the cache, never abort the conversion

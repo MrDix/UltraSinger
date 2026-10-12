@@ -858,7 +858,7 @@ No model is shipped with UltraSinger. You train your own on your UltraStar song 
 
 GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal separation; if the model file is missing or the step fails, the word-based notes are kept. With a model, the timing refinement (snapping note starts to audio onsets) and the GAP sweep (shifting all notes together to where the game scores them best) are skipped, because the model places note starts more precisely.
 
-To share one model between computers, keep it in a (private) GitHub repository and let UltraSinger download it: `--segmentation_model_repo owner/repo[/path/model.pt]` (default file `segmentation.pt`) with the `ULTRASINGER_MODEL_TOKEN` environment variable (or `--segmentation_model_token <token>`) for private repositories. The model is cached locally and only downloaded again when it changed. GUI: "Model Repository" and "Repository Token" (stored in the system keyring).
+To share one model between computers, keep it in a (private) GitHub repository and let UltraSinger download it: `--segmentation_model_repo owner/repo[/path/model.pt]` (default file `segmentation.pt`) with the `ULTRASINGER_MODEL_TOKEN` environment variable (or `--segmentation_model_token <token>`) for private repositories. The model is cached locally and only downloaded again when it changed; a download is only kept when it arrived complete and loads as a model. GUI: "Model Repository" and "Repository Token" (stored in the system keyring).
 
 ```commandline
 -i XYZ --segmentation_model_repo owner/models-repo
