@@ -267,9 +267,11 @@ _Not all options working now!_
                             Choosing a Whisper model chooses Whisper, unless --transcriber is given too.
     --whisper_align_model   Custom wav2vec2 forced-alignment model from HuggingFace
                             (e.g. --whisper_align_model gigant/romanian-wav2vec2)
-    --language              Override language for alignment and hyphenation.
-                            Priority: --language > video platform metadata > auto-detect.
-                            For video URLs, the video language is used automatically.
+    --language              Language of the singing (e.g. en, de) for the transcription, the alignment
+                            and the hyphenation. Without it the language is detected: by the
+                            transcription when it runs (this replaces any earlier guess); when found
+                            synced lyrics let it be skipped, from the video platform metadata of a
+                            video URL, else quickly via Whisper tiny (~2-3s).
                             WARNING: setting this for non-matching songs will degrade
                             alignment quality (e.g. --language en for German songs).
     --whisper_batch_size    Segments processed in parallel. 'auto' (default) scales to GPU VRAM: 16 (~8GB and larger) / 8 (5-7GB) / 4 (smaller). Lower manually if still low on GPU mem: slower, but transcription is UNCHANGED (the safe lever)
@@ -282,9 +284,9 @@ _Not all options working now!_
                             longer during vocal dips. >> ((default) is 0.20, WhisperX default: 0.363)
     --no_speech_threshold   No-speech probability threshold (0.0-1.0). Lower values prevent Whisper from
                             classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
-    --ignore_audio          Skip transcription for audio/video input and only recompute pitch (advanced;
-                            e.g. reuse existing lyrics/timing). Automatically enabled when the input (-i)
-                            is an ultrastar.txt file (re-pitch mode).
+    --ignore_audio          Re-pitch mode: keep the lyrics and timing of an ultrastar.txt input (-i) and
+                            only recompute the pitch. Set automatically for a .txt input; with an audio
+                            or video input it stops with an error.
 
     [pitch detection]
     --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
@@ -317,8 +319,10 @@ _Not all options working now!_
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain
                             precise word-level timing — dramatically improving lyrics coverage and timing
-                            accuracy. Falls back to standard Whisper pipeline when disabled or when no
-                            synced lyrics are available. Enabled by default.
+                            accuracy. Without synced lyrics (or when their alignment fails), plain lyrics
+                            are aligned the same way, then a --remote_stt text. When disabled, or
+                            when none of them can be aligned, the notes come from the transcription.
+                            Enabled by default.
 
     [freestyle detection]
     --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
@@ -689,7 +693,7 @@ When LRCLIB provides **synced (timestamped) lyrics** for a song, UltraSinger use
   3. Whisper tiny fast-detect (~2-3 seconds)
   4. Full transcription (fallback)
 
-The pipeline is **enabled by default** and falls back to the standard transcription (Qwen3-ASR or Whisper, see [Transcriber](#-transcriber)) when no synced lyrics are available on LRCLIB. Use `--disable_reference_lyrics` to force the transcription path.
+The pipeline is **enabled by default** and falls back to the standard transcription (Qwen3-ASR or Whisper, see [Transcriber](#-transcriber)) when LRCLIB has no lyrics for the song or they cannot be aligned. Use `--disable_reference_lyrics` to force the transcription path.
 
 **Finding the lyrics:** UltraSinger searches LRCLIB by artist and title. Titles taken from a video often carry additions like `(Official Video)`, `- US Version`, `[HD]` or `feat. …`; when nothing is found with them, the search is repeated without them. Other parts of a title, like `(Part 2)`, are kept, since they can tell two songs apart. A found song is only used when its artist and its title match (also in the other order, for video titles that name the song first). When LRCLIB has several versions of the song (album, single, live), the one closest in length to the audio is taken, since versions of a different length often differ in their lyrics too. Of the versions about as close as that one (up to 5 s further off), one with synced lyrics is preferred. The length never rules a version out: when none has the length of the audio, the closest one is still used.
 
@@ -699,7 +703,7 @@ The pipeline is **enabled by default** and falls back to the standard transcript
 
 **Placing the lines:** The words are placed with wav2vec2 forced alignment over the whole vocal track, and the LRC times of the lines check the result. Four alignments are made: with the model run over the whole song or over 30-s pieces, each with two ways of ending the path after the last word. The one with the most lines at their LRC times is used. A line that lands in a poor place moves to a clearly better place near its LRC time, and lines at the end that the recording does not have (lyrics of a longer version) are left out. On a benchmark of 89 songs, the share of words that start more than 1 s off went from 6.5 % to 4.9 %. When there is not enough memory to run the model over the whole song at once, the 30-s pieces are used alone.
 
-**Plain lyrics** from LRCLIB (without timestamps) do not enable the reference pipeline. They are used to **post-correct** the transcription by comparing words against the verified lyrics text, improving recall by ~5 percentage points. Timing still comes from the transcription in this case.
+**Plain lyrics** from LRCLIB (without timestamps) are looked up after the transcription. They first **post-correct** it by comparing words against the verified lyrics text, improving recall by ~5 percentage points. When no synced lyrics could be aligned, the plain lyrics are then aligned with wav2vec2 in the same way and make the notes. Only when that fails too does the timing come from the transcription.
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used.
 

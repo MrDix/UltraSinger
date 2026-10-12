@@ -62,12 +62,11 @@ def print_help() -> None:
     --whisper_align_model   Custom wav2vec2 forced-alignment model from HuggingFace.
                             Useful for languages where the default model performs poorly.
                             Example: --whisper_align_model gigant/romanian-wav2vec2
-    --language              Override language for alignment and hyphenation.
-                            Priority: --language flag > video platform metadata > auto-detect.
-                            For video URLs, yt-dlp language metadata is used automatically
-                            when no --language flag is set, avoiding misdetection.
-                            When LRCLIB synced lyrics are found, language is detected quickly
-                            via Whisper tiny (~2-3s) instead of full transcription.
+    --language              Language of the singing (e.g. en, de) for the transcription, the alignment
+                            and the hyphenation. Without it the language is detected: by the
+                            transcription when it runs (this replaces any earlier guess); when found
+                            synced lyrics let it be skipped, from the video platform metadata of a
+                            video URL, else quickly via Whisper tiny (~2-3s).
                             WARNING: setting this for non-matching songs will degrade
                             alignment quality (e.g. --language en for German songs).
     --whisper_batch_size    Segments processed in parallel. 'auto' (default) scales to GPU VRAM: 16 (~8GB and larger) / 8 (5-7GB) / 4 (smaller). Lower manually if still low on GPU mem: slower, but transcription is UNCHANGED (the safe lever)
@@ -80,9 +79,9 @@ def print_help() -> None:
                             longer during vocal dips. >> ((default) is 0.20, WhisperX default: 0.363)
     --no_speech_threshold   No-speech probability threshold (0.0-1.0). Lower values prevent Whisper from
                             classifying singing as silence. >> ((default) is 0.4, WhisperX default: 0.6)
-    --ignore_audio          Skip transcription for audio/video input and only recompute pitch (advanced;
-                            e.g. reuse existing lyrics/timing). Automatically enabled when the input (-i)
-                            is an ultrastar.txt file (re-pitch mode).
+    --ignore_audio          Re-pitch mode: keep the lyrics and timing of an ultrastar.txt input (-i) and
+                            only recompute the pitch. Set automatically for a .txt input; with an audio
+                            or video input it stops with an error.
 
     [pitch detection]
     --pitcher               Pitch detection backend: swiftf0|fcpe >> ((default) is swiftf0)
@@ -148,7 +147,9 @@ def print_help() -> None:
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain precise
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.
-                            Falls back to standard Whisper pipeline when disabled or when no synced lyrics available.
+                            Without synced lyrics (or when their alignment fails), plain lyrics are aligned
+                            the same way, then a --remote_stt text. When disabled, or when none of them
+                            can be aligned, the notes come from the transcription.
 
     [freestyle detection]
     --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle

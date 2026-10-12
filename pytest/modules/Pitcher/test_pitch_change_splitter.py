@@ -412,3 +412,62 @@ class TestEdgeCases:
         )
 
         assert len(result) >= 2
+
+
+class TestMergeShortFragmentsKeepsWordEnd:
+    """Merging a short fragment keeps the space ending the word and the line break."""
+
+    def test_short_first_part_keeps_the_space_of_the_word_end(self):
+        # A short scoop into the note: the text moves into the last part
+        segments = [MidiSegment("C4", 0.0, 0.04, "go"), MidiSegment("E4", 0.04, 0.3, "~ ")]
+        result = _merge_short_fragments(segments, min_note_duration_ms=80.0)
+        assert [r.word for r in result] == ["go "]
+        assert (result[0].start, result[0].end) == (0.0, 0.3)
+
+    def test_short_last_part_keeps_the_line_break(self):
+        last = MidiSegment("E4", 0.3, 0.34, "~ ")
+        last.line_break_after = True
+        result = _merge_short_fragments([MidiSegment("C4", 0.0, 0.3, "go"), last], min_note_duration_ms=80.0)
+        assert [r.word for r in result] == ["go "]
+        assert result[0].line_break_after
+
+
+class TestSplitNotesAndWords:
+    """split_notes_and_words_at_pitch_changes keeps one transcribed syllable per note."""
+
+    @staticmethod
+    def _syllable(word, start, end, is_word_end=True, line_break_after=False):
+        from src.modules.Speech_Recognition.TranscribedData import TranscribedData
+        return TranscribedData(word=word, start=start, end=end, confidence=0.8,
+                               is_word_end=is_word_end, line_break_after=line_break_after)
+
+    def test_split_syllable_is_split_along(self):
+        from src.modules.Pitcher.pitch_change_splitter import split_notes_and_words_at_pitch_changes
+
+        times = [i * 0.016 for i in range(30)]
+        freqs = [_hz("C4")] * 10 + [_hz("C4")] * 5 + [_hz("G4")] * 15
+        pitched = _make_pitched_data(times, freqs)
+        notes = [MidiSegment("C4", 0.0, 0.16, "one "), MidiSegment("C4", 0.16, 0.464, "two ")]
+        words = [self._syllable("one ", 0.0, 0.16),
+                 self._syllable("two ", 0.16, 0.464, line_break_after=True)]
+
+        new_notes, new_words = split_notes_and_words_at_pitch_changes(
+            notes, words, pitched, min_semitone_change=2.0, min_note_duration_ms=60.0
+        )
+
+        assert len(new_notes) == len(new_words) == 3
+        assert new_words[0] is words[0]  # not split: unchanged
+        assert [w.word for w in new_words] == [n.word for n in new_notes] == ["one ", "two", "~ "]
+        assert [(w.start, w.end) for w in new_words] == [(n.start, n.end) for n in new_notes]
+        assert [w.is_word_end for w in new_words] == [True, False, True]
+        assert [w.line_break_after for w in new_words] == [False, False, True]
+        assert all(w.confidence == 0.8 for w in new_words)
+
+    def test_lists_of_different_length_raise(self):
+        from src.modules.Pitcher.pitch_change_splitter import split_notes_and_words_at_pitch_changes
+
+        pitched = _make_pitched_data([0.0, 0.016], [_hz("C4")] * 2)
+        with pytest.raises(ValueError):
+            split_notes_and_words_at_pitch_changes(
+                [MidiSegment("C4", 0.0, 0.016, "a ")], [], pitched
+            )

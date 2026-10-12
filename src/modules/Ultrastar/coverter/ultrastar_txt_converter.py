@@ -71,8 +71,15 @@ def create_ultrastar_txt_from_automation(
         raise Exception("Missing Audio extension. It is required to create Ultrastar txt")
     ultrastar_txt.mp3 = basename + "." + media_info.audio_extension
     ultrastar_txt.audio = basename + "." + media_info.audio_extension
-    ultrastar_txt.vocals = basename + " [Vocals]." + media_info.audio_extension
-    ultrastar_txt.instrumental = basename + " [Instrumental]." + media_info.audio_extension
+    # The stems are only there when the vocals were separated
+    vocals = basename + " [Vocals]." + media_info.audio_extension
+    ultrastar_txt.vocals = (
+        vocals if os_helper.check_file_exists(os.path.join(song_folder_output_path, vocals)) else None
+    )
+    instrumental = basename + " [Instrumental]." + media_info.audio_extension
+    ultrastar_txt.instrumental = (
+        instrumental if os_helper.check_file_exists(os.path.join(song_folder_output_path, instrumental)) else None
+    )
     if media_info.video_extension is not None:
         ultrastar_txt.video = basename + "." + media_info.video_extension
     ultrastar_txt.language = media_info.language
