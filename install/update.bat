@@ -39,15 +39,8 @@ git ls-files -v pyproject.toml 2>nul | findstr /b /c:"S" >nul 2>&1
 if !errorlevel! equ 0 set "IS_CUDA=1"
 findstr /c:"whl/cu" pyproject.toml >nul 2>&1
 if !errorlevel! equ 0 set "IS_CUDA=1"
-REM The CUDA variant of the PyTorch index (cu128 unless the user picked another
-REM one, e.g. cu126 for an older driver), put back after the pull
-set "CUDA_VARIANT="
-for /f "delims=" %%V in ('powershell -NoProfile -Command "$m = [regex]::Match([IO.File]::ReadAllText('pyproject.toml'), 'whl/(cu[0-9]+)'); if ($m.Success) { $m.Groups[1].Value }"') do set "CUDA_VARIANT=%%V"
-if not defined CUDA_VARIANT set "CUDA_VARIANT=cu128"
 
 set "BACKUP_DIR="
-set "KEEP_BACKUP="
-set "PULLED="
 if defined IS_CUDA (
     echo CUDA-protected install detected - lifting the pyproject/uv.lock
     echo protection for the update...
@@ -57,28 +50,6 @@ if defined IS_CUDA (
     copy /y uv.lock "!BACKUP_DIR!\" >nul
     git update-index --no-skip-worktree pyproject.toml 2>nul
     git update-index --no-skip-worktree uv.lock 2>nul
-    REM Only the PyTorch index line is carried over to the new pyproject.toml:
-    REM say so, and keep a copy, when the file has other local changes. A file
-    REM put back by an update that failed after its pull is the version of the
-    REM commit before that pull (ORIG_HEAD) plus the index line: no change.
-    for /f "tokens=1,2" %%A in ('git diff --numstat -- pyproject.toml 2^>nul') do (
-        if not "%%A %%B"=="1 1" set "KEEP_BACKUP=1"
-    )
-    if defined KEEP_BACKUP (
-        git rev-parse -q --verify ORIG_HEAD >nul 2>&1
-        if !errorlevel! equ 0 (
-            set "BASE_CHANGED="
-            for /f "tokens=1,2" %%A in ('git diff --numstat ORIG_HEAD -- pyproject.toml 2^>nul') do (
-                if not "%%A %%B"=="1 1" set "BASE_CHANGED=1"
-            )
-            if not defined BASE_CHANGED set "KEEP_BACKUP="
-        )
-    )
-    if defined KEEP_BACKUP (
-        echo Note: pyproject.toml has local changes besides the CUDA index. The
-        echo update replaces them; your previous file is kept as
-        echo   !BACKUP_DIR!\pyproject.toml
-    )
     git checkout -- pyproject.toml uv.lock
 ) else (
     REM The in-app yt-dlp update rewrites uv.lock; such a local change would
@@ -96,9 +67,27 @@ echo Pulling latest changes...
 git pull --ff-only
 if !errorlevel! neq 0 (
     echo Error: git pull failed. Resolve the issue above and re-run.
+    set "PULLED="
+    set "KEEP_BACKUP="
     goto :restore_and_fail
 )
+
+REM ---------------------------------------------------------------------------
+REM Keep everything above, down to and including the "git pull --ff-only" line,
+REM byte for byte as it is. cmd.exe reads a running batch file piece by piece:
+REM when the pull replaces this file, the update.bat that is running (the one
+REM from before the pull) carries on at the same byte offset in the new file -
+REM with the same beginning, that is the line right after the pull. Add new
+REM steps below this point only, and give every variable they use its value
+REM down here: of those, an earlier update.bat only sets IS_CUDA and BACKUP_DIR
+REM before its pull. pytest/test_install_scripts.py checks that the beginning
+REM stays unchanged.
+REM ---------------------------------------------------------------------------
 set "PULLED=1"
+set "KEEP_BACKUP="
+set "CUDA_VARIANT="
+if defined IS_CUDA call :read_previous_pyproject
+if not defined CUDA_VARIANT set "CUDA_VARIANT=cu128"
 
 if defined IS_CUDA (
     echo Re-applying the CUDA PyTorch index ^(!CUDA_VARIANT!^)...
@@ -160,6 +149,40 @@ echo.
 echo Update completed.
 echo.
 pause
+exit /b 0
+
+:read_previous_pyproject
+REM The pyproject.toml of the installation, as copied before the pull. It gives
+REM the CUDA variant of the PyTorch index to put back - cu128 unless the user
+REM picked another one, e.g. cu126 for an older driver.
+if not defined BACKUP_DIR exit /b 0
+if not exist "!BACKUP_DIR!\pyproject.toml" exit /b 0
+set "US_PREVIOUS_PYPROJECT=!BACKUP_DIR!\pyproject.toml"
+for /f "delims=" %%V in ('powershell -NoProfile -Command "$m = [regex]::Match([IO.File]::ReadAllText($env:US_PREVIOUS_PYPROJECT), 'whl/(cu[0-9]+)'); if ($m.Success) { $m.Groups[1].Value }"') do set "CUDA_VARIANT=%%V"
+REM Only the index line is carried over to the new pyproject.toml: say so, and
+REM keep the copy, when the file had other local changes - that is, when it is
+REM not the file of a recent commit with just the index line changed. Recent
+REM commits are the one before this pull (ORIG_HEAD) and the two HEAD was on
+REM before its latest moves: an update that failed after its pull put back
+REM the file of the commit before that pull.
+set "KEEP_BACKUP=1"
+for %%R in (ORIG_HEAD HEAD@{1} HEAD@{2}) do if defined KEEP_BACKUP call :compare_with_commit %%R
+del "!BACKUP_DIR!\pyproject.base" "!BACKUP_DIR!\numstat.txt" 2>nul
+if defined KEEP_BACKUP (
+    echo Note: pyproject.toml has local changes besides the CUDA index. The
+    echo update replaces them; your previous file is kept as
+    echo   !BACKUP_DIR!\pyproject.toml
+)
+exit /b 0
+
+:compare_with_commit
+REM Clears KEEP_BACKUP when the copy is the pyproject.toml of the given commit
+REM with at most one line changed
+git show "%~1:pyproject.toml" > "!BACKUP_DIR!\pyproject.base" 2>nul || exit /b 0
+git diff --no-index --numstat --ignore-cr-at-eol "!BACKUP_DIR!\pyproject.base" "!BACKUP_DIR!\pyproject.toml" > "!BACKUP_DIR!\numstat.txt" 2>nul
+if !errorlevel! gtr 1 exit /b 0
+for /f "usebackq tokens=1,2" %%A in ("!BACKUP_DIR!\numstat.txt") do if not "%%A %%B"=="1 1" exit /b 0
+set "KEEP_BACKUP="
 exit /b 0
 
 :restore_and_fail

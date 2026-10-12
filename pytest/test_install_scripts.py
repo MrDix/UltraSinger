@@ -4,9 +4,11 @@ Every script that locks the dependencies must lock the newest yt-dlp (video
 platforms change often, so the pinned yt-dlp soon fails to download) and fall
 back to the pinned version when that is not possible. update.sh, the Linux
 install scripts, auto_install.sh and the shell helpers are also run for real
-against throw-away git repositories with stubs for uv, nvidia-smi, node and npm.
+against throw-away git repositories with stubs for uv, nvidia-smi, node and npm;
+on Windows, so are update.bat and the batch helper.
 """
 
+import hashlib
 import os
 import re
 import shutil
@@ -75,6 +77,23 @@ def test_update_discards_a_local_lock_change_before_pulling(script):
     pull = _index(lines, lambda l: l.startswith("git pull"))
     assert discard < pull
     assert any("git diff --quiet HEAD -- uv.lock" in l for l in lines[:pull])
+
+
+# cmd.exe reads a running batch file piece by piece: when update.bat pulls a new
+# version of itself, the running one carries on at the same byte offset in the
+# new file. So everything up to and including the pull line stays as released.
+UPDATE_BAT_PULL_LINE = b"\r\ngit pull --ff-only\r\n"
+UPDATE_BAT_UNTIL_PULL_SHA256 = "f3a7bcdfbcf2fed45eb03c3d3ea10195469a65f4deee02d2676466bb28ceda59"
+
+
+def test_update_bat_keeps_its_beginning_up_to_the_pull():
+    """An update.bat that pulls this version must carry on right after the pull in it."""
+    data = (INSTALL / "update.bat").read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    assert data.count(UPDATE_BAT_PULL_LINE) == 1
+    end = data.index(UPDATE_BAT_PULL_LINE) + len(UPDATE_BAT_PULL_LINE)
+    assert hashlib.sha256(data[:end]).hexdigest() == UPDATE_BAT_UNTIL_PULL_SHA256, (
+        "install/update.bat changed before its pull: an update.bat that pulls this version would carry "
+        "on at the wrong place in it - add new steps after the pull (see the comment there)")
 
 
 WINDOWS_INSTALL_SCRIPTS = ["CPU/windows_cpu.bat", "CUDA/windows_cuda_gpu.bat"]
@@ -238,24 +257,39 @@ def _commit_lock(repo: Path, content: str) -> None:
     _git(repo, "push", "-q", "origin", "main")
 
 
-@pytest.fixture
-def install(tmp_path):
-    """An "installation" cloned from a remote whose uv.lock has moved on since."""
+def _installation(tmp_path: Path, script: str) -> Path:
+    """An "installation" with install/<script>, cloned from a remote whose uv.lock has moved on since."""
     remote, seed, app = tmp_path / "remote.git", tmp_path / "seed", tmp_path / "app"
     _git(tmp_path, "init", "-q", "--bare", str(remote))
     _git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
     _git(tmp_path, "clone", "-q", "-c", "core.autocrlf=false", str(remote), str(seed))
     _git(seed, "symbolic-ref", "HEAD", "refs/heads/main")
     (seed / "install").mkdir()
-    script = (INSTALL / "update.sh").read_text(encoding="utf-8").replace("\r\n", "\n")
-    (seed / "install" / "update.sh").write_text(script, encoding="utf-8", newline="\n")
+    text = (INSTALL / script).read_text(encoding="utf-8").replace("\r\n", "\n")
+    (seed / "install" / script).write_text(text, encoding="utf-8",
+                                           newline="\r\n" if script.endswith(".bat") else "\n")
     (seed / "pyproject.toml").write_text('url = "https://download.pytorch.org/whl/cpu"\n', encoding="utf-8")
     (seed / "uv.lock").write_text("lock v1\n", encoding="utf-8")
-    _git(seed, "add", "install/update.sh", "pyproject.toml", "uv.lock")
+    _git(seed, "add", f"install/{script}", "pyproject.toml", "uv.lock")
     _git(seed, "commit", "-qm", "init")
     _git(seed, "push", "-q", "origin", "main")
     _git(tmp_path, "clone", "-q", "-c", "core.autocrlf=false", str(remote), str(app))
     _commit_lock(seed, "lock v2\n")  # upstream changes uv.lock after the install
+    return app
+
+
+def _change_upstream_pyproject(app: Path, extra: str) -> None:
+    seed = app.parent / "seed"
+    (seed / "pyproject.toml").write_text(f'url = "https://download.pytorch.org/whl/cpu"\n{extra}',
+                                         encoding="utf-8")
+    _git(seed, "commit", "-qam", "pyproject")
+    _git(seed, "push", "-q", "origin", "main")
+
+
+@pytest.fixture
+def install(tmp_path):
+    """update.sh in an "installation" whose upstream has moved on; uv is a stub."""
+    app = _installation(tmp_path, "update.sh")
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -399,11 +433,7 @@ def test_update_after_a_failed_update_reports_no_local_changes(install):
     """A failed update puts the pyproject.toml of before its pull back; the next run must not call that an edit."""
     app, run = install
     _make_cuda(app)
-    seed = app.parent / "seed"
-    (seed / "pyproject.toml").write_text('url = "https://download.pytorch.org/whl/cpu"\nnew = "upstream"\n',
-                                         encoding="utf-8")
-    _git(seed, "commit", "-qam", "pyproject")
-    _git(seed, "push", "-q", "origin", "main")
+    _change_upstream_pyproject(app, 'new = "upstream"\n')
     result, calls = run(UV_STUB_FAIL_SYNC="1")
     assert result.returncode != 0 and "restoring the previous CUDA configuration" in result.stdout
     result, calls = run()
@@ -1147,3 +1177,134 @@ def test_bat_provider_needs_a_recent_node(bat_provider):
     assert result.returncode == 2
     assert "Node.js 22 or newer is needed" in result.stdout and "found v18.0.0" in result.stdout
     assert steps == [] and not bat_provider["checkout"].exists()
+
+
+# --------------------------------------------------------------------------
+# update.bat, run for real with cmd.exe (Windows only). uv is a small
+# compiled program here: a batch file called without "call" would end the
+# script that calls it.
+# --------------------------------------------------------------------------
+
+STUB_UV_CS = r"""
+using System; using System.IO;
+class Uv {
+    static bool On(string name) { return !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(name)); }
+    static int Main(string[] args) {
+        string call = string.Join(" ", args);
+        File.AppendAllText(Environment.GetEnvironmentVariable("UV_STUB_LOG"), call + "\n");
+        if (call == "lock --upgrade-package yt-dlp" && On("UV_STUB_FAIL_UPGRADE")) return 1;
+        if (call == "lock" && On("UV_STUB_FAIL_LOCK")) return 1;
+        if (call.StartsWith("sync")) {
+            Directory.CreateDirectory(".venv");
+            if (On("UV_STUB_FAIL_SYNC")) { File.WriteAllText(@".venv\partial", ""); return 1; }
+            File.WriteAllText(@".venv\marker-new", "");
+        }
+        return 0;
+    }
+}
+"""
+
+
+@pytest.fixture(scope="session")
+def stub_uv_exe(tmp_path_factory):
+    """A folder with a uv.exe that behaves like STUB_UV, built with the C# compiler that comes with Windows."""
+    csc = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe"
+    if not csc.is_file():
+        pytest.skip("needs the C# compiler that comes with Windows (csc.exe) to build a stand-in for uv")
+    bin_dir = tmp_path_factory.mktemp("uv_stub")
+    (bin_dir / "uv.cs").write_text(STUB_UV_CS, encoding="utf-8")
+    subprocess.run([str(csc), "/nologo", f"/out:{bin_dir / 'uv.exe'}", str(bin_dir / "uv.cs")], check=True,
+                   capture_output=True)
+    return bin_dir
+
+
+def _bat_runner(tmp_path: Path, bin_dir: Path, cwd: Path):
+    """Runs batch scripts with the stubs first on PATH and a home without the real uv in it."""
+    log = tmp_path / "uv.log"
+    for name in ("home", "tmp"):
+        (tmp_path / name).mkdir(exist_ok=True)
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}", USERPROFILE=str(tmp_path / "home"),
+               TEMP=str(tmp_path / "tmp"), TMP=str(tmp_path / "tmp"), UV_STUB_LOG=str(log), UV_LINK_MODE="copy")
+    for key in UV_STUB_SWITCHES:
+        env.pop(key, None)
+
+    def run(script: Path, **extra):
+        log.unlink(missing_ok=True)
+        result = subprocess.run(["cmd.exe", "/d", "/c", str(script)], cwd=cwd, env=dict(env, **extra),
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=120)
+        calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        return result, calls
+
+    return run
+
+
+@pytest.fixture
+def bat_update(tmp_path, stub_uv_exe):
+    """update.bat in an "installation" whose upstream has moved on; uv is a stub."""
+    app = _installation(tmp_path, "update.bat")
+    run = _bat_runner(tmp_path, stub_uv_exe, app)
+    return app, lambda **extra: run(app / "install" / "update.bat", **extra)
+
+
+@needs_cmd
+def test_bat_update_cuda_install_keeps_its_cuda_variant(bat_update):
+    app, run = bat_update
+    _make_cuda(app, "cu126")
+    _change_upstream_pyproject(app, 'new = "upstream"\n')
+    result, calls = run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    pyproject = (app / "pyproject.toml").read_text(encoding="utf-8")
+    assert "whl/cu126" in pyproject and 'new = "upstream"' in pyproject
+    assert (app / "uv.lock").read_text(encoding="utf-8") == "lock v2\n"  # the pull went through
+    assert _protected(app)
+    assert "local changes besides the CUDA index" not in result.stdout
+    assert calls == ["lock --upgrade-package yt-dlp", "sync --extra gui --extra scoring --extra potoken"]
+
+
+@needs_cmd
+def test_bat_update_cuda_install_keeps_a_copy_of_other_local_pyproject_changes(bat_update):
+    app, run = bat_update
+    _make_cuda(app, extra='extra = "mine"\n')
+    result, calls = run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "extra" not in (app / "pyproject.toml").read_text(encoding="utf-8")
+    kept = re.search(r"kept as\s+(\S+pyproject\.toml)", result.stdout)
+    assert kept, result.stdout
+    assert 'extra = "mine"' in Path(kept.group(1)).read_text(encoding="utf-8")
+
+
+@needs_cmd
+@pytest.mark.parametrize("more_upstream", [False, True], ids=["up-to-date", "new-commits"])
+def test_bat_update_after_a_failed_update_reports_no_local_changes(bat_update, more_upstream):
+    """A failed update puts the pyproject.toml of before its pull back; the next run must not call that an edit."""
+    app, run = bat_update
+    _make_cuda(app, "cu126")
+    _change_upstream_pyproject(app, 'new = "upstream"\n')
+    result, calls = run(UV_STUB_FAIL_SYNC="1")
+    assert result.returncode == 1
+    assert "restoring the previous CUDA configuration" in result.stdout
+    assert "The update is incomplete" in result.stdout and "install\\update.bat again" in result.stdout
+    if more_upstream:
+        _change_upstream_pyproject(app, 'new = "upstream"\nnewer = "upstream"\n')
+    result, calls = run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "local changes besides the CUDA index" not in result.stdout
+    pyproject = (app / "pyproject.toml").read_text(encoding="utf-8")
+    assert "whl/cu126" in pyproject and 'new = "upstream"' in pyproject
+    assert ('newer = "upstream"' in pyproject) == more_upstream
+    assert _protected(app)
+
+
+@needs_cmd
+def test_bat_update_reports_no_incomplete_update_when_the_pull_fails(bat_update, tmp_path):
+    app, run = bat_update
+    _make_cuda(app)
+    _git(app, "remote", "set-url", "origin", str(tmp_path / "missing.git"))
+    result, calls = run(PULLED="1", KEEP_BACKUP="1")  # not even when the environment has these variables
+    assert result.returncode == 1
+    assert "restoring the previous CUDA configuration" in result.stdout
+    assert "The update is incomplete" not in result.stdout
+    assert calls == []
+    assert _protected(app) and "whl/cu128" in (app / "pyproject.toml").read_text(encoding="utf-8")
+    assert not list((tmp_path / "tmp").glob("ultrasinger_update_*"))  # no copy kept
