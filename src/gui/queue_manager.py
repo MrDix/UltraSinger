@@ -401,7 +401,7 @@ class QueueManager(QObject):
                 "[Queue] Using browser-intercepted audio (yt-dlp bypassed)"
             )
             # Run UltraSinger with the local audio file as input, but pass
-            # the original video URL so metadata (title, artist, thumbnail)
+            # the original video URL so metadata (title, artist)
             # can still be fetched via yt-dlp extract_info(download=False).
             merged["video_url"] = item.input_source
             # Keep the stored snapshot in sync with the config actually passed
@@ -511,8 +511,9 @@ class QueueManager(QObject):
             info.pop("whisper_fallback", None)
             return
 
-        # Reference pipeline fell back to the transcription
-        if "Falling back to standard pipeline" in clean:
+        # Reference pipeline fell back to the transcription (the aligner's own
+        # messages, for an alignment that found no words, are in lower case)
+        if "falling back to standard pipeline" in clean.lower():
             info["whisper_fallback"] = True
             info["pipeline"] = "whisper"
             return
@@ -585,9 +586,10 @@ class QueueManager(QObject):
             elif info.get("lrclib_result") == "none":
                 info["lyrics_source"] = "transcribed"
                 info.setdefault("pipeline", "whisper")
-            elif "pipeline" not in info and "lrclib_result" not in info:
+            else:
+                # The transcription made the notes (also when no line above told more)
                 info["lyrics_source"] = "transcribed"
-                info["pipeline"] = "whisper"
+                info.setdefault("pipeline", "whisper")
 
         if exit_code == 0 and info:
             self.item_result_info.emit(item.id, dict(info))

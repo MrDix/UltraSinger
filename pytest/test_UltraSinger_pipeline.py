@@ -55,7 +55,8 @@ def _transcription(words, language):
 
 
 def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_language=("en", 0.95),
-         align=None, plain_align=None, remote=None, lyrics_check=None, mocks=None, **settings_values):
+         align=None, plain_align=None, remote=None, lyrics_check=None, mocks=None,
+         audio_paths=("vocals.wav", "vocals_mute.wav"), **settings_values):
     """Run run() with fakes. Returns the notes it wrote, its output and the output folder's files.
 
     ``align``/``plain_align``: fake alignment of synced/plain lyrics (the remote text is aligned
@@ -87,7 +88,7 @@ def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_lang
         for name, fake in (
                 ("InitProcessData", lambda: process_data),
                 ("setup_cache_folder", lambda: folder),
-                ("CreateProcessAudio", lambda data: ("vocals.wav", "vocals_mute.wav")),
+                ("CreateProcessAudio", lambda data: audio_paths),
                 ("detect_key_from_audio", lambda path: ("C", "major")),
                 ("pitch_audio", lambda paths: pitched_data),
                 ("TranscribeAudio", transcribe),
@@ -175,10 +176,11 @@ class TestLanguageSourceInInfoFile(unittest.TestCase):
 class TestPipelineInInfoFile(unittest.TestCase):
     """The [Pipeline] section of the info file names what made the notes."""
 
-    def _info(self, ignore_audio=False, disable_reference_lyrics=False, **kwargs):
+    def _info(self, ignore_audio=False, disable_reference_lyrics=False, llm_correct_lyrics=False, **kwargs):
         with tempfile.TemporaryDirectory() as folder, \
                 patch.object(us.settings, "ignore_audio", ignore_audio), \
                 patch.object(us.settings, "disable_reference_lyrics", disable_reference_lyrics), \
+                patch.object(us.settings, "llm_correct_lyrics", llm_correct_lyrics), \
                 patch.object(us.settings, "language", None), \
                 contextlib.redirect_stdout(io.StringIO()):
             us._write_settings_info_file(folder, None, None, **kwargs)
@@ -211,9 +213,13 @@ class TestPipelineInInfoFile(unittest.TestCase):
         self.assertNotIn("alignment failed", info)
 
     def test_repitch(self):
-        info = self._info(ignore_audio=True)
+        info = self._info(ignore_audio=True, llm_correct_lyrics=True, lang_source="txt", detected_language="de")
         self.assertIn("Pipeline:                 Re-pitch (notes and lyrics of the UltraStar txt)", info)
         self.assertNotIn("Standard transcription", info)
+        # no transcription ran: nothing about what it was given or corrected
+        self.assertNotIn("Transcriber language hint", info)
+        self.assertIn("Status:                   not run (no local transcription to correct)", info)
+        self.assertIn("Language detection:        language tag of the UltraStar txt -> de", info)
 
     def test_language_hint_only_with_language_option(self):
         info = self._info(lang_source="video_platform", detected_language="en")
@@ -470,6 +476,48 @@ class TestVideoUrlNaming(unittest.TestCase):
             self.assertEqual((process_data.media_info.artist, process_data.media_info.title),
                              ("Artist", "Song: Title?"))
             self.assertEqual((process_data.media_info.language, process_data.media_info.video_url), ("en", url))
+
+
+class TestRepitchRun(unittest.TestCase):
+    """A re-pitch of an UltraStar txt: the info file names the txt's language and no transcription."""
+
+    def test_info_file(self):
+        process_data = _process_data(language="de")
+        repitched = [us.MidiSegment("C4", 1.0, 1.4, "eins ")]
+        mocks = {}
+        with patch.object(us, "create_repitched_midi_segments_from_ultrastar_txt", return_value=repitched):
+            notes, _, files = _run(process_data, _pitch_track([(1.0, 1.4, "C4")], length=2.5),
+                                   _transcription([], "en"), mocks=mocks, ignore_audio=True,
+                                   write_settings_info=True)
+        mocks["TranscribeAudio"].assert_not_called()
+        self.assertEqual([n[0] for n in notes], ["eins "])
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Language detection:        language tag of the UltraStar txt -> de", info)
+        self.assertNotIn("Transcriber language hint", info)
+
+
+class TestPlotWithoutSeparation(unittest.TestCase):
+    """--plot with --disable_separation and --disable_karaoke: no vocals stem to plot, the run goes on."""
+
+    def test_plots_what_exists(self):
+        import numpy as np
+        import soundfile as sf
+
+        with tempfile.TemporaryDirectory() as audio_folder:
+            processing_audio = os.path.join(audio_folder, "song_mute.wav")
+            sf.write(processing_audio, 0.1 * np.sin(np.linspace(0, 2000, 16000)), 16000)
+            process_data = _process_data()
+            # what the separation step names, although it made no stems
+            process_data.process_data_paths.vocals_audio_file_path = os.path.join(audio_folder, "vocals.wav")
+            notes, out, _ = _run(
+                process_data, _pitch_track([(1.0, 1.24, "C4")], length=2.5),
+                _transcription([("one ", 1.0, 1.24)], "en"), bpm_override=60.0,
+                audio_paths=("song_mono.wav", processing_audio), create_plot=True,
+                use_separated_vocal=False, create_karaoke=False,
+            )
+        self.assertEqual([n[0] for n in notes], ["one "])
+        self.assertIn("Creating plot: processing audio", out)
+        self.assertNotIn("Creating plot: vocals.wav", out)
 
 
 class TestOutputWithoutSeparation(unittest.TestCase):

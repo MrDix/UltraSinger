@@ -33,7 +33,8 @@ def print_help() -> None:
                             is a local audio/video file instead of a URL. This is used by the
                             GUI's browser-based download: the audio is pre-downloaded via the
                             embedded browser (bypassing bot detection), so the input is a local
-                            file, but the video URL is still needed for artist/title/thumbnail.
+                            file, but the video URL is still needed for artist/title (the song is
+                            looked up and named by them; the cover comes from that lookup).
                             Not needed when -i is already a video URL.
                             (--youtube_url is accepted as a deprecated alias.)
     --yt_po_token           GVS Proof-of-Origin token for yt-dlp (web.gvs). Without it the video

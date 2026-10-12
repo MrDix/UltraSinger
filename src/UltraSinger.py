@@ -292,6 +292,7 @@ def run() -> tuple[str, Score, Score]:
     # Track language source for info file
     _lang_source = (
         "manual" if settings.language is not None
+        else "txt" if settings.ignore_audio and process_data.media_info.language  # the re-pitched txt's tag
         else "video_platform" if process_data.media_info.language
         else "pending"  # will be set to "whisper_fast" or "transcription" later
     )
@@ -393,7 +394,7 @@ def run() -> tuple[str, Score, Score]:
         whisper_skipped = True
         print(
             f"{ULTRASINGER_HEAD} "
-            f"{cyan_highlighted('Remote speech-to-text is on — the local transcription only runs if it fails')}"
+            f"{cyan_highlighted('Remote speech-to-text is on — found lyrics or the remote text make the notes; the local transcription only runs when neither can be aligned')}"
         )
 
     if not settings.ignore_audio and not whisper_skipped:
@@ -1217,7 +1218,9 @@ def _write_settings_info_file(
 
             # Pipeline: what made the notes. The transcription is skipped while
             # synced lyrics found before it, or remote speech-to-text, can make
-            # them (whisper_skipped); it only runs when they fail.
+            # them (whisper_skipped); it only runs when they fail. A re-pitch of
+            # an UltraStar txt never transcribes.
+            transcription_ran = not whisper_skipped and not settings.ignore_audio
             f.write("[Pipeline]\n")
             if has_synced_lyrics:
                 synced_line = "  LRCLIB synced lyrics:     found (but alignment failed)\n"
@@ -1267,6 +1270,7 @@ def _write_settings_info_file(
             # Language detection method
             _LANG_SOURCE_LABELS = {
                 "manual": f"manual (--language {settings.language})",
+                "txt": f"language tag of the UltraStar txt -> {detected_language}",
                 "video_platform": f"video platform metadata -> {detected_language}",
                 "whisper_fast": f"Whisper tiny (fast) -> {detected_language}",
                 "transcription": f"full transcription -> {detected_language}",
@@ -1279,7 +1283,7 @@ def _write_settings_info_file(
             # Language hint: did the transcriber receive an explicit language?
             # Only --language is passed to it; it detects the language itself otherwise.
             whisper_had_hint = settings.language is not None
-            if not whisper_skipped or reference_recovered:
+            if transcription_ran:
                 if whisper_had_hint:
                     hint_lang = settings.language or detected_language or "?"
                     f.write(f"  Transcriber language hint: yes (--language {hint_lang})\n")
@@ -1419,7 +1423,7 @@ def _write_settings_info_file(
                         f.write(f"  Status:                   FAILED (all {llm_result.chunks_total} chunks failed{retry_info})\n")
                     if llm_result.last_error:
                         f.write(f"  Last error:               {llm_result.last_error}\n")
-                elif whisper_skipped:
+                elif not transcription_ran:
                     # It corrects the words of the local transcription
                     f.write("  Status:                   not run (no local transcription to correct)\n")
             f.write("\n")

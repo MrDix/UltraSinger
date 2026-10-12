@@ -155,6 +155,16 @@ class TestParseOutputLine:
         assert item.result_info["whisper_fallback"] is True
         assert item.result_info["pipeline"] == "whisper"
 
+    def test_fallback_after_alignment_without_words(self, queue_manager):
+        """The aligner's own fallback message is in lower case."""
+        item = _make_item()
+        queue_manager._current_item = item
+        queue_manager._parse_output_line(
+            "[UltraSinger] Alignment returned no words -- falling back to standard pipeline"
+        )
+        assert item.result_info["whisper_fallback"] is True
+        assert item.result_info["pipeline"] == "whisper"
+
     def test_plain_lyrics_after_failed_synced_alignment(self, queue_manager):
         item = _make_item()
         queue_manager._current_item = item
@@ -406,6 +416,19 @@ class TestLyricsSourceDerivation:
             queue_manager._on_item_finished(0)
 
             assert item.result_info["lyrics_source"] == expected
+
+    def test_no_label_left_empty(self, queue_manager):
+        """Synced lyrics found, but no line told what made the notes: the transcription did."""
+        item = _make_item()
+        item.result_info = {"lrclib_result": "synced", "language": "en"}
+        queue_manager._items = [item]
+        queue_manager._current_item = item
+        queue_manager._running = True
+
+        queue_manager._on_item_finished(0)
+
+        assert item.result_info["lyrics_source"] == "transcribed"
+        assert item.result_info["pipeline"] == "whisper"
 
     def test_transcribed_no_lrclib(self, queue_manager):
         item = _make_item()

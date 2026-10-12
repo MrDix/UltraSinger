@@ -437,8 +437,9 @@ _Not all options working now!_
                             well when the filename is descriptive but fails for generic
                             names like "video.avi".
                             --video_url provides a fallback: the audio is loaded from the
-                            local file (-i), but artist/title/thumbnail are fetched from
-                            the video URL instead of relying on the filename.
+                            local file (-i), but artist/title are fetched from the video
+                            URL instead of relying on the filename (the cover comes from
+                            the lookup by them).
                             The GUI uses this automatically when downloading via the
                             embedded browser (pre-downloaded audio + video platform metadata).
                             Not needed when -i is already a video URL.

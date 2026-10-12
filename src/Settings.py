@@ -14,6 +14,9 @@ from modules.Ultrastar.ultrastar_txt import FormatVersion
 @dataclass_json
 @dataclass
 class Settings:
+    # Every setting needs a plain class-level default (no default_factory, nothing
+    # set only in __post_init__): init_settings() starts each run by clearing the
+    # instance values (vars(settings).clear()), so the class defaults show again.
 
     APP_VERSION = "0.1.0.dev1"
     CONFIDENCE_THRESHOLD = 0.6
