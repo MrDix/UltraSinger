@@ -3,6 +3,7 @@
 import copy
 import getopt
 import importlib.util
+import math
 import os
 import sys
 import warnings
@@ -1157,6 +1158,10 @@ def _write_settings_info_file(
             if settings.ignore_audio:
                 f.write("  Pipeline:                 Re-pitch (notes and lyrics of the UltraStar txt)\n")
                 f.write("  Transcription:            skipped\n")
+            elif settings.disable_reference_lyrics:
+                f.write("  Pipeline:                 Standard transcription (reference lyrics disabled)\n")
+                f.write("  Transcription:            full\n")
+                f.write("  Alignment:                WhisperX wav2vec2\n")
             elif reference_first_used and reference_recovered:
                 f.write("  Pipeline:                 Reference-Lyrics-First (recovered after language correction)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
@@ -2298,13 +2303,17 @@ def finish_cache_folder(cache_folder_path: str) -> None:
 
 
 def _option_number(opt: str, arg: str, kind: type = float):
-    """The number given to an option; a clear error and exit when it is none."""
+    """The number given to an option; a clear error and exit when it is none
+    (also for "inf" and "nan")."""
     try:
-        return kind(arg)
+        value = kind(arg)
+        if math.isfinite(value):
+            return value
     except ValueError:
-        what = "a whole number" if kind is int else "a number"
-        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} {opt} needs {what}, got {blue_highlighted(arg)}")
-        sys.exit(1)
+        pass
+    what = "a whole number" if kind is int else "a number"
+    print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} {opt} needs {what}, got {blue_highlighted(arg)}")
+    sys.exit(1)
 
 
 def init_settings(argv: list[str]) -> Settings:
@@ -2336,7 +2345,7 @@ def init_settings(argv: list[str]) -> Settings:
             except ValueError:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --bpm must be a positive number, got {arg}")
                 sys.exit(1)
-            if val <= 0:
+            if not math.isfinite(val) or val <= 0:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --bpm must be a positive number, got {val}")
                 sys.exit(1)
             settings.bpm_override = val

@@ -147,9 +147,9 @@ def print_help() -> None:
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain precise
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.
-                            Without synced lyrics (or when their alignment fails), plain lyrics are aligned
-                            the same way, then a --remote_stt text. When disabled, or when none of them
-                            can be aligned, the notes come from the transcription.
+                            Without synced lyrics, plain lyrics are aligned the same way, then a --remote_stt
+                            text. When disabled, or when none of them can be aligned, the notes come from the
+                            transcription.
 
     [freestyle detection]
     --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle

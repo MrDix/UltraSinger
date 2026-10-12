@@ -162,9 +162,10 @@ class TestLanguageSourceInInfoFile(unittest.TestCase):
 class TestPipelineInInfoFile(unittest.TestCase):
     """The [Pipeline] section of the info file names what made the notes."""
 
-    def _info(self, ignore_audio=False, **kwargs):
+    def _info(self, ignore_audio=False, disable_reference_lyrics=False, **kwargs):
         with tempfile.TemporaryDirectory() as folder, \
                 patch.object(us.settings, "ignore_audio", ignore_audio), \
+                patch.object(us.settings, "disable_reference_lyrics", disable_reference_lyrics), \
                 patch.object(us.settings, "language", None), \
                 contextlib.redirect_stdout(io.StringIO()):
             us._write_settings_info_file(folder, None, None, **kwargs)
@@ -192,6 +193,12 @@ class TestPipelineInInfoFile(unittest.TestCase):
     def test_synced(self):
         info = self._info(reference_first_used=True, has_synced_lyrics=True, whisper_skipped=True)
         self.assertIn("Pipeline:                 Reference-Lyrics-First (synced)", info)
+
+    def test_reference_lyrics_disabled(self):
+        # The lookup after the transcription still finds synced lyrics; they were never aligned
+        info = self._info(disable_reference_lyrics=True, has_synced_lyrics=True)
+        self.assertIn("Pipeline:                 Standard transcription (reference lyrics disabled)", info)
+        self.assertNotIn("alignment failed", info)
 
     def test_repitch(self):
         info = self._info(ignore_audio=True)

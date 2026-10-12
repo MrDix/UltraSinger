@@ -37,7 +37,10 @@ class TestOptionErrors(unittest.TestCase):
         for argv, expected in ((["--vad_onset", "abc"], "--vad_onset needs a number"),
                                (["--whisper_batch_size", "2.5"], "--whisper_batch_size needs a whole number"),
                                (["--llm_retry_max", "x"], "--llm_retry_max needs a whole number"),
-                               (["--refine_hit_ratio", ""], "--refine_hit_ratio needs a number")):
+                               (["--refine_hit_ratio", ""], "--refine_hit_ratio needs a number"),
+                               (["--remote_stt_timeout", "inf"], "--remote_stt_timeout needs a number"),
+                               (["--refine_timing_threshold", "nan"], "--refine_timing_threshold needs a number"),
+                               (["--bpm", "inf"], "--bpm must be a positive number")):
             with self.subTest(argv=argv):
                 code, out = _stop(["-i", "test.mp3", *argv])
                 self.assertEqual(code, 1)

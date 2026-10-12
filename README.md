@@ -319,9 +319,9 @@ _Not all options working now!_
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain
                             precise word-level timing — dramatically improving lyrics coverage and timing
-                            accuracy. Without synced lyrics (or when their alignment fails), plain lyrics
-                            are aligned the same way, then a --remote_stt text. When disabled, or
-                            when none of them can be aligned, the notes come from the transcription.
+                            accuracy. Without synced lyrics, plain lyrics are aligned the same way, then
+                            a --remote_stt text. When disabled, or when none of them can be aligned, the
+                            notes come from the transcription.
                             Enabled by default.
 
     [freestyle detection]
@@ -703,7 +703,7 @@ The pipeline is **enabled by default** and falls back to the standard transcript
 
 **Placing the lines:** The words are placed with wav2vec2 forced alignment over the whole vocal track, and the LRC times of the lines check the result. Four alignments are made: with the model run over the whole song or over 30-s pieces, each with two ways of ending the path after the last word. The one with the most lines at their LRC times is used. A line that lands in a poor place moves to a clearly better place near its LRC time, and lines at the end that the recording does not have (lyrics of a longer version) are left out. On a benchmark of 89 songs, the share of words that start more than 1 s off went from 6.5 % to 4.9 %. When there is not enough memory to run the model over the whole song at once, the 30-s pieces are used alone.
 
-**Plain lyrics** from LRCLIB (without timestamps) are looked up after the transcription. They first **post-correct** it by comparing words against the verified lyrics text, improving recall by ~5 percentage points. When no synced lyrics could be aligned, the plain lyrics are then aligned with wav2vec2 in the same way and make the notes. Only when that fails too does the timing come from the transcription.
+**Plain lyrics** from LRCLIB (without timestamps) are looked up after the transcription. They first **post-correct** it by comparing words against the verified lyrics text, improving recall by ~5 percentage points. When no synced lyrics were found, the plain lyrics are then aligned with wav2vec2 in the same way and make the notes. Only when that fails too does the timing come from the transcription.
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used.
 
