@@ -18,7 +18,8 @@ previous (degraded) behaviour.
 Provider server options (the plugin auto-detects the default port 4416):
   * Node.js: the install scripts build the provider under ``.potoken/``;
     the GUI launches ``node <server>/build/main.js`` on startup.
-  * Docker:  docker run -d --rm -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
+  * Docker:  docker run -d --rm -p 127.0.0.1:4416:4416 brainicism/bgutil-ytdlp-pot-provider:<version>
+    with <version> = the version of the installed plugin.
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = "http://127.0.0.1:4416"
 _DEFAULT_PORT = 4416
 _DOCKER_IMAGE = "brainicism/bgutil-ytdlp-pot-provider"
+# Image version when the plugin's version cannot be read (the one uv.lock pins)
+_DOCKER_FALLBACK_VERSION = "2.0.2"
 _CONTAINER_PREFIX = "ultrasinger-bgutil-pot"
 _PING_TIMEOUT = 2.0
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -299,18 +302,34 @@ def _docker_available(docker: str) -> bool:
         return False
 
 
+def _docker_image() -> str:
+    """The provider image in the version of the installed plugin.
+
+    The plugin refuses a provider of another major version, and an image
+    without a version would be whatever release is the newest.
+    """
+    import importlib.metadata
+
+    try:
+        version = importlib.metadata.version(_PLUGIN_DIST)
+    except importlib.metadata.PackageNotFoundError:
+        version = _DOCKER_FALLBACK_VERSION
+    return f"{_DOCKER_IMAGE}:{version}"
+
+
 def _start_docker_provider(docker: str, port: int) -> str:
     """Best-effort: launch the provider container.
 
     Returns the container id on success, "" on failure.  Uses a
     process-unique container name and captures the id so cleanup only ever
-    touches the container this process started.
+    touches the container this process started.  The port is published on
+    the loopback address only, so other machines cannot use the provider.
     """
     name = f"{_CONTAINER_PREFIX}-{os.getpid()}"
     try:
         r = subprocess.run(
             [docker, "run", "-d", "--rm", "--name", name,
-             "-p", f"{port}:4416", _DOCKER_IMAGE],
+             "-p", f"127.0.0.1:{port}:4416", _docker_image()],
             capture_output=True, timeout=60,
             creationflags=_CREATE_NO_WINDOW,
         )

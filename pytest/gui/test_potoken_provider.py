@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 from unittest.mock import MagicMock, patch
 
 from src.gui import potoken_provider as pp
@@ -318,3 +319,23 @@ class TestStopProvider:
         with patch("subprocess.run") as run:
             pp.stop_provider_if_started(status)
         run.assert_not_called()
+
+
+class TestStartDockerProvider:
+    def _docker_command(self, version):
+        result = MagicMock(returncode=0, stdout=b"abc123\n", stderr=b"")
+        with patch("subprocess.run", return_value=result) as run, \
+             patch("importlib.metadata.version", version):
+            assert pp._start_docker_provider("/usr/bin/docker", 4416) == "abc123"
+        return run.call_args[0][0]
+
+    def test_port_is_published_on_loopback_only(self):
+        cmd = self._docker_command(MagicMock(return_value="2.0.2"))
+        assert cmd[cmd.index("-p") + 1] == "127.0.0.1:4416:4416"
+
+    def test_image_has_the_plugin_version(self):
+        """The plugin refuses a provider of another major version."""
+        image = "brainicism/bgutil-ytdlp-pot-provider"
+        assert self._docker_command(MagicMock(return_value="2.0.2"))[-1] == f"{image}:2.0.2"
+        missing = MagicMock(side_effect=importlib.metadata.PackageNotFoundError)
+        assert self._docker_command(missing)[-1] == f"{image}:{pp._DOCKER_FALLBACK_VERSION}"

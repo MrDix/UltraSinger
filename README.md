@@ -191,9 +191,9 @@ The video platform now delivers its player streams via **SABR**, where the media
 To restore full-quality downloads UltraSinger uses the maintained [`bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider) yt-dlp plugin (installed by the install scripts via the `potoken` extra). The plugin fetches PO tokens from a small local **provider server**.
 
 - **Node.js (default, no Docker):** if [Node.js](https://nodejs.org) 22 or newer is installed, the install scripts build the provider automatically into `.potoken/` and the **GUI starts it on launch and stops it on exit** — nothing else to do. If Node.js was missing during install, install it and re-run the install script. The console tab reports the provider status (`[PO-Token] …`). The provider is always built from one fixed release (the one that matches the plugin version in `uv.lock`, checked by its commit, with the exact dependency versions of its lockfile); `install/update` moves an existing provider to it.
-- **Docker (fallback):** if no Node.js provider is set up but Docker is available, the GUI auto-starts the container `brainicism/bgutil-ytdlp-pot-provider` on port 4416 instead. You can also run it yourself:
+- **Docker (fallback):** if no Node.js provider is set up but Docker is available, the GUI auto-starts the container `brainicism/bgutil-ytdlp-pot-provider` on port 4416 instead. It uses the version of the installed plugin and is reachable only from this computer. You can also run it yourself. Replace `<version>` with the plugin's version (`uv pip show bgutil-ytdlp-pot-provider`): the plugin refuses a provider of another major version.
   ```bash
-  docker run -d --rm -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
+  docker run -d --rm -p 127.0.0.1:4416:4416 brainicism/bgutil-ytdlp-pot-provider:<version>
   ```
 
 Once a provider responds on `http://127.0.0.1:4416`, `yt-dlp` uses it transparently for every download (GUI and CLI). If no provider is available the app still works, but video downloads fall back to the limited formats.
