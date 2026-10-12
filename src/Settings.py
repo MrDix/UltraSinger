@@ -93,7 +93,8 @@ class Settings:
     audio_separator_model = AudioSeparatorModel.MEL_BAND_ROFORMER  # Mel-Band-Roformer (default; better pipeline results than BS despite lower SDR)
 
     # Whisper
-    transcriber = "whisper"  # whisper
+    transcriber = "auto"  # auto|qwen3|whisper: auto = Qwen3-ASR on a GPU with enough free memory, else Whisper
+    transcriber_used = None  # set per run: the transcriber that ran, for the settings info file
     whisper_model = WhisperModel.LARGE_V2  # Multilingual model tiny|base|small|medium|large-v1|large-v2|large-v3
     # English-only model tiny.en|base.en|small.en|medium.en
     whisper_align_model = None   # Model for other languages from huggingface.co e.g -> "gigant/romanian-wav2vec2"

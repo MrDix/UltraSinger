@@ -450,7 +450,7 @@ class QueueManager(QObject):
             info["uscore"] = m.group(1).strip()
             return
 
-        # Language detection (fast Whisper tiny, full Whisper, video platform metadata, or --language)
+        # Language detection (fast Whisper tiny, full transcription, video platform metadata, or --language)
         lang_pat = r"([A-Za-z0-9_-]+)"
         m = (re.search(rf"Language detected:\s*{lang_pat}", clean)
              or re.search(rf"Detected language:\s*{lang_pat}", clean)
@@ -493,8 +493,9 @@ class QueueManager(QObject):
             info["lrclib_result"] = "none"
             return
 
-        # Synced lyrics found — skipping Whisper (reference pipeline)
-        if "Synced lyrics found" in clean and "skipping Whisper" in clean:
+        # Synced lyrics found — skipping the transcription (reference pipeline;
+        # older versions said "skipping Whisper transcription")
+        if "Synced lyrics found" in clean and "skipping" in clean:
             info["whisper_skipped"] = True
             return
 
@@ -510,7 +511,7 @@ class QueueManager(QObject):
             info.pop("whisper_fallback", None)
             return
 
-        # Reference pipeline fell back to Whisper
+        # Reference pipeline fell back to the transcription
         if "Falling back to standard pipeline" in clean:
             info["whisper_fallback"] = True
             info["pipeline"] = "whisper"

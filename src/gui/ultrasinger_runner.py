@@ -307,6 +307,8 @@ class UltraSingerRunner(QObject):
         if config.get("cookie_file") and Path(config["cookie_file"]).exists():
             args.extend(["--cookiefile", config["cookie_file"]])
 
+        # Transcriber; it wins over the transcriber that --whisper alone selects
+        args.extend(["--transcriber", config.get("transcriber") or "auto"])
         # Whisper settings
         if config.get("whisper_model"):
             args.extend(["--whisper", config["whisper_model"]])

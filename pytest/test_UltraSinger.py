@@ -194,6 +194,143 @@ class TestLinebreakTimingFlag(unittest.TestCase):
         init_settings(["-i", "test.mp3"])  # reset the shared settings
 
 
+class TestTranscriberFlag(unittest.TestCase):
+    """--transcriber chooses the transcriber; a Whisper model alone chooses Whisper."""
+
+    def test_default_auto(self):
+        self.assertEqual(init_settings(["-i", "test.mp3"]).transcriber, "auto")
+
+    def test_values(self):
+        for value in ("auto", "qwen3", "whisper"):
+            with self.subTest(value=value):
+                self.assertEqual(init_settings(["-i", "test.mp3", "--transcriber", value]).transcriber, value)
+        init_settings(["-i", "test.mp3"])
+
+    def test_whisper_model_alone_chooses_whisper(self):
+        self.assertEqual(init_settings(["-i", "test.mp3", "--whisper", "small"]).transcriber, "whisper")
+
+    def test_transcriber_wins_in_any_order(self):
+        for argv in (["--whisper", "small", "--transcriber", "auto"], ["--transcriber", "auto", "--whisper", "small"]):
+            with self.subTest(argv=argv):
+                settings = init_settings(["-i", "test.mp3", *argv])
+                self.assertEqual((settings.transcriber, settings.whisper_model.value), ("auto", "small"))
+        init_settings(["-i", "test.mp3"])
+
+    def test_unknown_value(self):
+        with self.assertRaises(SystemExit):
+            init_settings(["-i", "test.mp3", "--transcriber", "other"])
+        init_settings(["-i", "test.mp3"])
+
+
+class TestTranscribeAudioDispatch(unittest.TestCase):
+    """transcribe_audio runs the chosen transcriber, caches under its name and falls back to Whisper."""
+
+    QWEN3 = None  # TranscriberChoice("qwen3", ...), set in setUp
+
+    def setUp(self):
+        from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
+        self.QWEN3 = TranscriberChoice("qwen3", 2, "6.0 GB of GPU memory free")
+
+    def _run(self, choice, requested="auto", qwen_error=None, cached=None, force_whisper_cpu=False):
+        import io
+        import os
+        import tempfile
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+
+        import src.UltraSinger as us
+        from src.modules.Speech_Recognition.TranscriptionResult import TranscriptionResult
+
+        result = TranscriptionResult([], "en")
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as cache, \
+                patch.object(us, "choose_transcriber", return_value=choice) as choose, \
+                patch.object(us, "transcribe_with_qwen3", return_value=result, side_effect=qwen_error) as qwen, \
+                patch.object(us, "transcribe_with_whisper", return_value=result) as whisper, \
+                patch.object(us, "release_gpu_memory") as release, \
+                patch.object(us.settings, "transcriber", requested), \
+                patch.object(us.settings, "force_whisper_cpu", force_whisper_cpu), \
+                patch.object(us.settings, "skip_cache_transcription", False), \
+                redirect_stdout(out):
+            if cached:
+                with open(os.path.join(cache, cached), "w", encoding="utf-8") as file:
+                    file.write(TranscriptionResult([], "de").to_json())
+            transcribed = us.transcribe_audio(cache, "audio.wav")
+            files = os.listdir(cache)
+        return {"choose": choose, "qwen": qwen, "whisper": whisper, "release": release, "files": files,
+                "used": us.settings.transcriber_used, "out": out.getvalue(), "result": transcribed}
+
+    def test_qwen3(self):
+        run = self._run(self.QWEN3)
+        run["qwen"].assert_called_once()
+        run["whisper"].assert_not_called()
+        self.assertTrue(run["files"][0].startswith("qwen3_1.7B_"))
+        self.assertEqual(run["used"], "qwen3 (Qwen/Qwen3-ASR-1.7B)")
+
+    def test_whisper_fallback_keeps_its_cache_name(self):
+        from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
+        run = self._run(TranscriberChoice("whisper", reason="Qwen3-ASR needs a GPU"))
+        run["qwen"].assert_not_called()
+        run["whisper"].assert_called_once()
+        self.assertTrue(run["files"][0].startswith("whisper_"))
+        self.assertTrue(run["used"].startswith("whisper ("))
+
+    def test_note_only_when_qwen3_was_asked_for(self):
+        from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
+        choice = TranscriberChoice("whisper", reason="Qwen3-ASR needs a GPU")
+        auto = self._run(choice)["out"]
+        self.assertIn("Transcribing with Whisper: Qwen3-ASR needs a GPU", auto)
+        self.assertNotIn("Note:", auto)
+        self.assertIn("Note:", self._run(choice, requested="qwen3")["out"])
+        self.assertNotIn("Whisper:", self._run(TranscriberChoice("whisper", reason="selected"), "whisper")["out"])
+
+    def test_whisper_takes_over_when_qwen3_fails(self):
+        # the class as the pipeline imports it (src.modules... would be another class object)
+        from src.UltraSinger import QwenFailed
+        for requested in ("auto", "qwen3"):
+            with self.subTest(requested=requested):
+                run = self._run(self.QWEN3, requested,
+                                qwen_error=QwenFailed("Qwen3-ASR failed (RuntimeError: CUDA out of memory.)"))
+                run["whisper"].assert_called_once()
+                # what the failed attempt left on the GPU is handed back before Whisper loads
+                run["release"].assert_called_once()
+                self.assertIn("Note:", run["out"])
+                self.assertIn("Qwen3-ASR failed (RuntimeError: CUDA out of memory.)", run["out"])
+                self.assertTrue(run["used"].startswith("whisper ("))
+                self.assertFalse(any(name.startswith("qwen3_") for name in run["files"]))
+
+    def test_other_errors_are_passed_on(self):
+        # e.g. the alignment failing: Whisper would run the same alignment
+        with self.assertRaises(RuntimeError):
+            self._run(self.QWEN3, qwen_error=RuntimeError("alignment failed"))
+
+    def test_whisper_takes_over_for_an_unknown_song_language(self):
+        # the class as the pipeline imports it (src.modules... would be another class object)
+        from src.UltraSinger import QwenUnavailable
+        run = self._run(self.QWEN3, qwen_error=QwenUnavailable("Qwen3-ASR does not transcribe the language uk"))
+        run["whisper"].assert_called_once()
+        self.assertIn("Transcribing with Whisper: Qwen3-ASR does not transcribe the language uk", run["out"])
+
+    def test_cached_qwen3_transcription_needs_no_gpu(self):
+        from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
+        run = self._run(TranscriberChoice("whisper", reason="only 1.0 GB of GPU memory free"),
+                        cached="qwen3_1.7B_None_None_p30_aligned.json")
+        run["choose"].assert_not_called()
+        run["qwen"].assert_not_called()
+        run["whisper"].assert_not_called()
+        self.assertEqual((run["result"].detected_language, run["used"]), ("de", "qwen3 (Qwen/Qwen3-ASR-1.7B)"))
+        # Whisper, when asked for, does not take it
+        self.assertEqual(self._run(TranscriberChoice("whisper", reason="selected"), "whisper",
+                                   cached="qwen3_1.7B_None_None_p30_aligned.json")["whisper"].call_count, 1)
+
+    def test_force_whisper_cpu(self):
+        run = self._run(self.QWEN3, force_whisper_cpu=True)
+        run["choose"].assert_not_called()
+        run["qwen"].assert_not_called()
+        run["whisper"].assert_called_once()
+        self.assertIn("--force_whisper_cpu keeps the transcription on the CPU", run["out"])
+
+
 class TestLeadVocalPitchFlag(unittest.TestCase):
     def test_default_on(self):
         self.assertTrue(Settings().lead_vocal_pitch)

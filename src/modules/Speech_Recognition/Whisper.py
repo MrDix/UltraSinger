@@ -186,7 +186,7 @@ def transcribe_with_whisper(
     if compute_type is None:
         compute_type = "float16" if device == "cuda" else "int8"
 
-    loaded_whisper_model = model_a = audio = None
+    loaded_whisper_model = audio = None
     try:
         torch.cuda.empty_cache()
 
@@ -247,54 +247,12 @@ def transcribe_with_whisper(
                 f"Consider omitting --language for auto-detection."
             )
 
-        # load alignment model and metadata
-        try:
-            model_a, metadata = whisperx.load_align_model(
-                language_code=language, device=device, model_name=alignment_model
-            )
-        except ValueError as ve:
-            # No built-in wav2vec2 model exists for this language and no
-            # custom model was given -- degrade gracefully to the English
-            # alignment model instead of aborting the whole run. Alignment
-            # quality will suffer for this language, but that is strictly
-            # better than crashing.
-            if alignment_model is None and language != "en":
-                print(
-                    f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
-                    f"No wav2vec2 alignment model available for language "
-                    f"{blue_highlighted(language)} -- falling back to the "
-                    f"{blue_highlighted('en')} alignment model. For better "
-                    f"results, provide a matching model with "
-                    f"--whisper_align_model [huggingface]."
-                )
-                model_a, metadata = whisperx.load_align_model(
-                    language_code="en", device=device, model_name=None
-                )
-            else:
-                print(
-                    f"{red_highlighted(f'{ve}')}"
-                    f"\n"
-                    f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Unknown language. "
-                    f"Try add it with --align_model [huggingface]."
-                )
-                raise ve
-
-        #Addition for numbers to words (Using previous code from louispan in PR#135)
-        if keep_numbers == False: 
-            for obj in result["segments"]:
-                obj["text"] = number_to_words(obj["text"],language)
-
-        # align whisper output
-        result_aligned = whisperx.align(
-            result["segments"],
-            model_a,
-            metadata,
-            audio,
-            device,
-            return_char_alignments=False,
-        )
-
-        transcribed_data = convert_to_transcribed_data(result_aligned)
+        # The alignment does not need the Whisper model: its memory goes to
+        # the alignment model
+        loaded_whisper_model = None
+        release_gpu_memory()
+        transcribed_data = align_segments(result["segments"], audio, language, device, alignment_model,
+                                          keep_numbers)
 
         return TranscriptionResult(transcribed_data, detected_language)
     except ValueError as value_error:
@@ -330,14 +288,78 @@ def transcribe_with_whisper(
         # Restore original torch.load after models are loaded
         # This ensures other modules (like pitch detection) are not affected by the monkey-patch
         torch.load = _original_torch_load
-        # Drop the models (and the audio) before leaving. The first call
+        # Drop the model (and the audio) before leaving. The first call
         # imports libraries, one of which keeps the traceback of a failed
         # optional import - and with it this call's frame and all its
-        # variables. The models would then stay on the GPU for the rest of
+        # variables. The model would then stay on the GPU for the rest of
         # the run (about 4 GB with large-v2), and later GPU steps, like the
         # lead-vocal separation, spilled into shared system memory and became
         # many times slower.
-        loaded_whisper_model = model_a = audio = None
+        loaded_whisper_model = audio = None
+        release_gpu_memory()
+
+
+def align_segments(segments: list[dict], audio, language: str, device: str,
+                   alignment_model: str = None, keep_numbers: bool = False) -> list[TranscribedData]:
+    """Word timings for transcribed text segments, by forced alignment.
+
+    ``segments`` are ``{"text", "start", "end"}`` dicts, times in seconds of
+    ``audio`` (16 kHz mono); each text is aligned within its time span with
+    the wav2vec2 model of ``language``, or ``alignment_model`` when given.
+    """
+    model_a = None
+    try:
+        # load alignment model and metadata
+        try:
+            model_a, metadata = whisperx.load_align_model(
+                language_code=language, device=device, model_name=alignment_model
+            )
+        except ValueError as ve:
+            # No built-in wav2vec2 model exists for this language and no
+            # custom model was given -- degrade gracefully to the English
+            # alignment model instead of aborting the whole run. Alignment
+            # quality will suffer for this language, but that is strictly
+            # better than crashing.
+            if alignment_model is None and language != "en":
+                print(
+                    f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
+                    f"No wav2vec2 alignment model available for language "
+                    f"{blue_highlighted(language)} -- falling back to the "
+                    f"{blue_highlighted('en')} alignment model. For better "
+                    f"results, provide a matching model with "
+                    f"--whisper_align_model [huggingface]."
+                )
+                model_a, metadata = whisperx.load_align_model(
+                    language_code="en", device=device, model_name=None
+                )
+            else:
+                print(
+                    f"{red_highlighted(f'{ve}')}"
+                    f"\n"
+                    f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Unknown language. "
+                    f"Try add it with --align_model [huggingface]."
+                )
+                raise ve
+
+        #Addition for numbers to words (Using previous code from louispan in PR#135)
+        if keep_numbers == False:
+            for obj in segments:
+                obj["text"] = number_to_words(obj["text"],language)
+
+        # align the transcribed text
+        result_aligned = whisperx.align(
+            segments,
+            model_a,
+            metadata,
+            audio,
+            device,
+            return_char_alignments=False,
+        )
+
+        return convert_to_transcribed_data(result_aligned)
+    finally:
+        # Drop the model before leaving (see transcribe_with_whisper)
+        model_a = None
         release_gpu_memory()
 
 

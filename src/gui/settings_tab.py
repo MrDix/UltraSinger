@@ -87,6 +87,13 @@ class _NoScrollComboBox(QComboBox):
         event.ignore()
 
 
+# "Transcriber" choices: (shown text, config value)
+_TRANSCRIBER_CHOICES = (
+    ("Auto (Qwen3-ASR on a GPU, else Whisper)", "auto"),
+    ("Qwen3-ASR", "qwen3"),
+    ("Whisper", "whisper"),
+)
+
 # "Line Break Timing" choices: (shown text, config value)
 _LINEBREAK_TIMING_CHOICES = (
     ("YASS style", "yass"),
@@ -136,7 +143,20 @@ class ConversionSettingsForm(QWidget):
     # ─── Transcription ────────────────────────────────────────────────────
 
     def _build_transcription_section(self):
-        card = SettingsCard("Transcription (Whisper)")
+        card = SettingsCard("Transcription")
+
+        self._transcriber = _NoScrollComboBox()
+        for text, value in _TRANSCRIBER_CHOICES:
+            self._transcriber.addItem(text, value)
+        self._set_transcriber(self._config.get("transcriber"))
+        card.add_row("Transcriber", self._transcriber,
+                     "Which AI writes down the sung lyrics. Qwen3-ASR recognizes singing better than "
+                     "Whisper (on 100 test songs about 27 % word errors against 30 %), needs a GPU "
+                     "with 5 GB of free memory and knows 30 languages. 'Auto' uses it when the GPU and "
+                     "the song's language allow, else Whisper; 'Qwen3-ASR' does the same with a note when "
+                     "Whisper has to take over. The model (about 4.4 GB) is downloaded on the first use. "
+                     "The Whisper settings below apply when Whisper transcribes.",
+                     reset_callback=lambda: self._set_transcriber(_DEFAULTS["transcriber"]))
 
         self._whisper_model = _NoScrollComboBox()
         models = ["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3",
@@ -1399,9 +1419,10 @@ class ConversionSettingsForm(QWidget):
             checked=self._config.get("force_whisper_cpu", False)
         )
         card.add_toggle_row("Force Whisper CPU", self._force_whisper_cpu,
-                           "Run only the Whisper transcription on CPU while keeping "
+                           "Run only the transcription on CPU while keeping "
                            "other stages (vocal separation, pitch detection) on GPU. "
-                           "Useful when Whisper alone exceeds your GPU memory.",
+                           "Whisper transcribes then, as Qwen3-ASR needs the GPU. "
+                           "Useful when the transcription alone exceeds your GPU memory.",
                            reset_callback=lambda: self._force_whisper_cpu.setChecked(
                                _DEFAULTS["force_whisper_cpu"]))
 
@@ -1610,6 +1631,10 @@ class ConversionSettingsForm(QWidget):
                 "Train a segmentation model on your own UltraStar song library. "
                 "The finished model is set here automatically.")
 
+    def _set_transcriber(self, value) -> None:
+        index = self._transcriber.findData(value)
+        self._transcriber.setCurrentIndex(index if index >= 0 else 0)
+
     def _set_linebreak_timing(self, value) -> None:
         index = self._linebreak_timing.findData(value)
         self._linebreak_timing.setCurrentIndex(index if index >= 0 else 0)
@@ -1681,6 +1706,7 @@ class ConversionSettingsForm(QWidget):
             "calculate_score": self._calculate_score.isChecked(),
             "format_version": self._format_version.currentText(),
             "linebreak_timing": self._linebreak_timing.currentData(),
+            "transcriber": self._transcriber.currentData(),
             "create_plot": self._create_plot.isChecked(),
             "create_midi": self._create_midi.isChecked(),
             "create_audio_chunks": self._create_chunks.isChecked(),

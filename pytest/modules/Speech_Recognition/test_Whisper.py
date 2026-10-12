@@ -350,6 +350,35 @@ class TranscribeWithWhisperReleasesModelsTest(unittest.TestCase):
         transcribe_with_whisper("/fake/audio.wav", WhisperModel.TINY, device="cpu")
 
         self.assertIsNone(kept_frames[0].f_locals["loaded_whisper_model"])
+        self.assertIsNone(models[0]())
+
+    def test_alignment_model_dropped_although_the_frame_is_kept(self):
+        import sys
+        import weakref
+        import numpy as np
+        from src.modules.Speech_Recognition.Whisper import align_segments
+
+        kept_frames, models = [], []
+
+        class AlignModel:
+            pass
+
+        def load_align_model(*args, **kwargs):
+            frame = sys._getframe(1)
+            while frame.f_code.co_name != "align_segments":
+                frame = frame.f_back
+            kept_frames.append(frame)
+            model = AlignModel()
+            models.append(weakref.ref(model))
+            return model, {}
+
+        def align(*args, **kwargs):  # a plain function: a mock would keep the model in its call list
+            return {"segments": []}
+
+        with patch("whisperx.load_align_model", new=load_align_model), patch("whisperx.align", new=align):
+            align_segments([{"text": "la", "start": 0.0, "end": 1.0}], np.zeros(16000, dtype=np.float32),
+                           "en", "cpu", keep_numbers=True)
+
         self.assertIsNone(kept_frames[0].f_locals["model_a"])
         self.assertIsNone(models[0]())
 

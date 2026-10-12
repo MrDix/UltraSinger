@@ -1,0 +1,257 @@
+"""Tests for the Qwen3-ASR transcriber (qwen3_asr.py); the model itself is never loaded."""
+
+import sys
+import types
+import unittest
+import weakref
+from unittest.mock import patch
+
+import numpy as np
+
+from src.modules.Speech_Recognition import qwen3_asr
+from src.modules.Speech_Recognition.qwen3_asr import (
+    QwenFailed,
+    QwenUnavailable,
+    TranscriberChoice,
+    choose_transcriber,
+    majority_language,
+    song_language,
+    transcribe_with_qwen3,
+)
+
+GIB = 2 ** 30
+
+
+class TestChooseTranscriber(unittest.TestCase):
+    def _choose(self, free_gib, installed=True, requested="auto", device="cuda", language=None):
+        with patch.object(qwen3_asr, "_qwen_asr_installed", return_value=installed), \
+                patch.object(qwen3_asr, "free_gpu_memory", return_value=None if free_gib is None else free_gib * GIB):
+            return choose_transcriber(requested, device, language)
+
+    def test_whisper_when_asked_for(self):
+        choice = self._choose(8, requested="whisper")
+        self.assertEqual((choice.name, choice.reason), ("whisper", "selected"))
+
+    def test_whisper_without_a_gpu(self):
+        for requested in ("auto", "qwen3"):
+            with self.subTest(requested=requested):
+                self.assertEqual(self._choose(8, requested=requested, device="cpu").name, "whisper")
+        self.assertEqual(self._choose(None).name, "whisper")
+
+    def test_whisper_when_not_installed(self):
+        choice = self._choose(8, installed=False)
+        self.assertEqual(choice.name, "whisper")
+        self.assertIn("not installed", choice.reason)
+
+    def test_installed_is_only_looked_up(self):
+        # importing qwen_asr takes seconds
+        for spec, installed in ((None, False), (object(), True)):
+            with self.subTest(installed=installed), \
+                    patch.object(qwen3_asr.importlib.util, "find_spec", return_value=spec) as find_spec:
+                self.assertIs(qwen3_asr._qwen_asr_installed(), installed)
+            find_spec.assert_called_once_with("qwen_asr")
+
+    def test_qwen3_with_enough_memory(self):
+        for requested in ("auto", "qwen3"):
+            with self.subTest(requested=requested):
+                choice = self._choose(8, requested=requested)
+                self.assertEqual((choice.name, choice.batch_size), ("qwen3", 8))
+        choice = self._choose(5.5)
+        self.assertEqual((choice.name, choice.batch_size), ("qwen3", 2))
+        self.assertIn("5.5 GB", choice.reason)
+
+    def test_whisper_with_too_little_memory(self):
+        # smaller variants that would fit were less accurate than Whisper, so Whisper takes over
+        for free_gib in (4.9, 3.5, 2.0):
+            with self.subTest(free_gib=free_gib):
+                choice = self._choose(free_gib)
+                self.assertEqual(choice.name, "whisper")
+                self.assertIn(f"only {free_gib:.1f} GB", choice.reason)
+        # just below the limit, the free memory does not read as enough
+        self.assertIn("only 4.9 GB", self._choose(4.96).reason)
+
+    def test_whisper_when_the_memory_cannot_be_read(self):
+        with patch.object(qwen3_asr, "_qwen_asr_installed", return_value=True), \
+                patch.object(qwen3_asr, "free_gpu_memory", side_effect=RuntimeError("CUDA error")):
+            choice = choose_transcriber("auto", "cuda")
+        self.assertEqual(choice.name, "whisper")
+        self.assertIn("could not be read", choice.reason)
+
+    def test_language_given(self):
+        self.assertEqual(self._choose(8, language="de").name, "qwen3")
+        # Filipino under Whisper's code, as the rest of the pipeline uses it
+        self.assertEqual(self._choose(8, language="tl").name, "qwen3")
+        for requested in ("auto", "qwen3"):
+            with self.subTest(requested=requested):
+                choice = self._choose(8, requested=requested, language="uk")
+                self.assertEqual(choice.name, "whisper")
+                self.assertIn("does not transcribe the language uk", choice.reason)
+
+
+class TestLanguage(unittest.TestCase):
+    def test_majority_language(self):
+        self.assertEqual(majority_language(["English", "German", "English", None, ""]), "en")
+        self.assertEqual(majority_language(["german", "Klingon"]), "de")
+        self.assertEqual(majority_language(["Filipino"]), "tl")
+        self.assertEqual(majority_language([]), "en")
+
+    def test_given_language_wins(self):
+        with patch("modules.Speech_Recognition.Whisper.detect_language_with_confidence") as detect:
+            self.assertEqual(song_language("a.wav", "de"), "de")
+        detect.assert_not_called()
+
+    def test_quick_detection_only_when_confident(self):
+        with patch("modules.Speech_Recognition.Whisper.detect_language_with_confidence",
+                   return_value=("de", 0.9)) as detect:
+            self.assertEqual(song_language("a.wav", None), "de")
+        # on the CPU, so that the GPU memory found free for the model stays free
+        self.assertEqual(detect.call_args.kwargs["device"], "cpu")
+        with patch("modules.Speech_Recognition.Whisper.detect_language_with_confidence", return_value=("de", 0.5)):
+            self.assertIsNone(song_language("a.wav", None))
+
+
+class TestTranscribe(unittest.TestCase):
+    """Pieces in, aligned segments out; the model is dropped afterwards."""
+
+    def _run(self, texts, language=None, error_message=None):
+        models, seen = [], {}
+
+        class Result:
+            def __init__(self, text, lang):
+                self.text, self.language = text, lang
+
+        class Model:
+            def transcribe(self, audio, language=None):
+                seen["pieces"], seen["language"] = len(audio), language
+                if error_message is not None:
+                    raise RuntimeError(error_message)
+                return [Result(text, "English") for text in texts]
+
+        def load_model(choice):
+            model = Model()
+            models.append(weakref.ref(model))
+            return model
+
+        def align_segments(segments, audio, lang, device, alignment_model=None, keep_numbers=False):
+            seen["segments"], seen["align_language"] = segments, lang
+            return []
+
+        pieces = [(np.zeros(16000 * 30, dtype=np.float32), 0.0), (np.zeros(16000 * 25, dtype=np.float32), 30.0),
+                  (np.zeros(16000 * 10, dtype=np.float32), 55.0)]
+        with patch.object(qwen3_asr, "_load_model", side_effect=load_model), \
+                patch.object(qwen3_asr, "audio_pieces", return_value=pieces), \
+                patch.object(qwen3_asr, "song_language", return_value=language), \
+                patch.object(qwen3_asr, "release_gpu_memory") as release, \
+                patch("whisperx.load_audio", return_value=np.zeros(16000 * 65, dtype=np.float32)), \
+                patch("modules.Speech_Recognition.Whisper.align_segments", side_effect=align_segments):
+            try:
+                result = transcribe_with_qwen3("a.wav", TranscriberChoice("qwen3", 2, "8.0 GB free"))
+            except QwenFailed as e:
+                result, seen["error"] = None, str(e)
+            seen["released"] = release.called
+        return result, seen, models
+
+    def test_pieces_become_segments(self):
+        result, seen, _ = self._run(["first words", "  ", "last words"])
+        self.assertEqual(seen["pieces"], 3)
+        # the silent piece gives no segment; the others keep their place in the song
+        self.assertEqual(seen["segments"], [{"text": "first words", "start": 0.0, "end": 30.0},
+                                            {"text": "last words", "start": 55.0, "end": 65.0}])
+        self.assertEqual(result.detected_language, "en")
+
+    def test_the_song_language_is_given_to_the_model(self):
+        result, seen, _ = self._run(["eins", "zwei", "drei"], language="de")
+        self.assertEqual((seen["language"], seen["align_language"], result.detected_language),
+                         ("German", "de", "de"))
+
+    def test_the_model_is_dropped(self):
+        _, seen, models = self._run(["a", "b", "c"])
+        self.assertIsNone(models[0]())
+        self.assertTrue(seen["released"])
+
+    def test_the_model_is_dropped_when_the_transcription_fails(self):
+        result, seen, models = self._run([], error_message="CUDA out of memory\nTried to allocate ...")
+        self.assertIsNone(result)
+        self.assertEqual(seen["error"], "Qwen3-ASR failed (RuntimeError: CUDA out of memory)")
+        self.assertTrue(seen["released"])
+        self.assertNotIn("segments", seen)
+        # once the error is handled, nothing holds the model any more
+        self.assertIsNone(models[0]())
+
+    def test_alignment_errors_are_passed_on(self):
+        # Whisper would run the same alignment: no reason to fall back to it
+        def align_fails(*args, **kwargs):
+            raise RuntimeError("alignment failed")
+
+        pieces = [(np.zeros(16000 * 30, dtype=np.float32), 0.0)]
+
+        class Model:
+            def transcribe(self, audio, language=None):
+                return [types.SimpleNamespace(text="words", language="English")]
+
+        with patch.object(qwen3_asr, "_load_model", return_value=Model()), \
+                patch.object(qwen3_asr, "audio_pieces", return_value=pieces), \
+                patch.object(qwen3_asr, "song_language", return_value="en"), \
+                patch("whisperx.load_audio", return_value=np.zeros(16000 * 30, dtype=np.float32)), \
+                patch("modules.Speech_Recognition.Whisper.align_segments", side_effect=align_fails):
+            with self.assertRaises(RuntimeError) as raised:
+                transcribe_with_qwen3("a.wav", TranscriberChoice("qwen3", 2, ""))
+        self.assertNotIsInstance(raised.exception, QwenFailed)
+
+    def test_a_broken_install_fails_over(self):
+        with patch.object(qwen3_asr, "audio_pieces", side_effect=ImportError("DLL load failed")), \
+                patch.object(qwen3_asr, "song_language", return_value="en"), \
+                patch("whisperx.load_audio", return_value=np.zeros(100, dtype=np.float32)):
+            with self.assertRaises(QwenFailed) as raised:
+                transcribe_with_qwen3("a.wav", TranscriberChoice("qwen3", 2, ""))
+        self.assertEqual(str(raised.exception), "Qwen3-ASR failed (ImportError: DLL load failed)")
+
+    def test_no_words_no_alignment(self):
+        result, seen, _ = self._run(["", " ", ""])
+        self.assertNotIn("segments", seen)
+        self.assertEqual(result.transcribed_data, [])
+
+    def test_no_pieces_no_model(self):
+        with patch.object(qwen3_asr, "_load_model") as load, \
+                patch.object(qwen3_asr, "audio_pieces", return_value=[]), \
+                patch.object(qwen3_asr, "song_language", return_value="de"), \
+                patch("whisperx.load_audio", return_value=np.zeros(100, dtype=np.float32)):
+            result = transcribe_with_qwen3("a.wav", TranscriberChoice("qwen3", 2, ""))
+        load.assert_not_called()
+        self.assertEqual((result.transcribed_data, result.detected_language), ([], "de"))
+
+    def test_unknown_detected_language_is_unavailable(self):
+        with patch.object(qwen3_asr, "_load_model") as load, \
+                patch.object(qwen3_asr, "song_language", return_value="uk"), \
+                patch("whisperx.load_audio") as load_audio:
+            with self.assertRaises(QwenUnavailable) as raised:
+                transcribe_with_qwen3("a.wav", TranscriberChoice("qwen3", 2, ""))
+        self.assertIn("does not transcribe the language uk", str(raised.exception))
+        load.assert_not_called()
+        load_audio.assert_not_called()
+
+
+class TestLoadModel(unittest.TestCase):
+    def test_float16_where_bfloat16_is_only_emulated(self):
+        import torch
+
+        loaded = {}
+
+        class Qwen3ASRModel:
+            @staticmethod
+            def from_pretrained(name, **kwargs):
+                loaded.update(kwargs, name=name)
+
+        fake = types.ModuleType("qwen_asr")
+        fake.Qwen3ASRModel = Qwen3ASRModel
+        for native, dtype in ((True, torch.bfloat16), (False, torch.float16)):
+            with self.subTest(native=native), patch.dict(sys.modules, {"qwen_asr": fake}), \
+                    patch("torch.cuda.is_bf16_supported", return_value=native) as supported:
+                qwen3_asr._load_model(TranscriberChoice("qwen3", 2))
+                supported.assert_called_once_with(including_emulation=False)
+                self.assertEqual((loaded["name"], loaded["dtype"], loaded["max_inference_batch_size"]),
+                                 ("Qwen/Qwen3-ASR-1.7B", dtype, 2))
+
+
+if __name__ == "__main__":
+    unittest.main()

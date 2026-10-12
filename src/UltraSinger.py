@@ -82,6 +82,17 @@ from modules.Speech_Recognition.hyphenation import (
     hyphenate_each_word,
 )
 from modules.Speech_Recognition.Whisper import transcribe_with_whisper
+from modules.Speech_Recognition.qwen3_asr import (
+    PIECE_SECONDS as QWEN3_PIECE_SECONDS,
+    QWEN3_MODEL,
+    QWEN3_SIZE,
+    TRANSCRIBERS,
+    QwenFailed,
+    QwenUnavailable,
+    TranscriberChoice,
+    choose_transcriber,
+    transcribe_with_qwen3,
+)
 from modules.Speech_Recognition.text_language import CONFIDENT_AUDIO_LANGUAGE, check_lyrics_language
 from modules.Ultrastar import (
     ultrastar_writer,
@@ -103,6 +114,7 @@ from modules.ProcessData import ProcessData, ProcessDataPaths, MediaInfo
 from modules.DeviceDetection.device_detection import (
     auto_whisper_batch_size,
     check_gpu_support,
+    release_gpu_memory,
 )
 from modules.Image.image_helper import save_image
 from modules.ffmpeg_helper import (
@@ -264,7 +276,7 @@ def run() -> tuple[str, Score, Score]:
     _lang_source = (
         "manual" if settings.language is not None
         else "video_platform" if process_data.media_info.language
-        else "pending"  # will be set to "whisper_fast" or "whisper_full" later
+        else "pending"  # will be set to "whisper_fast" or "transcription" later
     )
     _initial_language = None  # tracks pre-correction language
     _reference_recovered = False  # tracks recovery after language correction
@@ -327,7 +339,7 @@ def run() -> tuple[str, Score, Score]:
                     whisper_skipped = True
                     print(
                         f"{ULTRASINGER_HEAD} "
-                        f"{cyan_highlighted('Synced lyrics found — skipping Whisper transcription')}"
+                        f"{cyan_highlighted('Synced lyrics found — skipping the transcription')}"
                     )
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Early lyrics lookup failed: {e}")
@@ -335,7 +347,7 @@ def run() -> tuple[str, Score, Score]:
     if not settings.ignore_audio and not whisper_skipped:
         lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
         if _lang_source == "pending":
-            _lang_source = "whisper_full"
+            _lang_source = "transcription"
 
     # Onset correction — snap note starts to audio onsets for better timing
     if not settings.ignore_audio and not whisper_skipped and settings.onset_correction:
@@ -530,7 +542,7 @@ def run() -> tuple[str, Score, Score]:
                     else:
                         print(f"{ULTRASINGER_HEAD} Remote STT alignment produced no segments — falling back")
                 else:
-                    print(f"{ULTRASINGER_HEAD} Remote STT unavailable — falling back to local Whisper")
+                    print(f"{ULTRASINGER_HEAD} Remote STT unavailable — falling back to the local transcription")
             except Exception as e:
                 print(f"{ULTRASINGER_HEAD} Remote STT failed: {e}")
                 print(f"{ULTRASINGER_HEAD} Falling back to local Whisper")
@@ -543,7 +555,7 @@ def run() -> tuple[str, Score, Score]:
                 _initial_language = initial_language
                 lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
                 whisper_skipped = False
-                _lang_source = "whisper_full"
+                _lang_source = "transcription"
 
                 # If Whisper detected a DIFFERENT language, retry the reference
                 # pipeline with the corrected language.  This recovers from
@@ -1091,6 +1103,8 @@ def _write_settings_info_file(
 
             # Transcription
             f.write("[Transcription]\n")
+            f.write(f"  Transcriber:              {settings.transcriber}"
+                    f"{f' -> {settings.transcriber_used}' if settings.transcriber_used else ''}\n")
             f.write(f"  Whisper model:            {settings.whisper_model.value if hasattr(settings.whisper_model, 'value') else settings.whisper_model}\n")
             f.write(f"  Whisper batch size:       {settings.whisper_batch_size}\n")
             f.write(f"  Whisper compute type:     {settings.whisper_compute_type or 'auto'}\n")
@@ -1116,52 +1130,52 @@ def _write_settings_info_file(
             if reference_first_used and reference_recovered:
                 f.write("  Pipeline:                 Reference-Lyrics-First (recovered after language correction)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
-                f.write("  Whisper transcription:    full (for language correction)\n")
+                f.write("  Transcription:            full (for language correction)\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and has_synced_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
             elif reference_first_used and remote_stt_used:
                 f.write("  Pipeline:                 Remote STT (text) + local alignment\n")
-                f.write("  Whisper transcription:    skipped (remote STT used instead)\n")
+                f.write("  Transcription:            skipped (remote STT used instead)\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and has_plain_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
                 f.write("  LRCLIB plain lyrics:      found (no synced available)\n")
-                f.write("  Whisper transcription:    skipped\n")
+                f.write("  Transcription:            skipped\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif has_synced_lyrics:
-                f.write("  Pipeline:                 Whisper (reference-first failed, fell back)\n")
+                f.write("  Pipeline:                 Transcription (reference-first failed, fell back)\n")
                 f.write("  LRCLIB synced lyrics:     found (but alignment failed)\n")
-                f.write("  Whisper transcription:    full\n")
+                f.write("  Transcription:            full\n")
             elif whisper_skipped:
-                f.write("  Pipeline:                 Whisper skipped (no audio)\n")
+                f.write("  Pipeline:                 Transcription skipped (no audio)\n")
                 f.write("  LRCLIB synced lyrics:     not found\n")
             else:
-                f.write("  Pipeline:                 Standard Whisper\n")
+                f.write("  Pipeline:                 Standard transcription\n")
                 f.write("  LRCLIB synced lyrics:     not found\n")
-                f.write("  Whisper transcription:    full\n")
+                f.write("  Transcription:            full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
             # Language detection method
             _LANG_SOURCE_LABELS = {
                 "manual": f"manual (--language {settings.language})",
                 "video_platform": f"video platform metadata -> {detected_language}",
                 "whisper_fast": f"Whisper tiny (fast) -> {detected_language}",
-                "whisper_full": f"Whisper (full transcription) -> {detected_language}",
+                "transcription": f"full transcription -> {detected_language}",
                 "pending": "unknown",
             }
             lang_method = _LANG_SOURCE_LABELS.get(lang_source, lang_source)
             f.write(f"  Language detection:        {lang_method}\n")
             f.write(f"  Language used:             {detected_language or '(none)'}\n")
 
-            # Whisper language hint: did Whisper receive an explicit language?
+            # Language hint: did the transcriber receive an explicit language?
             whisper_had_hint = settings.language is not None or lang_source in ("video_platform", "whisper_fast")
             if not whisper_skipped or reference_recovered:
                 if whisper_had_hint:
                     hint_lang = settings.language or detected_language or "?"
-                    f.write(f"  Whisper language hint:     yes (--language {hint_lang})\n")
+                    f.write(f"  Transcriber language hint: yes (--language {hint_lang})\n")
                 else:
-                    f.write("  Whisper language hint:     no (auto-detect)\n")
+                    f.write("  Transcriber language hint: no (auto-detect)\n")
 
             # Language correction (if initial fast-detect was wrong)
             if initial_language and initial_language != detected_language:
@@ -1726,13 +1740,14 @@ def TranscribeAudio(process_data):
     transcription_result = transcribe_audio(process_data.process_data_paths.cache_folder_path,
                                             process_data.process_data_paths.whisper_audio_path)
 
-    # Full Whisper large-v2 detection is more accurate than Whisper tiny
-    # fast-detect or video platform metadata.  Always update the language from
-    # full transcription unless the user explicitly set --language.
+    # The full transcription settles the language (Whisper large-v2's detection,
+    # or the language Qwen3-ASR transcribed in): it replaces Whisper tiny
+    # fast-detect and video platform metadata unless the user explicitly set
+    # --language.
     if transcription_result.detected_language:
         if settings.language is not None:
-            # User specified --language: keep it, but log if Whisper disagrees
-            pass  # warning already printed by transcribe_with_whisper()
+            # User specified --language: keep it (Whisper warns when its detection disagrees)
+            pass
         else:
             process_data.media_info.language = transcription_result.detected_language
 
@@ -1950,40 +1965,73 @@ def CreateProcessAudio(process_data) -> tuple[str, str]:
 
 
 def transcribe_audio(cache_folder_path: str, audio_path: str) -> TranscriptionResult:
-    """Transcribe audio with AI"""
+    """Transcribe audio with AI: Qwen3-ASR or Whisper (see --transcriber)"""
     transcription_result = None
     whisper_align_model_string = None
-    if settings.transcriber == "whisper":
-        if settings.whisper_align_model is not None:
-            whisper_align_model_string = settings.whisper_align_model.replace("/", "_")
-        whisper_device = "cpu" if settings.force_whisper_cpu else settings.pytorch_device
-        # "aligned": transcriptions of the delayed denoised vocal (before the filter delay was removed) are not reused
-        transcription_config = f"{settings.transcriber}_{settings.whisper_model.value}_{whisper_device}_{whisper_align_model_string}_{settings.whisper_batch_size}_{settings.whisper_compute_type}_{settings.language}_vad{settings.vad_onset}_{settings.vad_offset}_nst{settings.no_speech_threshold}_unmuted_aligned"
-        transcription_path = os.path.join(cache_folder_path, f"{transcription_config}.json")
-        cached_transcription_available = check_file_exists(transcription_path)
-        if settings.skip_cache_transcription or not cached_transcription_available:
-            transcription_result = transcribe_with_whisper(
-                audio_path,
-                settings.whisper_model,
-                whisper_device,
-                settings.whisper_align_model,
-                settings.whisper_batch_size,
-                settings.whisper_compute_type,
-                settings.language,
-                settings.keep_numbers,
-                vad_onset=settings.vad_onset,
-                vad_offset=settings.vad_offset,
-                no_speech_threshold=settings.no_speech_threshold,
-            )
-            with open(transcription_path, "w", encoding=FILE_ENCODING) as file:
-                file.write(transcription_result.to_json())
-        else:
+    if settings.whisper_align_model is not None:
+        whisper_align_model_string = settings.whisper_align_model.replace("/", "_")
+    whisper_device = "cpu" if settings.force_whisper_cpu else settings.pytorch_device
+    if settings.transcriber != "whisper":
+        # A cached Qwen3-ASR transcription needs no GPU: reused whatever memory is free now
+        qwen3_path = os.path.join(cache_folder_path, f"qwen3_{QWEN3_SIZE}_{whisper_align_model_string}_"
+                                                     f"{settings.language}_p{QWEN3_PIECE_SECONDS}_aligned.json")
+        if not settings.skip_cache_transcription and check_file_exists(qwen3_path):
+            settings.transcriber_used = f"qwen3 ({QWEN3_MODEL})"
             print(f"{ULTRASINGER_HEAD} {green_highlighted('cache')} reusing cached transcribed data")
-            with open(transcription_path) as file:
-                json = file.read()
-                transcription_result = TranscriptionResult.from_json(json)
+            with open(qwen3_path, encoding=FILE_ENCODING) as file:
+                return TranscriptionResult.from_json(file.read())
+        if settings.force_whisper_cpu:
+            choice = TranscriberChoice("whisper", reason="--force_whisper_cpu keeps the transcription on the CPU")
+        else:
+            choice = choose_transcriber(settings.transcriber, whisper_device, settings.language)
+        failed = False
+        if choice.name == "qwen3":
+            try:
+                transcription_result = transcribe_with_qwen3(
+                    audio_path, choice, whisper_device, settings.language, settings.whisper_align_model,
+                    settings.keep_numbers,
+                )
+            except QwenUnavailable as e:
+                # Another language, or Qwen3-ASR failed (QwenFailed: out of GPU memory, no download, ...)
+                failed = isinstance(e, QwenFailed)
+                choice = TranscriberChoice("whisper", reason=str(e))
+            if transcription_result is not None:
+                settings.transcriber_used = f"qwen3 ({QWEN3_MODEL})"
+                with open(qwen3_path, "w", encoding=FILE_ENCODING) as file:
+                    file.write(transcription_result.to_json())
+                return transcription_result
+            # What the attempt left on the GPU; the error, and with it its frames, is gone by now
+            release_gpu_memory()
+        if settings.transcriber == "qwen3" or failed:
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} transcribing with Whisper: {choice.reason}")
+        else:
+            print(f"{ULTRASINGER_HEAD} Transcribing with Whisper: {choice.reason}")
+    settings.transcriber_used = f"whisper ({settings.whisper_model.value})"
+    # "aligned": transcriptions of the delayed denoised vocal (before the filter delay was removed) are not reused
+    transcription_config = f"whisper_{settings.whisper_model.value}_{whisper_device}_{whisper_align_model_string}_{settings.whisper_batch_size}_{settings.whisper_compute_type}_{settings.language}_vad{settings.vad_onset}_{settings.vad_offset}_nst{settings.no_speech_threshold}_unmuted_aligned"
+    transcription_path = os.path.join(cache_folder_path, f"{transcription_config}.json")
+    cached_transcription_available = check_file_exists(transcription_path)
+    if settings.skip_cache_transcription or not cached_transcription_available:
+        transcription_result = transcribe_with_whisper(
+            audio_path,
+            settings.whisper_model,
+            whisper_device,
+            settings.whisper_align_model,
+            settings.whisper_batch_size,
+            settings.whisper_compute_type,
+            settings.language,
+            settings.keep_numbers,
+            vad_onset=settings.vad_onset,
+            vad_offset=settings.vad_offset,
+            no_speech_threshold=settings.no_speech_threshold,
+        )
+        with open(transcription_path, "w", encoding=FILE_ENCODING) as file:
+            file.write(transcription_result.to_json())
     else:
-        raise NotImplementedError
+        print(f"{ULTRASINGER_HEAD} {green_highlighted('cache')} reusing cached transcribed data")
+        with open(transcription_path) as file:
+            json = file.read()
+            transcription_result = TranscriptionResult.from_json(json)
     return transcription_result
 
 
@@ -2180,6 +2228,9 @@ def init_settings(argv: list[str]) -> Settings:
     settings.octave_consistency = None
     settings.cache_folder = None
     settings.linebreak_timing = ultrastar_writer.DEFAULT_LINEBREAK_TIMING
+    settings.transcriber = "auto"
+    settings.transcriber_used = None
+    transcriber_option = None
     long, short = arg_options()
     opts, args = getopt.getopt(argv, short, long)
     if len(opts) == 0:
@@ -2210,7 +2261,16 @@ def init_settings(argv: list[str]) -> Settings:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --octave must be an integer, got {arg}")
                 sys.exit(1)
             settings.octave_shift = val
+        elif opt == "--transcriber":
+            if arg not in TRANSCRIBERS:
+                print(
+                    f"{ULTRASINGER_HEAD} {red_highlighted('Error: Transcriber')} {blue_highlighted(arg)} "
+                    f"{red_highlighted('is not supported, use one of: ' + ', '.join(TRANSCRIBERS))}"
+                )
+                sys.exit(1)
+            transcriber_option = arg
         elif opt in ("--whisper"):
+            # Choosing a Whisper model chooses Whisper, unless --transcriber says otherwise
             settings.transcriber = "whisper"
 
             #Addition of whisper model choice. Added error handling for unknown models.
@@ -2501,6 +2561,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.golden_notes = True
         elif opt in ("--disable_score"):
             settings.calculate_score = False
+    if transcriber_option is not None:
+        settings.transcriber = transcriber_option
     # Resolve the chart style into the ptAKF refit switch. An explicit
     # --ptakf_refit/--disable_ptakf_refit always wins (advanced override).
     if settings.chart_style not in ("singable", "score"):
@@ -2534,6 +2596,7 @@ def arg_options():
         "audio_separator_model=",
         "demucs=",
         "whisper=",
+        "transcriber=",
         "whisper_align_model=",
         "whisper_batch_size=",
         "whisper_compute_type=",
