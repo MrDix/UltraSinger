@@ -97,6 +97,10 @@ class SongFolder:
     dir_path: Path
     rel_path: str
     txt_path: Path
+    # A .txt of the folder that could not be checked while the library was
+    # scanned (read error, ...): stage 1 then reports the folder as an
+    # error instead of judging it by the other files.
+    unchecked_txt: Path | None = None
 
 
 def _read_text_lenient(path: Path) -> str:
@@ -117,7 +121,7 @@ def _looks_like_ultrastar_txt(path: Path) -> bool:
     folder here, so it can be flagged as stage-1-corrupt rather than
     silently ignored. A .txt that can't be read counts as a chart too:
     its folder is then reported as an error instead of being skipped,
-    judged by another chart in it, or moved along with a parent folder.
+    judged by the other files in it, or moved along with a parent folder.
     """
     try:
         text = _read_text_lenient(path)
@@ -129,32 +133,36 @@ def _looks_like_ultrastar_txt(path: Path) -> bool:
     return "#TITLE" in upper or "#BPM" in upper or bool(_NOTE_LINE_RE.search(text))
 
 
-def _pick_primary_txt(candidates: list[Path]) -> Path:
+def _pick_primary_txt(candidates: list[Path]) -> tuple[Path, Path | None]:
     """Pick the chart .txt that parses with the most notes.
 
     Folders normally have exactly one qualifying .txt; this only matters
     for the rare folder with several. Ties broken alphabetically. If none
     of the candidates parse cleanly, the first (alphabetically) is kept
-    so stage 1 still has something to flag as corrupt. A candidate that
-    can't be checked at all (read error, ...) is picked right away: it
-    may be the real chart, so stage 1 must report that error rather than
-    judge the folder by another chart.
+    so stage 1 still has something to flag as corrupt.
+
+    Returns ``(primary, unchecked)``: *unchecked* is the first candidate
+    that could not be checked at all (read error, ...), else None. Such a
+    file may be the real chart or no chart at all, so stage 1 must not
+    judge the folder this time.
     """
     ordered = sorted(candidates, key=lambda p: p.name)
     best = ordered[0]
     best_notes = -1
+    unchecked = None
     for candidate in ordered:
         try:
             song = parse_score_song(candidate)
             notes = len(song.all_notes)
         except ValueError:
             notes = -1
-        except Exception:  # noqa: BLE001 - not checkable now; stage 1 reports it as an error
-            return candidate
+        except Exception:  # noqa: BLE001 - not checkable now; stage 1 reports the folder as an error
+            unchecked = unchecked or candidate
+            continue
         if notes > best_notes:
             best_notes = notes
             best = candidate
-    return best
+    return best, unchecked
 
 
 def find_song_folders(source_dir: Path, *, skip_dir: Path | None = None) -> list[SongFolder]:
@@ -191,9 +199,10 @@ def find_song_folders(source_dir: Path, *, skip_dir: Path | None = None) -> list
         if not candidates:
             continue
 
-        primary = _pick_primary_txt(candidates)
+        primary, unchecked = _pick_primary_txt(candidates)
         rel = current.relative_to(source_dir)
-        folders.append(SongFolder(dir_path=current, rel_path=str(rel), txt_path=primary))
+        folders.append(SongFolder(dir_path=current, rel_path=str(rel), txt_path=primary,
+                                  unchecked_txt=unchecked))
 
     return folders
 
@@ -345,8 +354,17 @@ def evaluate_stage1(song: SongFolder, *, ffprobe_path: str | None) -> Stage1Resu
     failures and any other unexpected exception are no evidence of
     corruption: they give an "error" verdict, which never moves the song.
     Only a ValueError -- all the parser raises for a malformed chart (a
-    non-numeric ``#BPM``, text it cannot decode) -- means corrupt.
+    non-numeric ``#BPM``, text it cannot decode) -- means corrupt. The
+    folder is not judged either when a .txt of it could not be checked
+    while the library was scanned, or when the chart no longer looks like
+    one (e.g. emptied while an editor saves it): both are errors that the
+    next run checks again.
     """
+    if song.unchecked_txt is not None:
+        return Stage1Result(
+            "error", f"txt_unchecked: {song.unchecked_txt.name} could not be read during the scan")
+    if not _looks_like_ultrastar_txt(song.txt_path):
+        return Stage1Result("error", f"txt_changed: {song.txt_path.name} no longer looks like a chart")
     try:
         parsed = parse_score_song(song.txt_path)
     except OSError as e:

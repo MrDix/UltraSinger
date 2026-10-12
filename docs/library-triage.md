@@ -83,9 +83,12 @@ This is deliberately conservative: when in doubt, the song is kept.
 A file that cannot be read right now (locked by another program, no permission,
 deleted during the run) says nothing about the song, and neither does an
 `ffprobe` that fails to start, crashes or times out, or any other unexpected
-failure while a chart is checked. Such songs are logged as `error` and stay
-where they are; the next run checks them again. If `ffprobe` is found but does
-not work at all, the run stops before it checks any song.
+failure while a chart is checked. The same goes for a folder in which a `.txt`
+could not be read while the library was scanned, and for a chart that no longer
+looks like one when it is checked (e.g. emptied while an editor saves it). Such
+songs are logged as `error` and stay where they are; the next run checks them
+again. If `ffprobe` is found but does not work at all, the run stops before it
+checks any song.
 
 ---
 

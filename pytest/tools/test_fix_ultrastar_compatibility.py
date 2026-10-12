@@ -319,6 +319,21 @@ class TestRename:
         assert sorted(p.name for p in txt.parent.iterdir()) == ["song.txt", "song.us3"]
         assert "#MP3:song.us3" in txt.read_text(encoding="utf-8")
 
+    def test_rollback_never_replaces_a_file_that_appeared(self, tmp_path, monkeypatch):
+        txt = _song(tmp_path, self.LINES, files=("song.us3",))
+
+        def failing_update(txt_path, replacements):
+            (txt_path.parent / "song.us3").write_bytes(b"new file meanwhile")
+            raise OSError(28, "No space left on device")
+        monkeypatch.setattr(fx, "update_txt_tags", failing_update)
+
+        result = fx.process_song(fx.parse_song_info(txt), None, dry_run=False)
+
+        assert result.status == "error"
+        assert "No space left" in result.error_msg and "could not rename back: song.mp3" in result.error_msg
+        assert (txt.parent / "song.us3").read_bytes() == b"new file meanwhile"
+        assert (txt.parent / "song.mp3").read_bytes() == b"fake audio"
+
 
 # ── One song never stops the run ─────────────────────────────────────────────
 

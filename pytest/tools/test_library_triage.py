@@ -619,11 +619,11 @@ class TestStage1ErrorsNeverMove:
             raise error
         monkeypatch.setattr(lt, "parse_score_song", failing_parse)
 
-        assert lt.evaluate_stage1(lt.find_song_folders(source)[0], ffprobe_path=None).verdict == "error"
+        result = lt.evaluate_stage1(_song_folder(source, Path("Song A"), "Song A.txt"), ffprobe_path=None)
+        assert result.verdict == "error" and "parse_failed" in result.reason
         summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
         assert song_dir.exists() and summary.moved == 0
-        row = summary.all_rows["Song A"]
-        assert row["action"] == "error" and "parse_failed" in row["reason"]
+        assert summary.all_rows["Song A"]["action"] == "error"
 
     def test_unreadable_chart_is_not_judged_by_another_chart(self, tmp_path, monkeypatch):
         """The real chart can't be read right now, a stray chart next to it is
@@ -642,7 +642,69 @@ class TestStage1ErrorsNeverMove:
         summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
 
         assert song_dir.exists() and summary.moved == 0
-        assert "txt_unreadable" in summary.all_rows["Song"]["reason"]
+        assert "txt_unchecked: Song.txt" in summary.all_rows["Song"]["reason"]
+
+    @pytest.mark.parametrize("layout", ["song", "covers"])
+    def test_txt_locked_only_while_scanning_never_moves_the_folder(self, tmp_path, monkeypatch, layout):
+        """A plain notes/readme file is locked (e.g. by a sync client) while the
+        library is scanned and readable again when its folder is checked: it
+        must not become the folder's chart and get it moved as "no notes"."""
+        source = tmp_path / "source"
+        if layout == "song":
+            folder = _make_song(source, "Artist - Song")
+            locked_name = "Zzz notes.txt"
+        else:
+            folder = source / "Covers"
+            folder.mkdir(parents=True)
+            (folder / "front.jpg").write_bytes(b"x")
+            locked_name = "readme.txt"
+        (folder / locked_name).write_text("just some notes", encoding="utf-8")
+        scanning = {"on": False}
+        real_read, real_parse, real_find = lt._read_text_lenient, lt.parse_score_song, lt.find_song_folders
+
+        def read(path):
+            if scanning["on"] and Path(path).name == locked_name:
+                raise PermissionError(13, "locked")
+            return real_read(path)
+
+        def parse(path):
+            if scanning["on"] and Path(path).name == locked_name:
+                raise PermissionError(13, "locked")
+            return real_parse(path)
+
+        def find(*a, **k):
+            scanning["on"] = True
+            try:
+                return real_find(*a, **k)
+            finally:
+                scanning["on"] = False
+        monkeypatch.setattr(lt, "_read_text_lenient", read)
+        monkeypatch.setattr(lt, "parse_score_song", parse)
+        monkeypatch.setattr(lt, "find_song_folders", find)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert folder.is_dir() and (folder / locked_name).exists() and summary.moved == 0
+        row = summary.all_rows[folder.name]
+        assert row["action"] == "error" and f"txt_unchecked: {locked_name}" in row["reason"]
+
+    def test_chart_emptied_after_scanning_is_an_error(self, tmp_path, monkeypatch):
+        """An editor saving the chart (truncate, then write) right when the
+        folder is checked must not make it look like a chart without notes."""
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Song")
+        real_find = lt.find_song_folders
+
+        def find(*a, **k):
+            folders = real_find(*a, **k)
+            (song_dir / "Song.txt").write_bytes(b"")
+            return folders
+        monkeypatch.setattr(lt, "find_song_folders", find)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert song_dir.exists() and summary.moved == 0
+        assert "txt_changed" in summary.all_rows["Song"]["reason"]
 
     def test_folder_whose_only_txt_cannot_be_read_is_reported(self, tmp_path, monkeypatch):
         source = tmp_path / "source"
@@ -683,7 +745,7 @@ class TestStage1ErrorsNeverMove:
         row = summary.all_rows["Locked Song"]
         assert song_dir.exists() and summary.moved == 0
         assert row["action"] == "error" and row["stage1_verdict"] == "error"
-        assert "txt_unreadable" in row["reason"]
+        assert "txt_unchecked" in row["reason"]
         assert summary.stage1_corrupt == 0
 
     def test_vanished_chart_is_an_error(self, tmp_path):

@@ -4,9 +4,10 @@ Scans a directory tree for UltraStar TXT files and fixes three categories of
 compatibility issues:
 
 1. Audio Format Conversion:
-   UltraStar Play only supports mp3, ogg, and wav. Songs with incompatible
-   audio formats (aac, flac, opus, m4a, wma, etc.) are converted to OGG Vorbis
-   using FFmpeg, and the TXT file references are updated accordingly.
+   Some UltraStar-compatible games only support mp3, ogg, and wav. Songs with
+   incompatible audio formats (aac, flac, opus, m4a, wma, etc.) are converted
+   to OGG Vorbis using FFmpeg, and the TXT file references are updated
+   accordingly.
    Original audio files are preserved (never deleted). FFmpeg writes to a
    temporary file that becomes the OGG only once the conversion succeeded.
    An OGG that already exists is reused only when ffprobe confirms it is
@@ -16,7 +17,7 @@ compatibility issues:
 
 2. Non-Standard Tag Removal (always):
    Tags not part of the official UltraStar format specification (e.g. #COMMENT:)
-   are removed. These cause warnings in modern players like UltraStar Play.
+   are removed. These cause warnings in some modern games.
 
 3. Encoding Normalization (--normalize-encoding):
    TXT files in legacy encodings (CP1252, Latin-1, etc.) are converted to UTF-8
@@ -519,8 +520,7 @@ def _is_utf8_no_bom(enc: str) -> bool:
 
     Returns False for ``"utf-8-sig"`` because the BOM should be stripped
     during normalization — UTF-8 without BOM is the universal encoding
-    supported by all UltraStar derivatives (USDX, UltraStar Play,
-    Performous, Vocaluxe).
+    supported by all UltraStar-compatible games.
     """
     return enc.lower().replace("-", "").replace("_", "") == "utf8"
 
@@ -560,7 +560,7 @@ def normalize_txt_encoding(txt_path: Path) -> tuple[bool, bool]:
 # ---------------------------------------------------------------------------
 
 # Tags that are not part of any official UltraStar format specification
-# and cause warnings in modern players (e.g. UltraStar Play).
+# and cause warnings in some modern games.
 _NON_STANDARD_TAGS = {"#COMMENT:"}
 
 
@@ -792,9 +792,17 @@ def process_song(
                 af.full_path.rename(new_path)
                 renamed.append((af.full_path, new_path))
             update_txt_tags(song_info.txt_path, file_replacements)
-        except BaseException:
+        except BaseException as e:
+            stuck = []
             for old_path, new_path in reversed(renamed):
-                new_path.rename(old_path)
+                try:
+                    if old_path.exists():  # never replace a file that appeared meanwhile
+                        raise FileExistsError(old_path)
+                    new_path.rename(old_path)
+                except OSError:
+                    stuck.append(f"{new_path.name} (was {old_path.name})")
+            if stuck and isinstance(e, Exception):
+                raise RuntimeError(f"{e}; could not rename back: {', '.join(stuck)}") from e
             raise
 
         result.status = "converted"
@@ -951,7 +959,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "to OGG Vorbis and optionally normalize TXT file encoding to UTF-8."
         ),
         epilog=(
-            "UltraStar Play supports mp3, ogg, and wav. "
+            "Some UltraStar-compatible games only support mp3, ogg, and wav. "
             "Other formats (aac, flac, opus, m4a, wma, ...) are converted to OGG Vorbis. "
             "Original audio files are never deleted; an existing OGG that looks "
             "incomplete is kept as <name>.ogg.bak before it is converted again. "
