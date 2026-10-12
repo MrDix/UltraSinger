@@ -22,7 +22,7 @@ if ! command -v uv &> /dev/null; then
     echo "   install/CUDA/linux_cuda_gpu.sh (NVIDIA GPU with CUDA)"
     echo ""
     echo " The install script will install uv automatically."
-    echo " Or install manually: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo " Or install manually: curl -LsSf https://astral.sh/uv/0.12.24/install.sh | sh"
     echo ""
     echo " Prerequisites:"
     echo "   - Python 3.12 or 3.13  https://www.python.org/downloads/"

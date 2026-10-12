@@ -39,8 +39,15 @@ git ls-files -v pyproject.toml 2>nul | findstr /b /c:"S" >nul 2>&1
 if !errorlevel! equ 0 set "IS_CUDA=1"
 findstr /c:"whl/cu" pyproject.toml >nul 2>&1
 if !errorlevel! equ 0 set "IS_CUDA=1"
+REM The CUDA variant of the PyTorch index (cu128 unless the user picked another
+REM one, e.g. cu126 for an older driver), put back after the pull
+set "CUDA_VARIANT="
+for /f "delims=" %%V in ('powershell -NoProfile -Command "$m = [regex]::Match([IO.File]::ReadAllText('pyproject.toml'), 'whl/(cu[0-9]+)'); if ($m.Success) { $m.Groups[1].Value }"') do set "CUDA_VARIANT=%%V"
+if not defined CUDA_VARIANT set "CUDA_VARIANT=cu128"
 
 set "BACKUP_DIR="
+set "KEEP_BACKUP="
+set "PULLED="
 if defined IS_CUDA (
     echo CUDA-protected install detected - lifting the pyproject/uv.lock
     echo protection for the update...
@@ -50,6 +57,28 @@ if defined IS_CUDA (
     copy /y uv.lock "!BACKUP_DIR!\" >nul
     git update-index --no-skip-worktree pyproject.toml 2>nul
     git update-index --no-skip-worktree uv.lock 2>nul
+    REM Only the PyTorch index line is carried over to the new pyproject.toml:
+    REM say so, and keep a copy, when the file has other local changes. A file
+    REM put back by an update that failed after its pull is the version of the
+    REM commit before that pull (ORIG_HEAD) plus the index line: no change.
+    for /f "tokens=1,2" %%A in ('git diff --numstat -- pyproject.toml 2^>nul') do (
+        if not "%%A %%B"=="1 1" set "KEEP_BACKUP=1"
+    )
+    if defined KEEP_BACKUP (
+        git rev-parse -q --verify ORIG_HEAD >nul 2>&1
+        if !errorlevel! equ 0 (
+            set "BASE_CHANGED="
+            for /f "tokens=1,2" %%A in ('git diff --numstat ORIG_HEAD -- pyproject.toml 2^>nul') do (
+                if not "%%A %%B"=="1 1" set "BASE_CHANGED=1"
+            )
+            if not defined BASE_CHANGED set "KEEP_BACKUP="
+        )
+    )
+    if defined KEEP_BACKUP (
+        echo Note: pyproject.toml has local changes besides the CUDA index. The
+        echo update replaces them; your previous file is kept as
+        echo   !BACKUP_DIR!\pyproject.toml
+    )
     git checkout -- pyproject.toml uv.lock
 ) else (
     REM The in-app yt-dlp update rewrites uv.lock; such a local change would
@@ -69,10 +98,11 @@ if !errorlevel! neq 0 (
     echo Error: git pull failed. Resolve the issue above and re-run.
     goto :restore_and_fail
 )
+set "PULLED=1"
 
 if defined IS_CUDA (
-    echo Re-applying the CUDA PyTorch index...
-    powershell -NoProfile -Command "$c = [IO.File]::ReadAllText('pyproject.toml'); $c = $c -replace 'whl/cpu','whl/cu128'; [IO.File]::WriteAllText('pyproject.toml', $c)"
+    echo Re-applying the CUDA PyTorch index ^(!CUDA_VARIANT!^)...
+    powershell -NoProfile -Command "$c = [IO.File]::ReadAllText('pyproject.toml'); $c = $c -replace 'whl/cpu','whl/!CUDA_VARIANT!'; [IO.File]::WriteAllText('pyproject.toml', $c)"
 )
 
 echo Resolving dependencies with the newest yt-dlp...
@@ -89,7 +119,10 @@ if !errorlevel! neq 0 (
 )
 
 REM Stop a running instance from this folder so uv can replace locked files.
-powershell -NoProfile -Command "$venv = Join-Path '%CD%' '.venv'; $root = '%CD%'; foreach ($p in (Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains('bgutil') -and $_.CommandLine.ToLower().Contains($root.ToLower())) })) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host ('Closed running UltraSinger process (PID ' + $p.ProcessId + ').') } catch {} }"
+REM The folder is handed over in an environment variable, so quotes in its
+REM name cannot break the command.
+set "US_REPO_ROOT=%CD%"
+powershell -NoProfile -Command "$root = $env:US_REPO_ROOT; $venv = Join-Path $root '.venv'; foreach ($p in (Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains('bgutil') -and $_.CommandLine.ToLower().Contains($root.ToLower())) })) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host ('Closed running UltraSinger process (PID ' + $p.ProcessId + ').') } catch {} }"
 if exist ".venv" timeout /t 2 /nobreak >nul
 
 REM Avoid uv hardlink warnings when the cache and project are on different drives.
@@ -112,7 +145,7 @@ if defined IS_CUDA (
     echo Restoring the CUDA configuration protection...
     git update-index --skip-worktree pyproject.toml
     git update-index --skip-worktree uv.lock
-    rmdir /s /q "!BACKUP_DIR!" 2>nul
+    if not defined KEEP_BACKUP rmdir /s /q "!BACKUP_DIR!" 2>nul
 )
 
 REM Update the PO-token provider too, so a single "update" refreshes
@@ -137,7 +170,16 @@ if defined IS_CUDA (
     copy /y "!BACKUP_DIR!\uv.lock" uv.lock >nul 2>&1
     git update-index --skip-worktree pyproject.toml 2>nul
     git update-index --skip-worktree uv.lock 2>nul
-    rmdir /s /q "!BACKUP_DIR!" 2>nul
+    if not defined KEEP_BACKUP rmdir /s /q "!BACKUP_DIR!" 2>nul
+)
+if defined PULLED (
+    echo.
+    echo The update is incomplete: the code was updated, but the Python
+    echo packages could not be brought up to date with it, so UltraSinger may
+    echo fail to start or to work. Fix the problem shown above ^(e.g. no
+    echo internet connection, proxy settings, files locked by a running
+    echo UltraSinger^) and run install\update.bat again. If it keeps failing,
+    echo install\auto_install.bat builds the environment anew.
 )
 pause
 exit /b 1

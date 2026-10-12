@@ -4,6 +4,10 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Prefer the uv that the install and update scripts install: an older uv found
+# earlier on PATH (e.g. one installed with pip) may rewrite uv.lock in an old format
+export PATH="$HOME/.local/bin:$PATH"
+
 # Check if uv is available
 if ! command -v uv &> /dev/null; then
     echo "============================================================"
@@ -17,7 +21,7 @@ if ! command -v uv &> /dev/null; then
     echo "   install/CPU/macos_cpu.sh"
     echo ""
     echo " The install script will install uv automatically."
-    echo " Or install manually: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo " Or install manually: curl -LsSf https://astral.sh/uv/0.12.24/install.sh | sh"
     echo ""
     echo " Prerequisites:"
     echo "   - Python 3.12 or 3.13  https://www.python.org/downloads/"

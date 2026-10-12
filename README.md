@@ -1,5 +1,5 @@
 [![Discord](https://img.shields.io/discord/1048892118732656731?logo=discord)](https://discord.gg/rYz9wsxYYK)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rakuri255/UltraSinger/blob/master/colab/UltraSinger.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MrDix/UltraSinger/blob/main/colab/UltraSinger.ipynb)
 ![Status](https://img.shields.io/badge/status-development-yellow)
 
 ![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/rakuri255/UltraSinger/main.yml)
@@ -91,28 +91,31 @@ This will help me a lot to keep this project alive and improve it.
 * [ffmpeg](https://www.ffmpeg.org/download.html) — must be on your `PATH`.
 * [Node.js](https://nodejs.org) 22 or newer — *recommended:* needed for full-quality video downloads (the install script builds the local PO-token provider with it; without Node.js, downloads fall back to reduced quality — you can install it later and re-run the install script).
 * Python 3.12 or 3.13 ([Download](https://www.python.org/downloads/)) — *optional:* if neither is installed (e.g. you only have a newer version), the install scripts automatically download a portable, self-contained Python 3.12 via uv (into uv's per-user directory, or into an app-local `.uv-python/` folder if the global store is unusable); your system Python is never touched.
+* Linux and macOS: a C compiler, because some dependencies are built from source; on Linux also the headers of the system Python 3.12/3.13, if one is used. Debian/Ubuntu: `sudo apt install build-essential python3-dev`; Fedora: `sudo dnf install gcc python3-devel`; macOS: `xcode-select --install`. The installer checks for them before it starts.
 * Behind a corporate proxy? See [Corporate proxy / firewall](#-corporate-proxy--firewall) — the installer detects `HTTP(S)_PROXY` automatically.
 
 **Install**
 
 1. Get the source code:
    ```bash
-   git clone https://github.com/rakuri255/UltraSinger.git
+   git clone https://github.com/MrDix/UltraSinger.git
    cd UltraSinger
    ```
 2. Run the installer — `install\auto_install.bat` (Windows) or `install/auto_install.sh` (Linux/macOS). It takes care of everything:
-   * detects your NVIDIA GPU via `nvidia-smi` and picks the CUDA or CPU build automatically (force with `--cuda` / `--cpu`),
+   * detects your NVIDIA GPU via `nvidia-smi` and picks the CUDA or CPU build automatically (force with `--cuda` / `--cpu`); a GPU the CUDA build cannot run (compute capability below 7.0 on Linux or below 6.1 on Windows, or a driver without CUDA 12 support) gets the CPU build,
    * installs all dependencies including the GUI, scoring engine and PO-token plugin,
    * installs the newest `yt-dlp` release — video platforms change their internals often, so the version pinned in `uv.lock` soon fails to download; it is only used when the upgrade is not possible (e.g. offline),
    * builds the local PO-token provider when Node.js is available,
    * detects proxy environment variables and enables OS-store TLS for uv automatically,
    * and prints tailored advice when your GPU has little VRAM (< 8 GB) or none was found — including how a free cloud key can replace the slowest local step (`--remote_stt`).
 
+   An existing installation keeps working if the install fails (e.g. offline): the previous environment is only replaced once the new one is complete.
+
    You can also run a specific sub-script directly: `install/CUDA/…` (NVIDIA GPU, Windows/Linux) or `install/CPU/…` (no NVIDIA GPU, or macOS — Apple Silicon has no CUDA).
 
 **Update an existing installation**
 
-Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). **This is the only command you need to update** — you never have to re-run `auto_install`. It pulls the latest changes, upgrades `yt-dlp` to its newest release (keeping the pinned version if that is not possible, e.g. offline), syncs the Python packages into `.venv` (so newer dependency versions land too), refreshes the PO-token provider, and re-checks ffmpeg — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten"). Local changes to `uv.lock` from the in-app **Update yt-dlp** button are replaced the same way, since the newest `yt-dlp` is locked again anyway. `auto_install` is only for the first-time install.
+Run `install\update.bat` (Windows) or `install/update.sh` (Linux/macOS). **This is the only command you need to update** — you never have to re-run `auto_install`. It pulls the latest changes, upgrades `yt-dlp` to its newest release (keeping the pinned version if that is not possible, e.g. offline), syncs the Python packages into `.venv` (so newer dependency versions land too), refreshes the PO-token provider, and re-checks ffmpeg — and it transparently handles the CUDA case, where the installer protects `pyproject.toml`/`uv.lock` from git resets (a plain `git pull` would refuse to update those files with "Your local changes ... would be overwritten"). The CUDA variant of the PyTorch index you use (e.g. `cu126` instead of the default `cu128`) is kept; other local changes to `pyproject.toml` are replaced, and the update says where it kept a copy of your file. Local changes to `uv.lock` from the in-app **Update yt-dlp** button are replaced the same way, since the newest `yt-dlp` is locked again anyway. If the Python packages cannot be updated after the new code was pulled (e.g. no internet), the update says so: fix the cause and run it again. `auto_install` is only for the first-time install.
 
 **Keeping everything on one drive (e.g. all development on `D:`)**
 
@@ -946,14 +949,16 @@ With a GPU you can speed up the process. Also the quality of the transcription a
 
 You need an NVIDIA CUDA device for this to work. Sorry, there is no CUDA device for macOS.
 
-For GPU support on Windows and Linux, the installation script automatically installs PyTorch with CUDA support.
+For GPU support on Windows and Linux, the installation script automatically installs PyTorch with CUDA support (CUDA 12.8).
 
 It is optional (but recommended) to install the CUDA driver for your GPU: see [CUDA driver](https://developer.nvidia.com/cuda-downloads).
 Also check your GPU CUDA support. See [CUDA support](https://gist.github.com/standaloneSA/99788f30466516dbcc00338b36ad5acf)
+The CUDA build needs a GPU with compute capability 7.0 or newer on Linux (6.1 or newer on Windows) and a driver that supports CUDA 12 (`nvidia-smi` shows the supported CUDA version). `auto_install` checks both and installs the CPU build otherwise.
 
-For manual installation, you can use:
+For a manual installation, do what the CUDA install script does: in `pyproject.toml`, change the URL of the `pytorch` index from `https://download.pytorch.org/whl/cpu` to `https://download.pytorch.org/whl/cu128`, then run:
 ```bash
-uv pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision torchaudio
+uv lock
+uv sync --extra gui --extra scoring --extra potoken
 ```
 
 #### Crashes due to low VRAM
@@ -980,18 +985,22 @@ use a smaller Whisper model, or force CPU with `--force_cpu`.
 Run UltraSinger in a container — no local Python install required.
 
 ```bash
+# Create the input and output folders (once, in the project root)
+mkdir input
+mkdir output
+
 # Build the image (once)
 docker compose -f container/compose-cpu.yml build
 
 # Convert a video URL (CPU)
 docker compose -f container/compose-cpu.yml run --rm ultrasinger \
-    uv run python /app/UltraSinger/src/UltraSinger.py \
+    python3.12 /app/UltraSinger/src/UltraSinger.py \
     -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
 
 # With NVIDIA GPU
 docker compose -f container/compose-gpu.yml run --rm ultrasinger \
-    uv run python /app/UltraSinger/src/UltraSinger.py \
+    python3.12 /app/UltraSinger/src/UltraSinger.py \
     -i "https://www.youtube.com/watch?v=XXXXX" -o /app/UltraSinger/output/
 ```
 
-For detailed setup (volumes, cookies, Podman), see [container/README.md](container/README.md)
+The image contains the conversion pipeline (CLI) with FFmpeg and PyTorch, but not the GUI, the game-score engine or the PO-token provider for full-quality video downloads. The models are downloaded on first use and kept between runs. For detailed setup (volumes, cookies, Podman), see [container/README.md](container/README.md)

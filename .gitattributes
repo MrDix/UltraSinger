@@ -1,2 +1,7 @@
 # Ensure Windows batch files always use CRLF line endings
 *.bat text eol=crlf
+# Shell scripts must keep LF line endings, also in a checkout on Windows: bash
+# fails on carriage returns (e.g. a Windows checkout used from WSL or copied
+# to Linux/macOS)
+*.sh text eol=lf
+*.command text eol=lf

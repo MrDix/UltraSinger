@@ -41,9 +41,15 @@ fi
 if grep -q 'whl/cu' pyproject.toml 2>/dev/null; then
     IS_CUDA=1
 fi
+# The CUDA variant of the PyTorch index (cu128 unless the user picked another
+# one, e.g. cu126 for an older driver), put back after the pull
+CUDA_VARIANT="$(grep -o 'whl/cu[0-9][0-9]*' pyproject.toml 2>/dev/null | head -n1 | cut -d/ -f2)"
+CUDA_VARIANT="${CUDA_VARIANT:-cu128}"
 
 # --- Failure safety: back up the protected files, restore them on any error --
 BACKUP_DIR=""
+KEEP_BACKUP=""
+PULLED=""
 cleanup() {
     rc=$?
     if [ "$rc" -ne 0 ] && [ -n "$IS_CUDA" ] && [ -n "$BACKUP_DIR" ]; then
@@ -54,7 +60,16 @@ cleanup() {
         git update-index --skip-worktree pyproject.toml 2>/dev/null || true
         git update-index --skip-worktree uv.lock 2>/dev/null || true
     fi
-    if [ -n "$BACKUP_DIR" ]; then
+    if [ "$rc" -ne 0 ] && [ -n "$PULLED" ]; then
+        echo ""
+        echo "The update is incomplete: the code was updated, but the Python"
+        echo "packages could not be brought up to date with it, so UltraSinger may"
+        echo "fail to start or to work. Fix the problem shown above (e.g. no"
+        echo "internet connection, proxy settings, files locked by a running"
+        echo "UltraSinger) and run install/update.sh again. If it keeps failing,"
+        echo "install/auto_install.sh builds the environment anew."
+    fi
+    if [ -n "$BACKUP_DIR" ] && [ -z "$KEEP_BACKUP" ]; then
         rm -rf "$BACKUP_DIR"
     fi
     # keep the script's own exit status (the trap's last command would set it)
@@ -69,6 +84,22 @@ if [ -n "$IS_CUDA" ]; then
     cp -f pyproject.toml uv.lock "$BACKUP_DIR/"
     git update-index --no-skip-worktree pyproject.toml 2>/dev/null || true
     git update-index --no-skip-worktree uv.lock 2>/dev/null || true
+    # Only the PyTorch index line is carried over to the new pyproject.toml:
+    # say so, and keep a copy, when the file has other local changes. A file
+    # put back by an update that failed after its pull is the version of the
+    # commit before that pull (ORIG_HEAD) plus the index line: no change.
+    only_the_index_differs() {  # $@ = the commit to compare with (default: the index)
+        local changes
+        changes="$(git diff --numstat "$@" -- pyproject.toml 2>/dev/null | cut -f1,2)"
+        [ -z "$changes" ] || [ "$changes" = "$(printf '1\t1')" ]
+    }
+    if ! only_the_index_differs \
+            && ! { git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1 && only_the_index_differs ORIG_HEAD; }; then
+        KEEP_BACKUP=1
+        echo "Note: pyproject.toml has local changes besides the CUDA index. The"
+        echo "update replaces them; your previous file is kept as"
+        echo "  $BACKUP_DIR/pyproject.toml"
+    fi
     git checkout -- pyproject.toml uv.lock
 else
     # The in-app yt-dlp update rewrites uv.lock; such a local change would make
@@ -85,11 +116,12 @@ fi
 
 echo "Pulling latest changes..."
 git pull --ff-only
+PULLED=1
 
 if [ -n "$IS_CUDA" ]; then
-    echo "Re-applying the CUDA PyTorch index..."
+    echo "Re-applying the CUDA PyTorch index ($CUDA_VARIANT)..."
     # BSD/macOS sed needs a suffix argument for -i
-    sed -i.bak 's|whl/cpu|whl/cu128|' pyproject.toml && rm -f pyproject.toml.bak
+    sed -i.bak "s|whl/cpu|whl/$CUDA_VARIANT|" pyproject.toml && rm -f pyproject.toml.bak
 fi
 
 echo "Resolving dependencies with the newest yt-dlp..."
