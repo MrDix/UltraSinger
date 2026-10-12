@@ -276,6 +276,22 @@ class TestRemoteSpeechToText(unittest.TestCase):
         self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
         self.assertIn("Transcription:            skipped", info)
 
+    def test_platform_language_is_not_trusted(self):
+        # The metadata is often a default ("en"); no transcription replaces it now
+        for early_lyrics, aligner in ((None, "remote"),
+                                      (SimpleNamespace(synced_lyrics=None, plain_lyrics="hallo welt"), "plain_align")):
+            with self.subTest(aligner=aligner):
+                mocks = {}
+                _, _, files = _run(
+                    _process_data(language="en"), _pitch_track([(1.0, 1.4, "C4")], length=2.5),
+                    _transcription([("eins ", 1.0, 1.24)], "de"), early_lyrics=early_lyrics,
+                    fast_language=("de", 0.95), plain_align=_aligned, remote=lambda **kwargs: "hallo welt",
+                    mocks=mocks, remote_stt=True, write_settings_info=True,
+                )
+                self.assertEqual(mocks[aligner].call_args.kwargs["language"], "de")
+                self.assertIn("Language detection:        Whisper tiny (fast) -> de",
+                              files["ultrasinger_parameter.info"])
+
     def test_without_remote_option_the_transcription_runs_first(self):
         mocks = {}
         _run(_process_data(), _pitch_track([(1.0, 1.24, "C4")], length=2.5),
@@ -327,13 +343,24 @@ class TestRejectedSyncedLyricsAreDropped(unittest.TestCase):
                "night comes and it is dark, and then we go home to the place where we are from")
 
     def test_early_synced_lyrics_are_cleared(self):
+        process_data = self._transcribe(SimpleNamespace(synced_lyrics=self.ENGLISH, plain_lyrics=None),
+                                        synced_lyrics=self.ENGLISH)
+        self.assertIsNone(process_data.synced_lyrics)
+        self.assertEqual(process_data.synced_lyrics_other_language, "en")
+
+    def test_early_plain_lyrics_are_cleared(self):
+        plain = self.ENGLISH.replace("[00:01.00] ", "")
+        process_data = self._transcribe(SimpleNamespace(synced_lyrics=None, plain_lyrics=plain), plain_lyrics=plain)
+        self.assertIsNone(process_data.plain_lyrics)
+
+    def _transcribe(self, lyrics, synced_lyrics=None, plain_lyrics=None):
+        """TranscribeAudio with lyrics kept by the early lookup; the transcription detects German."""
         process_data = SimpleNamespace(
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
-            transcribed_data=[], synced_lyrics=self.ENGLISH, plain_lyrics=None,
+            transcribed_data=[], synced_lyrics=synced_lyrics, plain_lyrics=plain_lyrics,
         )
         transcription = SimpleNamespace(detected_language="de", transcribed_data=[])
-        lyrics = SimpleNamespace(synced_lyrics=self.ENGLISH, plain_lyrics=None)
         with patch.object(us, "transcribe_audio", return_value=transcription), \
                 patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data), \
                 patch("modules.lrclib_client.search_lyrics", return_value=lyrics), \
@@ -343,7 +370,7 @@ class TestRejectedSyncedLyricsAreDropped(unittest.TestCase):
                 patch.object(us.settings, "language", None), \
                 contextlib.redirect_stdout(io.StringIO()):
             us.TranscribeAudio(process_data)
-        self.assertIsNone(process_data.synced_lyrics)
+        return process_data
 
 
 class TestInputKinds(unittest.TestCase):

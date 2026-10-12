@@ -517,6 +517,16 @@ class QueueManager(QObject):
             info["pipeline"] = "whisper"
             return
 
+        # Plain lyrics, or the text of remote speech-to-text, were aligned and
+        # made the notes (also after synced lyrics failed to align)
+        if "Plain lyrics pipeline:" in clean:
+            info["pipeline"] = "plain"
+            info.pop("whisper_fallback", None)
+            return
+        if "Remote STT transcription aligned locally" in clean:
+            info["pipeline"] = "remote"
+            return
+
         # Output folder — derive from "Creating UltraStar file <path>".
         m = re.search(r"Creating UltraStar file\s+(.+)", clean)
         if m:
@@ -559,6 +569,11 @@ class QueueManager(QObject):
         if exit_code == 0:
             if info.get("pipeline") == "reference":
                 info["lyrics_source"] = "synced"
+            elif info.get("pipeline") == "plain":
+                info["lyrics_source"] = "plain"
+            elif info.get("pipeline") == "remote":
+                # A speech-to-text text, like the transcription's
+                info["lyrics_source"] = "transcribed"
             elif info.get("lrclib_result") == "synced" and info.get("whisper_fallback"):
                 info["lyrics_source"] = "synced (fallback)"
                 if info.get("language_changed"):

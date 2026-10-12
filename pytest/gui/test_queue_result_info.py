@@ -155,6 +155,21 @@ class TestParseOutputLine:
         assert item.result_info["whisper_fallback"] is True
         assert item.result_info["pipeline"] == "whisper"
 
+    def test_plain_lyrics_after_failed_synced_alignment(self, queue_manager):
+        item = _make_item()
+        queue_manager._current_item = item
+        queue_manager._parse_output_line("[UltraSinger] Falling back to standard pipeline")
+        queue_manager._parse_output_line("[UltraSinger] Plain lyrics pipeline: 150 notes from 120 words")
+        assert item.result_info["pipeline"] == "plain"
+        assert "whisper_fallback" not in item.result_info
+
+    def test_remote_text_aligned(self, queue_manager):
+        item = _make_item()
+        queue_manager._current_item = item
+        queue_manager._parse_output_line("[UltraSinger] Plain lyrics pipeline: 150 notes from 120 words")
+        queue_manager._parse_output_line("[UltraSinger] Remote STT transcription aligned locally")
+        assert item.result_info["pipeline"] == "remote"
+
     def test_output_folder_parsed(self, queue_manager):
         item = _make_item()
         queue_manager._current_item = item
@@ -376,6 +391,20 @@ class TestLyricsSourceDerivation:
         queue_manager._on_item_finished(0)
 
         assert item.result_info["lyrics_source"] == "synced"
+
+    def test_plain_lyrics_made_the_notes(self, queue_manager):
+        """Synced lyrics were found but did not align; the plain lyrics made the notes."""
+        for info, expected in (({"lrclib_result": "synced", "pipeline": "plain"}, "plain"),
+                               ({"lrclib_result": "none", "pipeline": "remote"}, "transcribed")):
+            item = _make_item()
+            item.result_info = dict(info, language="en")
+            queue_manager._items = [item]
+            queue_manager._current_item = item
+            queue_manager._running = True
+
+            queue_manager._on_item_finished(0)
+
+            assert item.result_info["lyrics_source"] == expected
 
     def test_transcribed_no_lrclib(self, queue_manager):
         item = _make_item()

@@ -269,9 +269,10 @@ _Not all options working now!_
                             (e.g. --whisper_align_model gigant/romanian-wav2vec2)
     --language              Language of the singing (e.g. en, de) for the transcription, the alignment
                             and the hyphenation. Without it the language is detected: by the
-                            transcription when it runs (this replaces any earlier guess); when found
-                            synced lyrics let it be skipped, from the video platform metadata of a
-                            video URL, else quickly via Whisper tiny (~2-3s).
+                            transcription when it runs (this replaces any earlier guess), else quickly
+                            via Whisper tiny (~2-3s). Only when found synced lyrics let the
+                            transcription be skipped (without --remote_stt), the language metadata of
+                            a video URL is used instead.
                             WARNING: setting this for non-matching songs will degrade
                             alignment quality (e.g. --language en for German songs).
     --whisper_batch_size    Segments processed in parallel. 'auto' (default) scales to GPU VRAM: 16 (~8GB and larger) / 8 (5-7GB) / 4 (smaller). Lower manually if still low on GPU mem: slower, but transcription is UNCHANGED (the safe lever)

@@ -259,8 +259,9 @@ def run() -> tuple[str, Score, Score]:
 
     # Audio transcription
     # Language: --language, else the one the transcription detects (when it
-    # runs); until then, and when it is skipped, video platform metadata, else
-    # a fast detection with Whisper tiny
+    # runs); until then, and when it is skipped, a fast detection with Whisper
+    # tiny, or the video platform metadata for synced lyrics without remote
+    # speech-to-text
     if settings.language is not None:
         process_data.media_info.language = settings.language
         print(
@@ -317,9 +318,13 @@ def run() -> tuple[str, Score, Score]:
                 # Detect language if not explicitly set and no video platform hint.
                 # Platform metadata is deliberately NOT trusted for rejecting
                 # lyrics: it reflects upload settings and is often a default
-                # (e.g. "en") for songs in other languages.
+                # (e.g. "en") for songs in other languages. With remote
+                # speech-to-text it is not used at all: no transcription replaces
+                # it later, and plain lyrics or the remote text have no line times
+                # that would show a wrong alignment.
                 language_is_confident = settings.language is not None
-                if process_data.media_info.language is None:
+                if (process_data.media_info.language is None
+                        or (remote_first and _lang_source == "video_platform")):
                     from modules.Speech_Recognition.Whisper import detect_language_with_confidence
                     process_data.media_info.language, probability = detect_language_with_confidence(
                         process_data.process_data_paths.whisper_audio_path,
@@ -360,6 +365,13 @@ def run() -> tuple[str, Score, Score]:
                     early_plain, process_data.media_info.language, language_is_confident,
                 )
                 if use_lyrics:
+                    if lyrics_language:
+                        print(
+                            f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the plain lyrics look like "
+                            f"{blue_highlighted(lyrics_language)} while the song language was detected as "
+                            f"{blue_highlighted(process_data.media_info.language)}; if the result is poor, "
+                            f"set the language with --language"
+                        )
                     process_data.plain_lyrics = early_plain
                 else:
                     print(
@@ -520,8 +532,9 @@ def run() -> tuple[str, Score, Score]:
                 # Local CTC alignment needs a language code; remote STT
                 # responses aren't guaranteed to include a reliable one,
                 # so fast-detect locally first (mirrors the early-LRCLIB
-                # synced-lyrics path above).
-                if process_data.media_info.language is None:
+                # synced-lyrics path above; video platform metadata is not
+                # trusted for it either)
+                if process_data.media_info.language is None or _lang_source == "video_platform":
                     from modules.Speech_Recognition.Whisper import detect_language_from_audio
                     process_data.media_info.language = detect_language_from_audio(
                         process_data.process_data_paths.whisper_audio_path,
