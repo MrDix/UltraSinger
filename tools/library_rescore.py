@@ -45,6 +45,10 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 if sys.stderr and hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from compare_ultrastar import parse_score_song  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -130,7 +134,9 @@ def score_medium(txt_path: Path, vocal_path: Path) -> tuple[float, int]:
     + ``score_song(pitch_frames=...)`` fast path when the installed
     ``ultrastar-score`` version offers it (checked via ``hasattr`` so this
     keeps working across library versions that don't), otherwise falls
-    back to the plain ``score_song`` call.
+    back to the plain ``score_song`` call. A ``#RELATIVE:YES`` chart is
+    scored with absolute beats (see
+    :func:`compare_ultrastar.parse_score_song`).
 
     Raises whatever the underlying parse/score call raises — the caller
     is expected to catch broadly and record a CSV error row per song so
@@ -139,9 +145,8 @@ def score_medium(txt_path: Path, vocal_path: Path) -> tuple[float, int]:
     """
     import ultrastar_score
     from ultrastar_score import Difficulty, score_song
-    from ultrastar_score.parser import parse_ultrastar
 
-    song = parse_ultrastar(str(txt_path))
+    song = parse_score_song(txt_path)
     note_count = len(song.all_notes)
 
     if hasattr(ultrastar_score, "detect_pitch_frames"):
