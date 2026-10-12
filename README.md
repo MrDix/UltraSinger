@@ -486,7 +486,9 @@ Note that if you run into a yt-dlp error such as `Sign in to confirm you’re no
 
 #### UltraStar (re-pitch)
 
-This re-pitch the audio and creates a new txt file.
+This re-pitches the notes of an UltraStar txt file from its audio and writes the chart with the new pitches into a new song folder, as `Artist - Title.txt`. Normal and golden notes get new pitches; freestyle and rap notes keep theirs. Like a converted song, the new chart gets a [game score](#-ultrastar-score-calculation).
+
+Older hand-made charts are read as well: in CP1252 or in the encoding their `#ENCODING` tag names, and with relative beats (`#RELATIVE:YES`). The new file is always written in UTF-8.
 
 ```commandline
 -i "input/ultrastar.txt"
@@ -939,7 +941,7 @@ A measurement against professional reference charts makes the trade-off concrete
 
 #### Simple / accurate score (fallback only)
 
-Without the optional `ultrastar-score` package installed, UltraSinger falls back to an internal simple/accurate estimate instead. Ultrastar is not interested in pitch heights: as long as a note is in the pitch range A-G you get one point (simple), while accurate requires the exact octave. This fallback measures against the SwiftF0 pitch data the chart was built from rather than the actual in-game ptAKF detector, so it can rank charts differently — prefer the game score above whenever it is available.
+Without the optional `ultrastar-score` package installed, UltraSinger falls back to an internal simple/accurate estimate instead. Ultrastar is not interested in pitch heights: as long as a note is in the pitch range A-G you get one point (simple), while accurate requires the exact octave. Golden notes count double, as in the games, and a chart sung right throughout reaches the full 10000 points. This fallback measures against the SwiftF0 pitch data the chart was built from rather than the actual in-game ptAKF detector, so it can rank charts differently — prefer the game score above whenever it is available.
 
 
 ### 📟 Use GPU

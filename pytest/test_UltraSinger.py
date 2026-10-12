@@ -514,3 +514,48 @@ class TestOctaveInfoLines(unittest.TestCase):
 
     def test_all_notes(self):
         self.assertIn("Octave consistency:       True\n", self._info(True))
+
+
+class TestRepitchedChart(unittest.TestCase):
+    """An UltraStar txt as input (re-pitch): the new chart and its game score."""
+
+    def test_game_score_also_for_a_repitched_chart(self):
+        from src.UltraSinger import game_score_wanted
+
+        def wanted(**values):
+            settings = Settings()
+            for name, value in values.items():
+                setattr(settings, name, value)
+            return game_score_wanted(settings)
+
+        self.assertTrue(wanted())
+        self.assertTrue(wanted(ignore_audio=True, input_file_is_ultrastar_txt=True))
+        self.assertFalse(wanted(ignore_audio=True))
+        self.assertFalse(wanted(calculate_score=False))
+        self.assertFalse(wanted(use_separated_vocal=False, ignore_audio=True, input_file_is_ultrastar_txt=True))
+
+    def test_chart_is_named_after_the_song_folder(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        import src.UltraSinger as us
+
+        with tempfile.TemporaryDirectory() as folder:
+            input_file = os.path.join(folder, "input.txt")
+            with open(input_file, "w", encoding="utf-8") as file:
+                file.write("#TITLE:What?\n#ARTIST:Artist\n#BPM:300\n: 0 2 0 a\nE\n")
+            process_data = us.ProcessData()
+            process_data.basename = "Artist - What"  # the title, made valid as a file name
+            process_data.media_info = us.MediaInfo(title="What?", artist="Artist", audio_extension="mp3")
+            process_data.midi_segments = [us.MidiSegment("C4", 0.0, 0.1, "a")]
+            with patch.object(us.settings, "ignore_audio", True), \
+                    patch.object(us.settings, "input_file_path", input_file), \
+                    patch.object(us.settings, "output_folder_path", folder), \
+                    patch.object(us.settings, "create_karaoke", False), \
+                    patch.object(us.settings, "write_metadata_tags", False), \
+                    patch.object(us.settings, "calculate_score", False), \
+                    patch.object(us, "convert_audio_format"):
+                _, _, output = us.CreateUltraStarTxt(process_data)
+            self.assertEqual(output, os.path.join(folder, "Artist - What.txt"))
+            self.assertTrue(os.path.isfile(output))

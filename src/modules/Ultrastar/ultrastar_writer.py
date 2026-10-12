@@ -10,6 +10,7 @@ from modules.Ultrastar.coverter.ultrastar_converter import (
     real_bpm_to_ultrastar_bpm,
     second_to_beat, )
 from modules.Ultrastar.coverter.ultrastar_midi_converter import convert_midi_note_to_ultrastar_note
+from modules.Ultrastar.ultrastar_parser import NOTE_LINE_PREFIXES, read_chart_lines
 from modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag, UltrastarTxtNoteTypeTag, \
     FILE_ENCODING
 from modules.Ultrastar.ultrastar_score_calculator import Score
@@ -408,32 +409,36 @@ def calculate_silent_beat_length(
 def create_repitched_txt_from_ultrastar_data(
         input_file: str, note_numbers: list[int], output_repitched_ultrastar: str
 ) -> None:
-    """Creates a repitched ultrastar txt file from the original one"""
-    # todo: just add '_repitched' to input_file
-    print(f"{ULTRASINGER_HEAD} Creating repitched ultrastar txt -> {input_file}_repitch.txt")
+    """Creates a repitched ultrastar txt file from the original one.
 
-    # todo: to reader
-    with open(input_file, "r", encoding=FILE_ENCODING) as file:
-        txt = file.readlines()
+    ``note_numbers`` holds a pitch for every note line of the original, in
+    order. Normal and golden notes get it; freestyle and rap notes, whose pitch
+    the games do not score, keep theirs. The file is written in UTF-8.
+    """
+    print(f"{ULTRASINGER_HEAD} Creating repitched ultrastar txt -> {output_repitched_ultrastar}")
+
+    txt = read_chart_lines(input_file)
 
     i = 0
-    # todo: just add '_repitched' to input_file
     with open(output_repitched_ultrastar, "w", encoding=FILE_ENCODING) as file:
         for line in txt:
-            if line.startswith(f"{UltrastarTxtNoteTypeTag.NORMAL.value} "):
-                parts = re.findall(r"\S+|\s+", line)
-                # between are whitespaces
-                # [0] :
-                # [2] start beat
-                # [4] duration
-                # [6] pitch
-                # [8] word
-                parts[6] = str(note_numbers[i])
-                delimiter = ""
-                file.write(delimiter.join(parts))
+            if line.startswith(NOTE_LINE_PREFIXES):
+                if line.startswith((f"{UltrastarTxtNoteTypeTag.NORMAL.value} ",
+                                    f"{UltrastarTxtNoteTypeTag.GOLDEN.value} ")):
+                    parts = re.findall(r"\S+|\s+", line)
+                    # between are whitespaces
+                    # [0] : or *
+                    # [2] start beat
+                    # [4] duration
+                    # [6] pitch
+                    # [8] word
+                    parts[6] = str(note_numbers[i])
+                    line = "".join(parts)
+                # one pitch per note line, whatever its type
                 i += 1
-            else:
-                file.write(line)
+            elif line.upper().startswith(f"#{UltrastarTxtTag.ENCODING.value}:"):
+                line = f"#{UltrastarTxtTag.ENCODING.value}:UTF8\n"
+            file.write(line)
 
 
 def _append_creator_header_suffix(ultrastar_file_output: str, suffix: str) -> None:

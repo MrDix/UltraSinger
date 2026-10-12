@@ -903,14 +903,8 @@ def run() -> tuple[str, Score, Score]:
     # actually use. The internal simple/accurate score (fallback only, see
     # CreateUltraStarTxt) measures against SwiftF0 data and can rank charts
     # differently.
-    # Only meaningful against isolated vocals: without separation the
-    # processing audio is the full mix, so the report is skipped then.
     uscore_result = None
-    if (
-        settings.calculate_score
-        and not settings.ignore_audio
-        and settings.use_separated_vocal
-    ):
+    if game_score_wanted(settings):
         from modules.uscore_report import (
             calculate_uscore_report,
             format_uscore_report,
@@ -924,7 +918,8 @@ def run() -> tuple[str, Score, Score]:
                 f"{ULTRASINGER_HEAD} Game score (ptAKF): "
                 f"{blue_highlighted(format_uscore_report(uscore_result))}"
             )
-            if settings.chart_style == "singable" and not settings.ptakf_refit:
+            if (settings.chart_style == "singable" and not settings.ptakf_refit
+                    and not settings.input_file_is_ultrastar_txt):
                 # The scorer rewards charts that trace the vocal exactly, so a
                 # singable chart lands near the level a professional chart
                 # reaches (~77% Medium on isolated vocals) - not a defect.
@@ -1052,6 +1047,20 @@ def timing_pass_wanted(enabled: bool, model_segmentation_used: bool) -> bool:
     than either pass would place them, so both are skipped for them.
     """
     return enabled and not model_segmentation_used
+
+
+def game_score_wanted(run_settings: Settings) -> bool:
+    """Whether to score the written chart as the games do (ultrastar-score).
+
+    Only meaningful against isolated vocals: without separation the processing
+    audio is the full mix, so the report is skipped then. A re-pitched chart
+    (UltraStar txt input) is scored as well.
+    """
+    return bool(
+        run_settings.calculate_score
+        and (not run_settings.ignore_audio or run_settings.input_file_is_ultrastar_txt)
+        and run_settings.use_separated_vocal
+    )
 
 
 def octave_consistency_wanted(setting: bool | None, model_segmentation_used: bool) -> bool:
@@ -1875,7 +1884,7 @@ def CreateUltraStarTxt(process_data: ProcessData):
         )
     else:
         ultrastar_file_output = create_ultrastar_txt_from_midi_segments(
-            settings.output_folder_path, settings.input_file_path, process_data.media_info.title,
+            settings.output_folder_path, settings.input_file_path, process_data.basename,
             process_data.midi_segments
         )
 

@@ -37,11 +37,12 @@ def from_ultrastar_txt(ultrastar_txt: UltrastarTxtValue) -> ProcessData:
 def create_ultrastar_txt_from_midi_segments(
         song_folder_output_path: str,
         input_file_path: str,
-        title: str,
+        basename: str,
         midi_segments: list[MidiSegment],
 ) -> str:
-    """Create Ultrastar txt from Ultrastar data"""
-    output_repitched_ultrastar = os.path.join(song_folder_output_path, title + ".txt")
+    """Create Ultrastar txt from Ultrastar data, as ``<basename>.txt`` (a name
+    that is valid as a file name, like the song folder's)"""
+    output_repitched_ultrastar = os.path.join(song_folder_output_path, basename + ".txt")
     ultrastar_note_numbers = convert_midi_notes_to_ultrastar_notes(midi_segments)
 
     create_repitched_txt_from_ultrastar_data(

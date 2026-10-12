@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 
+import librosa
 from packaging import version
 from unittest.mock import patch, mock_open
 from src.modules.Ultrastar.ultrastar_writer import (
@@ -821,6 +822,41 @@ class TestLinebreakBeat(unittest.TestCase):
             for pause in range(0, 200, 7):
                 beat = self._beat(pause, timing)
                 self.assertTrue(100 <= beat <= 100 + pause, (timing, pause, beat))
+
+
+class TestRepitchedTxt(unittest.TestCase):
+    """The re-pitched chart: the original with the new pitches (one per note line)."""
+
+    def _repitch(self, original: bytes, pitches: list[int]) -> str:
+        from src.modules.Ultrastar.coverter.ultrastar_txt_converter import create_ultrastar_txt_from_midi_segments
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = os.path.join(tmp, "input.txt")
+            with open(input_file, "wb") as f:
+                f.write(original)
+            segments = [MidiSegment(librosa.midi_to_note(48 + p), 0.0, 1.0, "w") for p in pitches]
+            output = create_ultrastar_txt_from_midi_segments(tmp, input_file, "Artist - Title", segments)
+            with open(output, "r", encoding="utf-8") as f:
+                return f.read()
+
+    def test_every_note_line_takes_its_own_pitch(self):
+        original = (b"#TITLE:Title\n#BPM:300\n"
+                    b": 0 2 0 one\n* 2 2 0 gold\nF 4 2 0 free\nR 6 2 0 rap\n- 9\nG 10 2 0 gr\n: 12 2 0 two\nE\n")
+        text = self._repitch(original, [1, 2, 3, 4, 5, 6])
+        notes = [line for line in text.splitlines() if line[:2] in (": ", "* ", "F ", "R ", "G ")]
+        # normal and golden notes are re-pitched, freestyle and rap notes keep their pitch
+        self.assertEqual(notes, [": 0 2 1 one", "* 2 2 2 gold", "F 4 2 0 free", "R 6 2 0 rap",
+                                 "G 10 2 0 gr", ": 12 2 6 two"])
+
+    def test_hand_made_charts_in_other_encodings(self):
+        original = "#TITLE:Grüße\n#ENCODING:CP1252\n#BPM:300\n: 0 2 0 Grün\nE\n".encode("cp1252")
+        text = self._repitch(original, [3])
+        self.assertIn("#TITLE:Grüße\n", text)
+        self.assertIn(": 0 2 3 Grün\n", text)
+        self.assertIn("#ENCODING:UTF8\n", text)  # written in UTF-8
+        text = self._repitch(b"\xef\xbb\xbf#TITLE:Title\n: 0 2 0 a\n", [4])
+        self.assertTrue(text.startswith("#TITLE:Title\n"))
+        self.assertIn(": 0 2 4 a\n", text)
 
 
 if __name__ == "__main__":
