@@ -48,9 +48,10 @@ class TestOptionErrors(unittest.TestCase):
 
     def test_numbers_still_parse(self):
         settings = init_settings(["-i", "test.mp3", "--vad_onset", "0.5", "--whisper_batch_size", "4",
-                                  "--remote_stt_timeout", "90.0"])
+                                  "--remote_stt_timeout", "90.0", "--llm_retry_max", "1" + "0" * 400])
         self.assertEqual((settings.vad_onset, settings.whisper_batch_size, settings.remote_stt_timeout),
                          (0.5, 4, 90))
+        self.assertEqual(settings.llm_retry_max, 10 ** 400)  # too long for a float, still a whole number
         init_settings(["-i", "test.mp3"])
 
     def test_unknown_whisper_model_is_an_error(self):

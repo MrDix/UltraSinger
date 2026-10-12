@@ -1160,6 +1160,8 @@ def _write_settings_info_file(
                 f.write("  Transcription:            skipped\n")
             elif settings.disable_reference_lyrics:
                 f.write("  Pipeline:                 Standard transcription (reference lyrics disabled)\n")
+                f.write("  LRCLIB synced lyrics:     found (not aligned: reference lyrics disabled)\n"
+                        if has_synced_lyrics else "  LRCLIB synced lyrics:     not found\n")
                 f.write("  Transcription:            full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
             elif reference_first_used and reference_recovered:
@@ -2307,7 +2309,8 @@ def _option_number(opt: str, arg: str, kind: type = float):
     (also for "inf" and "nan")."""
     try:
         value = kind(arg)
-        if math.isfinite(value):
+        # (an int is finite; a very long one would not even fit a float)
+        if kind is int or math.isfinite(value):
             return value
     except ValueError:
         pass

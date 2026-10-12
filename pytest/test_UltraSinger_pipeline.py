@@ -198,6 +198,7 @@ class TestPipelineInInfoFile(unittest.TestCase):
         # The lookup after the transcription still finds synced lyrics; they were never aligned
         info = self._info(disable_reference_lyrics=True, has_synced_lyrics=True)
         self.assertIn("Pipeline:                 Standard transcription (reference lyrics disabled)", info)
+        self.assertIn("LRCLIB synced lyrics:     found (not aligned: reference lyrics disabled)", info)
         self.assertNotIn("alignment failed", info)
 
     def test_repitch(self):
