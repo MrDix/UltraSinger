@@ -1037,15 +1037,39 @@ def split_args(value: str, posix: bool | None = None) -> list[str]:
 
     POSIX shell rules read backslashes as escapes, which would turn a Windows
     path like ``D:\\Seg\\model.pt`` into ``D:Segmodel.pt``. On Windows
-    (``posix`` False) backslashes are kept and quotes only group words like
-    ``"D:\\My Models\\model.pt"``; they are dropped afterwards.
+    (``posix`` False) backslashes are kept as they are, and quotes at the
+    start of an argument or right after ``=`` group words like
+    ``"D:\\My Models\\model.pt"`` or ``--x='a b'``; the quotes are dropped.
+    An apostrophe inside a word stays.
     """
     if posix is None:
         posix = os.name != "nt"
     if posix:
         return shlex.split(value)
-    return [token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'" else token
-            for token in shlex.split(value, posix=False)]
+    args: list[str] = []
+    current: list[str] = []
+    in_arg = False
+    quote = None
+    for ch in value:
+        if quote:
+            if ch == quote:
+                quote = None
+            else:
+                current.append(ch)
+        elif ch in "\"'" and (not current or current[-1] == "="):
+            quote, in_arg = ch, True
+        elif ch.isspace():
+            if in_arg:
+                args.append("".join(current))
+                current, in_arg = [], False
+        else:
+            current.append(ch)
+            in_arg = True
+    if quote:
+        raise ValueError("No closing quotation")
+    if in_arg:
+        args.append("".join(current))
+    return args
 
 
 def cmd_convert(args) -> int:

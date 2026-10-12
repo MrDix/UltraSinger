@@ -717,6 +717,15 @@ class TestSplitArgs:
     def test_windows_apostrophe_inside_a_word_kept(self):
         assert cb.split_args(r"--x D:\Rock'n'Roll\m.pt", posix=False) == ["--x", r"D:\Rock'n'Roll\m.pt"]
 
+    @pytest.mark.parametrize("quote", ['"', "'"])
+    def test_windows_quotes_after_equals(self, quote):
+        value = f"--segmentation_model={quote}D:\\My Models\\model.pt{quote} --x"
+        assert cb.split_args(value, posix=False) == [r"--segmentation_model=D:\My Models\model.pt", "--x"]
+
+    def test_windows_unclosed_quote(self):
+        with pytest.raises(ValueError, match="closing quotation"):
+            cb.split_args('--x "D:\\a b', posix=False)
+
     def test_posix_rules_elsewhere(self):
         assert cb.split_args("--x 'a b' c\\ d", posix=True) == ["--x", "a b", "c d"]
 

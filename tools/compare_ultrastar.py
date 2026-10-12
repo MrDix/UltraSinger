@@ -322,11 +322,17 @@ def declared_encoding(raw: bytes) -> str | None:
 def read_chart_text(path: str | Path) -> str:
     """Decode an UltraStar TXT the way the games read it.
 
-    A UTF-8 byte order mark is dropped (it would hide the first header line).
-    Valid UTF-8 is read as UTF-8; a legacy chart is read in the codepage its
-    ``#ENCODING:`` tag names (e.g. CP1250), else as Windows-1252.
+    A UTF-8 byte order mark is dropped (it would hide the first header line)
+    and a UTF-16 one is honoured. Valid UTF-8 is read as UTF-8; a legacy
+    chart is read in the codepage its ``#ENCODING:`` tag names (e.g.
+    CP1250), else as Windows-1252.
     """
     raw = Path(path).read_bytes()
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        try:
+            return raw.decode("utf-16")
+        except UnicodeDecodeError:
+            pass
     if raw.startswith(codecs.BOM_UTF8):
         raw = raw[len(codecs.BOM_UTF8):]
     for encoding in ("utf-8", declared_encoding(raw), "cp1252"):
@@ -405,7 +411,7 @@ def parse_score_song(path: str | Path):
         return score_parser.parse_ultrastar(str(path))
     with tempfile.TemporaryDirectory(prefix="chart_") as tmp:
         copy = Path(tmp) / "chart.txt"
-        copy.write_text(prepared, encoding="utf-8")
+        copy.write_text(prepared, encoding="utf-8", newline="")
         return score_parser.parse_ultrastar(str(copy))
 
 

@@ -613,6 +613,25 @@ class TestStage1ErrorsNeverMove:
         result = lt.evaluate_stage1(song, ffprobe_path="ffprobe")
         assert result.verdict == "error" and "ffprobe_failed" in result.reason
 
+    @pytest.mark.parametrize("returncode", [-9, 3221225477])
+    def test_ffprobe_crash_or_kill_is_an_error(self, tmp_path, monkeypatch, returncode):
+        """Killed (e.g. out of memory) or crashed while probing one file: not
+        evidence that the audio is broken."""
+        _make_song(tmp_path, "Song")
+        song = _song_folder(tmp_path, Path("Song"), "Song.txt")
+        monkeypatch.setattr(lt.subprocess, "run",
+                            lambda cmd, **k: subprocess.CompletedProcess(cmd, returncode, "", ""))
+        result = lt.evaluate_stage1(song, ffprobe_path="ffprobe")
+        assert result.verdict == "error" and "ffprobe_failed" in result.reason
+
+    def test_ffprobe_rejecting_the_file_is_corrupt(self, tmp_path, monkeypatch):
+        _make_song(tmp_path, "Song")
+        song = _song_folder(tmp_path, Path("Song"), "Song.txt")
+        monkeypatch.setattr(lt.subprocess, "run", lambda cmd, **k: subprocess.CompletedProcess(
+            cmd, 1, "", "Invalid data found when processing input"))
+        result = lt.evaluate_stage1(song, ffprobe_path="ffprobe")
+        assert result.verdict == "corrupt" and "audio_undecodable" in result.reason
+
     def test_broken_ffprobe_stops_the_run_before_anything_moves(self, tmp_path, monkeypatch):
         source = tmp_path / "source"
         song_dir = _make_song(source, "Song")

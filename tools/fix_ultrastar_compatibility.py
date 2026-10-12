@@ -8,9 +8,11 @@ compatibility issues:
    audio formats (aac, flac, opus, m4a, wma, etc.) are converted to OGG Vorbis
    using FFmpeg, and the TXT file references are updated accordingly.
    Original audio files are preserved (never deleted). FFmpeg writes to a
-   temporary file that becomes the OGG only once the conversion succeeded,
-   and an OGG that already exists is only reused when ffprobe confirms it is
-   complete (an aborted run of an older version could leave a partial one).
+   temporary file that becomes the OGG only once the conversion succeeded.
+   An OGG that already exists is reused only when ffprobe confirms it is
+   complete; an incomplete one (an aborted run of an older version could
+   leave one) is kept as ``<name>.ogg.bak`` and converted again. An OGG the
+   chart already uses for other audio (e.g. #INSTRUMENTAL) is never touched.
 
 2. Non-Standard Tag Removal (always):
    Tags not part of the official UltraStar format specification (e.g. #COMMENT:)
@@ -135,7 +137,8 @@ def _write_txt_atomic(path: Path, lines: list[str], encoding: str) -> None:
     new chart, never a truncated one. The file mode is kept.
     """
     mode = stat.S_IMODE(path.stat().st_mode)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    # A short name: the chart's own path may already be close to the length limit.
+    fd, tmp_name = tempfile.mkstemp(prefix=".chart-", suffix=".tmp", dir=path.parent)
     tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
@@ -444,6 +447,23 @@ def ogg_is_complete(ogg_path: Path, source_path: Path, ffprobe_path: str | None)
     return source_seconds is None or ogg_seconds >= source_seconds - OGG_LENGTH_TOLERANCE_S
 
 
+def _is_same_file(a: Path, b: Path) -> bool:
+    """Whether *a* and *b* are the same existing file (however they are spelled)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _unused_path(path: Path) -> Path:
+    """*path*, or *path* with a number appended if that name is taken."""
+    candidate, n = path, 1
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}.{n}")
+        n += 1
+    return candidate
+
+
 # ---------------------------------------------------------------------------
 # TXT file update
 # ---------------------------------------------------------------------------
@@ -472,9 +492,10 @@ def update_txt_tags(txt_path: Path, replacements: dict[str, str]) -> None:
                 value = stripped[colon_idx + 1:].strip()
                 if tag_part in ("#MP3:", "#AUDIO:", "#VOCALS:", "#INSTRUMENTAL:"):
                     if value in replacements:
-                        # Preserve original tag case from the file
+                        # Preserve original tag case and line ending from the file
                         original_tag = stripped[: colon_idx + 1]
-                        line = f"{original_tag}{replacements[value]}\n"
+                        ending = line[len(line.rstrip("\r\n")):] or "\n"
+                        line = f"{original_tag}{replacements[value]}{ending}"
                         updated = True
         new_lines.append(line)
 
@@ -650,6 +671,7 @@ def process_song(
     file_replacements: dict[str, str] = {}  # old_filename → new_filename
     renames_to_do: list[tuple[AudioFileInfo, Path]] = []     # just rename (e.g. .us3 → .mp3)
     conversions_to_do: list[tuple[AudioFileInfo, Path]] = []  # FFmpeg conversion → .ogg
+    ogg_sources: dict[Path, AudioFileInfo] = {}               # planned .ogg → its source
 
     for af in needs_conversion:
         if af.filename in file_replacements:
@@ -680,6 +702,14 @@ def process_song(
         else:
             new_basename = f"{stem}.ogg"
             new_path = af.full_path.parent / new_basename
+            other = ogg_sources.get(new_path)
+            if other is not None and not _is_same_file(other.full_path, af.full_path):
+                # Two different files would become the same OGG, so one tag
+                # would end up pointing at the other file's audio.
+                result.status = "error"
+                result.error_msg = f"{other.filename} and {af.filename} would both become {new_basename}"
+                return result
+            ogg_sources[new_path] = af
             conversions_to_do.append((af, new_path))
 
         new_filename = f"{prefix}{new_basename}"
@@ -700,20 +730,41 @@ def process_song(
         # Perform FFmpeg conversions first — resolve ffmpeg lazily on first need
         for af, ogg_path in conversions_to_do:
             if ogg_path.is_file():
+                users = [o.tag for o in song_info.audio_files if _is_same_file(o.full_path, ogg_path)]
+                if users:
+                    # The chart already plays this OGG as other audio (e.g. an
+                    # instrumental): it is no conversion of this file.
+                    raise RuntimeError(
+                        f"{ogg_path.name} already exists and is used by {users[0].rstrip(':')}; "
+                        f"convert {af.filename} by hand"
+                    )
                 if ogg_is_complete(ogg_path, af.full_path, find_ffprobe(ffmpeg_path)):
                     # OGG already exists (previous run?) — skip conversion but still update TXT
                     result.warnings.append(
                         f"{ogg_path.name} already exists, skipping conversion"
                     )
                     continue
-                # Empty, unreadable or shorter than the source: an aborted
-                # conversion must not become the song's audio.
-                result.warnings.append(
-                    f"{ogg_path.name} already exists but is empty or incomplete, converting again"
-                )
             if ffmpeg_path is None:
                 ffmpeg_path = check_ffmpeg()
-            convert_to_ogg(ffmpeg_path, af.full_path, ogg_path)
+            # Empty, unreadable or shorter than the source: an aborted
+            # conversion must not become the song's audio. A non-empty one is
+            # kept under another name in case it is a file of the user's.
+            kept = None
+            if ogg_path.is_file():
+                if ogg_path.stat().st_size > 0:
+                    kept = _unused_path(ogg_path.with_name(ogg_path.name + ".bak"))
+                    ogg_path.rename(kept)
+                    result.warnings.append(
+                        f"{ogg_path.name} looked incomplete, kept it as {kept.name} and converted again"
+                    )
+                else:
+                    result.warnings.append(f"{ogg_path.name} was empty, converted again")
+            try:
+                convert_to_ogg(ffmpeg_path, af.full_path, ogg_path)
+            except BaseException:
+                if kept is not None and not ogg_path.exists():
+                    kept.rename(ogg_path)
+                raise
 
         # Update TXT file with new filenames — before renames so that on
         # failure the original filenames still match the files on disk.
@@ -886,7 +937,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         epilog=(
             "UltraStar Play supports mp3, ogg, and wav. "
             "Other formats (aac, flac, opus, m4a, wma, ...) are converted to OGG Vorbis. "
-            "Original audio files are never deleted. "
+            "Original audio files are never deleted; an existing OGG that looks "
+            "incomplete is kept as <name>.ogg.bak before it is converted again. "
             "Use --normalize-encoding to also convert legacy text encodings "
             "(CP1252, Latin-1, etc.) to UTF-8 for universal compatibility."
         ),

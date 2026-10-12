@@ -797,6 +797,12 @@ class TestReadChartText:
     def test_known_encoding_tag(self):
         assert declared_encoding(b"#TITLE:x\r\n#encoding: cp1250 \r\n") == "cp1250"
 
+    def test_utf16_with_byte_order_mark(self, tmp_path):
+        p = tmp_path / "utf16.txt"
+        p.write_bytes("#VERSION:1.2.0\r\n#BPM:300\r\n#GAP:0\r\n: 0 4 12 ła\r\nE\r\n".encode("utf-16"))
+        parsed = parse_ultrastar(p)
+        assert parsed.version == "1.2.0" and parsed.notes[0].word == "ła"
+
 
 # ── #RELATIVE charts ────────────────────────────────────────────────────────
 
@@ -868,6 +874,24 @@ class TestParseScoreSong:
         song = parse_score_song(p)
         assert song.gap == 500.0 and song.audio == "song.mp3"
         assert [n.start_beat for n in song.all_notes] == [3]
+
+    def test_utf16_relative_chart_with_empty_gap(self, tmp_path):
+        pytest.importorskip("ultrastar_score")
+        p = tmp_path / "utf16.txt"
+        chart = [line if line != "#GAP:1000" else "#GAP:" for line in _RELATIVE_CHART]
+        p.write_bytes("\r\n".join(chart + [""]).encode("utf-16"))
+        song = parse_score_song(p)
+        assert song.gap == 0.0
+        assert [n.start_beat for n in song.all_notes] == [0, 4, 10, 14, 18]
+
+    def test_copy_for_the_score_library_keeps_line_endings(self, tmp_path, monkeypatch):
+        us_parser = pytest.importorskip("ultrastar_score.parser")
+        seen = []
+        monkeypatch.setattr(us_parser, "parse_ultrastar", lambda path: seen.append(Path(path).read_bytes()))
+        p = tmp_path / "rel.txt"
+        p.write_bytes("\r\n".join(_RELATIVE_CHART + [""]).encode("utf-8"))
+        parse_score_song(p)
+        assert seen and b"\r\r\n" not in seen[0] and seen[0].count(b"\r\n") == len(_RELATIVE_CHART) - 1
 
     def test_non_numeric_bpm_still_fails(self, tmp_path):
         pytest.importorskip("ultrastar_score")

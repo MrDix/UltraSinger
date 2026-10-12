@@ -277,8 +277,8 @@ def probe_audio(path: Path, ffprobe_path: str) -> tuple[bool, str]:
 
     Not ok when: ffprobe exits non-zero, there's no audio stream, or the
     reported duration is zero/empty. Raises :class:`ProbeError` when
-    ffprobe can't be launched, times out, or its output isn't parseable
-    JSON.
+    ffprobe can't be launched, times out, crashes or is killed, or its
+    output isn't parseable JSON.
     """
     cmd = [
         ffprobe_path, "-v", "error", "-print_format", "json",
@@ -293,6 +293,10 @@ def probe_audio(path: Path, ffprobe_path: str) -> tuple[bool, str]:
     except OSError as e:
         raise ProbeError(f"ffprobe launch failed: {e}") from e
 
+    # Killed by a signal (negative on POSIX, e.g. when memory runs out) or
+    # crashed (Windows status codes from 0xC0000000): not the file's fault.
+    if result.returncode < 0 or result.returncode >= 0xC0000000:
+        raise ProbeError(f"ffprobe crashed or was killed (exit {result.returncode})")
     if result.returncode != 0:
         return False, f"ffprobe exit {result.returncode}: {result.stderr.strip()[:300]}"
 

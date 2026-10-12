@@ -175,15 +175,18 @@ class TestExistingOgg:
 
     LINES = ["#TITLE:Title", "#ARTIST:Artist", "#MP3:song.flac", "#BPM:300", "#GAP:0", ": 0 4 60 la", "E"]
 
-    def _process(self, tmp_path, monkeypatch, *, ogg: bytes, seconds: dict | None):
+    def _process(self, tmp_path, monkeypatch, *, ogg: bytes, seconds: dict | None,
+                 lines: list[str] | None = None, files: tuple[str, ...] = ("song.flac",), fail: bool = False):
         """process_song on a FLAC song with an existing song.ogg; *seconds* maps
         a suffix to the length ffprobe reports (None: there is no ffprobe)."""
-        txt = _song(tmp_path, self.LINES, files=("song.flac",))
+        txt = _song(tmp_path, lines or self.LINES, files=files)
         (txt.parent / "song.ogg").write_bytes(ogg)
         converted = []
 
         def fake_convert(ffmpeg_path, input_path, output_path):
             converted.append(output_path.name)
+            if fail:
+                raise RuntimeError("FFmpeg conversion failed: broken input")
             output_path.write_bytes(b"OggS fresh")
         monkeypatch.setattr(fx, "convert_to_ogg", fake_convert)
         monkeypatch.setattr(fx, "check_ffmpeg", lambda: "ffmpeg")
@@ -196,18 +199,33 @@ class TestExistingOgg:
         txt, result, converted = self._process(tmp_path, monkeypatch, ogg=b"", seconds={".flac": 200.0})
         assert converted == ["song.ogg"]
         assert (txt.parent / "song.ogg").read_bytes() == b"OggS fresh"
+        assert not (txt.parent / "song.ogg.bak").exists()  # nothing to keep
         assert result.status == "converted"
         assert "#MP3:song.ogg" in txt.read_text(encoding="utf-8")
 
-    def test_truncated_ogg_is_converted_again(self, tmp_path, monkeypatch):
+    def test_truncated_ogg_is_kept_aside_and_converted_again(self, tmp_path, monkeypatch):
         txt, result, converted = self._process(tmp_path, monkeypatch, ogg=b"OggS partial",
                                                seconds={".ogg": 61.0, ".flac": 200.0})
         assert converted == ["song.ogg"]
-        assert any("incomplete" in w for w in result.warnings)
+        assert (txt.parent / "song.ogg").read_bytes() == b"OggS fresh"
+        assert (txt.parent / "song.ogg.bak").read_bytes() == b"OggS partial"
+        assert any("song.ogg.bak" in w for w in result.warnings)
 
-    def test_unreadable_ogg_is_converted_again(self, tmp_path, monkeypatch):
-        _, _, converted = self._process(tmp_path, monkeypatch, ogg=b"garbage", seconds={".flac": 200.0})
+    def test_unreadable_ogg_is_kept_aside_and_converted_again(self, tmp_path, monkeypatch):
+        (tmp_path / "Artist - Title").mkdir()
+        (tmp_path / "Artist - Title" / "song.ogg.bak").write_bytes(b"older backup")
+        txt, _, converted = self._process(tmp_path, monkeypatch, ogg=b"garbage", seconds={".flac": 200.0})
         assert converted == ["song.ogg"]
+        assert (txt.parent / "song.ogg.bak").read_bytes() == b"older backup"
+        assert (txt.parent / "song.ogg.bak.1").read_bytes() == b"garbage"
+
+    def test_failed_conversion_puts_the_old_ogg_back(self, tmp_path, monkeypatch):
+        txt, result, converted = self._process(tmp_path, monkeypatch, ogg=b"OggS partial", fail=True,
+                                               seconds={".ogg": 61.0, ".flac": 200.0})
+        assert converted == ["song.ogg"] and result.status == "error"
+        assert (txt.parent / "song.ogg").read_bytes() == b"OggS partial"
+        assert not (txt.parent / "song.ogg.bak").exists()
+        assert "#MP3:song.flac" in txt.read_text(encoding="utf-8")
 
     def test_complete_ogg_is_reused(self, tmp_path, monkeypatch):
         txt, result, converted = self._process(tmp_path, monkeypatch, ogg=b"OggS complete",
@@ -218,8 +236,34 @@ class TestExistingOgg:
         assert "#MP3:song.ogg" in txt.read_text(encoding="utf-8")
 
     def test_ogg_not_trusted_without_ffprobe(self, tmp_path, monkeypatch):
-        _, _, converted = self._process(tmp_path, monkeypatch, ogg=b"OggS unknown", seconds=None)
+        txt, _, converted = self._process(tmp_path, monkeypatch, ogg=b"OggS unknown", seconds=None)
         assert converted == ["song.ogg"]
+        assert (txt.parent / "song.ogg.bak").read_bytes() == b"OggS unknown"
+
+    @pytest.mark.parametrize("ogg_seconds", [150.0, 200.0])
+    def test_ogg_the_chart_uses_for_other_audio_is_never_touched(self, tmp_path, monkeypatch, ogg_seconds):
+        """song.ogg is the chart's instrumental, not a conversion of song.flac."""
+        lines = self.LINES[:3] + ["#INSTRUMENTAL:song.ogg"] + self.LINES[3:]
+        txt, result, converted = self._process(tmp_path, monkeypatch, ogg=b"OggS instrumental", lines=lines,
+                                               seconds={".ogg": ogg_seconds, ".flac": 200.0})
+        assert converted == [] and result.status == "error"
+        assert "used by #INSTRUMENTAL" in result.error_msg
+        assert (txt.parent / "song.ogg").read_bytes() == b"OggS instrumental"
+        assert not (txt.parent / "song.ogg.bak").exists()
+        assert txt.read_bytes() == "\n".join(lines + [""]).encode()
+
+    def test_two_sources_for_one_ogg_name_are_refused(self, tmp_path, monkeypatch):
+        lines = self.LINES[:3] + ["#VOCALS:song.m4a"] + self.LINES[3:]
+        txt, result, converted = self._process(tmp_path, monkeypatch, ogg=b"", lines=lines,
+                                               files=("song.flac", "song.m4a"), seconds={".flac": 200.0})
+        assert converted == [] and result.status == "error"
+        assert "would both become song.ogg" in result.error_msg
+        assert "#MP3:song.flac" in txt.read_text(encoding="utf-8")
+
+    def test_rewired_tag_keeps_the_line_ending(self, tmp_path, monkeypatch):
+        txt = _song(tmp_path, self.LINES, files=("song.flac",), newline="\r\n")
+        fx.update_txt_tags(txt, {"song.flac": "song.ogg"})
+        assert txt.read_bytes() == "\r\n".join(self.LINES + [""]).replace("song.flac", "song.ogg").encode()
 
 
 # ── One song never stops the run ─────────────────────────────────────────────
