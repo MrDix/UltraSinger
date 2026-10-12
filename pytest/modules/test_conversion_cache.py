@@ -284,6 +284,64 @@ class TestConversion:
         assert not fixed.exists()
 
 
+class TestContentKey:
+    def test_key_follows_the_content_not_the_name(self, tmp_path):
+        a, b, c = tmp_path / "a.wav", tmp_path / "b.wav", tmp_path / "c.wav"
+        a.write_bytes(b"vocal")
+        b.write_bytes(b"vocal")
+        c.write_bytes(b"vocal, denoised")
+        assert cc.content_key(str(a)) == cc.content_key(str(b)) != cc.content_key(str(c))
+        assert len(cc.content_key(str(a))) == cc.KEY_CHARS
+
+
+class TestCachedSteps:
+    """A cached step result is only reused for the audio it was made from (cache folder used again)."""
+
+    def test_pitch_data(self, tmp_path, monkeypatch):
+        calls = []
+
+        def pitch(path):
+            calls.append(path)
+            return us.PitchedData([0.0], [440.0], [0.9])
+        monkeypatch.setattr(us, "get_pitch_with_file", pitch)
+        monkeypatch.setattr(us.settings, "pitcher", "swiftf0")
+        monkeypatch.setattr(us.settings, "skip_cache_pitch_detection", False)
+        audio = tmp_path / "Artist - Title_mute.wav"
+        paths = us.ProcessDataPaths(processing_audio_path=str(audio), cache_folder_path=str(tmp_path))
+        audio.write_bytes(b"vocal A")
+        us.pitch_audio(paths)
+        us.pitch_audio(paths)
+        assert len(calls) == 1
+        audio.write_bytes(b"vocal B")  # e.g. separated with another model
+        us.pitch_audio(paths)
+        assert len(calls) == 2
+
+    def test_denoised_vocal(self, tmp_path, monkeypatch):
+        song = tmp_path / "Artist - Title.ogg"
+        song.write_bytes(b"mix")
+        stems = tmp_path / "stems"
+        stems.mkdir()
+        vocals = stems / "vocals.wav"
+        monkeypatch.setattr(us, "separate_vocal_from_audio", lambda *args, **kwargs: str(stems))
+        denoised = []
+        monkeypatch.setattr(us, "denoise_vocal_audio",
+                            lambda input_path, output_path, **kwargs: denoised.append(output_path))
+        monkeypatch.setattr(us, "convert_audio_to_mono_wav", lambda *args: None)
+        monkeypatch.setattr(us, "mute_no_singing_parts", lambda *args: None)
+        process_data = us.ProcessData(basename="Artist - Title")
+        process_data.process_data_paths.cache_folder_path = str(tmp_path / "cache")
+        process_data.process_data_paths.audio_output_file_path = str(song)
+        for content, use_separated_vocal in ((b"vocals", True), (b"vocals", False),
+                                             (b"vocals of another model", True), (b"vocals", True)):
+            vocals.write_bytes(content)
+            monkeypatch.setattr(us.settings, "use_separated_vocal", use_separated_vocal)
+            us.CreateProcessAudio(process_data)
+        names = [os.path.basename(path) for path in denoised]
+        assert names[0].endswith(f"_{cc.content_key(str(vocals))}.wav")
+        assert names[1].endswith(f"_{cc.content_key(str(song))}.wav")  # the unseparated audio
+        assert len(set(names)) == 3 and names[3] == names[0]
+
+
 class TestCacheFolderFlag:
     def test_flag_and_reset(self):
         assert init_settings(["-i", "test.mp3", "--cache_folder", "D:/cache"]).cache_folder == "D:/cache"

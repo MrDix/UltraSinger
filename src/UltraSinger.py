@@ -1936,10 +1936,12 @@ def CreateProcessAudio(process_data) -> tuple[str, str]:
 
     # Denoise vocal audio
     # Include denoise parameters in cache filename so changed settings invalidate the cache
-    # ("aligned": files cached before the noise filter's delay was removed are not reused)
+    # ("aligned": files cached before the noise filter's delay was removed are not reused),
+    # and the key of the input: the vocals of another separation, or the unseparated audio
     denoise_config = f"nr{float(settings.denoise_noise_reduction):.1f}_nf{float(settings.denoise_noise_floor):.1f}_tn{int(settings.denoise_track_noise)}_aligned"
     denoised_output_path = os.path.join(
-        process_data.process_data_paths.cache_folder_path, process_data.basename + f"_denoised_{denoise_config}.wav"
+        process_data.process_data_paths.cache_folder_path,
+        process_data.basename + f"_denoised_{denoise_config}_{conversion_cache.content_key(input_path)}.wav"
     )
     denoise_vocal_audio(input_path, denoised_output_path,
                         skip_cache=settings.skip_cache_denoise_vocal_audio,
@@ -1971,12 +1973,14 @@ def transcribe_audio(cache_folder_path: str, audio_path: str) -> TranscriptionRe
     if settings.whisper_align_model is not None:
         whisper_align_model_string = settings.whisper_align_model.replace("/", "_")
     whisper_device = "cpu" if settings.force_whisper_cpu else settings.pytorch_device
+    # The key of the audio: a transcription of another song, separation or denoising is not reused
+    audio_key = conversion_cache.content_key(audio_path)
     if settings.transcriber != "whisper":
         # A cached Qwen3-ASR transcription needs no GPU: reused whatever memory is free now
         # "kn": numbers are written as words unless --keep_numbers, before the result is cached
         qwen3_path = os.path.join(cache_folder_path, f"qwen3_{QWEN3_SIZE}_{whisper_align_model_string}_"
                                                      f"{settings.language}_p{QWEN3_PIECE_SECONDS}_"
-                                                     f"kn{int(settings.keep_numbers)}_aligned.json")
+                                                     f"kn{int(settings.keep_numbers)}_aligned_{audio_key}.json")
         if not settings.skip_cache_transcription and check_file_exists(qwen3_path):
             settings.transcriber_used = f"qwen3 ({QWEN3_MODEL})"
             print(f"{ULTRASINGER_HEAD} {green_highlighted('cache')} reusing cached transcribed data")
@@ -2010,8 +2014,8 @@ def transcribe_audio(cache_folder_path: str, audio_path: str) -> TranscriptionRe
             print(f"{ULTRASINGER_HEAD} Transcribing with Whisper: {choice.reason}")
     settings.transcriber_used = f"whisper ({settings.whisper_model.value})"
     # "aligned": transcriptions of the delayed denoised vocal (before the filter delay was removed) are not reused;
-    # "kn": as for Qwen3-ASR above
-    transcription_config = f"whisper_{settings.whisper_model.value}_{whisper_device}_{whisper_align_model_string}_{settings.whisper_batch_size}_{settings.whisper_compute_type}_{settings.language}_vad{settings.vad_onset}_{settings.vad_offset}_nst{settings.no_speech_threshold}_unmuted_kn{int(settings.keep_numbers)}_aligned"
+    # "kn" and the key of the audio: as for Qwen3-ASR above
+    transcription_config = f"whisper_{settings.whisper_model.value}_{whisper_device}_{whisper_align_model_string}_{settings.whisper_batch_size}_{settings.whisper_compute_type}_{settings.language}_vad{settings.vad_onset}_{settings.vad_offset}_nst{settings.no_speech_threshold}_unmuted_kn{int(settings.keep_numbers)}_aligned_{audio_key}"
     transcription_path = os.path.join(cache_folder_path, f"{transcription_config}.json")
     cached_transcription_available = check_file_exists(transcription_path)
     if settings.skip_cache_transcription or not cached_transcription_available:
@@ -2111,8 +2115,10 @@ def pitch_audio(
         process_data_paths: ProcessDataPaths) -> PitchedData:
     """Pitch audio"""
 
-    # "aligned": pitch of the delayed denoised vocal (before the filter delay was removed) is not reused
-    pitching_config = f"{settings.pitcher}_{settings.ignore_audio}_aligned"
+    # "aligned": pitch of the delayed denoised vocal (before the filter delay was removed) is not reused;
+    # the key of the audio: pitch of another song, separation or denoising is not reused
+    audio_key = conversion_cache.content_key(process_data_paths.processing_audio_path)
+    pitching_config = f"{settings.pitcher}_{settings.ignore_audio}_aligned_{audio_key}"
     pitched_data_path = os.path.join(process_data_paths.cache_folder_path, f"{pitching_config}.json")
     cache_available = check_file_exists(pitched_data_path)
 

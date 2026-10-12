@@ -11,6 +11,7 @@ the cache is to be kept.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import shutil
@@ -29,6 +30,8 @@ STALE_AFTER_S = 24 * 3600
 # Characters of the song name in a folder name (short paths stay below the
 # Windows path length limit).
 NAME_CHARS = 40
+# Hex characters of a content key (see content_key)
+KEY_CHARS = 12
 
 
 def default_root() -> Path:
@@ -56,6 +59,15 @@ def create(song_name: str, root: str | None = None) -> str:
         (folder / MARKER).touch()
         return str(folder)
     raise FileExistsError(f"no unused cache folder name in {base}")
+
+
+def content_key(path: str) -> str:
+    """Short key of the content of the file ``path``. A cached step result
+    carries the key of the audio it was made from, so a cache folder that is
+    used again (``cache_override_path``) never hands out a result of other
+    audio: of another song, separation, or denoising."""
+    with open(path, "rb") as file:
+        return hashlib.file_digest(file, "sha256").hexdigest()[:KEY_CHARS]
 
 
 def create_in_song_folder(song_folder: str) -> str:

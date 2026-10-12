@@ -20,7 +20,11 @@ from modules.console_colors import (
     green_highlighted,
     red_highlighted,
 )
+from modules.conversion_cache import content_key
 from modules.os_helper import check_file_exists
+
+# File next to the stems: the content key of the audio they were made from
+SOURCE_KEY_FILE = "source.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -187,14 +191,22 @@ def separate_vocal_from_audio(
 
     vocals_path = os.path.join(audio_separation_path, "vocals.wav")
     instrumental_path = os.path.join(audio_separation_path, "no_vocals.wav")
+    source_key_path = os.path.join(audio_separation_path, SOURCE_KEY_FILE)
 
     if use_separated_vocal or create_karaoke:
+        # Stems are only reused when made from this audio: a cache folder
+        # that is used again can hold stems of another file of the same name
+        source_key = content_key(audio_output_file_path)
         cache_available = (
             check_file_exists(vocals_path)
             and check_file_exists(instrumental_path)
+            and _read_source_key(source_key_path) == source_key
         )
         if skip_cache or not cache_available:
             os.makedirs(audio_separation_path, exist_ok=True)
+            # Stems of an interrupted separation must never pass as made from this audio
+            if os.path.exists(source_key_path):
+                os.remove(source_key_path)
 
             if backend == SeparatorBackend.AUDIO_SEPARATOR:
                 _separate_with_audio_separator(
@@ -209,6 +221,8 @@ def separate_vocal_from_audio(
                     model=resolved_model,
                     device=pytorch_device,
                 )
+            with open(source_key_path, "w", encoding="utf-8") as file:
+                file.write(source_key)
         else:
             print(
                 f"{ULTRASINGER_HEAD} "
@@ -216,3 +230,12 @@ def separate_vocal_from_audio(
             )
 
     return audio_separation_path
+
+
+def _read_source_key(path: str) -> str | None:
+    """The content key in ``path``, or None when there is none."""
+    try:
+        with open(path, encoding="utf-8") as file:
+            return file.read().strip()
+    except OSError:
+        return None
