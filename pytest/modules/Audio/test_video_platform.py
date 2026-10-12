@@ -436,7 +436,7 @@ class TestDownloadedFile(unittest.TestCase):
 
     def test_missing_file_is_an_error(self):
         with tempfile.TemporaryDirectory() as folder:
-            with self.assertRaises(Exception):
+            with self.assertRaisesRegex(Exception, "no downloaded file"):
                 self._download(folder, os.path.join(folder, "Artist - Title.mp4"))
 
     def test_webm_and_a_failed_thumbnail(self):

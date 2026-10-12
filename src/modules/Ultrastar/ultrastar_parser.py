@@ -1,5 +1,6 @@
 """Ultrastar txt parser"""
 import codecs
+import math
 import os
 import re
 import shutil
@@ -104,11 +105,20 @@ def relative_line_break(line: str) -> tuple[float, float] | None:
     """The numbers of a line break ``- <break beat> <shift>`` of a #RELATIVE:YES
     chart, both counted from the start of the current line: the break, and how
     far the start of the next line moves on (a break with one number moves the
-    start there). None without numbers."""
-    parts = line[1:].split()
-    if not parts:
+    start there). None without a number; a second value that is not a number
+    counts as missing."""
+    numbers = []
+    for part in line[1:].split()[:2]:
+        try:
+            number = float(part)
+        except ValueError:
+            break
+        if not math.isfinite(number):
+            break
+        numbers.append(number)
+    if not numbers:
         return None
-    return float(parts[0]), float(parts[1] if len(parts) > 1 else parts[0])
+    return numbers[0], numbers[-1]
 
 
 def parse(input_file: str) -> UltrastarTxtValue:

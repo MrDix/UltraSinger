@@ -155,6 +155,13 @@ class TestParse(unittest.TestCase):
         self.assertEqual([(n.startBeat, n.pitch, n.word) for n in chart.UltrastarNoteLines],
                          [(0, 5, "one"), (10, 7, "tab")])
 
+    def test_relative_line_break_that_is_not_a_number(self):
+        # a break without a number does not move the line start; a second value
+        # that is not a number counts as missing (the break moves the start)
+        chart = self._parse(b"#RELATIVE:YES\n#BPM:300\n: 0 4 5 one\n- x\n: 2 4 5 two\n"
+                            b"- 8 text\n: 1 4 5 three\n- nan\n: 3 4 5 four\n")
+        self.assertEqual([n.startBeat for n in chart.UltrastarNoteLines], [0, 2, 9, 11])
+
     def test_line_breaks_of_absolute_charts_do_not_move_the_beats(self):
         chart = self._parse(b"#BPM:300\n: 0 4 5 one\n- 10 12\n: 20 4 5 two\n")
         self.assertEqual([n.startBeat for n in chart.UltrastarNoteLines], [0, 20])

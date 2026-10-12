@@ -94,9 +94,12 @@ def _remote_file(owner: str, repo: str, path: str, token: str | None) -> tuple[s
 def _matches_sha(file: Path, sha: str) -> bool:
     """Whether the file's content has the git blob SHA ``sha`` (the SHA the
     repository reports for it). A SHA that is neither SHA-1 nor SHA-256 cannot
-    be checked and counts as matching."""
+    be checked and counts as matching, with a warning."""
+    sha = sha.lower()
     hash_type = {40: hashlib.sha1, 64: hashlib.sha256}.get(len(sha))
     if hash_type is None or not re.fullmatch(r"[0-9a-f]+", sha):
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the repository reports no SHA-1 or SHA-256 "
+              f"for {file.name}, so its content is not checked")
         return True
     digest = hash_type(f"blob {file.stat().st_size}\0".encode("ascii"))
     with open(file, "rb") as f:

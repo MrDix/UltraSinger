@@ -876,6 +876,12 @@ class TestRepitchedTxt(unittest.TestCase):
                      for name in ("original.txt", "new.txt")]
         self.assertEqual(beats[0], beats[1])
 
+    def test_relative_line_break_that_is_not_a_number(self):
+        original = b"#RELATIVE:YES\n#BPM:300\n: 0 4 0 one\n- x\n: 2 4 0 two\n- 8 text\n: 1 4 0 three\nE\n"
+        text = self._repitch(original, [1, 2, 3])
+        # the unreadable break is kept as it is and moves nothing
+        self.assertEqual(text, "#BPM:300\n: 0 4 1 one\n- x\n: 2 4 2 two\n- 8\n: 9 4 3 three\nE\n")
+
     def test_note_line_with_a_tab_after_its_type(self):
         from src.modules.Ultrastar.ultrastar_parser import parse
 

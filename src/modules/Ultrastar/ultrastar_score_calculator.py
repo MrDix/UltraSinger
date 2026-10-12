@@ -117,7 +117,7 @@ def calculate_score(pitched_data: PitchedData, ultrastar_class: UltrastarTxtValu
 
     # Notes without a word and freestyle notes are not scored
     scored = [i for i, note_line in enumerate(ultrastar_class.UltrastarNoteLines)
-              if note_line.word != "" and note_line.noteType != UltrastarTxtNoteTypeTag.FREESTYLE]
+              if note_line.word != "" and note_line.noteType != UltrastarTxtNoteTypeTag.FREESTYLE.value]
     if(len(scored) == 0):
         print(f"{ULTRASINGER_HEAD} No note lines found in Ultrastar txt, returning 0 points")
         return get_score(simple_points), get_score(accurate_points)

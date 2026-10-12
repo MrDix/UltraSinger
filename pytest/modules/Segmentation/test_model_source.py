@@ -228,3 +228,17 @@ class TestFetch:
 
     def test_cache_dir_is_per_user(self):
         assert ms.cache_dir().name == "models"
+
+
+class TestMatchesSha:
+    def test_sha_in_upper_case_is_checked(self, tmp_path):
+        file = tmp_path / "model.pt"
+        file.write_bytes(b"weights")
+        assert ms._matches_sha(file, blob_sha(b"weights").upper())
+        assert not ms._matches_sha(file, blob_sha(b"other").upper())
+
+    def test_unknown_sha_is_not_checked_with_a_warning(self, tmp_path, capsys):
+        file = tmp_path / "model.pt"
+        file.write_bytes(b"weights")
+        assert ms._matches_sha(file, "abc123")
+        assert "is not checked" in capsys.readouterr().out
