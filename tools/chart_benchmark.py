@@ -712,7 +712,7 @@ def has_audio_stream(path: Path) -> bool:
     try:
         proc = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
                                "stream=index", "-of", "csv=p=0", str(path)],
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return True
     return proc.returncode != 0 or bool(proc.stdout.strip())
