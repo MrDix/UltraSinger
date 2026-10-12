@@ -125,54 +125,79 @@ def syllables_from_segments(segments: list[MidiSegment], language: str | None) -
 
 
 def align_syllables(note_starts_ms: np.ndarray, syllables: list[Syllable]) -> list[tuple[int, bool]]:
-    """Monotonic DP: for each note (syllable index, starts_new_syllable)."""
+    """Monotonic DP: for each note (syllable index, starts_new_syllable).
+
+    Each row of the DP (a note) only holds the band of syllables it is filled
+    for; the syllables outside it are unreachable for that note. So the memory
+    grows with the number of notes, not notes x syllables (an hour-long input
+    needed gigabytes).
+    """
     k_notes, m = len(note_starts_ms), len(syllables)
     if k_notes == 0 or m == 0:
         return []
     inf = np.inf  # must be non-finite: reachability is checked with np.isfinite
     sa = np.array([s.start_ms for s in syllables])
     sb = np.array([s.end_ms for s in syllables])
-    dp = np.full((k_notes, m), inf)
-    back = np.full((k_notes, m, 2), -1, dtype=np.int64)
+    # Row i: costs of the syllables offsets[i] .. offsets[i] + len(costs[i]) - 1
+    # and per syllable (previous syllable, starts_new_syllable)
+    offsets: list[int] = []
+    costs: list[np.ndarray] = []
+    backs: list[np.ndarray] = []
 
     def start_cost(i: int, j: int) -> float:
         return min(abs(note_starts_ms[i] - sa[j]), MAX_START_COST_MS)
 
-    for j in range(min(m, MAX_SKIP + 1)):
-        dp[0, j] = start_cost(0, j) + j * DROP_COST_MS
-        back[0, j] = (-1, 1)
-    def fill_row(i: int, j_from: int, j_to: int) -> None:
-        for j in range(max(j_from, 0), min(j_to, m)):
-            best = dp[i - 1, j] + CONTINUE_COST_MS + max(0.0, note_starts_ms[i] - sb[j])
+    def prev_cost(j: int):
+        k = j - offsets[-1]
+        return costs[-1][k] if 0 <= k < len(costs[-1]) else inf
+
+    def fill_row(i: int, j_from: int, j_to: int) -> tuple[int, np.ndarray, np.ndarray]:
+        j_from = max(j_from, 0)
+        j_to = max(min(j_to, m), j_from)
+        row = np.full(j_to - j_from, inf)
+        row_back = np.full((j_to - j_from, 2), -1, dtype=np.int64)
+        for j in range(j_from, j_to):
+            best = prev_cost(j) + CONTINUE_COST_MS + max(0.0, note_starts_ms[i] - sb[j])
             arg = (j, 0)
             for skip in range(MAX_SKIP + 1):
                 pj = j - 1 - skip
                 if pj < 0:
                     break
-                c = dp[i - 1, pj] + start_cost(i, j) + skip * DROP_COST_MS
+                c = prev_cost(pj) + start_cost(i, j) + skip * DROP_COST_MS
                 if c < best:
                     best, arg = c, (pj, 1)
-            dp[i, j] = best
-            back[i, j] = arg
+            row[j - j_from] = best
+            row_back[j - j_from] = arg
+        return j_from, row, row_back
+
+    first = np.full(min(m, MAX_SKIP + 1), inf)
+    for j in range(len(first)):
+        first[j] = start_cost(0, j) + j * DROP_COST_MS
+    offsets.append(0)
+    costs.append(first)
+    backs.append(np.tile(np.array([-1, 1], dtype=np.int64), (len(first), 1)))
 
     for i in range(1, k_notes):
         lo = int(np.searchsorted(sa, note_starts_ms[i] - BAND_MS))
         hi = int(np.searchsorted(sa, note_starts_ms[i] + BAND_MS))
-        fill_row(i, lo - MAX_SKIP, hi + 1)
-        if not np.isfinite(dp[i]).any():
+        offset, row, row_back = fill_row(i, lo - MAX_SKIP, hi + 1)
+        if not np.isfinite(row).any():
             # Note far from every syllable (e.g. a long untexted ad-lib): widen
             # to all syllables reachable from the previous note so the path
             # continues instead of becoming impossible.
-            reach = np.flatnonzero(np.isfinite(dp[i - 1]))
+            reach = np.flatnonzero(np.isfinite(costs[-1])) + offsets[-1]
             if len(reach):
-                fill_row(i, int(reach[0]), int(reach[-1]) + MAX_SKIP + 2)
-    final = dp[k_notes - 1] + (m - 1 - np.arange(m)) * DROP_COST_MS
+                offset, row, row_back = fill_row(i, int(reach[0]), int(reach[-1]) + MAX_SKIP + 2)
+        offsets.append(offset)
+        costs.append(row)
+        backs.append(row_back)
+    final = costs[-1] + (m - 1 - (offsets[-1] + np.arange(len(costs[-1])))) * DROP_COST_MS
     if not np.isfinite(final).any():
         return []  # no valid alignment; caller keeps the word-based notes
-    j = int(np.argmin(final))
+    j = offsets[-1] + int(np.argmin(final))
     path: list[tuple[int, bool]] = [(0, True)] * k_notes
     for i in range(k_notes - 1, -1, -1):
-        pj, is_start = back[i, j]
+        pj, is_start = backs[i][j - offsets[i]]
         path[i] = (j, bool(is_start))
         if pj >= 0:
             j = int(pj)

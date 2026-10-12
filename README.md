@@ -491,7 +491,9 @@ Note that if you run into a yt-dlp error such as `Sign in to confirm you’re no
 
 #### UltraStar (re-pitch)
 
-This re-pitch the audio and creates a new txt file.
+This re-pitches the notes of an UltraStar txt file from its audio and writes the chart with the new pitches into a new song folder, as `Artist - Title.txt`. Normal and golden notes get new pitches; freestyle and rap notes keep theirs. Like a converted song, the new chart gets a [game score](#-ultrastar-score-calculation).
+
+Older hand-made charts are read as well: in CP1252 or in the encoding their `#ENCODING` tag names, and with relative beats (`#RELATIVE:YES`). The new file is always written in UTF-8 and with absolute beats.
 
 ```commandline
 -i "input/ultrastar.txt"
@@ -702,6 +704,8 @@ The pipeline is **enabled by default** and falls back to the standard transcript
 
 **Auto-recovery from wrong language detection:** If the fast language detection (Whisper tiny, ~2-3s) misidentifies the language (e.g. "cy" instead of "en"), the reference pipeline may fail because no alignment model exists for that language. In this case, UltraSinger automatically runs the full transcription, which detects the correct language, then **retries the reference pipeline** with the corrected language — recovering to full synced-lyrics quality without user intervention.
 
+**Reading the lines:** A line with several times (`[00:12.00][01:30.00] ...`, a repeated chorus) is sung at each of them. Word times of enhanced LRC (`<00:12.50>`), ID tags like `[ar:...]` and section labels at the start of a line, like `[Chorus]` or `[Verse 2]`, are not sung and are left out. Other words in brackets, like `(oh yeah)` or `[oh yeah]`, are backing vocals and become freestyle notes.
+
 **Placing the lines:** The words are placed with wav2vec2 forced alignment over the whole vocal track, and the LRC times of the lines check the result. Four alignments are made: with the model run over the whole song or over 30-s pieces, each with two ways of ending the path after the last word. The one with the most lines at their LRC times is used. A line that lands in a poor place moves to a clearly better place near its LRC time, and lines at the end that the recording does not have (lyrics of a longer version) are left out. On a benchmark of 89 songs, the share of words that start more than 1 s off went from 6.5 % to 4.9 %. When there is not enough memory to run the model over the whole song at once, the 30-s pieces are used alone.
 
 **Plain lyrics** from LRCLIB (without timestamps) are aligned with wav2vec2 in the same way when no synced lyrics were found or the synced ones could not be aligned, and then make the notes. Only when that fails too do the words come from remote speech-to-text (`--remote_stt`) or the transcription. When the transcription runs, the plain lyrics also **post-correct** its words by comparing them against the verified lyrics text, improving recall by ~5 percentage points.
@@ -863,7 +867,7 @@ No model is shipped with UltraSinger. You train your own on your UltraStar song 
 
 GUI: Settings → Experimental Features → "Segmentation Model". Requires vocal separation; if the model file is missing or the step fails, the word-based notes are kept. With a model, the timing refinement (snapping note starts to audio onsets) and the GAP sweep (shifting all notes together to where the game scores them best) are skipped, because the model places note starts more precisely.
 
-To share one model between computers, keep it in a (private) GitHub repository and let UltraSinger download it: `--segmentation_model_repo owner/repo[/path/model.pt]` (default file `segmentation.pt`) with the `ULTRASINGER_MODEL_TOKEN` environment variable (or `--segmentation_model_token <token>`) for private repositories. The model is cached locally and only downloaded again when it changed. GUI: "Model Repository" and "Repository Token" (stored in the system keyring).
+To share one model between computers, keep it in a (private) GitHub repository and let UltraSinger download it: `--segmentation_model_repo owner/repo[/path/model.pt]` (default file `segmentation.pt`) with the `ULTRASINGER_MODEL_TOKEN` environment variable (or `--segmentation_model_token <token>`) for private repositories. The model is cached locally and only downloaded again when it changed; a download is only kept when it arrived complete and loads as a model. GUI: "Model Repository" and "Repository Token" (stored in the system keyring).
 
 ```commandline
 -i XYZ --segmentation_model_repo owner/models-repo
@@ -944,7 +948,7 @@ A measurement against professional reference charts makes the trade-off concrete
 
 #### Simple / accurate score (fallback only)
 
-Without the optional `ultrastar-score` package installed, UltraSinger falls back to an internal simple/accurate estimate instead. Ultrastar is not interested in pitch heights: as long as a note is in the pitch range A-G you get one point (simple), while accurate requires the exact octave. This fallback measures against the SwiftF0 pitch data the chart was built from rather than the actual in-game ptAKF detector, so it can rank charts differently — prefer the game score above whenever it is available.
+Without the optional `ultrastar-score` package installed, UltraSinger falls back to an internal simple/accurate estimate instead. Ultrastar is not interested in pitch heights: as long as a note is in the pitch range A-G you get one point (simple), while accurate requires the exact octave. Golden notes count double, as in the games, and a chart sung right throughout reaches the full 10000 points. This fallback measures against the SwiftF0 pitch data the chart was built from rather than the actual in-game ptAKF detector, so it can rank charts differently — prefer the game score above whenever it is available.
 
 
 ### 📟 Use GPU

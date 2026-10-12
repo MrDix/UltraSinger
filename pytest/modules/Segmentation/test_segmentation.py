@@ -375,6 +375,90 @@ class TestPlaceLyrics:
         idx = [j for j, _ in path]
         assert idx == sorted(idx)
 
+    def test_same_path_as_the_former_dense_tables(self):
+        rng = np.random.default_rng(5)
+        for _ in range(150):
+            length = rng.uniform(5000, 90000)
+            starts = np.sort(rng.uniform(0, length, rng.integers(1, 60)))
+            syl_starts = np.sort(rng.uniform(0, length, rng.integers(1, 60)))
+            if rng.random() < 0.3:  # notes far from all syllables: the rows are widened
+                starts = np.sort(np.concatenate([starts, rng.uniform(length + 20000, length + 40000, 3)]))
+            if rng.random() < 0.3:  # equal times: ties between paths
+                starts = np.round(starts / 1000) * 1000
+                syl_starts = np.round(syl_starts / 1000) * 1000
+            syl = [seg_lyrics.Syllable(f"s{i} ", t, t + rng.uniform(50, 900)) for i, t in enumerate(syl_starts)]
+            assert seg_lyrics.align_syllables(starts, syl) == _former_align_syllables(starts, syl)
+
+    def test_memory_grows_with_the_notes_only(self):
+        import tracemalloc
+
+        # 12.5 minutes: 1500 notes and syllables, 0.5 s apart. Dense tables took
+        # 1500 x 1500 x 24 B = 51 MB here (an hour: 1.2 GB), the bands about 2 MB.
+        starts = np.arange(1500) * 500.0
+        syl = [seg_lyrics.Syllable(f"s{i} ", t, t + 400) for i, t in enumerate(starts)]
+        tracemalloc.start()
+        try:
+            path = seg_lyrics.align_syllables(starts, syl)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert path == [(i, True) for i in range(1500)]
+        assert peak < 10 * 2 ** 20
+
+
+def _former_align_syllables(note_starts_ms, syllables):
+    """align_syllables as it was, with dense notes x syllables tables."""
+    MAX_SKIP, BAND_MS = seg_lyrics.MAX_SKIP, seg_lyrics.BAND_MS
+    k_notes, m = len(note_starts_ms), len(syllables)
+    if k_notes == 0 or m == 0:
+        return []
+    inf = np.inf
+    sa = np.array([s.start_ms for s in syllables])
+    sb = np.array([s.end_ms for s in syllables])
+    dp = np.full((k_notes, m), inf)
+    back = np.full((k_notes, m, 2), -1, dtype=np.int64)
+
+    def start_cost(i, j):
+        return min(abs(note_starts_ms[i] - sa[j]), seg_lyrics.MAX_START_COST_MS)
+
+    for j in range(min(m, MAX_SKIP + 1)):
+        dp[0, j] = start_cost(0, j) + j * seg_lyrics.DROP_COST_MS
+        back[0, j] = (-1, 1)
+
+    def fill_row(i, j_from, j_to):
+        for j in range(max(j_from, 0), min(j_to, m)):
+            best = dp[i - 1, j] + seg_lyrics.CONTINUE_COST_MS + max(0.0, note_starts_ms[i] - sb[j])
+            arg = (j, 0)
+            for skip in range(MAX_SKIP + 1):
+                pj = j - 1 - skip
+                if pj < 0:
+                    break
+                c = dp[i - 1, pj] + start_cost(i, j) + skip * seg_lyrics.DROP_COST_MS
+                if c < best:
+                    best, arg = c, (pj, 1)
+            dp[i, j] = best
+            back[i, j] = arg
+
+    for i in range(1, k_notes):
+        lo = int(np.searchsorted(sa, note_starts_ms[i] - BAND_MS))
+        hi = int(np.searchsorted(sa, note_starts_ms[i] + BAND_MS))
+        fill_row(i, lo - MAX_SKIP, hi + 1)
+        if not np.isfinite(dp[i]).any():
+            reach = np.flatnonzero(np.isfinite(dp[i - 1]))
+            if len(reach):
+                fill_row(i, int(reach[0]), int(reach[-1]) + MAX_SKIP + 2)
+    final = dp[k_notes - 1] + (m - 1 - np.arange(m)) * seg_lyrics.DROP_COST_MS
+    if not np.isfinite(final).any():
+        return []
+    j = int(np.argmin(final))
+    path = [(0, True)] * k_notes
+    for i in range(k_notes - 1, -1, -1):
+        pj, is_start = back[i, j]
+        path[i] = (j, bool(is_start))
+        if pj >= 0:
+            j = int(pj)
+    return path
+
 
 # ── pipeline step ───────────────────────────────────────────────────────────
 

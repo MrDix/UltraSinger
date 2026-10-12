@@ -7,6 +7,7 @@ file metadata (with a SHA) and raw content.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import urllib.error
@@ -15,6 +16,13 @@ from pathlib import Path
 import pytest
 
 from modules.Segmentation import model_source as ms
+
+_real_check_loads = ms._check_loads  # the fixture below replaces it
+
+
+def blob_sha(content: bytes) -> str:
+    """The SHA the repository reports for a file: the SHA-1 of its git blob."""
+    return hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
 
 
 class _Resp(io.BytesIO):
@@ -26,8 +34,9 @@ class _Resp(io.BytesIO):
 
 
 class FakeGitHub:
-    def __init__(self, sha="sha1", content=b"MODEL-1", fail=None):
-        self.sha, self.content, self.fail = sha, content, fail
+    def __init__(self, content=b"MODEL-1", fail=None):
+        self.content, self.fail = content, fail
+        self.served = None  # raw content actually sent, e.g. cut short (default: content)
         self.requests = []
 
     def urlopen(self, req, timeout=None):
@@ -36,12 +45,12 @@ class FakeGitHub:
             raise self.fail
         accept = req.get_header("Accept")
         if accept == ms.RAW_MEDIA_TYPE:
-            return _Resp(self.content)
+            return _Resp(self.content if self.served is None else self.served)
         large = len(self.content) > 1 << 20
         if large and accept != ms.OBJECT_MEDIA_TYPE:
             # documented: files over 1 MB only through the raw or object media type
             raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
-        meta = {"type": "file", "sha": self.sha, "size": len(self.content),
+        meta = {"type": "file", "sha": blob_sha(self.content), "size": len(self.content),
                 "encoding": "none" if large else "base64",
                 "content": "" if large else base64.b64encode(self.content).decode()}
         return _Resp(json.dumps(meta).encode())
@@ -55,7 +64,18 @@ def github(monkeypatch):
     fake = FakeGitHub()
     monkeypatch.setattr(ms.urllib.request, "urlopen", fake.urlopen)
     monkeypatch.delenv(ms.TOKEN_ENV, raising=False)
+    # The fake files are no real models; the load check has tests of its own
+    monkeypatch.setattr(ms, "_check_loads", lambda file: None)
     return fake
+
+
+def model_bytes(tmp_path) -> bytes:
+    """The content of a small, real segmentation model file."""
+    from modules.Segmentation.model import SegNet, save_model
+
+    path = tmp_path / "tiny.pt"
+    save_model(path, SegNet(hidden=4))
+    return path.read_bytes()
 
 
 class TestParseSpec:
@@ -93,10 +113,57 @@ class TestFetch:
 
     def test_new_version_is_downloaded(self, github, tmp_path):
         path = ms.fetch_model("owner/repo", cache=tmp_path)
-        github.sha, github.content = "sha2", b"MODEL-2"
+        github.content = b"MODEL-2"
         assert ms.fetch_model("owner/repo", cache=tmp_path) == path
         assert open(path, "rb").read() == b"MODEL-2"
         assert github.downloads() == 2
+
+    def test_download_cut_short_is_not_kept(self, github, tmp_path, capsys):
+        # http.client's read() ends without an error when the connection breaks off
+        github.served = github.content[:3]
+        assert ms.fetch_model("owner/repo", cache=tmp_path) is None
+        assert "incomplete download (3 of 7 bytes)" in capsys.readouterr().out
+        assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+        # the next run downloads it again
+        github.served = None
+        path = ms.fetch_model("owner/repo", cache=tmp_path)
+        assert Path(path).read_bytes() == b"MODEL-1"
+        assert github.downloads() == 2
+
+    def test_download_with_other_content_is_not_kept(self, github, tmp_path, capsys):
+        path = ms.fetch_model("owner/repo", cache=tmp_path)
+        github.content, github.served = b"MODEL-2", b"MODEL-X"  # same size, other bytes
+        assert ms.fetch_model("owner/repo", cache=tmp_path) == path
+        out = capsys.readouterr().out
+        assert "does not match its SHA" in out and "using the cached copy" in out
+        assert Path(path).read_bytes() == b"MODEL-1"
+
+    def test_cached_copy_cut_short_is_downloaded_again(self, github, tmp_path, capsys):
+        # as an earlier version left a download that broke off: marker written, file short
+        path = Path(ms.fetch_model("owner/repo", cache=tmp_path))
+        path.write_bytes(b"MOD")
+        assert ms.fetch_model("owner/repo", cache=tmp_path) == str(path)
+        assert path.read_bytes() == b"MODEL-1"
+        assert github.downloads() == 2
+        assert "incomplete or damaged" in capsys.readouterr().out
+        # offline, a damaged copy is not used
+        path.write_bytes(b"MOD")
+        github.fail = urllib.error.URLError("no network")
+        assert ms.fetch_model("owner/repo", cache=tmp_path) is None
+
+    def test_download_that_does_not_load_is_not_kept(self, github, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(ms, "_check_loads", _real_check_loads)
+        assert ms.fetch_model("owner/repo", cache=tmp_path) is None
+        assert "not a segmentation model" in capsys.readouterr().out
+        assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+
+    def test_real_model_is_kept(self, github, tmp_path, monkeypatch):
+        monkeypatch.setattr(ms, "_check_loads", _real_check_loads)
+        github.content = model_bytes(tmp_path)
+        cache = tmp_path / "cache"
+        path = Path(ms.fetch_model("owner/repo", cache=cache))
+        assert path.read_bytes() == github.content
+        assert path.with_name(path.name + ".sha").read_text(encoding="utf-8") == blob_sha(github.content)
 
     def test_offline_uses_cache(self, github, tmp_path, capsys):
         path = ms.fetch_model("owner/repo", cache=tmp_path)
@@ -130,7 +197,7 @@ class TestFetch:
 
     def test_distinct_paths_have_distinct_cache_entries(self, github, tmp_path):
         first = ms.fetch_model("owner/repo/models/a__b.pt", cache=tmp_path)
-        github.sha, github.content = "sha2", b"MODEL-2"
+        github.content = b"MODEL-2"
         second = ms.fetch_model("owner/repo/models__a/b.pt", cache=tmp_path)
         assert first != second
         github.fail = urllib.error.URLError("no network")

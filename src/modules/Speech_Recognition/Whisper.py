@@ -2,25 +2,13 @@
 import os
 import inspect
 import textwrap
+from contextlib import contextmanager
 
 # Set environment variable to handle cuDNN loading issues
 # CUDA_MODULE_LOADING=LAZY allows PyTorch to continue even if some cuDNN modules are not found
 #os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
 
 import torch
-
-# Fix for PyTorch 2.6+ compatibility with omegaconf and old models
-# MUST be done before importing whisperx or any other modules that use torch.load
-# Monkey-patch torch.load to use weights_only=False for compatibility with older models
-# This is necessary because PyTorch 2.6+ changed the default to weights_only=True
-# but WhisperX/Pyannote models were saved with pickle and require weights_only=False
-_original_torch_load = torch.load
-def _patched_torch_load(*args, **kwargs):
-    # Force weights_only=False regardless of what was passed
-    kwargs['weights_only'] = False
-    return _original_torch_load(*args, **kwargs)
-torch.load = _patched_torch_load
-
 import whisperx
 from enum import Enum
 from torch.cuda import OutOfMemoryError
@@ -32,11 +20,16 @@ from modules.Speech_Recognition.TranscribedData import TranscribedData, from_whi
 
 #Addition for numbers to words
 import re
-import ast
-from num2words import num2words
+from num2words import CONVERTER_CLASSES, num2words
 
 #Addition for numbers to words
-re_split_preserve_space = re.compile(r'(\d+|\W+|\w+)')
+# A word (numbers and words joined by "." or ",", like "1,000", count as one), or other characters
+_NUMBER_TOKEN_RE = re.compile(r"\w+(?:[.,]\w+)*|\W+")
+_DIGITS_RE = re.compile(r"\d+")
+# A number with thousands separators: "1,000" or "1.000.000"
+_THOUSANDS_RE = re.compile(r"\d{1,3}([.,])\d{3}(?:\1\d{3})*")
+# An English ordinal number: "1st", "22nd", "3rd", "4th"
+_EN_ORDINAL_RE = re.compile(r"(\d+)(?:st|nd|rd|th)", re.IGNORECASE)
 
 
 MEMORY_ERROR_MESSAGE = f"{ULTRASINGER_HEAD} {blue_highlighted('whisper')} ran out of GPU memory; reduce --whisper_batch_size or force usage of cpu with --force_cpu"
@@ -48,12 +41,38 @@ from modules.Speech_Recognition.language_constants import (
 )
 
 
-def detect_language_from_audio(audio_path: str, device: str = "cpu") -> str:
+@contextmanager
+def whisperx_model_loading():
+    """Load WhisperX's own models (VAD, alignment) as before PyTorch 2.6.
+
+    PyTorch 2.6 changed the default of torch.load to weights_only=True, and
+    older WhisperX/pyannote versions load their pickled model files without
+    passing weights_only. Inside this block a torch.load without it unpickles
+    as before; a caller that passes weights_only keeps its choice. torch.load
+    is only replaced for the duration of the block, so other model files (a
+    downloaded segmentation model, for example) are never unpickled.
+    """
+    original_load = torch.load
+
+    def load(*args, **kwargs):
+        if kwargs.get("weights_only") is None:
+            kwargs["weights_only"] = False
+        return original_load(*args, **kwargs)
+
+    torch.load = load
+    try:
+        yield
+    finally:
+        torch.load = original_load
+
+
+def detect_language_from_audio(audio_path: str, device: str = "cpu", compute_type: str = None) -> str:
     """Detect the language from audio (see :func:`detect_language_with_confidence`)."""
-    return detect_language_with_confidence(audio_path, device)[0]
+    return detect_language_with_confidence(audio_path, device, compute_type)[0]
 
 
-def detect_language_with_confidence(audio_path: str, device: str = "cpu") -> tuple[str, float]:
+def detect_language_with_confidence(audio_path: str, device: str = "cpu",
+                                    compute_type: str = None) -> tuple[str, float]:
     """Detect language from audio using Whisper tiny model; returns ``(language, probability)``.
 
     Much faster than full transcription (~2-3s vs ~2min) because it only
@@ -76,6 +95,10 @@ def detect_language_with_confidence(audio_path: str, device: str = "cpu") -> tup
     Args:
         audio_path: Path to the audio file.
         device: ``"cpu"`` or ``"cuda"``.
+        compute_type: As for the transcription (``--whisper_compute_type``);
+            None picks the same default (float16 on CUDA, int8 on the CPU).
+            When the device does not support it (float16 on older GPUs), the
+            fastest type it supports is used instead.
 
     Returns:
         ISO language code (e.g. ``"en"``, ``"de"``) and Whisper's probability
@@ -84,8 +107,16 @@ def detect_language_with_confidence(audio_path: str, device: str = "cpu") -> tup
     """
     from faster_whisper import WhisperModel as FasterWhisperModel
 
-    compute_type = "float16" if device == "cuda" else "int8"
-    model = FasterWhisperModel("tiny", device=device, compute_type=compute_type)
+    if compute_type is None:
+        compute_type = "float16" if device == "cuda" else "int8"
+    try:
+        model = FasterWhisperModel("tiny", device=device, compute_type=compute_type)
+    except ValueError as error:
+        print(
+            f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} compute type {compute_type} is not "
+            f"supported here ({error}) -- detecting the language with the fastest supported type"
+        )
+        model = FasterWhisperModel("tiny", device=device, compute_type="auto")
     audio = whisperx.load_audio(audio_path)
 
     language, probability, _ = model.detect_language(audio, vad_filter=True)
@@ -124,23 +155,50 @@ class WhisperModel(Enum):
 
 #Addition for numbers to words (Using previous code from louispan in PR#135)
 def number_to_words(line,language='en'):
+    """``line`` with its numbers written as words of ``language``.
+
+    Only numbers are converted: digits, also in groups of a thousand ("1,000")
+    and, in English, ordinals ("21st"). Other words with digits ("80s", "mp3")
+    stay as they are, and so do all numbers when num2words does not know the
+    language.
+    """
     # https://github.com/m-bain/whisperX
     # Transcript words which do not contain characters in the alignment models dictionary e.g. "2014." or "£13.60" cannot be aligned and therefore are not given a timing.
     # Therefore, convert numbers to words
+    if not _DIGITS_RE.search(line):
+        return line
+    if not language or (language not in CONVERTER_CLASSES and language[:2] not in CONVERTER_CLASSES):
+        print(
+            f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Unknown language for number transcription. Keeping numbers as numeric characters for line: {line}"
+        )
+        return line
     out_tokens = []
-    in_tokens = re_split_preserve_space.findall(line)
-    for token in in_tokens:
-        try:
-            num = ast.literal_eval(token)
-            try:
-                out_tokens.append(num2words(num, lang=language))
-            except NotImplementedError:
-                print(
-                    f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Unknown language for number transcription. Keeping number as numeric characters for line: {line}, token: {token}"
-                )
-        except Exception:
+    for token in _NUMBER_TOKEN_RE.findall(line):
+        if not _DIGITS_RE.search(token):
             out_tokens.append(token)
-    return ''.join(out_tokens) 
+        elif _THOUSANDS_RE.fullmatch(token):
+            out_tokens.append(_number_as_words(token, token.replace(",", "").replace(".", ""), language))
+        else:
+            # Numbers joined by "." or "," otherwise ("1,2,3", "9.30") one by one
+            out_tokens.extend(_word_to_words(part, language) for part in re.split(r"([.,])", token))
+    return ''.join(out_tokens)
+
+
+def _word_to_words(word: str, language: str) -> str:
+    """A number as words, an English ordinal number as ordinal; other words unchanged."""
+    if _DIGITS_RE.fullmatch(word) and (len(word) == 1 or not word.startswith("0")):
+        return _number_as_words(word, word, language)
+    ordinal = _EN_ORDINAL_RE.fullmatch(word) if language[:2] == "en" else None
+    if ordinal:
+        return _number_as_words(word, ordinal.group(1), language, "ordinal")
+    return word
+
+
+def _number_as_words(token: str, digits: str, language: str, to: str = "cardinal") -> str:
+    try:
+        return num2words(int(digits), lang=language, to=to)
+    except Exception:
+        return token
 
 def replace_code_lines(source, start_token, end_token,
                        replacement, escape_tokens=True):
@@ -206,14 +264,15 @@ def transcribe_with_whisper(
             f"no_speech_threshold={no_speech_threshold}"
         )
 
-        loaded_whisper_model = whisperx.load_model(
-            model.value,
-            language=language,
-            device=device,
-            compute_type=compute_type,
-            vad_options=vad_options,
-            asr_options=asr_options,
-        )
+        with whisperx_model_loading():
+            loaded_whisper_model = whisperx.load_model(
+                model.value,
+                language=language,
+                device=device,
+                compute_type=compute_type,
+                vad_options=vad_options,
+                asr_options=asr_options,
+            )
 
         audio = whisperx.load_audio(audio_path)
 
@@ -256,12 +315,9 @@ def transcribe_with_whisper(
 
         return TranscriptionResult(transcribed_data, detected_language)
     except ValueError as value_error:
-        # Restore original torch.load in case of error
-        torch.load = _original_torch_load
-
         if (
             "Requested float16 compute type, but the target device or backend do not support efficient float16 computation."
-            in str(value_error.args[0])
+            in str(value_error)
         ):
             print(value_error)
             print(
@@ -270,24 +326,15 @@ def transcribe_with_whisper(
 
         raise value_error
     except OutOfMemoryError as oom_exception:
-        # Restore original torch.load in case of error
-        torch.load = _original_torch_load
-
         print(oom_exception)
         print(MEMORY_ERROR_MESSAGE)
         raise oom_exception
     except Exception as exception:
-        # Restore original torch.load in case of error
-        torch.load = _original_torch_load
-
-        if "CUDA failed with error out of memory" in str(exception.args[0]):
+        if "CUDA failed with error out of memory" in str(exception):
             print(exception)
             print(MEMORY_ERROR_MESSAGE)
         raise exception
     finally:
-        # Restore original torch.load after models are loaded
-        # This ensures other modules (like pitch detection) are not affected by the monkey-patch
-        torch.load = _original_torch_load
         # Drop the model (and the audio) before leaving. The first call
         # imports libraries, one of which keeps the traceback of a failed
         # optional import - and with it this call's frame and all its
@@ -311,9 +358,10 @@ def align_segments(segments: list[dict], audio, language: str, device: str,
     try:
         # load alignment model and metadata
         try:
-            model_a, metadata = whisperx.load_align_model(
-                language_code=language, device=device, model_name=alignment_model
-            )
+            with whisperx_model_loading():
+                model_a, metadata = whisperx.load_align_model(
+                    language_code=language, device=device, model_name=alignment_model
+                )
         except ValueError as ve:
             # No built-in wav2vec2 model exists for this language and no
             # custom model was given -- degrade gracefully to the English
@@ -329,9 +377,10 @@ def align_segments(segments: list[dict], audio, language: str, device: str,
                     f"results, provide a matching model with "
                     f"--whisper_align_model [huggingface]."
                 )
-                model_a, metadata = whisperx.load_align_model(
-                    language_code="en", device=device, model_name=None
-                )
+                with whisperx_model_loading():
+                    model_a, metadata = whisperx.load_align_model(
+                        language_code="en", device=device, model_name=None
+                    )
             else:
                 print(
                     f"{red_highlighted(f'{ve}')}"

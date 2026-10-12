@@ -1,5 +1,7 @@
 """Ultrastar txt parser"""
+import codecs
 import os
+import re
 import shutil
 
 from modules import os_helper
@@ -19,74 +21,159 @@ from modules.Ultrastar.ultrastar_txt import (
 )
 from modules.os_helper import get_unused_song_output_dir
 
+NOTE_LINE_PREFIXES = (
+    f"{UltrastarTxtNoteTypeTag.FREESTYLE.value} ",
+    f"{UltrastarTxtNoteTypeTag.NORMAL.value} ",
+    f"{UltrastarTxtNoteTypeTag.GOLDEN.value} ",
+    f"{UltrastarTxtNoteTypeTag.RAP.value} ",
+    f"{UltrastarTxtNoteTypeTag.RAP_GOLDEN.value} ",
+)
+
+_ENCODING_TAG_RE = re.compile(rb"^#ENCODING:([^\r\n]*)", re.IGNORECASE | re.MULTILINE)
+
+
+def chart_encoding(input_file: str) -> str:
+    """The encoding to read an UltraStar txt file with.
+
+    UTF-8 when the file starts with a byte order mark (which is then left out
+    when reading), or when it is valid UTF-8 with non-ASCII characters (also
+    under a stale #ENCODING tag, as an editor that saves in UTF-8 leaves it;
+    text in a single-byte encoding is practically never valid UTF-8).
+    Otherwise the encoding its #ENCODING tag names (older charts) if the file
+    decodes with it, else UTF-8 or, when that fails, CP1252, the encoding of
+    many older hand-made charts.
+    """
+    with open(input_file, "rb") as file:
+        data = file.read()
+    if data.startswith(codecs.BOM_UTF8):
+        return "utf-8-sig"
+    try:
+        data.decode(FILE_ENCODING)
+        utf8 = True
+    except UnicodeDecodeError:
+        utf8 = False
+    if utf8 and not data.isascii():
+        return FILE_ENCODING
+    tag = _ENCODING_TAG_RE.search(data)
+    declared = _codec_of_encoding_tag(tag.group(1).decode("ascii", "replace")) if tag else None
+    if declared:
+        try:
+            data.decode(declared)
+            return declared
+        except (UnicodeDecodeError, LookupError):
+            pass
+    return FILE_ENCODING if utf8 else "cp1252"
+
+
+def _codec_of_encoding_tag(value: str) -> str | None:
+    """Python codec of an #ENCODING tag value ("UTF8", "CP1252", ...); None for
+    "AUTO", "LOCALE", unknown names and codecs that are no text encoding or do
+    not read the tag itself (ASCII) as ASCII."""
+    value = value.strip()
+    if value.upper() in ("", "AUTO", "LOCALE"):
+        return None
+    try:
+        codec = codecs.lookup(value).name
+        return codec if b"#ENCODING:".decode(codec) == "#ENCODING:" else None
+    except (LookupError, UnicodeDecodeError):
+        return None
+
+
+def read_chart_lines(input_file: str) -> list[str]:
+    """The lines of an UltraStar txt file (decoded as ``chart_encoding`` says)."""
+    with open(input_file, "r", encoding=chart_encoding(input_file), errors="replace") as file:
+        return file.readlines()
+
+
+def is_relative_tag(line: str) -> bool:
+    """Whether the line is ``#RELATIVE:YES``: the beats of each line count from the line's own start."""
+    tag, separator, value = line.partition(":")
+    return (bool(separator) and tag.strip().upper() == f"#{UltrastarTxtTag.RELATIVE.value}"
+            and value.strip().upper() == "YES")
+
+
+def relative_line_break(line: str) -> tuple[float, float] | None:
+    """The numbers of a line break ``- <break beat> <shift>`` of a #RELATIVE:YES
+    chart, both counted from the start of the current line: the break, and how
+    far the start of the next line moves on (a break with one number moves the
+    start there). None without numbers."""
+    parts = line[1:].split()
+    if not parts:
+        return None
+    return float(parts[0]), float(parts[1] if len(parts) > 1 else parts[0])
+
 
 def parse(input_file: str) -> UltrastarTxtValue:
     """Parse ultrastar txt file to UltrastarTxt class"""
     print(f"{ULTRASINGER_HEAD} Parse ultrastar txt -> {input_file}")
 
-    with open(input_file, "r", encoding=FILE_ENCODING) as file:
-        txt = file.readlines()
+    txt = read_chart_lines(input_file)
 
     ultrastar_class = UltrastarTxtValue()
-    count = 0
+    # #RELATIVE:YES - the beats of a line count from the line's own start, which
+    # each line break "- <break beat> <shift>" moves on by <shift> beats
+    relative = False
+    line_start_beat = 0.0
 
-    # Strips the newline character
     for line in txt:
-        count += 1
         if line.startswith("#"):
-            if line.startswith(f"#{UltrastarTxtTag.ARTIST.value}"):
-                ultrastar_class.artist = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.TITLE.value}"):
-                ultrastar_class.title = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.MP3.value}"):
-                ultrastar_class.mp3 = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.AUDIO.value}"):
-                ultrastar_class.audio = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.VIDEO.value}"):
-                ultrastar_class.video = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.GAP.value}"):
-                ultrastar_class.gap = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.BPM.value}"):
-                ultrastar_class.bpm = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.VIDEOGAP.value}"):
-                ultrastar_class.videoGap = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.COVERURL.value}:"):
-                ultrastar_class.coverUrl = line.split(":", 1)[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.COVER.value}:"):
-                ultrastar_class.cover = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.BACKGROUNDURL.value}:"):
-                ultrastar_class.backgroundUrl = line.split(":", 1)[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.BACKGROUND.value}:"):
-                ultrastar_class.background = line.split(":")[1].replace("\n", "")
-            elif line.startswith(f"#{UltrastarTxtTag.VIDEOURL.value}:"):
-                ultrastar_class.videoUrl = line.split(":", 1)[1].replace("\n", "")
-        elif line.startswith(
-            (
-                f"{UltrastarTxtNoteTypeTag.FREESTYLE.value} ",
-                f"{UltrastarTxtNoteTypeTag.NORMAL.value} ",
-                f"{UltrastarTxtNoteTypeTag.GOLDEN.value} ",
-                f"{UltrastarTxtNoteTypeTag.RAP.value} ",
-                f"{UltrastarTxtNoteTypeTag.RAP_GOLDEN.value} ",
-            )
-        ):
+            tag, separator, value = line[1:].partition(":")
+            if not separator:
+                continue
+            tag = tag.strip().upper()
+            value = value.replace("\n", "")
+            if tag == UltrastarTxtTag.ARTIST.value:
+                ultrastar_class.artist = value
+            elif tag == UltrastarTxtTag.TITLE.value:
+                ultrastar_class.title = value
+            elif tag == UltrastarTxtTag.MP3.value:
+                ultrastar_class.mp3 = value
+            elif tag == UltrastarTxtTag.AUDIO.value:
+                ultrastar_class.audio = value
+            elif tag == UltrastarTxtTag.VIDEO.value:
+                ultrastar_class.video = value
+            elif tag == UltrastarTxtTag.GAP.value:
+                ultrastar_class.gap = value
+            elif tag == UltrastarTxtTag.BPM.value:
+                ultrastar_class.bpm = value
+            elif tag == UltrastarTxtTag.VIDEOGAP.value:
+                ultrastar_class.videoGap = value
+            elif tag == UltrastarTxtTag.COVERURL.value:
+                ultrastar_class.coverUrl = value
+            elif tag == UltrastarTxtTag.COVER.value:
+                ultrastar_class.cover = value
+            elif tag == UltrastarTxtTag.BACKGROUNDURL.value:
+                ultrastar_class.backgroundUrl = value
+            elif tag == UltrastarTxtTag.BACKGROUND.value:
+                ultrastar_class.background = value
+            elif tag == UltrastarTxtTag.VIDEOURL.value:
+                ultrastar_class.videoUrl = value
+            elif tag == UltrastarTxtTag.RELATIVE.value:
+                relative = is_relative_tag(line)
+        elif line.startswith(NOTE_LINE_PREFIXES):
             parts = line.split()
             # [0] F : * R G
             # [1] start beat
             # [2] duration
             # [3] pitch
             # [4] word
+            start_beat = float(parts[1]) + line_start_beat
 
             ultrastar_note_line = UltrastarNoteLine(noteType=get_note_type_from_string(parts[0]),
-                              startBeat=float(parts[1]),
+                              startBeat=start_beat,
                               duration=float(parts[2]),
                               pitch=int(parts[3]),
                               word=parts[4] if len(parts) > 4 else "",
-                            startTime=get_start_time(ultrastar_class.gap, ultrastar_class.bpm, float(parts[1])),
-                            endTime=get_end_time(ultrastar_class.gap, ultrastar_class.bpm, float(parts[1]), float(parts[2])))
+                            startTime=get_start_time(ultrastar_class.gap, ultrastar_class.bpm, start_beat),
+                            endTime=get_end_time(ultrastar_class.gap, ultrastar_class.bpm, start_beat, float(parts[2])))
 
             ultrastar_class.UltrastarNoteLines.append(ultrastar_note_line)
 
             # todo: Progress?
+        elif relative and line.startswith(UltrastarTxtTag.LINEBREAK.value):
+            numbers = relative_line_break(line)
+            if numbers:
+                line_start_beat += numbers[1]
 
     return ultrastar_class
 
@@ -208,7 +295,10 @@ def _fetch_musicbrainz_cover(
             ultrastar_class.artist.strip(),
         )
         if song_info.cover_image_data:
-            basename = f"{ultrastar_class.artist.strip()} - {ultrastar_class.title.strip()}"
+            # A name that is valid as a file name, like the song folder's
+            basename = os_helper.sanitize_filename(
+                f"{ultrastar_class.artist.strip()} - {ultrastar_class.title.strip()}"
+            )
             save_image(song_info.cover_image_data, basename, output_dir)
             cover_filename = basename + " [CO].jpg"
             ultrastar_class.cover = cover_filename
