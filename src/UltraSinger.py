@@ -2129,7 +2129,7 @@ def infos_from_audio_video_input_file(
 
     song_info = search_musicbrainz(title, artist or None)
     if video_title:
-        # As for a video URL input (-i): MusicBrainz may re-introduce
+        # As for a video URL input (-i): the song lookup may re-introduce
         # suffixes that the video title does not have
         song_info.title = strip_unmatched_suffixes(song_info.title, video_title)
     # Metadata titles may contain characters that are invalid in paths (e.g. "?" or "/")
