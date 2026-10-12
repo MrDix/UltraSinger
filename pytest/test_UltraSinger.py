@@ -231,7 +231,8 @@ class TestTranscribeAudioDispatch(unittest.TestCase):
         from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
         self.QWEN3 = TranscriberChoice("qwen3", 2, "6.0 GB of GPU memory free")
 
-    def _run(self, choice, requested="auto", qwen_error=None, cached=None, force_whisper_cpu=False):
+    def _run(self, choice, requested="auto", qwen_error=None, cached=None, force_whisper_cpu=False,
+             keep_numbers=False):
         import io
         import os
         import tempfile
@@ -251,9 +252,10 @@ class TestTranscribeAudioDispatch(unittest.TestCase):
                 patch.object(us.settings, "transcriber", requested), \
                 patch.object(us.settings, "force_whisper_cpu", force_whisper_cpu), \
                 patch.object(us.settings, "skip_cache_transcription", False), \
+                patch.object(us.settings, "keep_numbers", keep_numbers), \
                 redirect_stdout(out):
-            if cached:
-                with open(os.path.join(cache, cached), "w", encoding="utf-8") as file:
+            for name in ([cached] if isinstance(cached, str) else cached or []):
+                with open(os.path.join(cache, name), "w", encoding="utf-8") as file:
                     file.write(TranscriptionResult([], "de").to_json())
             transcribed = us.transcribe_audio(cache, "audio.wav")
             files = os.listdir(cache)
@@ -314,14 +316,26 @@ class TestTranscribeAudioDispatch(unittest.TestCase):
     def test_cached_qwen3_transcription_needs_no_gpu(self):
         from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
         run = self._run(TranscriberChoice("whisper", reason="only 1.0 GB of GPU memory free"),
-                        cached="qwen3_1.7B_None_None_p30_aligned.json")
+                        cached="qwen3_1.7B_None_None_p30_kn0_aligned.json")
         run["choose"].assert_not_called()
         run["qwen"].assert_not_called()
         run["whisper"].assert_not_called()
         self.assertEqual((run["result"].detected_language, run["used"]), ("de", "qwen3 (Qwen/Qwen3-ASR-1.7B)"))
         # Whisper, when asked for, does not take it
         self.assertEqual(self._run(TranscriberChoice("whisper", reason="selected"), "whisper",
-                                   cached="qwen3_1.7B_None_None_p30_aligned.json")["whisper"].call_count, 1)
+                                   cached="qwen3_1.7B_None_None_p30_kn0_aligned.json")["whisper"].call_count, 1)
+
+    def test_cache_depends_on_keep_numbers(self):
+        # numbers are written as words before caching unless --keep_numbers: no reuse across the setting
+        from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
+        qwen_run = self._run(self.QWEN3, cached="qwen3_1.7B_None_None_p30_kn0_aligned.json", keep_numbers=True)
+        qwen_run["qwen"].assert_called_once()
+        self.assertIn("qwen3_1.7B_None_None_p30_kn1_aligned.json", qwen_run["files"])
+        whisper = TranscriberChoice("whisper", reason="selected")
+        names = [self._run(whisper, "whisper", keep_numbers=value)["files"][0] for value in (False, True)]
+        self.assertTrue(names[0].endswith("_kn0_aligned.json") and names[1].endswith("_kn1_aligned.json"))
+        cached_run = self._run(whisper, "whisper", cached=names[0], keep_numbers=True)
+        cached_run["whisper"].assert_called_once()
 
     def test_force_whisper_cpu(self):
         run = self._run(self.QWEN3, force_whisper_cpu=True)
