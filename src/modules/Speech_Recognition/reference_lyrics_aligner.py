@@ -54,8 +54,9 @@ from modules.Speech_Recognition.lyrics_alignment import (
 # ---------------------------------------------------------------------------
 
 # A bracket at the start of an LRC line: a time ("[01:23.45]"), an ID tag
-# ("[ar:Artist]"), a section label ("[Chorus]") or a backing vocal ("[oh yeah]")
-_LRC_TAG_RE = re.compile(r"\s*\[([^\]]*)\]")
+# ("[ar:Artist]"), a section label ("[Chorus]") or a backing vocal ("[oh yeah]",
+# "(la)")
+_LRC_TAG_RE = re.compile(r"\s*(\[[^\]]*\]|\([^)]*\)|\{[^}]*\})")
 _LRC_TIME_RE = re.compile(r"(\d+):(\d+(?:\.\d+)?)")
 _LRC_ID_TAG_RE = re.compile(r"[A-Za-z#]+:")
 _LRC_SECTION_RE = re.compile(
@@ -78,9 +79,10 @@ def parse_lrc_synced_lyrics(
 
     A line with several time tags (``"[00:12.00][01:30.00] Chorus line"``)
     is sung at each of these times. Word times of enhanced LRC
-    (``"<00:12.50>"``), ID tags (``"[ar:Artist]"``) and section labels at the
-    start of a line (``"[Chorus]"``, ``"[Verse 2]"``) are not sung and are left
-    out; other brackets are backing vocals, wherever they are.
+    (``"<00:12.50>"``), ID tags (``"[ar:Artist]"``) and section labels among
+    the brackets at the start of a line (``"[Chorus]"``, ``"[Verse 2]"``) are
+    not sung and are left out; other brackets are backing vocals, wherever
+    they are.
 
     Args:
         synced_lyrics: Raw LRC text, e.g. ``"[01:23.45] Hello world\\n..."``.
@@ -100,16 +102,19 @@ def parse_lrc_synced_lyrics(
     lines: list[dict] = []
     for raw_line in synced_lyrics.strip().splitlines():
         times: list[float] = []
+        sung: list[str] = []  # backing vocals among the brackets at the start
         pos = 0
         while m := _LRC_TAG_RE.match(raw_line, pos):
-            content = m.group(1).strip()
-            time_tag = _LRC_TIME_RE.fullmatch(content)
+            bracket = m.group(1)
+            content = bracket[1:-1].strip()
+            time_tag = _LRC_TIME_RE.fullmatch(content) if bracket.startswith("[") else None
             if time_tag:
                 times.append(int(time_tag.group(1)) * 60 + float(time_tag.group(2)))
-            elif not (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(content)):
-                break  # a backing vocal: part of the text
+            elif not (bracket.startswith("[")
+                      and (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(content))):
+                sung.append(bracket)
             pos = m.end()
-        text = " ".join(_LRC_WORD_TIME_RE.sub("", raw_line[pos:]).split())
+        text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [raw_line[pos:]])).split())
         if text:
             lines.extend({"time": time_s, "text": text} for time_s in times)
 

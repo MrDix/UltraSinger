@@ -20,14 +20,16 @@ from modules.Speech_Recognition.TranscribedData import TranscribedData, from_whi
 
 #Addition for numbers to words
 import re
+from decimal import Decimal
 from num2words import CONVERTER_CLASSES, num2words
 
 #Addition for numbers to words
 # A word (numbers and words joined by "." or ",", like "1,000", count as one), or other characters
 _NUMBER_TOKEN_RE = re.compile(r"\w+(?:[.,]\w+)*|\W+")
 _DIGITS_RE = re.compile(r"\d+")
-# A number with thousands separators: "1,000" or "1.000.000"
-_THOUSANDS_RE = re.compile(r"\d{1,3}([.,])\d{3}(?:\1\d{3})*")
+# A number with thousands separators, maybe with decimals after the other
+# separator: "1,000", "1.000.000", "1,000.50", "1.000,50"
+_THOUSANDS_RE = re.compile(r"\d{1,3}([.,])\d{3}(?:\1\d{3})*(?:(?!\1)[.,]\d+)?")
 # An English ordinal number: "1st", "22nd", "3rd", "4th"
 _EN_ORDINAL_RE = re.compile(r"(\d+)(?:st|nd|rd|th)", re.IGNORECASE)
 
@@ -157,8 +159,8 @@ class WhisperModel(Enum):
 def number_to_words(line,language='en'):
     """``line`` with its numbers written as words of ``language``.
 
-    Only numbers are converted: digits, also in groups of a thousand ("1,000")
-    and, in English, ordinals ("21st"). Other words with digits ("80s", "mp3")
+    Only numbers are converted: digits, also in groups of a thousand ("1,000",
+    with decimals "1,000.50") and, in English, ordinals ("21st"). Other words with digits ("80s", "mp3")
     stay as they are, and so do all numbers when num2words does not know the
     language.
     """
@@ -176,8 +178,10 @@ def number_to_words(line,language='en'):
     for token in _NUMBER_TOKEN_RE.findall(line):
         if not _DIGITS_RE.search(token):
             out_tokens.append(token)
-        elif _THOUSANDS_RE.fullmatch(token):
-            out_tokens.append(_number_as_words(token, token.replace(",", "").replace(".", ""), language))
+        elif thousands := _THOUSANDS_RE.fullmatch(token):
+            # without the thousands separators; the other one, if any, marks the decimals
+            number = token.replace(thousands.group(1), "").replace(",", ".")
+            out_tokens.append(_number_as_words(token, number, language))
         else:
             # Numbers joined by "." or "," otherwise ("1,2,3", "9.30") one by one
             out_tokens.extend(_word_to_words(part, language) for part in re.split(r"([.,])", token))
@@ -194,9 +198,10 @@ def _word_to_words(word: str, language: str) -> str:
     return word
 
 
-def _number_as_words(token: str, digits: str, language: str, to: str = "cardinal") -> str:
+def _number_as_words(token: str, number: str, language: str, to: str = "cardinal") -> str:
+    """``number`` (digits, maybe with a "." before decimals) in words, else ``token``."""
     try:
-        return num2words(int(digits), lang=language, to=to)
+        return num2words(Decimal(number) if "." in number else int(number), lang=language, to=to)
     except Exception:
         return token
 

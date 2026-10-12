@@ -83,9 +83,11 @@ class ConvertToTranscribedDataTest(unittest.TestCase):
     def test_number_to_words_converts_only_numbers(self):
         # words are never read as numbers
         self.act_and_assert("True or False, None of it", "True or False, None of it")
-        # thousands separators
+        # thousands separators, also with decimals after the other separator
         self.act_and_assert("1,000 times", "one thousand times")
         self.act_and_assert("1.000.000 Mal", "eine Million Mal", "de")
+        self.act_and_assert("1,000.50 dollars", "one thousand point five dollars")
+        self.act_and_assert("1.000,05 Euro", "eintausend Komma null fünf Euro", "de")
         # ordinals in English, other words with digits stay as they are
         self.act_and_assert("the 1st and the 22nd time", "the first and the twenty-second time")
         self.act_and_assert("back in the 80s with an mp3", "back in the 80s with an mp3")

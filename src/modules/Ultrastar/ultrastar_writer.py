@@ -10,7 +10,7 @@ from modules.Ultrastar.coverter.ultrastar_converter import (
     real_bpm_to_ultrastar_bpm,
     second_to_beat, )
 from modules.Ultrastar.coverter.ultrastar_midi_converter import convert_midi_note_to_ultrastar_note
-from modules.Ultrastar.ultrastar_parser import NOTE_LINE_PREFIXES, is_relative_tag, read_chart_lines, \
+from modules.Ultrastar.ultrastar_parser import header_tag, is_note_line, is_relative_tag, read_chart_lines, \
     relative_line_break
 from modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag, UltrastarTxtNoteTypeTag, \
     FILE_ENCODING
@@ -408,7 +408,8 @@ def calculate_silent_beat_length(
 
 
 def create_repitched_txt_from_ultrastar_data(
-        input_file: str, note_numbers: list[int], output_repitched_ultrastar: str
+        input_file: str, note_numbers: list[int], output_repitched_ultrastar: str,
+        cover: str | None = None, cover_url: str | None = None,
 ) -> None:
     """Creates a repitched ultrastar txt file from the original one.
 
@@ -418,17 +419,26 @@ def create_repitched_txt_from_ultrastar_data(
     #RELATIVE:YES chart with absolute beats (the beats the parser reads), so
     that every reader of the new file, like the game score, places the notes
     right.
+
+    ``cover``, the cover in the new song folder (one found online when the
+    original's was missing), replaces the original's #COVER or is added at the
+    end of the header; ``cover_url`` replaces the original's #COVERURL.
     """
     print(f"{ULTRASINGER_HEAD} Creating repitched ultrastar txt -> {output_repitched_ultrastar}")
 
     txt = read_chart_lines(input_file)
+    add_cover = cover is not None and UltrastarTxtTag.COVER.value not in map(header_tag, txt)
 
     i = 0
     relative = False
     line_start_beat = 0.0  # #RELATIVE:YES: the beat the current line's beats count from
     with open(output_repitched_ultrastar, "w", encoding=FILE_ENCODING) as file:
         for line in txt:
-            if line.startswith(NOTE_LINE_PREFIXES):
+            if add_cover and not line.startswith("#"):
+                file.write(f"#{UltrastarTxtTag.COVER.value}:{cover}\n")
+                add_cover = False
+            tag = header_tag(line)
+            if is_note_line(line):
                 parts = re.findall(r"\S+|\s+", line)
                 # between are whitespaces
                 # [0] : * F R G
@@ -438,8 +448,7 @@ def create_repitched_txt_from_ultrastar_data(
                 # [8] word
                 if relative:
                     parts[2] = _beat_text(float(parts[2]) + line_start_beat)
-                if line.startswith((f"{UltrastarTxtNoteTypeTag.NORMAL.value} ",
-                                    f"{UltrastarTxtNoteTypeTag.GOLDEN.value} ")):
+                if parts[0] in (UltrastarTxtNoteTypeTag.NORMAL.value, UltrastarTxtNoteTypeTag.GOLDEN.value):
                     parts[6] = str(note_numbers[i])
                 line = "".join(parts)
                 # one pitch per note line, whatever its type
@@ -452,9 +461,17 @@ def create_repitched_txt_from_ultrastar_data(
                 if numbers:
                     line = f"{UltrastarTxtTag.LINEBREAK.value} {_beat_text(line_start_beat + numbers[0])}\n"
                     line_start_beat += numbers[1]
-            elif line.upper().startswith(f"#{UltrastarTxtTag.ENCODING.value}:"):
+            elif tag == UltrastarTxtTag.ENCODING.value:
                 line = f"#{UltrastarTxtTag.ENCODING.value}:UTF8\n"
+            elif tag == UltrastarTxtTag.COVER.value and cover is not None:
+                line = f"#{UltrastarTxtTag.COVER.value}:{cover}\n"
+            elif tag == UltrastarTxtTag.COVERURL.value and cover_url is not None:
+                line = f"#{UltrastarTxtTag.COVERURL.value}:{cover_url}\n"
             file.write(line)
+        if add_cover:  # a chart of header lines only
+            if txt and not txt[-1].endswith("\n"):
+                file.write("\n")
+            file.write(f"#{UltrastarTxtTag.COVER.value}:{cover}\n")
 
 
 def _beat_text(beat: float) -> str:
@@ -477,12 +494,7 @@ def _append_creator_header_suffix(ultrastar_file_output: str, suffix: str) -> No
             text[i] = f"{line}{suffix}"
             break
 
-        if line.startswith((
-                f"{UltrastarTxtNoteTypeTag.FREESTYLE.value} ",
-                f"{UltrastarTxtNoteTypeTag.NORMAL.value} ",
-                f"{UltrastarTxtNoteTypeTag.GOLDEN.value} ",
-                f"{UltrastarTxtNoteTypeTag.RAP.value} ",
-                f"{UltrastarTxtNoteTypeTag.RAP_GOLDEN.value} ")):
+        if is_note_line(line):
             text.insert(
                 i,
                 f"#{UltrastarTxtTag.CREATOR.value}:UltraSinger [GitHub]{suffix}",

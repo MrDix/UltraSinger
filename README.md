@@ -493,7 +493,7 @@ Note that if you run into a yt-dlp error such as `Sign in to confirm you’re no
 
 #### UltraStar (re-pitch)
 
-This re-pitches the notes of an UltraStar txt file from its audio and writes the chart with the new pitches into a new song folder, as `Artist - Title.txt`. Normal and golden notes get new pitches; freestyle and rap notes keep theirs. Like a converted song, the new chart gets a [game score](#-ultrastar-score-calculation).
+This re-pitches the notes of an UltraStar txt file from its audio and writes the chart with the new pitches into a new song folder, as `Artist - Title.txt`. Normal and golden notes get new pitches; freestyle and rap notes keep theirs. Like a converted song, the new chart gets a [game score](#-ultrastar-score-calculation). The cover, background and video files the chart names are copied along; when the cover is missing, a cover found online is saved and written into the new chart.
 
 Older hand-made charts are read as well: in CP1252 or in the encoding their `#ENCODING` tag names, and with relative beats (`#RELATIVE:YES`). The new file is always written in UTF-8 and with absolute beats.
 
