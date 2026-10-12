@@ -1,11 +1,16 @@
 """Tests for reference_lyrics_aligner module."""
 
+from types import SimpleNamespace
+
 import pytest
 import numpy as np
+import torch
 from unittest.mock import patch, MagicMock
 
+from modules.Speech_Recognition.lyrics_alignment import lyrics_tokens
 from modules.Speech_Recognition.reference_lyrics_aligner import (
     parse_lrc_synced_lyrics,
+    _align_model_log_probs,
     _compute_note_for_word,
     _split_word_at_pitch_changes,
     _trim_word_to_voiced,
@@ -367,6 +372,215 @@ class TestCreateMidiSegmentsFromReferenceLyrics:
 
 
 # ---------------------------------------------------------------------------
+# Forced alignment (align_lyrics_to_audio) with a fake model
+# ---------------------------------------------------------------------------
+
+LETTERS = "abcdefghijklmnopqrstuvwxyz'"
+DICTIONARY = {"<pad>": 0, "|": 1, **{c: i + 2 for i, c in enumerate(LETTERS)}}
+METADATA = {"language": "en", "dictionary": DICTIONARY, "type": "torchaudio"}
+
+
+class FakeAlignModel:
+    """A torchaudio-like CTC model for audio that holds its sample indices:
+    the frames of any part of the audio are rows of one emission of the song."""
+
+    def __init__(self, log_probs, out_of_memory_from=None, error=None):
+        self.log_probs = log_probs
+        self.out_of_memory_from = out_of_memory_from  # inputs this long run out of memory
+        self.error = error or torch.cuda.OutOfMemoryError("CUDA out of memory.")
+        self.inputs = []
+
+    def __call__(self, waveform, lengths=None):
+        samples = waveform[0].numpy()
+        self.inputs.append(len(samples))
+        if self.out_of_memory_from is not None and len(samples) >= self.out_of_memory_from:
+            raise self.error
+        n = max(1, (len(samples) - 400) // 320 + 1)
+        frames = (samples[np.arange(n) * 320] / 320).astype(int)
+        return torch.from_numpy(self.log_probs[frames]).unsqueeze(0), None
+
+
+def fake_song(segments, sung_at, seconds, **model_args):
+    """A fake model and audio in which the words of segment i are sung from
+    sung_at[i] seconds on (None: not at all)."""
+    n_samples = int(seconds * 16000)
+    n_frames = (n_samples - 400) // 320 + 1
+    frame_s = n_samples / 16000 / n_frames  # as whisperx times the frames
+    lines = [[w.replace("\x00", "") for w in seg["text"].split()] for seg in segments]
+    tokens = lyrics_tokens(lines, DICTIONARY, "en")
+    em = np.full((n_frames, len(DICTIONARY)), -10.0, dtype=np.float32)
+    em[:, 0] = -0.01
+    for i, t in enumerate(sung_at):
+        if t is None:
+            continue
+        for n, k in enumerate(np.flatnonzero(tokens.word_line[tokens.word] == i)):
+            f = round(t / frame_s) + 2 * n
+            em[f, 0], em[f, tokens.ids[k]] = -10.0, -0.01
+    em -= np.logaddexp.reduce(em, axis=1, keepdims=True)  # log-probabilities
+    return FakeAlignModel(em, **model_args), np.arange(n_samples, dtype=np.float32)
+
+
+def lrc_segments(n_lines):
+    """LRC lines 3 s apart, two words of a letter of their own each."""
+    return [{"text": f"{LETTERS[i] * 2} {LETTERS[i] * 3}", "start": 2.0 + 3 * i, "end": 5.0 + 3 * i}
+            for i in range(n_lines)]
+
+
+def align_with(model, audio, segments, language="en", **kwargs):
+    with patch("whisperx.load_align_model", return_value=(model, METADATA)) as load_model, \
+            patch("whisperx.load_audio", return_value=audio):
+        words = align_lyrics_to_audio(segments, "/fake/audio.wav", language, device="cpu", **kwargs)
+    return words, load_model
+
+
+class TestAlignLyricsToAudio:
+
+    def test_words_with_their_flags(self, capsys):
+        segments = lrc_segments(20)
+        segments[0]["text"] = "aa \x00aaa"
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+
+        words, _ = align_with(model, audio, segments)
+
+        assert len(words) == 40
+        assert all(set(w) == {"word", "start", "end", "backing", "line_end"} for w in words)
+        assert all(isinstance(w["start"], float) and isinstance(w["end"], float) for w in words)
+        assert [(w["word"], w["backing"], w["line_end"]) for w in words[:3]] == [
+            ("aa", False, False), ("aaa", True, True), ("bb", False, False)]
+        # frames of about 20 ms: "aa" up to the space after it, "aaa" from 3 frames on
+        assert (words[0]["start"], words[0]["end"]) == pytest.approx((2.0, 2.08), abs=0.011)
+        assert (words[1]["start"], words[1]["end"]) == pytest.approx((2.12, 2.24), abs=0.011)
+        assert [w["line_end"] for w in words] == [False, True] * 20
+        assert [w["start"] for w in words[::2]] == pytest.approx([s["start"] for s in segments], abs=0.011)
+        out = capsys.readouterr().out
+        assert "Aligning" in out and "40" in out
+        assert "Lyrics alignment:" in out and "of" in out and "(whole song, free end)" in out
+        assert "Reference alignment:" in out
+
+    def test_pieces_first_then_the_whole_song(self):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 70.0)
+        align_with(model, audio, segments)
+        # 30-s pieces with 5 s of context on both sides, then the whole 70 s
+        assert model.inputs == [35 * 16000, 40 * 16000, 15 * 16000, 70 * 16000]
+
+    def test_words_of_lines_the_recording_does_not_have_are_left_out(self, capsys):
+        segments = lrc_segments(22)
+        sung = [s["start"] if i < 20 else None for i, s in enumerate(segments)]
+        model, audio = fake_song(segments, sung, segments[19]["start"] + 4.0)
+
+        words, _ = align_with(model, audio, segments)
+
+        assert len(words) == 40
+        assert {w["word"] for w in words}.isdisjoint({"uu", "uuu", "vv", "vvv"})
+        assert words[-1]["word"] == "ttt" and words[-1]["line_end"]
+        assert "Left out" in capsys.readouterr().out
+
+    def test_plain_lyrics_as_one_segment(self, capsys):
+        segments = [{"text": "aa aaa bb bbb", "start": 0.0, "end": 10.0}]
+        model, audio = fake_song(segments, [1.0], 10.0)
+
+        words, _ = align_with(model, audio, segments)
+
+        # the whole song only, no line check
+        assert model.inputs == [len(audio)]
+        # tokens 2 frames apart: "a a | a a a | b b | b b b"
+        assert [w["start"] for w in words] == pytest.approx([1.0, 1.12, 1.28, 1.40], abs=0.011)
+        assert [w["line_end"] for w in words] == [False, False, False, True]
+        assert "Lyrics alignment:" not in capsys.readouterr().out
+
+    def test_whole_song_out_of_memory_uses_the_pieces(self, capsys):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0,
+                                 out_of_memory_from=64 * 16000)
+
+        words, _ = align_with(model, audio, segments)
+
+        assert len(words) == 40
+        assert [w["start"] for w in words[::2]] == pytest.approx([s["start"] for s in segments], abs=0.011)
+        out = capsys.readouterr().out
+        assert "Not enough GPU memory" in out
+        assert "(30-s pieces," in out
+
+    def test_out_of_memory_runtime_error_of_plain_lyrics(self, capsys):
+        segments = [{"text": "aa aaa bb bbb", "start": 0.0, "end": 50.0}]
+        model, audio = fake_song(segments, [41.0], 50.0, out_of_memory_from=50 * 16000,
+                                 error=RuntimeError("CUDA error: out of memory"))
+
+        words, _ = align_with(model, audio, segments)
+
+        # the whole song first, then the pieces
+        assert model.inputs == [len(audio), 35 * 16000, 25 * 16000]
+        assert [w["start"] for w in words] == pytest.approx([41.0, 41.12, 41.28, 41.40], abs=0.011)
+        assert "Not enough GPU memory" in capsys.readouterr().out
+
+    def test_other_runtime_errors_are_raised(self):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0,
+                                 out_of_memory_from=64 * 16000, error=RuntimeError("shape mismatch"))
+        with pytest.raises(RuntimeError, match="shape mismatch"):
+            align_with(model, audio, segments)
+
+    def test_model_with_another_hop_aligns_with_the_whole_song(self):
+        segments = lrc_segments(20)
+
+        class Model:
+            def __call__(self, waveform, lengths=None):
+                return torch.zeros(1, waveform.shape[-1] // 160, len(DICTIONARY)), None
+
+        with patch("modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics",
+                   return_value=None) as align:
+            align_with(Model(), np.zeros(64 * 16000, dtype=np.float32), segments)
+        assert [label for label, _ in align.call_args.args[1]] == ["whole song"]
+
+    def test_custom_align_model_passed_through(self):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+
+        words, load_model = align_with(model, audio, segments, align_model_name="org/custom-model")
+
+        load_model.assert_called_once_with(language_code="en", device="cpu", model_name="org/custom-model")
+        assert len(words) == 40
+
+    def test_no_words_without_alignable_characters(self):
+        segments = [{"text": "|||", "start": 0.0, "end": 5.0}]
+        model, audio = fake_song([], [], 5.0)
+        metadata = {**METADATA, "dictionary": {"<pad>": 0, "a": 1}}
+        with patch("whisperx.load_align_model", return_value=(model, metadata)), \
+                patch("whisperx.load_audio", return_value=audio):
+            assert align_lyrics_to_audio(segments, "/fake/audio.wav", "en") == []
+        assert model.inputs == []
+
+
+class TestAlignModelLogProbs:
+
+    def test_short_input_padded_as_whisperx(self):
+        calls = []
+
+        class TorchaudioModel:
+            def __call__(self, waveform, lengths=None):
+                calls.append((waveform.shape[-1], None if lengths is None else lengths.tolist()))
+                return torch.zeros(1, 1, 5), None
+
+        class HuggingfaceModel:
+            def __call__(self, waveform):
+                calls.append((waveform.shape[-1],))
+                return SimpleNamespace(logits=torch.zeros(1, 1, 5))
+
+        out = _align_model_log_probs(TorchaudioModel(), "torchaudio", np.zeros(100, np.float32), "cpu")
+        _align_model_log_probs(HuggingfaceModel(), "huggingface", np.zeros(100, np.float32), "cpu")
+        _align_model_log_probs(TorchaudioModel(), "torchaudio", np.zeros(1000, np.float32), "cpu")
+
+        assert calls == [(400, [100]), (400,), (1000, None)]
+        assert out.shape == (1, 5)
+        assert out == pytest.approx(np.full((1, 5), -np.log(5)))
+
+    def test_unknown_model_type(self):
+        with pytest.raises(NotImplementedError):
+            _align_model_log_probs(MagicMock(), "other", np.zeros(1000, np.float32), "cpu")
+
+
+# ---------------------------------------------------------------------------
 # Language-aware alignment model selection (align_lyrics_to_audio)
 # ---------------------------------------------------------------------------
 
@@ -376,49 +590,26 @@ class TestAlignLyricsToAudioLanguageModel:
     whisperx.load_align_model, and degrades gracefully (instead of crashing)
     when WhisperX has no default wav2vec2 model for that language."""
 
-    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
-    @patch("whisperx.align")
-    @patch("whisperx.load_audio")
-    @patch("whisperx.load_align_model")
-    def test_language_passed_to_align_model(
-        self, mock_load_align_model, mock_load_audio, mock_align, mock_librosa
-    ):
-        mock_librosa.get_duration.return_value = 5.0
-        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
-        mock_load_align_model.return_value = (MagicMock(), MagicMock())
-        mock_align.return_value = {
-            "segments": [{"words": [
-                {"word": "hallo", "start": 0.0, "end": 0.5},
-                {"word": "welt", "start": 0.6, "end": 1.0},
-            ]}]
-        }
-
+    def test_language_passed_to_align_model(self):
         segments = [{"text": "hallo welt", "start": 0.0, "end": 5.0}]
-        words = align_lyrics_to_audio(segments, "/fake/audio.wav", "de", device="cpu")
+        model, audio = fake_song(segments, [0.5], 5.0)
 
-        mock_load_align_model.assert_called_once_with(
-            language_code="de", device="cpu", model_name=None
-        )
-        assert len(words) == 2
+        words, load_model = align_with(model, audio, segments, language="de")
 
-    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
-    @patch("whisperx.align")
+        load_model.assert_called_once_with(language_code="de", device="cpu", model_name=None)
+        assert [w["word"] for w in words] == ["hallo", "welt"]
+
     @patch("whisperx.load_audio")
     @patch("whisperx.load_align_model")
-    def test_unsupported_language_falls_back_to_english(
-        self, mock_load_align_model, mock_load_audio, mock_align, mock_librosa
-    ):
-        mock_librosa.get_duration.return_value = 5.0
-        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+    def test_unsupported_language_falls_back_to_english(self, mock_load_align_model, mock_load_audio):
+        segments = [{"text": "hello", "start": 0.0, "end": 5.0}]
+        model, audio = fake_song(segments, [0.5], 5.0)
+        mock_load_audio.return_value = audio
         mock_load_align_model.side_effect = [
             ValueError("No default align-model for language: xx"),
-            (MagicMock(), MagicMock()),
+            (model, METADATA),
         ]
-        mock_align.return_value = {
-            "segments": [{"words": [{"word": "hello", "start": 0.0, "end": 0.5}]}]
-        }
 
-        segments = [{"text": "hello", "start": 0.0, "end": 5.0}]
         words = align_lyrics_to_audio(segments, "/fake/audio.wav", "xx", device="cpu")
 
         assert mock_load_align_model.call_count == 2
@@ -427,12 +618,10 @@ class TestAlignLyricsToAudioLanguageModel:
         assert second_call.kwargs == {"language_code": "en", "device": "cpu", "model_name": None}
         assert len(words) == 1
 
-    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
     @patch("whisperx.load_align_model")
-    def test_custom_align_model_error_is_not_swallowed(self, mock_load_align_model, mock_librosa):
+    def test_custom_align_model_error_is_not_swallowed(self, mock_load_align_model):
         """A user-supplied --whisper_align_model that fails must raise --
         we must not silently substitute English for an explicit choice."""
-        mock_librosa.get_duration.return_value = 5.0
         mock_load_align_model.side_effect = ValueError("bad custom model")
 
         segments = [{"text": "hello", "start": 0.0, "end": 5.0}]
@@ -446,9 +635,8 @@ class TestAlignLyricsToAudioLanguageModel:
             language_code="xx", device="cpu", model_name="some/custom-model"
         )
 
-    @patch("modules.Speech_Recognition.reference_lyrics_aligner.librosa")
     @patch("whisperx.load_audio")
-    def test_model_dropped_although_the_frame_is_kept(self, mock_load_audio, mock_librosa):
+    def test_model_dropped_although_the_frame_is_kept(self, mock_load_audio):
         """The alignment model is dropped when the alignment is done, also when
         a library keeps the call's frame alive (as a stored traceback of a
         failed optional import does)."""
@@ -456,28 +644,22 @@ class TestAlignLyricsToAudioLanguageModel:
         import weakref
 
         kept_frames, models = [], []
-
-        class Model:
-            pass
+        segments = lrc_segments(20)
+        song_model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+        mock_load_audio.return_value = audio
 
         def load_align_model(*args, **kwargs):
             frame = sys._getframe(1)
             while frame.f_code.co_name != "align_lyrics_to_audio":
                 frame = frame.f_back
             kept_frames.append(frame)
-            model = Model()
+            model = FakeAlignModel(song_model.log_probs)
             models.append(weakref.ref(model))
-            return model, {}
+            return model, METADATA
 
-        def align(*args, **kwargs):  # a plain function: a mock would keep the model in its call list
-            return {"segments": [{"words": [{"word": "hello", "start": 0.0, "end": 0.5}]}]}
+        with patch("whisperx.load_align_model", new=load_align_model):
+            words = align_lyrics_to_audio(segments, "/fake/audio.wav", "en")
 
-        mock_librosa.get_duration.return_value = 5.0
-        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
-
-        with patch("whisperx.load_align_model", new=load_align_model), patch("whisperx.align", new=align):
-            words = align_lyrics_to_audio([{"text": "hello", "start": 0.0, "end": 5.0}], "/fake/audio.wav", "en")
-
-        assert len(words) == 1
+        assert len(words) == 40
         assert kept_frames[0].f_locals["align_model"] is None
         assert models[0]() is None

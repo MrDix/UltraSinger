@@ -7,7 +7,9 @@ word-level timing.
 
 Pipeline:
     1. Parse LRC synced lyrics -> line segments with timestamps
-    2. Feed segments to WhisperX forced alignment -> word-level timing
+    2. Align the lines with wav2vec2 forced alignment (WhisperX's models and
+       path search) and check them line by line against their LRC times
+       (see lyrics_alignment) -> word-level timing
     2a. (reserved -- boundary rebalancing disabled)
     2b. Trim word boundaries to actual voiced regions (confidence clipping)
     2c. Split long notes at silence gaps (gap splitting)
@@ -38,6 +40,13 @@ from modules.Midi.midi_creator import (
     find_nearest_index,
 )
 from modules.Audio.key_detector import quantize_note_to_key
+from modules.Speech_Recognition.lyrics_alignment import (
+    SAMPLE_RATE,
+    align_lyrics,
+    blank_index,
+    emission_in_pieces,
+    lyrics_tokens,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +158,10 @@ def _mark_bracketed_words(text: str) -> str:
 # Forced alignment
 # ---------------------------------------------------------------------------
 
+_WHOLE_SONG = "whole song"
+_PIECES = "30-s pieces"
+
+
 def align_lyrics_to_audio(
     segments: list[dict],
     audio_path: str,
@@ -158,8 +171,11 @@ def align_lyrics_to_audio(
 ) -> list[dict]:
     """Align LRC line segments to audio using wav2vec2 forced alignment.
 
-    Uses WhisperX's alignment infrastructure (which is already a project
-    dependency) to get word-level timing for each line segment.
+    Uses WhisperX's alignment models and path search (see
+    ``lyrics_alignment``). Several segments are the lines of synced lyrics:
+    their start times, the LRC times, choose between alignments and check
+    the lines one by one. A single segment (plain lyrics) is aligned as
+    WhisperX aligns one segment over the whole audio.
 
     Args:
         segments: LRC segments from :func:`parse_lrc_synced_lyrics`.
@@ -171,10 +187,25 @@ def align_lyrics_to_audio(
             ``whisperx.load_align_model(model_name=...)``.
 
     Returns:
-        List of ``{"word": str, "start": float, "end": float}`` dicts,
-        one per word, sorted by start time.
+        List of ``{"word", "start", "end", "backing", "line_end"}`` dicts,
+        one per aligned word, in the order of the lyrics. Words of lines at
+        the end that the recording does not have are left out.
     """
     import whisperx
+
+    # The words of each line without the backing-vocal marker (\x00), which
+    # CTC cannot handle, and per word whether it had the marker
+    lines: list[list[str]] = []
+    line_times: list[float] = []
+    backing: list[bool] = []
+    for seg in segments:
+        seg_words = [w for w in seg["text"].split() if w.replace("\x00", "")]
+        if seg_words:
+            lines.append([w.replace("\x00", "") for w in seg_words])
+            line_times.append(seg["start"])
+            backing.extend(w.startswith("\x00") for w in seg_words)
+    total_lrc_words = len(backing)
+    synced = len(lines) > 1
 
     print(f"{ULTRASINGER_HEAD} Loading alignment model for reference lyrics")
     align_model = audio = None
@@ -204,38 +235,16 @@ def align_lyrics_to_audio(
                 raise
 
         audio = whisperx.load_audio(audio_path)
-        audio_duration = librosa.get_duration(path=audio_path)
-
-        # Merge all lyrics into a single segment spanning the full audio.
-        # This gives CTC alignment maximum flexibility to find words wherever
-        # they actually are, regardless of how the LRC timestamps relate to
-        # the audio version.  Per-line segments with narrow windows failed
-        # catastrophically when song structure differed between releases.
-        all_text = " ".join(s["text"] for s in segments)
-
-        # Build ordered list of original words to track which are backing vocals
-        # (\x00-prefixed) and which line each word belongs to.
-        original_words: list[str] = []
-        line_end_indices: list[int] = []  # index of last word of each LRC line
-        for seg in segments:
-            seg_words = seg["text"].split()
-            original_words.extend(seg_words)
-            if seg_words:
-                line_end_indices.append(len(original_words) - 1)
-
-        # Strip \x00 markers before feeding to alignment (CTC can't handle them)
-        clean_text = all_text.replace("\x00", "")
-        merged_segments = [{"text": clean_text, "start": 0.0, "end": audio_duration}]
-
-        total_lrc_words = len(clean_text.split())
+        n_samples = len(audio)
         print(
             f"{ULTRASINGER_HEAD} Aligning {blue_highlighted(str(total_lrc_words))} "
             f"reference lyric words to audio"
         )
-        aligned = whisperx.align(
-            merged_segments, align_model, align_metadata, audio, device,
-            return_char_alignments=False,
-        )
+        dictionary = align_metadata["dictionary"]
+        tokens = lyrics_tokens(lines, dictionary, align_metadata["language"])
+        emissions = []
+        if len(tokens.ids) and n_samples:
+            emissions = _alignment_emissions(align_model, align_metadata["type"], audio, device, synced)
     finally:
         # Drop the model (and the audio) before going on: the first call imports
         # libraries, one of which keeps the traceback of a failed optional
@@ -245,53 +254,29 @@ def align_lyrics_to_audio(
         align_model = audio = None
         release_gpu_memory()
 
-    # Map aligned words back to original word list to restore backing-vocal
-    # markers and line boundary information.
-    # Build a clean->original index mapping: the clean word list matches
-    # original_words with \x00 stripped.
-    clean_original = [w.lstrip("\x00") for w in original_words]
-    backing_set = {i for i, w in enumerate(original_words) if w.startswith("\x00")}
-    line_end_set = set(line_end_indices)
+    result = None
+    if emissions:
+        frame_s = n_samples / SAMPLE_RATE / len(emissions[0][1])
+        result = align_lyrics(
+            tokens, emissions, blank_index(dictionary), frame_s, line_times if synced else None,
+        )
 
-    # Collect all words with valid timing
     words: list[dict] = []
-    aligned_idx = 0
-    for seg in aligned.get("segments", []):
-        for w in seg.get("words", []):
-            if "start" in w and "end" in w and w.get("word", "").strip():
-                aligned_word = w["word"].strip()
-
-                # Find matching original word by sequential scan with fuzzy match
-                is_backing = False
-                is_line_end = False
-                if aligned_idx < len(clean_original):
-                    # Try exact match at current position
-                    if aligned_word.lower() == clean_original[aligned_idx].lower():
-                        is_backing = aligned_idx in backing_set
-                        is_line_end = aligned_idx in line_end_set
-                        aligned_idx += 1
-                    else:
-                        # Skip forward to find match (alignment may have dropped words)
-                        for scan in range(aligned_idx + 1, min(aligned_idx + 5, len(clean_original))):
-                            if aligned_word.lower() == clean_original[scan].lower():
-                                is_backing = scan in backing_set
-                                is_line_end = scan in line_end_set
-                                aligned_idx = scan + 1
-                                break
-                        else:
-                            # No match found -- advance anyway
-                            aligned_idx += 1
-
-                words.append({
-                    "word": aligned_word,
-                    "start": float(w["start"]),
-                    "end": float(w["end"]),
-                    "backing": is_backing,
-                    "line_end": is_line_end,
-                })
-
-    # Sort by start time
-    words.sort(key=lambda x: x["start"])
+    if result is not None:
+        if synced:
+            _print_line_check(result)
+        last_of_line = {}  # line -> index of its last word
+        for w, start, end in result.words:
+            last_of_line[int(tokens.word_line[w])] = len(words)
+            words.append({
+                "word": tokens.words[w],
+                "start": start,
+                "end": end,
+                "backing": backing[tokens.word_source[w]],
+                "line_end": False,
+            })
+        for k in last_of_line.values():
+            words[k]["line_end"] = True
 
     print(
         f"{ULTRASINGER_HEAD} Reference alignment: "
@@ -300,6 +285,86 @@ def align_lyrics_to_audio(
     )
 
     return words
+
+
+def _alignment_emissions(model, model_type: str, audio: np.ndarray, device: str,
+                         synced: bool) -> list[tuple[str, np.ndarray]]:
+    """The emissions to align with, as (label, log-probabilities): of the whole
+    song and, for synced lyrics, of 30-s pieces; of the pieces alone when the
+    whole song does not fit in the GPU memory."""
+
+    def run(samples: np.ndarray) -> np.ndarray:
+        return _align_model_log_probs(model, model_type, samples, device)
+
+    pieces = emission_in_pieces(run, audio) if synced else None
+    whole = None
+    try:
+        whole = run(audio)
+    except RuntimeError as error:
+        if not _out_of_memory(error):
+            raise
+    if whole is None:
+        print(f"{ULTRASINGER_HEAD} Not enough GPU memory to align the whole song at once "
+              f"-- aligning it in 30-s pieces")
+        if pieces is None:
+            release_gpu_memory()
+            pieces = emission_in_pieces(run, audio)
+        return [(_PIECES, pieces)]
+    # The pieces match the whole song frame by frame (both have the model's
+    # 320-sample hop); a model with another hop gets the whole song only
+    if pieces is None or len(pieces) != len(whole):
+        return [(_WHOLE_SONG, whole)]
+    return [(_WHOLE_SONG, whole), (_PIECES, pieces)]
+
+
+def _align_model_log_probs(model, model_type: str, samples: np.ndarray, device: str) -> np.ndarray:
+    """Log-probabilities (frames x vocabulary) of the alignment model for
+    16-kHz samples, computed as whisperx.align does it (inputs shorter than
+    400 samples are padded)."""
+    import torch
+
+    waveform = torch.from_numpy(samples).unsqueeze(0)
+    lengths = None
+    if waveform.shape[-1] < 400:
+        lengths = torch.as_tensor([waveform.shape[-1]]).to(device)
+        waveform = torch.nn.functional.pad(waveform, (0, 400 - waveform.shape[-1]))
+    with torch.inference_mode():
+        if model_type == "torchaudio":
+            emissions, _ = model(waveform.to(device), lengths=lengths)
+        elif model_type == "huggingface":
+            emissions = model(waveform.to(device)).logits
+        else:
+            raise NotImplementedError(f"Align model of type {model_type} not supported.")
+        emissions = torch.log_softmax(emissions, dim=-1)
+    return emissions[0].float().cpu().numpy()
+
+
+def _out_of_memory(error: RuntimeError) -> bool:
+    import torch
+
+    return isinstance(error, torch.cuda.OutOfMemoryError) or "out of memory" in str(error)
+
+
+def _print_line_check(result) -> None:
+    """Which alignment of the synced lyrics was used, and what the line check changed."""
+    end = "capped end" if result.capped else "free end"
+    print(
+        f"{ULTRASINGER_HEAD} Lyrics alignment: {blue_highlighted(str(result.fit))} of "
+        f"{blue_highlighted(str(result.lines))} lines at their LRC time ({result.emission}, {end})"
+    )
+    changes = []
+    if result.moved:
+        changes.append(f"moved {_count_lines(result.moved)} to their LRC time")
+    if result.dropped:
+        changes.append(
+            f"left out {_count_lines(len(result.dropped))} at the end that the recording does not have")
+    if changes:
+        text = "; ".join(changes)
+        print(f"{ULTRASINGER_HEAD} {text[0].upper()}{text[1:]}")
+
+
+def _count_lines(n: int) -> str:
+    return f"{blue_highlighted(str(n))} {'line' if n == 1 else 'lines'}"
 
 
 # ---------------------------------------------------------------------------
