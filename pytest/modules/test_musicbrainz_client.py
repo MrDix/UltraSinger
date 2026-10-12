@@ -221,11 +221,11 @@ class TestCoverArt404Detection(unittest.TestCase):
         mb, get_image = self._get_image_fn()
         cause = HTTPError("u", http_status, "msg", None, None)
         exc = musicbrainzngs.ResponseError(cause=cause)
-        recording = {"release-list": [{"id": "r1"}]}
+        releases = [{"id": "r1"}]
         buf = _io.StringIO()
         with patch.object(mb.musicbrainzngs, "get_image_front",
                           side_effect=exc), redirect_stdout(buf):
-            result = get_image(recording)
+            result = get_image(releases)
         return result, buf.getvalue()
 
     def test_404_cause_is_silent(self):
@@ -289,7 +289,7 @@ class TestMultiLineMatchValidation(unittest.TestCase):
     @patch('musicbrainzngs.search_recordings')
     def test_swapped_artist_and_title(self, mock_search):
         # file named "Title - Artist": the second ordering must find it
-        def search(recording=None, limit=None, artist=None, artistname=None):
+        def search(recording=None, limit=None, artist=None, artistname=None, **fields):
             if artist == 'wanted artist':
                 return {'recording-count': 1, 'recording-list': [_recording('Wanted Title', 'Wanted Artist')]}
             return {'recording-count': 0, 'recording-list': []}
@@ -395,6 +395,142 @@ class TestCoverRelease(unittest.TestCase):
                     {'id': 'd', 'status': 'Official', 'date': '1989-03'},
                     {'id': 'e', 'date': '1990'}]
         self.assertEqual([r['id'] for r in _preferred_releases(releases)], ['d', 'c', 'b', 'a', 'e'])
+
+    def test_original_release_before_a_compilation_of_the_same_year(self):
+        # A compilation dated only "1994" sorts before "1994-01-10" by date alone
+        from src.modules.musicbrainz_client import _preferred_releases
+        releases = [{'id': 'hits', 'status': 'Official', 'date': '1994',
+                     'release-group': {'type': 'Compilation', 'secondary-type-list': ['Compilation']}},
+                    {'id': 'live', 'status': 'Official', 'date': '1993', 'release-group': {'type': 'Live'}},
+                    {'id': 'single', 'status': 'Official', 'date': '1994-01-10', 'release-group': {'type': 'Single'}},
+                    {'id': 'album', 'status': 'Official', 'date': '1994-01-31', 'release-group': {'type': 'Album'}}]
+        self.assertEqual([r['id'] for r in _preferred_releases(releases)], ['single', 'album', 'live', 'hits'])
+
+
+class TestTitleAdditions(unittest.TestCase):
+    """Additions of a video title neither prevent the match nor pick a version of the song."""
+
+    @staticmethod
+    def _recording(title, rec_id, *releases):
+        rec = _recording(title, 'Wanted Artist')
+        rec['id'] = rec_id
+        rec['release-list'] = [{'id': f'{rec_id}-{i}', 'status': status, 'date': date,
+                                'release-group': {'id': f'{rec_id}-g{i}', 'type': kind}}
+                               for i, (status, date, kind) in enumerate(releases)]
+        return rec
+
+    def _search(self, title, *recordings):
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': len(recordings), 'recording-list': list(recordings)}) as search, \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz(title, 'Wanted Artist')
+        return info, search
+
+    def test_additions_do_not_prevent_the_match(self):
+        info, search = self._search('Wanted Title - US Version (Official Video)',
+                                    self._recording('Wanted Title', 'r1', ('Official', '2006', 'Single')))
+        self.assertEqual((info.title, info.year), ('Wanted Title', '2006'))
+        self.assertEqual(search.call_args_list[0].kwargs['recording'], 'wanted title')
+        # recordings on official releases rank higher among the many of a famous song
+        self.assertEqual(search.call_args_list[0].kwargs['status'], 'official')
+
+    def test_title_without_additions_and_year_of_all_recordings(self):
+        # The search lists a video recording first; the song came out years before
+        info, _ = self._search('Wanted Title (US Version) (Official Music Video)',
+                               self._recording('Wanted Title (US)', 'video', ('Official', '2006-02-14', 'Video')),
+                               self._recording('Wanted Title', 'live', ('Bootleg', '1994-05', 'Live')),
+                               self._recording('Wanted Title', 'studio', ('Official', '1994-01-31', 'Album')))
+        self.assertEqual((info.title, info.year), ('Wanted Title', '1994'))
+
+    def test_unknown_bracketed_addition_still_matches(self):
+        info, _ = self._search('Wanted Title (Some Channel Words)',
+                               self._recording('Wanted Title', 'r1', ('Official', '2006', 'Single')))
+        self.assertEqual(info.title, 'Wanted Title')
+
+    def test_matching_bracketed_part_first(self):
+        info, _ = self._search('Some Song (Part 2)',
+                               self._recording('Some Song', 'one', ('Official', '2001', 'Single')),
+                               self._recording('Some Song (Part 2)', 'two', ('Official', '2005', 'Single')))
+        self.assertEqual((info.title, info.year), ('Some Song (Part 2)', '2005'))
+
+    def test_other_part_does_not_date_the_song(self):
+        # Without a match of the unknown bracketed part, the wanted title is compared without it;
+        # the recordings keep their parts, so "(Part 2)" (listed first) is no match
+        info, _ = self._search('Some Song (Some Channel Words)',
+                               self._recording('Some Song (Part 2)', 'two', ('Official', '1999', 'Single')),
+                               self._recording('Some Song', 'one', ('Official', '2001', 'Single')))
+        self.assertEqual((info.title, info.year), ('Some Song', '2001'))
+
+    def test_other_part_is_no_match(self):
+        for wanted, listed in (('Some Song (Part 1)', 'Some Song (Part 2)'), ('Some Song (Part 2)', 'Some Song')):
+            with self.subTest(wanted=wanted, listed=listed):
+                info, _ = self._search(wanted, self._recording(listed, 'r1', ('Official', '1999', 'Single')))
+                self.assertEqual((info.title, info.year), (wanted, None))
+
+    def test_other_part_is_no_match_with_artist_and_title_swapped(self):
+        # File "Some Song (Part 2) - Wanted Artist": the song comes as the artist
+        recording = self._recording('Some Song', 'r1', ('Official', '1999', 'Single'))
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [recording]}), \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz('Wanted Artist', 'Some Song (Part 2)')
+        self.assertIsNone(info.year)
+
+    def test_each_release_group_asked_once(self):
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [
+                       self._recording('Wanted Title', 'r1', ('Official', '', 'Album'))]}), \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None) as group, \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertIsNone(info.year)
+        self.assertEqual(group.call_count, 1)
+
+    def test_year_of_a_compilation_when_the_album_has_no_date(self):
+        info, _ = self._search('Wanted Title',
+                               self._recording('Wanted Title', 'album', ('Official', '', 'Album')),
+                               self._recording('Wanted Title', 'hits', ('Official', '1990', 'Compilation')))
+        self.assertEqual(info.year, '1990')
+
+    def test_only_recordings_of_the_same_title_date_the_song(self):
+        # A similar title of the same artist is another song: it must not lend its year
+        info, _ = self._search('Wanted Title',
+                               self._recording('Wanted Title', 'song', ('Official', '2010', 'Album')),
+                               self._recording('Wanted Titles', 'other', ('Official', '1995', 'Single')))
+        self.assertEqual((info.title, info.year), ('Wanted Title', '2010'))
+
+    def test_live_and_compilation_releases_do_not_date_the_song(self):
+        info, _ = self._search('Wanted Title',
+                               self._recording('Wanted Title', 'studio', ('Official', '1994-01-31', 'Album')),
+                               self._recording('Wanted Title (live)', 'live', ('Official', '1993', 'Live')),
+                               self._recording('Wanted Title', 'hits', ('Official', '1992', 'Compilation')))
+        self.assertEqual(info.year, '1994')
+
+    def test_later_kinds(self):
+        from src.modules.musicbrainz_client import _is_later_kind
+        for group, later in (({'type': 'Album', 'secondary-type-list': ['Compilation']}, True),
+                             ({'type': 'Compilation'}, True), ({'type': 'Live'}, True),
+                             ({'type': 'Album'}, False), ({'type': 'Single'}, False), (None, False), ({}, False)):
+            with self.subTest(group=group):
+                self.assertEqual(_is_later_kind({'release-group': group}), later)
+
+    def test_at_most_some_releases_are_asked_for_a_cover(self):
+        from src.modules.musicbrainz_client import MAX_COVER_RELEASES
+        recording = self._recording('Wanted Title', 'r1', *[('Official', f'20{i:02d}', 'Single') for i in range(20)])
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [recording]}), \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
+                patch('musicbrainzngs.get_image_front', return_value=None) as front:
+            search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual(front.call_count, MAX_COVER_RELEASES)
+
+    def test_releases_of_all_recordings_once(self):
+        from src.modules.musicbrainz_client import _releases_of
+        shared = {'id': 'album'}
+        recordings = [{'release-list': [shared, {'id': 'single'}]}, {'release-list': [dict(shared)]}, {}]
+        self.assertEqual([r['id'] for r in _releases_of(recordings)], ['album', 'single'])
 
 
 class TestSimilarity(unittest.TestCase):
