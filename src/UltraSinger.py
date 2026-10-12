@@ -703,6 +703,7 @@ def run() -> tuple[str, Score, Score]:
             device=settings.pytorch_device,
             lead_vocal_pitch=settings.lead_vocal_pitch,
             cache_folder=process_data.process_data_paths.cache_folder_path,
+            force_cpu=settings.force_cpu,
         ) if model_path else None
         if model_result:
             process_data.midi_segments = model_result.segments
@@ -1725,7 +1726,9 @@ def InitProcessData():
         # Override with video platform metadata if available
         if yt_artist:
             process_data.media_info.artist = yt_artist
-            process_data.basename = f"{yt_artist} - {yt_title}" if yt_title else yt_artist
+            # The names of the song's files: valid in paths, and short enough for them
+            process_data.basename = os_helper.sanitize_filename(
+                f"{yt_artist} - {yt_title}" if yt_title else yt_artist)
         if yt_title:
             process_data.media_info.title = yt_title
         if yt_language and not process_data.media_info.language:
@@ -1924,6 +1927,7 @@ def CreateProcessAudio(process_data) -> tuple[str, str]:
         sep_model,
         settings.skip_cache_vocal_separation,
         settings.separator_backend,
+        force_cpu=settings.force_cpu,
     )
     process_data.process_data_paths.vocals_audio_file_path = os.path.join(audio_separation_folder_path, "vocals.wav")
     process_data.process_data_paths.instrumental_audio_file_path = os.path.join(audio_separation_folder_path,

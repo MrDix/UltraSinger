@@ -53,6 +53,7 @@ This will help me a lot to keep this project alive and improve it.
         - [Local file](#local-file)
         - [Video URL](#video-url)
       - [UltraStar (re-pitch)](#ultrastar-re-pitch)
+      - [Song folder](#song-folder)
     - [🗣 Transcriber](#-transcriber)
       - [Whisper](#whisper)
         - [Whisper languages](#whisper-languages)
@@ -491,6 +492,10 @@ This re-pitch the audio and creates a new txt file.
 ```commandline
 -i "input/ultrastar.txt"
 ```
+
+#### Song folder
+
+Each song gets a folder of its own in the output folder, named `Artist - Title` (`Artist - Title (1)` ... if that folder exists), and its files are named alike. A name longer than 60 characters is shortened and ends with a short code made from the full name, so the paths of the song's files and of its cache folder stay within the Windows path length limit.
 
 ### 🗣 Transcriber
 
