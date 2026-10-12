@@ -30,9 +30,10 @@ STALE_AFTER_S = 24 * 3600
 # Characters of the song name in a folder name (short paths stay below the
 # Windows path length limit).
 NAME_CHARS = 40
-# Hex characters of a content key (see content_key): enough for the few files
-# of a cache folder, and short for the Windows path length limit
-KEY_CHARS = 8
+# Hex characters of a content key (see content_key): 64 bits, so two different
+# inputs never share a key. The longest path in a cache folder stays that of the
+# separated stems, which have no key in their path.
+KEY_CHARS = 16
 
 
 def default_root() -> Path:
