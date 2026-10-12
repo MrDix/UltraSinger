@@ -53,7 +53,12 @@ from modules.Speech_Recognition.lyrics_alignment import (
 # LRC parsing
 # ---------------------------------------------------------------------------
 
-_LRC_LINE_RE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)")
+# A tag at the start of an LRC line: a time ("[01:23.45]"), an ID tag
+# ("[ar:Artist]") or a section label ("[Chorus]")
+_LRC_TAG_RE = re.compile(r"\s*\[([^\]]*)\]")
+_LRC_TIME_RE = re.compile(r"(\d+):(\d+(?:\.\d+)?)")
+# A word time of enhanced LRC: "<01:23.45>"
+_LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
 
 _BRACKET_RE = re.compile(r"[\(\[\{]([^)\]\}]*)[\)\]\}]")
@@ -64,6 +69,11 @@ def parse_lrc_synced_lyrics(
     audio_duration: Optional[float] = None,
 ) -> list[dict]:
     """Parse LRC format synced lyrics into line segments.
+
+    A line with several time tags (``"[00:12.00][01:30.00] Chorus line"``)
+    is sung at each of these times. Word times of enhanced LRC
+    (``"<00:12.50>"``) and other tags at the start of a line (``"[Chorus]"``)
+    are not sung and are left out.
 
     Args:
         synced_lyrics: Raw LRC text, e.g. ``"[01:23.45] Hello world\\n..."``.
@@ -82,19 +92,21 @@ def parse_lrc_synced_lyrics(
     """
     lines: list[dict] = []
     for raw_line in synced_lyrics.strip().splitlines():
-        m = _LRC_LINE_RE.match(raw_line)
-        if not m:
-            continue
-        minutes, seconds, text = m.groups()
-        time_s = int(minutes) * 60 + float(seconds)
-        text = text.strip()
+        times: list[float] = []
+        pos = 0
+        while m := _LRC_TAG_RE.match(raw_line, pos):
+            time_tag = _LRC_TIME_RE.fullmatch(m.group(1).strip())
+            if time_tag:
+                times.append(int(time_tag.group(1)) * 60 + float(time_tag.group(2)))
+            pos = m.end()
+        text = " ".join(_LRC_WORD_TIME_RE.sub("", raw_line[pos:]).split())
         if text:
-            lines.append({"time": time_s, "text": text})
+            lines.extend({"time": time_s, "text": text} for time_s in times)
 
     if not lines:
         return []
 
-    # Sort by time (should already be sorted, but be safe)
+    # Sort by time: a line with several times comes again later
     lines.sort(key=lambda x: x["time"])
 
     # Build segments with start/end
@@ -195,6 +207,8 @@ def align_lyrics_to_audio(
     """
     import whisperx
 
+    from modules.Speech_Recognition.Whisper import whisperx_model_loading
+
     # The words of each line without the backing-vocal marker (\x00), which
     # CTC cannot handle, and per word whether it had the marker
     lines: list[list[str]] = []
@@ -213,9 +227,10 @@ def align_lyrics_to_audio(
     align_model = audio = None
     try:
         try:
-            align_model, align_metadata = whisperx.load_align_model(
-                language_code=language, device=device, model_name=align_model_name,
-            )
+            with whisperx_model_loading():
+                align_model, align_metadata = whisperx.load_align_model(
+                    language_code=language, device=device, model_name=align_model_name,
+                )
         except ValueError:
             # No built-in wav2vec2 model exists for this language and no custom
             # model was given -- degrade gracefully to English instead of
@@ -230,9 +245,10 @@ def align_lyrics_to_audio(
                     f"results, provide a matching model with "
                     f"--whisper_align_model [huggingface]."
                 )
-                align_model, align_metadata = whisperx.load_align_model(
-                    language_code="en", device=device, model_name=None,
-                )
+                with whisperx_model_loading():
+                    align_model, align_metadata = whisperx.load_align_model(
+                        language_code="en", device=device, model_name=None,
+                    )
             else:
                 raise
 

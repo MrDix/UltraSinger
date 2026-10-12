@@ -307,6 +307,7 @@ def run() -> tuple[str, Score, Score]:
                     process_data.media_info.language, probability = detect_language_with_confidence(
                         process_data.process_data_paths.whisper_audio_path,
                         device=settings.pytorch_device,
+                        compute_type=settings.whisper_compute_type,
                     )
                     language_is_confident = probability >= CONFIDENT_AUDIO_LANGUAGE
                     _lang_source = "whisper_fast"
@@ -490,6 +491,7 @@ def run() -> tuple[str, Score, Score]:
                     process_data.media_info.language = detect_language_from_audio(
                         process_data.process_data_paths.whisper_audio_path,
                         device=settings.pytorch_device,
+                        compute_type=settings.whisper_compute_type,
                     )
                     _lang_source = "whisper_fast"
 
