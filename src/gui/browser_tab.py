@@ -5,9 +5,11 @@ import logging
 import re
 import subprocess
 import shutil
+import threading
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from PySide6.QtCore import QLocale, QObject, QThread, QUrl, Signal, Qt
+from PySide6.QtCore import QLocale, QObject, QUrl, Signal, Qt
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .cookie_file import remove_cookie_file
 from .cookie_manager import CookieManager
 from .media_interceptor import MediaInterceptor
 
@@ -49,18 +52,29 @@ class _FormatProbeWorker(QObject):
 
     def __init__(self, video_id: str, cookie_file: str = "",
                  po_token: str = "", parent: QObject | None = None):
+        """``cookie_file`` is a private copy for this probe, which removes it."""
         super().__init__(parent)
         self._video_id = video_id
         self._cookie_file = cookie_file
         self._po_token = po_token
+        self._process: subprocess.Popen | None = None
+        self._cancelled = False
 
-    def run(self):
-        import json
+    def cancel(self):
+        """Stop the probe (the window is closing): its yt-dlp process is killed."""
+        self._cancelled = True
+        process = self._process
+        if process is not None:
+            try:
+                process.kill()
+            except OSError:
+                pass
 
+    def _dump_json(self) -> str | None:
+        """yt-dlp's JSON output for the video, or None."""
         yt_dlp = shutil.which("yt-dlp")
         if not yt_dlp:
-            self.finished.emit(self._video_id, "", "")
-            return
+            return None
 
         url = f"https://www.youtube.com/watch?v={self._video_id}"
         cmd = [
@@ -78,15 +92,39 @@ class _FormatProbeWorker(QObject):
             ]
 
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=15,
+            self._process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            if result.returncode != 0:
-                self.finished.emit(self._video_id, "", "")
-                return
+            if self._cancelled:
+                self._process.kill()
+            try:
+                stdout, _ = self._process.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.communicate()
+                return None
+        except OSError:
+            return None
+        if self._process.returncode != 0 or self._cancelled:
+            return None
+        return stdout
 
-            info = json.loads(result.stdout)
+    def run(self):
+        import json
+
+        try:
+            output = self._dump_json()
+        finally:
+            # yt-dlp has written its cookies back into the copy; it is not needed any more
+            if self._cookie_file:
+                remove_cookie_file(self._cookie_file)
+        if output is None:
+            self.finished.emit(self._video_id, "", "")
+            return
+
+        try:
+            info = json.loads(output)
             formats = info.get("formats", [])
 
             # Find best video resolution
@@ -457,7 +495,8 @@ class BrowserTab(QWidget):
         # Media interceptor — passively captures audio stream URLs
         self.media_interceptor = MediaInterceptor(self)
         self._profile.setUrlRequestInterceptor(self.media_interceptor)
-        self._probe_yt_language = ""  # Video platform language from yt-dlp metadata
+        # Running format probes: (thread, worker)
+        self._probes: list[tuple[threading.Thread, _FormatProbeWorker]] = []
 
         # Web page + view
         self._page = UltraSingerWebPage(self._profile, self)
@@ -613,7 +652,6 @@ class BrowserTab(QWidget):
         # Let any previous probe finish on its own; stale results are
         # discarded by the video_id check in _on_format_probed.
         self._probe_video_id = video_id
-        self._probe_yt_language = ""  # reset until probe completes
 
         # Hide badge while loading
         if self._page:
@@ -625,41 +663,35 @@ class BrowserTab(QWidget):
             )
 
         # Export fresh browser cookies for the probe so it sees the same
-        # formats as the authenticated download (badge accuracy).
+        # formats as the authenticated download (badge accuracy). The probe
+        # gets its own copy, which its yt-dlp may write back to.
         cookie_file = ""
         if self.probe_cookie_file and self.cookie_manager.has_video_cookies:
             try:
-                self.cookie_manager.export_netscape(self.probe_cookie_file)
-                cookie_file = self.probe_cookie_file
+                cookie_file = str(self.cookie_manager.export_private_copy(
+                    Path(self.probe_cookie_file).parent))
             except OSError as e:
                 logger.warning("Cookie export for format probe failed: %s", e)
 
-        thread = QThread(self)
         worker = _FormatProbeWorker(
             video_id, cookie_file, self.media_interceptor.get_po_token()
         )
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
         worker.finished.connect(self._on_format_probed)
-        worker.finished.connect(thread.quit)
-        # prevent Qt from garbage-collecting thread/worker prematurely
-        thread.finished.connect(lambda: self._cleanup_probe(thread, worker))
+        # A daemon thread, not a QThread: closing the window must not wait for
+        # a slow lyrics lookup, and a QThread destroyed while running aborts
+        # the application. The worker stays referenced until its thread ends.
+        thread = threading.Thread(target=worker.run, name="format-probe", daemon=True)
+        self._probes = [(t, w) for t, w in self._probes if t.is_alive()]
+        self._probes.append((thread, worker))
         thread.start()
 
-    def _cleanup_probe(self, thread, worker):
-        """Clean up finished probe thread and worker."""
-        thread.deleteLater()
-        worker.deleteLater()
-
-    def _on_format_probed(self, video_id: str, info_text: str, yt_language: str):
+    def _on_format_probed(self, video_id: str, info_text: str, _yt_language: str):
         """Show the format info badge in the browser overlay."""
         if not info_text or not self._page:
             return
         # Only update if still on the same video
         if self._probe_video_id != video_id:
             return
-        # Store the video platform language for use as pipeline hint
-        self._probe_yt_language = yt_language or ""
 
         # Escape for JS string literal (backslash, quotes, control chars)
         safe_text = (
@@ -723,11 +755,6 @@ class BrowserTab(QWidget):
             self._cookie_dot.setStyleSheet("color: #605848; font-size: 14px;")
             self._cookie_dot.setToolTip("Not logged in")
 
-    @property
-    def yt_language(self) -> str:
-        """Return the video platform language metadata for the current video, if available."""
-        return getattr(self, "_probe_yt_language", "")
-
     def _on_convert_with_title(self, url: str):
         """Extract the page title asynchronously, then emit convert_requested."""
         def _callback(title):
@@ -751,6 +778,14 @@ class BrowserTab(QWidget):
         which flushes cookies and persistent storage to disk and
         terminates the renderer subprocess.
         """
+        # Stop running format probes; the short wait lets them remove their
+        # private cookie copy (a probe in its lyrics lookup is left behind)
+        for _thread, worker in self._probes:
+            worker.cancel()
+        for thread, _worker in self._probes:
+            thread.join(timeout=2)
+        self._probes.clear()
+
         self._view.setPage(None)
         self._page.deleteLater()
         self._page = None

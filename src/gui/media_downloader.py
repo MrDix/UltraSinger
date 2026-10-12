@@ -45,9 +45,17 @@ class MediaDownloadWorker(QObject):
         self._output_path = output_path
         self._keep_video = keep_video
         self._process: subprocess.Popen | None = None
+        self._cancelled = False
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancelled
 
     def run(self):
         """Download the stream via ffmpeg (stream copy, no re-encode)."""
+        if self._cancelled:
+            self.finished.emit(False, "", "cancelled")
+            return
         ffmpeg = _find_ffmpeg()
         if not ffmpeg:
             self.finished.emit(
@@ -75,6 +83,9 @@ class MediaDownloadWorker(QObject):
                 stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            if self._cancelled:
+                # cancel() ran before the process was stored and found nothing to stop
+                self._process.kill()
             _, stderr = self._process.communicate(timeout=300)
             rc = self._process.returncode
 
@@ -98,9 +109,14 @@ class MediaDownloadWorker(QObject):
             self._process = None
 
     def cancel(self):
-        """Cancel the running download."""
-        if self._process:
-            self._process.kill()
+        """Cancel the download (called from the GUI thread)."""
+        self._cancelled = True
+        process = self._process
+        if process is not None:
+            try:
+                process.kill()
+            except OSError:
+                pass
 
 
 def _find_ffmpeg() -> Path | None:

@@ -8,7 +8,6 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -21,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from .models import LLMProvider
-from .settings_tab import ConversionSettingsForm
+from .settings_tab import ConversionSettingsForm, _NoScrollComboBox
 from .widgets import AnimatedButton, LLMProviderListWidget, SettingsCard
 
 logger = logging.getLogger(__name__)
@@ -221,7 +220,7 @@ class PreferencesTab(QWidget):
         main_layout.addWidget(proxy_header)
         proxy_card = SettingsCard()
 
-        self._proxy_mode = QComboBox()
+        self._proxy_mode = _NoScrollComboBox()
         self._proxy_mode.addItem("System / environment (default)", userData="system")
         self._proxy_mode.addItem("Manual", userData="manual")
         self._proxy_mode.addItem("No proxy", userData="none")
@@ -363,9 +362,15 @@ class PreferencesTab(QWidget):
         self._llm_provider_list.set_providers(providers, api_keys)
 
     def _sync_provider_selector(self):
-        """Update the conversion form's LLM provider combobox."""
+        """Update the conversion form's LLM provider combobox.
+
+        Keeps the selected provider (on start the saved one) while the
+        provider list is edited.
+        """
         providers = self._llm_provider_list.get_providers()
-        self._conversion_form.set_llm_providers(providers)
+        selected = (self._conversion_form.get_selected_provider_id()
+                    or self._config.get("llm_provider_id", ""))
+        self._conversion_form.set_llm_providers(providers, selected_id=selected)
 
     def get_llm_providers(self) -> list[LLMProvider]:
         """Return current LLM providers from the widget."""
@@ -434,6 +439,12 @@ class PreferencesTab(QWidget):
             self._ytdlp_update_available_label.setVisible(True)
         else:
             self._ytdlp_update_available_label.setVisible(False)
+
+    @property
+    def is_ytdlp_update_running(self) -> bool:
+        """True while "Update yt-dlp" re-locks and re-syncs the environment."""
+        thread = self._ytdlp_update_thread
+        return thread is not None and thread.isRunning()
 
     def _on_update_ytdlp_clicked(self):
         reply = QMessageBox.question(
@@ -519,6 +530,10 @@ class PreferencesTab(QWidget):
         api_keys = self._llm_provider_list.get_api_keys()
         for pid, key in api_keys.items():
             result[f"llm_api_key_{pid}"] = key
+        # Keys of removed providers: saving an empty key deletes it from the keyring
+        for name in self._config:
+            if name.startswith("llm_api_key_") and name[len("llm_api_key_"):] not in api_keys:
+                result[name] = ""
 
         return result
 

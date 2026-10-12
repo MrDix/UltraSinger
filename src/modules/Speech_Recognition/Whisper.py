@@ -121,6 +121,11 @@ class WhisperModel(Enum):
     LARGE_V1 = "large-v1"
     LARGE_V2 = "large-v2"
     LARGE_V3 = "large-v3"
+    # English-only models (whisperx then transcribes in English)
+    TINY_EN = "tiny.en"
+    BASE_EN = "base.en"
+    SMALL_EN = "small.en"
+    MEDIUM_EN = "medium.en"
 
 #Addition for numbers to words (Using previous code from louispan in PR#135)
 def number_to_words(line,language='en'):

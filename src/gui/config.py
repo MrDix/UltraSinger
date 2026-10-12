@@ -5,14 +5,17 @@ Security model:
   - API keys are stored in the system keyring, NOT in config.json
   - config.json contains only non-sensitive settings (permissions 0o600)
   - Legacy API keys in config.json are migrated to keyring on first load
+    (without a keyring backend they stay where they are)
 """
 
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -180,6 +183,18 @@ def _get_secret_keys(config: dict) -> set[str]:
     return keys
 
 
+def _secrets_in_file() -> dict:
+    """The secrets config.json holds in plain text (written by older versions)."""
+    try:
+        with open(_CONFIG_FILE, "r", encoding="utf-8-sig") as f:
+            stored = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(stored, dict):
+        return {}
+    return {k: v for k, v in stored.items() if _is_secret_key(k) and v}
+
+
 def _migrate_single_llm_to_provider(config: dict) -> None:
     """Auto-create an LLM provider from legacy single-LLM config fields.
 
@@ -264,12 +279,36 @@ def _secure_directory_windows(path: Path) -> None:
 
 
 def _ensure_config_dir() -> None:
-    """Create config directory with restricted permissions if needed."""
+    """Create config directory with restricted permissions if needed.
+
+    On POSIX an existing directory is restricted as well: older versions could
+    create it readable by everyone (e.g. when the cookie export came first).
+    """
     created = not _CONFIG_DIR.exists()
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    if created:
+    _CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if created or sys.platform != "win32":
         _secure_directory(_CONFIG_DIR)
+    if created:
         logger.info("Created secure config directory: %s", _CONFIG_DIR)
+
+
+def _secure_existing_files(config: dict) -> None:
+    """Restrict the settings and cookie files to their owner (POSIX).
+
+    Older versions could write them readable by everyone; new ones are created
+    owner-only.
+    """
+    if sys.platform == "win32":
+        return
+    paths = [_CONFIG_FILE]
+    if config.get("cookie_file"):
+        paths.append(Path(config["cookie_file"]))
+    for path in paths:
+        try:
+            if path.is_file() and path.stat().st_mode & 0o077:
+                os.chmod(path, 0o600)
+        except OSError as exc:
+            logger.warning("Could not set permissions on %s: %s", path, exc)
 
 
 def octave_consistency_choice(value) -> str:
@@ -283,6 +322,101 @@ def octave_consistency_choice(value) -> str:
     return value if value in ("all", "off") else "model"
 
 
+def _back_up_config_file() -> Path | None:
+    """Copy config.json aside before the next save replaces it, so hand edits are kept."""
+    backup = _CONFIG_FILE.with_name(f"{_CONFIG_FILE.name}.{time.strftime('%Y%m%d-%H%M%S')}.bak")
+    try:
+        shutil.copyfile(_CONFIG_FILE, backup)
+        if sys.platform != "win32":
+            os.chmod(backup, 0o600)
+    except OSError as exc:
+        logger.warning("Could not back up %s: %s", _CONFIG_FILE, exc)
+        return None
+    return backup
+
+
+def _read_stored_config() -> dict:
+    """The settings stored in config.json, or {} when there are none or they cannot be read.
+
+    A file that is not UTF-8 JSON (e.g. saved by an editor in another encoding)
+    is backed up and the defaults are used.
+    """
+    if not _CONFIG_FILE.exists():
+        return {}
+    try:
+        # utf-8-sig: editors may write a byte order mark
+        with open(_CONFIG_FILE, "r", encoding="utf-8-sig") as f:
+            stored = json.load(f)
+        if isinstance(stored, dict):
+            return stored
+        problem = "unexpected format"
+    except OSError as exc:
+        logger.warning("Failed to load config from %s: %s", _CONFIG_FILE, exc)
+        return {}
+    except ValueError as exc:  # UnicodeDecodeError, json.JSONDecodeError
+        problem = str(exc)
+    backup = _back_up_config_file()
+    logger.warning(
+        "Config file %s cannot be read (%s); using the default settings. %s",
+        _CONFIG_FILE, problem,
+        f"Its content is kept in {backup}." if backup else "",
+    )
+    return {}
+
+
+_INVALID = object()
+
+
+def _fit_type(value, default):
+    """``value`` in the type of ``default``, or ``_INVALID`` when it does not fit."""
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else _INVALID
+    if isinstance(default, (int, float)):
+        # bool is an int subclass, but no number setting
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        return _INVALID
+    if isinstance(default, str):
+        if value is None:
+            # Older versions saved "auto" Compute Type as null
+            return default
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)  # e.g. a BPM override written as a number
+        return _INVALID
+    if isinstance(default, list):
+        return value if isinstance(value, list) else _INVALID
+    return value
+
+
+# Settings whose older stored type the migrations in load_config convert
+_MIGRATED_KEYS = {"octave_consistency"}
+
+
+def _checked_values(stored: dict) -> dict:
+    """``stored`` without the values that do not fit the type of their setting.
+
+    The widgets cannot show such a value (e.g. text for a number), so the
+    default applies to it; the warning names the setting but not the value,
+    which could be a secret.
+    """
+    checked = {}
+    for key, value in stored.items():
+        if key not in _DEFAULTS or key in _MIGRATED_KEYS:
+            checked[key] = value
+            continue
+        fitted = _fit_type(value, _DEFAULTS[key])
+        if fitted is _INVALID:
+            logger.warning(
+                "Ignoring the setting '%s' in %s: wrong type (expected %s); using the default",
+                key, _CONFIG_FILE, type(_DEFAULTS[key]).__name__,
+            )
+            continue
+        checked[key] = fitted
+    return checked
+
+
 def load_config() -> dict:
     """Load configuration from disk, merged with defaults.
 
@@ -291,20 +425,18 @@ def load_config() -> dict:
     automatically.
     """
     config = dict(_DEFAULTS)
-    if _CONFIG_FILE.exists():
+    stored = _read_stored_config()
+    config.update(_checked_values(stored))
+    if _CONFIG_DIR.exists():
         try:
-            with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
-                stored = json.load(f)
-            if isinstance(stored, dict):
-                config.update(stored)
-            else:
-                logger.warning("Config file %s has unexpected format, ignoring", _CONFIG_FILE)
-        except (json.JSONDecodeError, TypeError, OSError) as exc:
-            logger.warning("Failed to load config from %s: %s", _CONFIG_FILE, exc)
+            _ensure_config_dir()
+            _secure_existing_files(config)
+        except OSError as exc:
+            logger.warning("Could not restrict permissions in %s: %s", _CONFIG_DIR, exc)
 
-    # Migrate legacy single-LLM to multi-provider
-    providers = config.get("llm_providers", [])
-    if not providers:
+    # Migrate legacy single-LLM to multi-provider. Only a config without a
+    # provider list gets one: a list the user has emptied stays empty.
+    if "llm_providers" not in stored:
         _migrate_single_llm_to_provider(config)
 
     # Migrate the legacy on/off "octave_consistency" switch
@@ -337,18 +469,24 @@ def save_config(config: dict) -> None:
     _ensure_config_dir()
 
     # Store secrets in keyring, strip from JSON data
+    kept_in_file = {}
     try:
         from .secrets import store_secret
 
+        in_file = _secrets_in_file()
         secret_keys = _get_secret_keys(config)
         for key in secret_keys:
             value = config.get(key, "")
-            store_secret(key, value)
+            if not store_secret(key, value) and key in in_file:
+                # Without a keyring, a key that an older version kept in
+                # config.json stays there as it is: stripping it would lose it.
+                kept_in_file[key] = in_file[key]
     except ImportError:
         logger.debug("secrets module not available, skipping keyring storage")
 
     # Build JSON-safe copy without secret keys
     json_config = {k: v for k, v in config.items() if not _is_secret_key(k)}
+    json_config.update(kept_in_file)
 
     try:
         fd, tmp_path = tempfile.mkstemp(

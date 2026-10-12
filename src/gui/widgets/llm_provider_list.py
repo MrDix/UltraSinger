@@ -37,6 +37,7 @@ class _ModelFetcher(QObject):
     finished = Signal(list)  # list of model ID strings
     finished_raw = Signal(list)  # list of raw model dicts (id + optional metadata)
     error = Signal(str)
+    done = Signal()  # after finished/error: the fetch has ended
 
     def __init__(self, base_url: str, api_key: str):
         super().__init__()
@@ -58,6 +59,33 @@ class _ModelFetcher(QObject):
             self.finished_raw.emit(raw_models)
         except Exception as e:  # noqa: BLE001 — worker thread must never raise
             self.error.emit(str(e))
+        finally:
+            self.done.emit()
+
+
+# Model fetches that have not ended yet. A QThread destroyed while it runs
+# aborts the application, so each fetch stays referenced here until its
+# thread has finished, also when the widget that started it is gone.
+_running_fetches: list[tuple[QThread, _ModelFetcher]] = []
+
+
+def start_model_fetch(fetcher: _ModelFetcher) -> None:
+    """Run ``fetcher`` in a background thread; connect to its signals before."""
+    _running_fetches[:] = [(t, f) for t, f in _running_fetches if not t.isFinished()]
+    thread = QThread()
+    fetcher.moveToThread(thread)
+    thread.started.connect(fetcher.run)
+    fetcher.done.connect(thread.quit)
+    _running_fetches.append((thread, fetcher))
+    thread.start()
+
+
+def wait_for_model_fetches() -> None:
+    """Wait until all model fetches have ended (before the application quits)."""
+    for thread, _fetcher in _running_fetches:
+        thread.quit()
+        thread.wait()  # bounded by the request timeout
+    _running_fetches.clear()
 
 
 def filter_stt_models(raw_models: list[dict]) -> list[str]:
@@ -245,7 +273,8 @@ class LLMProviderRow(QWidget):
         self._fetch_btn.clicked.connect(self._fetch_models)
         fields_model.addWidget(self._fetch_btn)
 
-        self._fetch_thread: QThread | None = None
+        self._fetching = False
+        self._fetch_again = False
 
         layout.addLayout(fields_model)
 
@@ -349,28 +378,29 @@ class LLMProviderRow(QWidget):
         url = self._url_edit.text().strip()
         if not url:
             return
+        if self._fetching:
+            # One fetch at a time; fetch again with the current URL and key
+            # when the running one has ended
+            self._fetch_again = True
+            return
 
+        self._fetching = True
         self._fetch_btn.setEnabled(False)
         self._fetch_btn.setToolTip("Fetching models...")
 
-        self._fetch_thread = QThread()
-        self._fetcher = _ModelFetcher(url, self._key_edit.text())
-        self._fetcher.moveToThread(self._fetch_thread)
-
-        self._fetch_thread.started.connect(self._fetcher.run)
-        self._fetcher.finished.connect(self._on_models_fetched)
-        self._fetcher.error.connect(self._on_fetch_error)
-        self._fetcher.finished.connect(self._cleanup_fetch)
-        self._fetcher.error.connect(self._cleanup_fetch)
-
-        self._fetch_thread.start()
+        fetcher = _ModelFetcher(url, self._key_edit.text())
+        fetcher.finished.connect(self._on_models_fetched)
+        fetcher.error.connect(self._on_fetch_error)
+        fetcher.done.connect(self._on_fetch_done)
+        start_model_fetch(fetcher)
 
     _FALLBACK_MODEL = "qwen/qwen3-32b"
 
     def _on_models_fetched(self, models: list[str]):
         """Populate the model combobox with fetched models.
 
-        Selection priority: previous model → qwen/qwen3-32b → first model.
+        Selection priority: previous model (kept even when the provider does
+        not list it, e.g. typed by the user) → qwen/qwen3-32b → first model.
         """
         previous = self._model_combo.currentText()
         self._model_combo.clear()
@@ -380,8 +410,10 @@ class LLMProviderRow(QWidget):
         idx = self._model_combo.findText(previous)
         if idx >= 0:
             self._model_combo.setCurrentIndex(idx)
+        elif previous:
+            self._model_combo.setEditText(previous)
         else:
-            # Previous model not available — try fallback
+            # No previous model — try fallback
             idx = self._model_combo.findText(self._FALLBACK_MODEL)
             if idx >= 0:
                 self._model_combo.setCurrentIndex(idx)
@@ -397,12 +429,12 @@ class LLMProviderRow(QWidget):
         logger.warning("Failed to fetch models: %s", error)
         self._fetch_btn.setToolTip(f"Fetch failed: {error}")
 
-    def _cleanup_fetch(self):
+    def _on_fetch_done(self):
+        self._fetching = False
         self._fetch_btn.setEnabled(True)
-        if self._fetch_thread:
-            self._fetch_thread.quit()
-            self._fetch_thread.wait(2000)
-            self._fetch_thread = None
+        if self._fetch_again:
+            self._fetch_again = False
+            self._fetch_models()
 
 
 class LLMProviderListWidget(QWidget):

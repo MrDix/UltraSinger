@@ -16,12 +16,14 @@ from PySide6.QtWidgets import (
 
 from .browser_tab import BrowserTab
 from .config import load_config, save_config
+from .cookie_file import remove_cookie_file, remove_stale_copies
 from .models import LLMProvider
 from .preferences_tab import PreferencesTab
 from .queue_manager import QueueManager
 from .queue_tab import QueueTab
 from .settings_dialog import PerSongSettingsDialog, ReadOnlySettingsDialog
 from .training_dialog import TrainingDialog
+from .widgets.llm_provider_list import wait_for_model_fetches
 from .widgets.sidebar import Sidebar
 
 logger = logging.getLogger(__name__)
@@ -151,6 +153,9 @@ class MainWindow(QMainWindow):
         # Create tabs (Video, Console, Settings)
         self._browser_tab = BrowserTab()
         self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
+        if self._browser_tab.probe_cookie_file:
+            # Private cookie copies of yt-dlp runs that a crash left behind
+            remove_stale_copies(Path(self._browser_tab.probe_cookie_file).parent)
         self._queue_tab = QueueTab()
         self._settings_tab = PreferencesTab(
             self._config, self._browser_tab.cookie_manager
@@ -291,12 +296,15 @@ class MainWindow(QMainWindow):
         thread = self._potoken_thread
         if thread is not None and thread.isRunning():
             # Signal the worker to abort its wait/start loop, then join it
-            # so the QThread is never destroyed while still running.
+            # so the QThread is never destroyed while still running (that
+            # aborts the application). No timeout: every step the worker can
+            # be in ends after the cancel or its own timeout.
             if self._potoken_cancel is not None:
                 self._potoken_cancel.set()
             thread.quit()
             if not thread.wait(8000):
-                logger.warning("PO-token provider thread did not stop in time")
+                logger.info("Waiting for the PO-token provider start to stop ...")
+                thread.wait()
 
         # Prefer the status delivered via signal; fall back to the value the
         # worker stored directly (the queued signal may not have run yet).
@@ -352,8 +360,9 @@ class MainWindow(QMainWindow):
             if self._ytdlp_check_cancel is not None:
                 self._ytdlp_check_cancel.set()
             thread.quit()
-            if not thread.wait(8000):
-                logger.warning("yt-dlp update-check thread did not stop in time")
+            # No timeout (a QThread destroyed while running aborts the
+            # application): the version lookup has its own timeout
+            thread.wait()
 
     # ── Model training ────────────────────────────────────────────────
 
@@ -381,10 +390,6 @@ class MainWindow(QMainWindow):
         from urllib.parse import parse_qs, urlparse
         params = parse_qs(urlparse(url).query)
         video_id = params.get("v", [""])[0]
-        # Store video platform language metadata as pipeline hint
-        yt_lang = self._browser_tab.yt_language
-        if yt_lang:
-            item.yt_language = yt_lang
 
         if video_id:
             item.video_id = video_id
@@ -531,8 +536,6 @@ class MainWindow(QMainWindow):
         )
         if old_item.video_id:
             new_item.video_id = old_item.video_id
-        if old_item.yt_language:
-            new_item.yt_language = old_item.yt_language
 
         self._update_queue_buttons()
 
@@ -641,14 +644,12 @@ class MainWindow(QMainWindow):
         # 1. Clear in-memory cookies (also wipes the QWebEngine cookie DB)
         self._browser_tab.cookie_manager.clear_all()
 
-        # 2. Delete the exported Netscape cookie file
+        # 2. Delete the exported Netscape cookie file. Conversions and format
+        # probes use private copies of it, so their yt-dlp cannot write it back.
         cookie_path = self._config.get("cookie_file", "")
         if cookie_path:
-            try:
-                Path(cookie_path).unlink(missing_ok=True)
-                logger.info("Deleted cookie file: %s", cookie_path)
-            except OSError:
-                logger.warning("Could not delete %s", cookie_path, exc_info=True)
+            remove_cookie_file(cookie_path)
+            logger.info("Deleted cookie file: %s", cookie_path)
 
         # 3. Reload the browser so the user sees a logged-out state
         self._browser_tab._view.reload()
@@ -684,7 +685,34 @@ class MainWindow(QMainWindow):
         subprocess can flush cookies and persistent storage to disk
         before the process exits.  Without this, the subprocess stays
         alive and locks the database files, preventing persistence.
+
+        Running work is cancelled and its threads are joined before the
+        window goes: a QThread destroyed while it runs aborts the application.
         """
+        if self._settings_tab.is_ytdlp_update_running:
+            # Stopping 'uv lock' / 'uv sync' halfway can break the installation
+            QMessageBox.information(
+                self,
+                "UltraSinger",
+                "yt-dlp is being updated. Please close UltraSinger when the update "
+                "has finished (1-2 minutes).",
+            )
+            event.ignore()
+            return
+
+        if self._queue_mgr.is_running:
+            answer = QMessageBox.question(
+                self,
+                "UltraSinger",
+                "A conversion is still running. Quit anyway and cancel it?\n\n"
+                "The song it is working on is not finished.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
         training = self._training_dialog
         if training is not None and training.is_running:
             answer = QMessageBox.question(
@@ -708,6 +736,12 @@ class MainWindow(QMainWindow):
             save_config(self._config)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
+
+        # Cancel the conversion queue (runner and pre-download) and join its threads
+        self._queue_mgr.shutdown()
+
+        # Let model list fetches end (they time out after a few seconds)
+        wait_for_model_fetches()
 
         # Stop a pending provider start / the server we launched
         self._shutdown_potoken_provider()

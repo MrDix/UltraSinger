@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Signal
 
 from .config import octave_consistency_choice
+from .cookie_file import copy_cookie_file, remove_cookie_file
 from .uv_locator import find_uv
 
 logger = logging.getLogger(__name__)
@@ -28,13 +29,18 @@ def _find_project_root() -> Path:
     return Path.cwd()
 
 
-SECRET_OPTIONS = ("--llm_api_key", "--remote_stt_api_key", "--segmentation_model_token")
+SECRET_OPTIONS = ("--llm_api_key", "--remote_stt_api_key", "--segmentation_model_token",
+                  "--yt_po_token")
 
 # The CLI reads a model repository token from this environment variable
 # (modules.Segmentation.model_source.TOKEN_ENV). The GUI passes the token this
 # way so that it never appears in the child's command line, which other local
 # processes can read.
 MODEL_TOKEN_ENV = "ULTRASINGER_MODEL_TOKEN"
+# Likewise the API keys: the CLI falls back to these environment variables
+# when --llm_api_key / --remote_stt_api_key are not given (UltraSinger.py).
+LLM_KEY_ENV = "LLM_API_KEY"
+REMOTE_STT_KEY_ENV = "ULTRASINGER_REMOTE_STT_API_KEY"
 
 
 def redact_secrets(cmd: list[str]) -> list[str]:
@@ -53,6 +59,25 @@ def _build_command(project_root: Path) -> list[str]:
     if uv:
         return [uv, "run", "python", str(entry)]
     return [sys.executable, str(entry)]
+
+
+def _with_private_cookie_copy(args: list[str]) -> tuple[list[str], Path | None]:
+    """``args`` with the ``--cookiefile`` replaced by a private copy for one run.
+
+    yt-dlp writes its cookies back into its cookie file when it ends (see
+    ``cookie_file``). Returns the new arguments and the copy to remove after
+    the run; without a copy (e.g. the file was deleted after a bot check) the
+    conversion runs without cookies.
+    """
+    if "--cookiefile" not in args[:-1]:
+        return args, None
+    i = args.index("--cookiefile")
+    try:
+        copy = copy_cookie_file(args[i + 1])
+    except OSError as exc:
+        logger.warning("Cookie file not used: %s", exc)
+        return args[:i] + args[i + 2:], None
+    return args[:i + 1] + [str(copy)] + args[i + 2:], copy
 
 
 class ConversionWorker(QObject):
@@ -74,12 +99,20 @@ class ConversionWorker(QObject):
 
     def run(self):
         """Execute UltraSinger and stream output."""
+        args, cookie_copy = _with_private_cookie_copy(self._args)
+        try:
+            self._run(args)
+        finally:
+            if cookie_copy is not None:
+                remove_cookie_file(cookie_copy)
+
+    def _run(self, args: list[str]):
         if self._cancelled:
             self.finished.emit(-2)
             return
 
         project_root = _find_project_root()
-        cmd = _build_command(project_root) + self._args
+        cmd = _build_command(project_root) + args
 
         self.line_output.emit(f"[GUI] Running: {' '.join(redact_secrets(cmd))}")
         self.line_output.emit("")
@@ -273,6 +306,22 @@ class UltraSingerRunner(QObject):
         if self._worker:
             self._worker.cancel()
 
+    def shutdown(self):
+        """Cancel a running conversion and wait for its thread (the window is closing).
+
+        A QThread destroyed while it runs aborts the application.
+        """
+        thread = self._thread
+        if thread is None:
+            return
+        if self._worker:
+            self._worker.cancel()
+        thread.quit()
+        # No timeout: cancel() has stopped the process tree whose output run() reads
+        thread.wait()
+        self._thread = None
+        self._worker = None
+
     def _on_finished(self, exit_code: int):
         # Clean up the thread BEFORE emitting finished, so that
         # is_running returns False when the QueueManager calls start()
@@ -294,7 +343,36 @@ class UltraSingerRunner(QObject):
         if (not config.get("segmentation_model") and config.get("segmentation_model_repo")
                 and config.get("segmentation_model_token")):
             env[MODEL_TOKEN_ENV] = config["segmentation_model_token"]
+        if config.get("llm_correct"):
+            _url, api_key, _model = self._llm_settings(config)
+            if api_key:
+                env[LLM_KEY_ENV] = api_key
+        if config.get("remote_stt") and config.get("remote_stt_api_key"):
+            env[REMOTE_STT_KEY_ENV] = config["remote_stt_api_key"]
         return env
+
+    @staticmethod
+    def _llm_settings(config: dict) -> tuple[str, str, str]:
+        """Base URL, API key and model of the selected LLM provider.
+
+        The provider is looked up by its ID; without one the flat config keys
+        apply (legacy / no provider selected).
+        """
+        provider_id = config.get("llm_provider_id", "")
+        providers = config.get("llm_providers", [])
+        provider = None
+        if provider_id and providers:
+            provider = next(
+                (p for p in providers
+                 if (p.get("id") if isinstance(p, dict) else getattr(p, "id", "")) == provider_id),
+                None,
+            )
+        if provider:
+            p = provider if isinstance(provider, dict) else provider.__dict__
+            return (p.get("api_base_url", ""), config.get(f"llm_api_key_{provider_id}", ""),
+                    p.get("default_model", ""))
+        return (config.get("llm_api_base_url", ""), config.get("llm_api_key", ""),
+                config.get("llm_model", ""))
 
     def build_args(self, config: dict, input_source: str) -> list[str]:
         """Build CLI argument list from configuration dictionary."""
@@ -349,10 +427,10 @@ class UltraSingerRunner(QObject):
         elif separator == "demucs" and config.get("demucs_model"):
             args.extend(["--demucs", config["demucs_model"]])
 
-        # BPM override
-        bpm = config.get("bpm_override", "")
+        # BPM override (the CLI reads a decimal point; older versions could save a comma)
+        bpm = str(config.get("bpm_override", "")).strip().replace(",", ".")
         if bpm:
-            args.extend(["--bpm", str(bpm)])
+            args.extend(["--bpm", bpm])
 
         # Octave shift
         octave = config.get("octave_shift", "")
@@ -467,37 +545,12 @@ class UltraSingerRunner(QObject):
         if config.get("llm_correct"):
             args.append("--llm_correct")
 
-            # Resolve LLM provider: look up by provider ID, fall back to
-            # flat config keys for backward compatibility.
-            provider_id = config.get("llm_provider_id", "")
-            providers = config.get("llm_providers", [])
-            provider = None
-            if provider_id and providers:
-                provider = next(
-                    (p for p in providers
-                     if (p.get("id") if isinstance(p, dict) else getattr(p, "id", "")) == provider_id),
-                    None,
-                )
-
-            if provider:
-                p = provider if isinstance(provider, dict) else provider.__dict__
-                url = p.get("api_base_url", "")
-                model = p.get("default_model", "")
-                api_key = config.get(f"llm_api_key_{provider_id}", "")
-                if url:
-                    args.extend(["--llm_api_base_url", url])
-                if api_key:
-                    args.extend(["--llm_api_key", api_key])
-                if model:
-                    args.extend(["--llm_model", model])
-            else:
-                # Flat keys (legacy / no provider selected)
-                if config.get("llm_api_base_url"):
-                    args.extend(["--llm_api_base_url", config["llm_api_base_url"]])
-                if config.get("llm_api_key"):
-                    args.extend(["--llm_api_key", config["llm_api_key"]])
-                if config.get("llm_model"):
-                    args.extend(["--llm_model", config["llm_model"]])
+            # The API key goes through the environment (build_env)
+            url, _api_key, model = self._llm_settings(config)
+            if url:
+                args.extend(["--llm_api_base_url", url])
+            if model:
+                args.extend(["--llm_model", model])
 
             # Retry settings
             if not config.get("llm_retry_on_rate_limit", True):
@@ -515,8 +568,7 @@ class UltraSingerRunner(QObject):
             args.append("--remote_stt")
             if config.get("remote_stt_api_base_url"):
                 args.extend(["--remote_stt_api_base_url", config["remote_stt_api_base_url"]])
-            if config.get("remote_stt_api_key"):
-                args.extend(["--remote_stt_api_key", config["remote_stt_api_key"]])
+            # The API key goes through the environment (build_env)
             if config.get("remote_stt_model"):
                 args.extend(["--remote_stt_model", config["remote_stt_model"]])
             timeout = config.get("remote_stt_timeout", 120)
@@ -534,8 +586,10 @@ class UltraSingerRunner(QObject):
                 if remote_retry_max != 3:
                     args.extend(["--remote_stt_retry_max", str(remote_retry_max)])
 
-        # Refinement
-        if config.get("refine_from_vocal", False):
+        # Refinement (on by default in the CLI, so "off" must be passed)
+        if not config.get("refine_from_vocal", True):
+            args.append("--disable_refine")
+        else:
             args.append("--refine_from_vocal")
             if not config.get("refine_pitch", True):
                 args.append("--disable_refine_pitch")

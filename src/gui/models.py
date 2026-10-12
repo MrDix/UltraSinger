@@ -32,13 +32,17 @@ class LLMProvider:
 
     @classmethod
     def from_dict(cls, data: dict) -> "LLMProvider":
-        """Deserialize from JSON config."""
+        """Deserialize from JSON config (values of a wrong type, e.g. hand-edited, become text)."""
+        def text(key: str) -> str:
+            value = data.get(key)
+            return value if isinstance(value, str) else ("" if value is None else str(value))
+
         return cls(
-            id=data.get("id", uuid.uuid4().hex[:8]),
-            name=data.get("name", ""),
-            api_base_url=data.get("api_base_url", ""),
-            default_model=data.get("default_model", ""),
-            is_default=data.get("is_default", False),
+            id=text("id") or uuid.uuid4().hex[:8],
+            name=text("name"),
+            api_base_url=text("api_base_url"),
+            default_model=text("default_model"),
+            is_default=data.get("is_default") is True,
         )
 
 
@@ -53,7 +57,6 @@ class QueueItem:
     settings_overrides: dict = field(default_factory=dict)
     resolved_config: dict = field(default_factory=dict)  # filled at run time
     video_id: str = ""  # Video ID (for interceptor lookup)
-    yt_language: str = ""  # Video platform language metadata (from yt-dlp)
     exit_code: int | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     result_info: dict = field(default_factory=dict)
