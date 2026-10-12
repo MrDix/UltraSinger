@@ -108,6 +108,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import shlex
@@ -123,7 +124,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from compare_ultrastar import _beat_to_ms, parse_ultrastar  # noqa: E402
+from compare_ultrastar import _beat_to_ms, absolute_chart_text, parse_ultrastar, read_chart_text  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -481,7 +482,7 @@ def load_words(path: str | Path, shift_ms: float = 0.0) -> list[ChartWord]:
     parsed = parse_ultrastar(path)
     words: list[list] = []  # [raw text, spans]
     new_word = True
-    for raw in _read_text(Path(path)).splitlines():
+    for raw in absolute_chart_text(read_chart_text(path)).splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -606,22 +607,12 @@ def lyrics_metrics(ref: list[ChartWord], gen: list[ChartWord]) -> dict:
 _HEADER_RE = re.compile(r"^#([A-Za-z0-9_]+):(.*)$")
 
 
-def _read_text(path: Path) -> str:
-    raw = path.read_bytes()
-    for enc in ("utf-8-sig", "cp1252"):
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    return raw.decode("utf-8", errors="replace")
-
-
 def inspect_song_folder(folder: Path, prefer_video: bool = False) -> dict | None:
     """Return a candidate entry if the folder holds a usable solo chart + media."""
     txts = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".txt"]
     if len(txts) != 1:
         return None
-    text = _read_text(txts[0])
+    text = read_chart_text(txts[0])
     headers: dict[str, str] = {}
     pitched = 0
     for line in text.splitlines():
@@ -693,7 +684,7 @@ def input_name(song: dict, media: Path) -> str:
     """
     try:
         headers = {}
-        for line in _read_text(Path(song["txt"])).splitlines():
+        for line in read_chart_text(song["txt"]).splitlines():
             hm = _HEADER_RE.match(line.strip())
             if hm:
                 headers[hm.group(1).upper()] = hm.group(2).strip()
@@ -1041,11 +1032,27 @@ def cmd_sample(args) -> int:
     return 0
 
 
+def split_args(value: str, posix: bool | None = None) -> list[str]:
+    """Split the ``--args`` string into separate UltraSinger arguments.
+
+    POSIX shell rules read backslashes as escapes, which would turn a Windows
+    path like ``D:\\Seg\\model.pt`` into ``D:Segmodel.pt``. On Windows
+    (``posix`` False) backslashes are kept and quotes only group words like
+    ``"D:\\My Models\\model.pt"``; they are dropped afterwards.
+    """
+    if posix is None:
+        posix = os.name != "nt"
+    if posix:
+        return shlex.split(value)
+    return [token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'" else token
+            for token in shlex.split(value, posix=False)]
+
+
 def cmd_convert(args) -> int:
     workdir = Path(args.workdir)
     label = _check_label(args.label)
     songs = _load_songs(workdir)
-    extra = shlex.split(args.args or "", posix=True)
+    extra = split_args(args.args or "")
     for i, song in enumerate(songs, 1):
         if args.only and song["id"] not in args.only:
             continue
