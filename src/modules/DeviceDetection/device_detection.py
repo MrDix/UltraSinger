@@ -1,5 +1,6 @@
 """Device detection module."""
 
+import gc
 import logging
 import os
 import warnings
@@ -115,6 +116,36 @@ def auto_whisper_batch_size(device: str) -> int:
     if vram_gb < 7.5:
         return 8
     return 16
+
+
+def release_gpu_memory() -> None:
+    """Hand back the GPU memory that the models of a finished step left.
+
+    Collects models caught in reference cycles and returns PyTorch's cached
+    but unused memory, so the next step finds it free - also one that does
+    not allocate through PyTorch.
+    """
+    gc.collect()
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+        except RuntimeError:
+            # A GPU in an error state must not hide the error of the step
+            # that called this from a finally block
+            pass
+
+
+def free_gpu_memory() -> int | None:
+    """Bytes of GPU memory a new PyTorch model can use, or None without a GPU.
+
+    The memory the driver reports free plus what PyTorch keeps cached but
+    unused. Raises ``RuntimeError`` when there is a GPU but its memory cannot
+    be read.
+    """
+    if not torch.cuda.is_available():
+        return None
+    free, _total = torch.cuda.mem_get_info()
+    return free + torch.cuda.memory_reserved() - torch.cuda.memory_allocated()
 
 
 def __check_pytorch_support():

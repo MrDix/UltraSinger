@@ -39,12 +39,18 @@ class LeadStem(NamedTuple):
 
 def _lead_pitch(vocal_analysis, vocals_path: str, cache_folder: str | None) -> LeadStem | None:
     """The lead-vocal stem, or ``None`` when it could not be made."""
-    from modules.Segmentation.lead_vocal import MIN_VOICED_RATIO, choose_pitch_source, lead_vocal_analysis
+    from modules.Segmentation.lead_vocal import (
+        MIN_VOICED_RATIO, NotEnoughGpuMemory, choose_pitch_source, lead_vocal_analysis,
+    )
 
     try:
         folder = cache_folder or os.path.dirname(vocals_path)
         lead_path, lead_analysis = lead_vocal_analysis(vocals_path, folder)
         lead, ratio = choose_pitch_source(vocal_analysis, lead_analysis)
+    except NotEnoughGpuMemory as e:
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} lead-vocal pitch skipped: {e} "
+              f"- note pitches from the full vocal")
+        return None
     except Exception as e:  # noqa: BLE001 - lead pitch is an improvement, never a requirement
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} lead-vocal separation failed ({e!r}) "
               f"- note pitches from the full vocal")

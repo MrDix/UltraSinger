@@ -29,6 +29,7 @@ import librosa
 import numpy as np
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted
+from modules.DeviceDetection.device_detection import release_gpu_memory
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Pitcher.pitched_data_helper import get_frequencies_with_high_confidence
@@ -176,63 +177,73 @@ def align_lyrics_to_audio(
     import whisperx
 
     print(f"{ULTRASINGER_HEAD} Loading alignment model for reference lyrics")
+    align_model = audio = None
     try:
-        align_model, align_metadata = whisperx.load_align_model(
-            language_code=language, device=device, model_name=align_model_name,
-        )
-    except ValueError:
-        # No built-in wav2vec2 model exists for this language and no custom
-        # model was given -- degrade gracefully to English instead of
-        # aborting (the caller falls back to the standard pipeline on any
-        # exception, which would otherwise hit the same crash again).
-        if align_model_name is None and language != "en":
-            print(
-                f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
-                f"No wav2vec2 alignment model available for language "
-                f"{blue_highlighted(language)} -- falling back to the "
-                f"{blue_highlighted('en')} alignment model. For better "
-                f"results, provide a matching model with "
-                f"--whisper_align_model [huggingface]."
-            )
+        try:
             align_model, align_metadata = whisperx.load_align_model(
-                language_code="en", device=device, model_name=None,
+                language_code=language, device=device, model_name=align_model_name,
             )
-        else:
-            raise
+        except ValueError:
+            # No built-in wav2vec2 model exists for this language and no custom
+            # model was given -- degrade gracefully to English instead of
+            # aborting (the caller falls back to the standard pipeline on any
+            # exception, which would otherwise hit the same crash again).
+            if align_model_name is None and language != "en":
+                print(
+                    f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
+                    f"No wav2vec2 alignment model available for language "
+                    f"{blue_highlighted(language)} -- falling back to the "
+                    f"{blue_highlighted('en')} alignment model. For better "
+                    f"results, provide a matching model with "
+                    f"--whisper_align_model [huggingface]."
+                )
+                align_model, align_metadata = whisperx.load_align_model(
+                    language_code="en", device=device, model_name=None,
+                )
+            else:
+                raise
 
-    audio = whisperx.load_audio(audio_path)
-    audio_duration = librosa.get_duration(path=audio_path)
+        audio = whisperx.load_audio(audio_path)
+        audio_duration = librosa.get_duration(path=audio_path)
 
-    # Merge all lyrics into a single segment spanning the full audio.
-    # This gives CTC alignment maximum flexibility to find words wherever
-    # they actually are, regardless of how the LRC timestamps relate to
-    # the audio version.  Per-line segments with narrow windows failed
-    # catastrophically when song structure differed between releases.
-    all_text = " ".join(s["text"] for s in segments)
+        # Merge all lyrics into a single segment spanning the full audio.
+        # This gives CTC alignment maximum flexibility to find words wherever
+        # they actually are, regardless of how the LRC timestamps relate to
+        # the audio version.  Per-line segments with narrow windows failed
+        # catastrophically when song structure differed between releases.
+        all_text = " ".join(s["text"] for s in segments)
 
-    # Build ordered list of original words to track which are backing vocals
-    # (\x00-prefixed) and which line each word belongs to.
-    original_words: list[str] = []
-    line_end_indices: list[int] = []  # index of last word of each LRC line
-    for seg in segments:
-        seg_words = seg["text"].split()
-        original_words.extend(seg_words)
-        if seg_words:
-            line_end_indices.append(len(original_words) - 1)
+        # Build ordered list of original words to track which are backing vocals
+        # (\x00-prefixed) and which line each word belongs to.
+        original_words: list[str] = []
+        line_end_indices: list[int] = []  # index of last word of each LRC line
+        for seg in segments:
+            seg_words = seg["text"].split()
+            original_words.extend(seg_words)
+            if seg_words:
+                line_end_indices.append(len(original_words) - 1)
 
-    # Strip \x00 markers before feeding to alignment (CTC can't handle them)
-    clean_text = all_text.replace("\x00", "")
-    merged_segments = [{"text": clean_text, "start": 0.0, "end": audio_duration}]
+        # Strip \x00 markers before feeding to alignment (CTC can't handle them)
+        clean_text = all_text.replace("\x00", "")
+        merged_segments = [{"text": clean_text, "start": 0.0, "end": audio_duration}]
 
-    total_lrc_words = len(clean_text.split())
-    print(
-        f"{ULTRASINGER_HEAD} Aligning {blue_highlighted(str(total_lrc_words))} "
-        f"reference lyric words to audio"
-    )
-    aligned = whisperx.align(
-        merged_segments, align_model, align_metadata, audio, device,
-        return_char_alignments=False,
-    )
+        total_lrc_words = len(clean_text.split())
+        print(
+            f"{ULTRASINGER_HEAD} Aligning {blue_highlighted(str(total_lrc_words))} "
+            f"reference lyric words to audio"
+        )
+        aligned = whisperx.align(
+            merged_segments, align_model, align_metadata, audio, device,
+            return_char_alignments=False,
+        )
+    finally:
+        # Drop the model (and the audio) before going on: the first call imports
+        # libraries, one of which keeps the traceback of a failed optional
+        # import - and with it this call's frame and all its variables (see
+        # transcribe_with_whisper). The model would stay on the GPU for the
+        # rest of the run.
+        align_model = audio = None
+        release_gpu_memory()
 
     # Map aligned words back to original word list to restore backing-vocal
     # markers and line boundary information.

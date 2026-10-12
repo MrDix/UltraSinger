@@ -311,5 +311,48 @@ class TranscribeWithWhisperAlignModelTest(unittest.TestCase):
         )
 
 
+class TranscribeWithWhisperReleasesModelsTest(unittest.TestCase):
+    """The models are dropped when the transcription is done, also when a
+    library keeps the call's frame alive (as a stored traceback of a failed
+    optional import does)."""
+
+    @patch("whisperx.align")
+    @patch("whisperx.load_align_model")
+    @patch("whisperx.load_audio")
+    @patch("whisperx.load_model")
+    def test_models_dropped_although_the_frame_is_kept(
+        self, mock_load_model, mock_load_audio, mock_load_align_model, mock_align
+    ):
+        import sys
+        import weakref
+        import numpy as np
+
+        kept_frames, models = [], []
+
+        class Model:
+            def transcribe(self, audio, batch_size, language):
+                return {"segments": [], "language": "en"}
+
+        def load_model(*args, **kwargs):
+            frame = sys._getframe(1)
+            while frame.f_code.co_name != "transcribe_with_whisper":
+                frame = frame.f_back
+            kept_frames.append(frame)
+            model = Model()
+            models.append(weakref.ref(model))
+            return model
+
+        mock_load_model.side_effect = load_model
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+        mock_load_align_model.return_value = (MagicMock(), MagicMock())
+        mock_align.return_value = {"segments": []}
+
+        transcribe_with_whisper("/fake/audio.wav", WhisperModel.TINY, device="cpu")
+
+        self.assertIsNone(kept_frames[0].f_locals["loaded_whisper_model"])
+        self.assertIsNone(kept_frames[0].f_locals["model_a"])
+        self.assertIsNone(models[0]())
+
+
 if __name__ == "__main__":
     unittest.main()
