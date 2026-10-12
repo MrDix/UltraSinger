@@ -10,7 +10,7 @@ from modules.os_helper import sanitize_filename, get_unused_song_output_dir
 from modules import os_helper
 from modules.ProcessData import MediaInfo
 from modules.Audio.bpm import get_bpm_from_file
-from modules.console_colors import ULTRASINGER_HEAD, red_highlighted
+from modules.console_colors import ULTRASINGER_HEAD, gold_highlighted, red_highlighted
 from modules.Image.image_helper import save_image
 from modules.musicbrainz_client import search_musicbrainz
 from modules.name_matching import artist_from_channel
@@ -113,6 +113,8 @@ def get_video_title(url: str, cookiefile: str | None = None,
     ydl_opts = _apply_po_token({
         "cookiefile": cookiefile,
         "logger": _FilteredLogger(),
+        # A watch URL that also names a playlist stands for its video only
+        "noplaylist": True,
     }, po_token)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         result = ydl.extract_info(
@@ -133,36 +135,52 @@ def get_video_title(url: str, cookiefile: str | None = None,
     return artist_from_channel(channel), video_title, video_title, language
 
 
+def _output_template(output_path: str, clear_filename: str) -> str:
+    """yt-dlp output template for the file ``clear_filename`` in ``output_path``.
+
+    yt-dlp reads "%(...)" as a field of the video's data ("100%(Live)" raised a
+    KeyError), so a "%" of the path is written as "%%".
+    """
+    return f"{output_path}/{clear_filename}".replace("%", "%%") + ".%(ext)s"
+
+
 def __download_video_with_audio(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
                                  po_token: str = None) -> str:
-    """Download video with audio from the video platform and return the file extension"""
+    """Download video with audio from the video platform and return the path of the file"""
 
     print(f"{ULTRASINGER_HEAD} Downloading Video with Audio")
     ydl_opts = _apply_po_token({
         "format": _VIDEO_FORMAT,
-        "outtmpl": output_path + "/" + clear_filename + ".%(ext)s",
+        "outtmpl": _output_template(output_path, clear_filename),
+        # Only for formats that are merged: a single file keeps its own (e.g. webm)
         "merge_output_format": "mp4",
         "retries": _DOWNLOAD_RETRIES,
         "fragment_retries": _DOWNLOAD_RETRIES,
         "cookiefile": cookiefile,
         "logger": _FilteredLogger(),
+        "noplaylist": True,  # as in get_video_title
     }, po_token)
-    __start_download(ydl_opts, url)
-    return "mp4"
+    return __start_download(ydl_opts, url)
 
 
 def __download_thumbnail(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
                           po_token: str = None) -> str:
-    """Download thumbnail from the video platform"""
+    """Download thumbnail from the video platform; its URL, or "" without one"""
 
     print(f"{ULTRASINGER_HEAD} Downloading thumbnail")
     ydl_opts = _apply_po_token({
         "skip_download": True,
         "writethumbnail": True,
         "cookiefile": cookiefile,
+        "noplaylist": True,  # as in get_video_title
     }, po_token)
 
-    thumbnail_url = download_and_convert_thumbnail(ydl_opts, url, clear_filename, output_path)
+    try:
+        thumbnail_url = download_and_convert_thumbnail(ydl_opts, url, clear_filename, output_path)
+    except Exception as e:  # noqa: BLE001 - the cover is optional, the downloaded song is kept
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the thumbnail could not be downloaded "
+              f"({e}) - the song gets no cover")
+        return ""
     return thumbnail_url
 
 
@@ -219,13 +237,17 @@ class _FilteredLogger:
         print(f"ERROR: {msg}")
 
 
-def __start_download(ydl_opts, url: str) -> None:
-    """Start the download the ydl_opts"""
+def __start_download(ydl_opts, url: str) -> str:
+    """Start the download the ydl_opts; the path of the downloaded file"""
     ydl_opts.setdefault("logger", _FilteredLogger())
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        errors = ydl.download(url)
-        if errors:
-            raise Exception("Download failed with error: " + str(errors))
+        info = ydl.extract_info(url, download=True)
+    # The file as it is after merging, with the extension of its real container
+    downloads = (info or {}).get("requested_downloads") or []
+    path = downloads[-1].get("filepath") if downloads else None
+    if not path or not os.path.isfile(path):
+        raise Exception(f"Download failed: no downloaded file ({path})")
+    return path
 
 
 def download_from_video_platform(input_url: str, output_folder_path: str, cookiefile: str = None, *,
@@ -248,10 +270,9 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
     os_helper.create_folder(song_output)
 
     print(f"{ULTRASINGER_HEAD} Downloading from the video platform")
-    video_ext = __download_video_with_audio(
+    video_with_audio_path = __download_video_with_audio(
         input_url, basename_without_ext, song_output, cookiefile, po_token
     )
-    video_with_audio_path = os.path.join(song_output, f"{basename_without_ext}.{video_ext}")
 
     # Separate audio and video
     audio_file_path, final_video_path, audio_ext, video_ext = separate_audio_video(

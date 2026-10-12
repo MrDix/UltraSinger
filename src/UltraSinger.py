@@ -779,6 +779,7 @@ def run() -> tuple[str, Score, Score]:
             device=settings.pytorch_device,
             lead_vocal_pitch=settings.lead_vocal_pitch,
             cache_folder=process_data.process_data_paths.cache_folder_path,
+            force_cpu=settings.force_cpu,
         ) if model_path else None
         if model_result:
             process_data.midi_segments = model_result.segments
@@ -2066,6 +2067,7 @@ def CreateProcessAudio(process_data) -> tuple[str, str]:
         sep_model,
         settings.skip_cache_vocal_separation,
         settings.separator_backend,
+        force_cpu=settings.force_cpu,
     )
     process_data.process_data_paths.vocals_audio_file_path = os.path.join(audio_separation_folder_path, "vocals.wav")
     process_data.process_data_paths.instrumental_audio_file_path = os.path.join(audio_separation_folder_path,
@@ -2236,12 +2238,10 @@ def infos_from_audio_video_input_file(
         basename_with_ext = f"{basename_without_ext}{extension}"
         audio_ext = extension.lstrip('.')
         video_ext = None
-        os_helper.copy(settings.input_file_path, song_folder_output_path)
-        os_helper.rename(
-            os.path.join(song_folder_output_path, os.path.basename(settings.input_file_path)),
-            os.path.join(song_folder_output_path, basename_with_ext),
-        )
+        # Copied under its new name at once: in the song folder, the input file's
+        # own name could make the path too long
         ultrastar_audio_input_path = os.path.join(song_folder_output_path, basename_with_ext)
+        os_helper.copy(settings.input_file_path, ultrastar_audio_input_path)
 
         # Convert to UltraStar-compatible format if needed
         ultrastar_audio_input_path, audio_ext = convert_to_ultrastar_format(

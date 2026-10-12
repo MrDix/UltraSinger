@@ -1,13 +1,15 @@
 import musicbrainzngs
 import re
+import socket
 import string
 import time
+from contextlib import contextmanager
 from urllib.error import URLError
 from dataclasses import dataclass
 from typing import Optional
 from Settings import Settings
 
-from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted
+from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted, red_highlighted
 from modules.name_matching import (
     MIN_MATCH_SIMILARITY,
     bracketed_parts,
@@ -37,6 +39,15 @@ title_filter = [
 
 
 MAX_RETRIES = 3
+# Seconds a connection to MusicBrainz or the Cover Art Archive may stay silent.
+# musicbrainzngs sets no timeout: a server that never answered blocked the
+# conversion for good.
+REQUEST_TIMEOUT_SECONDS = 10
+# A lookup (search, year and cover) makes no more requests once its failed ones
+# took this long. musicbrainzngs already retries a request up to 8 times, for
+# about a minute when the server is overloaded; retrying that again, for each of
+# up to MAX_COVER_RELEASES releases, took 43 minutes before "No cover art".
+FAILED_REQUESTS_SECONDS = 30
 # Recordings asked for per artist+title search. A well-known song has dozens
 # of recordings with the same title (album, single, live, demos, videos) that
 # the search ranks alike, and the year and cover come from all that match.
@@ -51,14 +62,62 @@ def __clean_string(s: str) -> str:
     return s.translate(str.maketrans('', '', string.punctuation)).lower().strip()
 
 
+# Seconds that the failed requests of the current lookup took
+_failed_seconds = 0.0
+
+
+@contextmanager
+def _socket_timeout(seconds: float):
+    """Connections opened meanwhile time out after ``seconds`` of silence.
+
+    musicbrainzngs opens its connections without a timeout; the default
+    timeout of new sockets, set only while its request runs, gives them one.
+    """
+    previous = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(seconds)
+    try:
+        yield
+    finally:
+        socket.setdefaulttimeout(previous)
+
+
+def _http_status(error) -> Optional[int]:
+    """HTTP status of a failed request: musicbrainzngs wraps the HTTPError in
+    ResponseError(cause=HTTPError), a bare HTTPError carries it itself."""
+    status = getattr(error, "code", None)
+    if status is None:
+        status = getattr(getattr(error, "cause", None), "code", None)
+    return status
+
+
 def __musicbrainz_request(func):
-    for i in range(MAX_RETRIES):
-        try:
-            return func()
-        except musicbrainzngs.musicbrainz.NetworkError:
+    """The answer of a MusicBrainz request, or None when there is none: nothing
+    found, or MusicBrainz does not answer (see FAILED_REQUESTS_SECONDS)."""
+    global _failed_seconds
+    for attempt in range(MAX_RETRIES):
+        if _failed_seconds >= FAILED_REQUESTS_SECONDS:
+            return None
+        started = time.monotonic()
+        if attempt:
             time.sleep(1)
+        try:
+            with _socket_timeout(REQUEST_TIMEOUT_SECONDS):
+                return func()
+        except musicbrainzngs.musicbrainz.NetworkError as e:
+            # Unreachable, overloaded or silent
+            _failed_seconds += time.monotonic() - started
+            if _failed_seconds >= FAILED_REQUESTS_SECONDS:
+                print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} MusicBrainz does not answer ({e}) "
+                      f"- going on without it")
         except musicbrainzngs.musicbrainz.AuthenticationError:
             # Cover Art Archive returns 401 for some releases
+            return None
+        except musicbrainzngs.musicbrainz.ResponseError as e:
+            # Not found or a bad request, e.g. a release group that was merged
+            # into another, or a release without a cover: no answer, as when
+            # nothing matches
+            if _http_status(e) != 404:
+                print(f"{ULTRASINGER_HEAD} MusicBrainz request failed: {e}")
             return None
     return None
 
@@ -67,6 +126,8 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
     # Musicbrainz API documentation
     # https://python-musicbrainzngs.readthedocs.io/en/latest/api/
 
+    global _failed_seconds
+    _failed_seconds = 0.0
     musicbrainzngs.set_useragent("UltraSinger", Settings.APP_VERSION, "https://github.com/rakuri255/UltraSinger")
 
     # remove from search_string "official video"
@@ -277,14 +338,9 @@ def __get_image(releases) -> (bytes, str):
                 # A 404 just means THIS release has no cover in the Cover
                 # Art Archive — an expected, routine case while iterating
                 # the recording's releases, so don't alarm the user; the
-                # loop simply tries the next release. Detect it from the
-                # real HTTP status: musicbrainzngs wraps CAA failures in
-                # ResponseError(cause=HTTPError) exposing .cause.code, a
-                # bare HTTPError carries .code directly.
-                status = getattr(e, "code", None)
-                if status is None:
-                    status = getattr(getattr(e, "cause", None), "code", None)
-                if status != 404:
+                # loop simply tries the next release (__musicbrainz_request
+                # already answers it with None).
+                if _http_status(e) != 404:
                     print(f"{ULTRASINGER_HEAD} Cover art download failed: {e}")
                 continue
     if image_data is not None:

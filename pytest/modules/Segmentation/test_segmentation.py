@@ -677,14 +677,14 @@ class TestLeadVocalPitch:
 
     def test_analysis_comes_with_the_stem_path(self, monkeypatch):
         import modules.Segmentation.features as feats
-        monkeypatch.setattr(lead_vocal, "separate_lead_vocal", lambda v, c: "cache/lead.wav")
+        monkeypatch.setattr(lead_vocal, "separate_lead_vocal", lambda v, c, **kw: "cache/lead.wav")
         monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(160, np.float32))
         monkeypatch.setattr(feats, "analyse_vocal", lambda y: "analysis")
         assert lead_vocal.lead_vocal_analysis("v.wav", "cache") == ("cache/lead.wav", "analysis")
 
 
 class TestSegmenterLeadPitch:
-    def _run(self, tmp_path, monkeypatch, lead_result):
+    def _run(self, tmp_path, monkeypatch, lead_result, **kwargs):
         model = tmp_path / "m.pt"
         save_model(model, SegNet())
         vocal = tmp_path / "v.wav"
@@ -702,32 +702,41 @@ class TestSegmenterLeadPitch:
         monkeypatch.setattr(dec, "decode_notes", fake_decode)
         monkeypatch.setattr(lead_vocal, "lead_vocal_analysis", lead_result)
         result = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en",
-                                              lead_vocal_pitch=True, cache_folder=str(tmp_path))
+                                              lead_vocal_pitch=True, cache_folder=str(tmp_path), **kwargs)
         return result, seen
 
     def test_reliable_lead_is_used(self, tmp_path, monkeypatch):
         lead = _analysis(200, midi=64)
-        result, seen = self._run(tmp_path, monkeypatch, lambda p, c: ("lead.wav", lead))
+        result, seen = self._run(tmp_path, monkeypatch, lambda p, c, **kw: ("lead.wav", lead))
         assert result.segments and seen["pitch_analysis"] is lead and seen["check_analysis"] is None
         assert result.pitch_audio_path == "lead.wav"  # later steps compare the notes with the lead stem
 
     def test_unreliable_lead_only_checks_the_pitches(self, tmp_path, monkeypatch):
         lead = _analysis(200, midi=64)
         lead.f0_conf[:150] = 0.1
-        result, seen = self._run(tmp_path, monkeypatch, lambda p, c: ("lead.wav", lead))
+        result, seen = self._run(tmp_path, monkeypatch, lambda p, c, **kw: ("lead.wav", lead))
         assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is lead
         assert result.pitch_audio_path == str(tmp_path / "v.wav")
 
     def test_separation_error_falls_back(self, tmp_path, monkeypatch):
-        def boom(p, c):
+        def boom(p, c, **kw):
             raise RuntimeError("no model")
         result, seen = self._run(tmp_path, monkeypatch, boom)
         assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is None
         assert result.pitch_audio_path == str(tmp_path / "v.wav")
 
     def test_too_little_gpu_memory_falls_back(self, tmp_path, monkeypatch, capsys):
-        def no_memory(p, c):
+        def no_memory(p, c, **kw):
             raise lead_vocal.NotEnoughGpuMemory("only 1.0 GB of GPU memory free, the separation needs about 2.2 GB")
         result, seen = self._run(tmp_path, monkeypatch, no_memory)
         assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is None
         assert "lead-vocal pitch skipped: only 1.0 GB" in capsys.readouterr().out
+
+    def test_force_cpu_reaches_the_lead_separation(self, tmp_path, monkeypatch):
+        calls = []
+
+        def lead(p, c, **kw):
+            calls.append(kw)
+            return "lead.wav", _analysis(200, midi=64)
+        self._run(tmp_path, monkeypatch, lead, force_cpu=True)
+        assert calls == [{"force_cpu": True}]

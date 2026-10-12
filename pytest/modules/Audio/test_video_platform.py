@@ -1,6 +1,10 @@
 """Tests for video_platform.py"""
 
+import io
+import os
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 import yt_dlp
@@ -8,6 +12,7 @@ import yt_dlp
 from src.modules.Audio import video_platform
 from src.modules.Audio.video_platform import get_video_title, strip_unmatched_suffixes
 from src.modules.Audio.video_platform import download_and_convert_thumbnail
+from src.modules.musicbrainz_client import SongInfo
 
 
 class TestStripUnmatchedSuffixes(unittest.TestCase):
@@ -333,10 +338,14 @@ class TestDownloadRetries(unittest.TestCase):
 
     @patch("src.modules.Audio.video_platform.yt_dlp.YoutubeDL")
     def test_download_retries_like_the_command_line(self, mock_yt_dl):
-        mock_yt_dl.return_value.__enter__.return_value.download.return_value = 0
         download = getattr(video_platform, "__download_video_with_audio")
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "test.mp4")
+            open(video, "wb").close()
+            mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
+                "requested_downloads": [{"filepath": video}]}
 
-        download("https://fakeUrl", "test", "/path/to/output")
+            download("https://fakeUrl", "test", folder)
 
         ydl_opts = mock_yt_dl.call_args.args[0]
         self.assertEqual(ydl_opts["retries"], 10)
@@ -374,6 +383,88 @@ class TestVideoFormat(unittest.TestCase):
 
     def test_premium_video_is_taken_when_it_is_the_only_one(self):
         self.assertEqual(self._pick([_AUDIO, _PREMIUM]), ["616", "251"])
+
+
+class TestPlaylistUrl(unittest.TestCase):
+    """A watch URL that also names a playlist stands for its video: title, download and
+    thumbnail are those of the video, the playlist is not read."""
+
+    @patch("src.modules.Audio.video_platform.yt_dlp.YoutubeDL")
+    def test_only_the_video(self, mock_yt_dl):
+        url = "https://fakeUrl/watch?v=x&list=y"
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "Artist - Title.mp4")
+            open(video, "wb").close()
+            mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
+                "title": "Artist - Title", "thumbnail": None, "requested_downloads": [{"filepath": video}]}
+            get_video_title(url)
+            getattr(video_platform, "__download_video_with_audio")(url, "Artist - Title", folder)
+            getattr(video_platform, "__download_thumbnail")(url, "Artist - Title", folder)
+        options = [call.args[0] for call in mock_yt_dl.call_args_list]
+        self.assertEqual(len(options), 3)
+        self.assertEqual([o.get("noplaylist") for o in options], [True, True, True])
+
+
+class TestOutputTemplate(unittest.TestCase):
+    """A "%" in the song name or the output folder is part of the file name, no field of the video's data."""
+
+    def test_percent_in_the_names(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder = os.path.join(root, "50% Songs")
+            name = "Artist - 100%(Live) %s %%"
+            template = video_platform._output_template(folder, name)
+            path = yt_dlp.YoutubeDL({"outtmpl": template, "quiet": True}).prepare_filename(
+                {"id": "x", "title": "Video", "ext": "webm"})
+        self.assertEqual(os.path.normpath(path), os.path.normpath(os.path.join(folder, name + ".webm")))
+
+
+class TestDownloadedFile(unittest.TestCase):
+    """The song goes on with the file that was downloaded, whatever its container."""
+
+    def _download(self, folder, filepath):
+        download = getattr(video_platform, "__download_video_with_audio")
+        with patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl:
+            ydl.return_value.__enter__.return_value.extract_info.return_value = {
+                "requested_downloads": [{"filepath": filepath}]}
+            return download("https://fakeUrl", "Artist - Title", folder)
+
+    def test_single_file_keeps_its_container(self):
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "Artist - Title.webm")
+            open(video, "wb").close()
+            self.assertEqual(self._download(folder, video), video)
+
+    def test_missing_file_is_an_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(Exception):
+                self._download(folder, os.path.join(folder, "Artist - Title.mp4"))
+
+    def test_webm_and_a_failed_thumbnail(self):
+        with tempfile.TemporaryDirectory() as out:
+            song_folder = os.path.join(out, "Artist - Title")
+            video = os.path.join(song_folder, "Artist - Title.webm")
+
+            def extract_info(url, download):
+                open(video, "wb").close()
+                return {"requested_downloads": [{"filepath": video}]}
+
+            with patch.object(video_platform, "get_video_title",
+                              return_value=("Artist", "Title", "Artist - Title", "en")), \
+                    patch.object(video_platform, "search_musicbrainz",
+                                 return_value=SongInfo(title="Title", artist="Artist")), \
+                    patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl, \
+                    patch.object(video_platform, "download_and_convert_thumbnail",
+                                 side_effect=OSError("HTTP Error 404: Not Found")), \
+                    patch.object(video_platform, "separate_audio_video",
+                                 return_value=("audio.ogg", "video.webm", "ogg", "webm")) as split, \
+                    redirect_stdout(io.StringIO()) as log:
+                ydl.return_value.__enter__.return_value.extract_info.side_effect = extract_info
+                _, folder, _, media_info = video_platform.download_from_video_platform("https://fakeUrl", out)
+        self.assertEqual(split.call_args.args[0], video)
+        self.assertEqual(folder, song_folder)
+        # The cover is optional: the song goes on without it
+        self.assertEqual((media_info.video_extension, media_info.cover_url), ("webm", ""))
+        self.assertIn("the thumbnail could not be downloaded", log.getvalue())
 
 
 if __name__ == "__main__":
