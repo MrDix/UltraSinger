@@ -617,7 +617,25 @@ class MainWindow(QMainWindow):
         www.google.com/js/th/... answered with 502 by the proxy). yt-dlp
         then prints a warning pointing at the provider's issue tracker,
         which sends users in the wrong direction.
+
+        A provider of another major version than the plugin is refused
+        outright (e.g. an outdated build that the update could not rebuild);
+        that gets its own advice.
         """
+        if "major versions are mismatched" in line:
+            if self._pot_failure_handled:
+                return
+            self._pot_failure_handled = True
+            self._queue_tab.append_log(
+                "[PO-Token] The PO-token provider and the yt-dlp plugin have "
+                "different major versions, so the plugin does not use the "
+                "provider and downloads fall back to reduced quality. Run "
+                "install\\update.bat (Windows) or install/update.sh "
+                "(Linux/macOS) - it needs Node.js 22 or newer - and restart "
+                "UltraSinger. A provider you start yourself needs the plugin's "
+                "version (see the README)."
+            )
+            return
         if 'Error fetching PO Token from "bgutil' not in line:
             return
         if self._pot_failure_handled:

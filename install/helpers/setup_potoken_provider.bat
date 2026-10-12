@@ -1,8 +1,9 @@
 @echo off
 REM Set up the bgutil PO-token provider (Node.js server) so video downloads
 REM get full-quality formats. Non-fatal: the parent install script keeps going
-REM regardless. Exit codes: 0 = provider ready, 2 = Node.js/git missing,
-REM 3 = build failed. Arg %1 = the install script to name in the re-run hint.
+REM regardless. Exit codes: 0 = provider ready, 2 = Node.js/git missing or
+REM Node.js too old, 3 = download or build failed. Arg %1 = the install script
+REM to name in the re-run hint.
 REM Must be run from the repository root (the install scripts cd there first).
 
 setlocal enabledelayedexpansion
@@ -10,7 +11,18 @@ set "RERUN=%~1"
 if "%RERUN%"=="" set "RERUN=the install script you just ran"
 set "PROVIDER_DIR=.potoken\bgutil-ytdlp-pot-provider"
 set "PROVIDER_REPO=https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git"
-set "SERVER_ENTRY=%PROVIDER_DIR%\server\build\main.js"
+REM The provider release that is built, pinned by its tag and verified by its
+REM commit, so neither a newer release nor a moved tag runs unreviewed code.
+REM Keep it at the version of the bgutil-ytdlp-pot-provider plugin in uv.lock
+REM (server and plugin are released together) and in sync with
+REM setup_potoken_provider.sh. NODE_MIN_MAJOR is the release's "engines" entry.
+set "PROVIDER_TAG=2.0.2"
+set "PROVIDER_COMMIT=26475e9d3665b972c4aeb83b4dbaafcf64b88438"
+set "NODE_MIN_MAJOR=22"
+set "SERVER_DIR=%PROVIDER_DIR%\server"
+set "SERVER_ENTRY=%SERVER_DIR%\build\main.js"
+REM The commit the current build was made from
+set "BUILD_STAMP=%SERVER_DIR%\build\.ultrasinger-commit"
 
 echo.
 echo ============================================================
@@ -78,6 +90,49 @@ if !errorlevel! neq 0 (
     echo Node.js is now available.
 )
 
+REM The pinned provider release needs a recent Node.js
+set "NODE_MAJOR="
+for /f "delims=" %%M in ('node -p "parseInt(process.versions.node)" 2^>nul') do set "NODE_MAJOR=%%M"
+set /a "NODE_MAJOR=NODE_MAJOR+0" >nul 2>&1
+if !NODE_MAJOR! LSS %NODE_MIN_MAJOR% (
+    set "NODE_FOUND="
+    for /f "delims=" %%V in ('node --version 2^>nul') do set "NODE_FOUND=%%V"
+    echo.
+    echo ------------------------------------------------------------
+    echo  ACTION REQUIRED - Node.js %NODE_MIN_MAJOR% or newer is needed for
+    echo  full-quality video downloads ^(found !NODE_FOUND!^).
+    echo  The provider is not updated until this is done:
+    echo.
+    echo    1. Install the current Node.js LTS from https://nodejs.org
+    echo    2. Close this window and open a NEW terminal
+    echo    3. Run the installer again:
+    echo         %RERUN%
+    echo ------------------------------------------------------------
+    echo.
+    exit /b 2
+)
+
+REM Leftovers of an interrupted run: the download, the replaced folder, and the
+REM new or replaced build
+if exist "%PROVIDER_DIR%.new" rmdir /s /q "%PROVIDER_DIR%.new"
+if exist "%PROVIDER_DIR%.old" rmdir /s /q "%PROVIDER_DIR%.old"
+if exist "%SERVER_DIR%\build.new" rmdir /s /q "%SERVER_DIR%\build.new"
+if exist "%SERVER_DIR%\build.old" rmdir /s /q "%SERVER_DIR%\build.old"
+
+REM --- Already built from the pinned release? ---
+REM Also needs the installed dependencies (npm ci writes the hidden lockfile):
+REM security software sometimes removes them, and then the build must be redone.
+REM utils.js holds the version the GUI checks; without it the GUI asks for a rebuild.
+if exist "%SERVER_ENTRY%" if exist "%SERVER_DIR%\build\utils.js" if exist "%SERVER_DIR%\node_modules\.package-lock.json" if exist "%BUILD_STAMP%" (
+    set "BUILT_COMMIT="
+    set /p BUILT_COMMIT=<"%BUILD_STAMP%"
+    if "!BUILT_COMMIT!"=="%PROVIDER_COMMIT%" (
+        echo The provider ^(release %PROVIDER_TAG%^) is already built -
+        echo full-quality video downloads are enabled.
+        exit /b 0
+    )
+)
+
 where git >nul 2>&1
 if !errorlevel! neq 0 (
     echo.
@@ -91,57 +146,98 @@ if !errorlevel! neq 0 (
     exit /b 2
 )
 
-REM --- Fetch and build the provider ---
+REM --- Fetch the pinned release ---
+REM Every git command on the provider folder checks for its .git first: in a
+REM folder without one, git would act on the UltraSinger repository instead.
 if not exist ".potoken" mkdir ".potoken"
+set "FOLDER_IN_USE="
 if exist "%PROVIDER_DIR%\.git" (
-    echo Updating provider source...
-    REM Discard our local proxy patch (re-applied below) so ff-only pulls work
-    git -C "%PROVIDER_DIR%" checkout -- . >nul 2>&1
-    git -C "%PROVIDER_DIR%" pull --ff-only >nul 2>&1
+    echo Updating the provider source to release %PROVIDER_TAG%...
+    git -C "%PROVIDER_DIR%" fetch --quiet --depth 1 --force origin "refs/tags/%PROVIDER_TAG%:refs/tags/%PROVIDER_TAG%" >nul 2>&1
 ) else (
-    echo Downloading provider source...
-    git clone --depth 1 "%PROVIDER_REPO%" "%PROVIDER_DIR%" >nul 2>&1
+    echo Downloading the provider source ^(release %PROVIDER_TAG%^)...
+    REM Into a new folder first: a provider folder without .git (e.g. restored
+    REM from a backup that skips .git) is only replaced once the download worked,
+    REM and by renaming it, which fails as a whole while the folder is in use
+    REM where deleting it would leave a damaged folder behind.
+    git clone --quiet --depth 1 --branch "%PROVIDER_TAG%" "%PROVIDER_REPO%" "%PROVIDER_DIR%.new" >nul 2>&1
+    set "NEW_COMMIT="
+    if exist "%PROVIDER_DIR%.new\.git" (
+        for /f "delims=" %%H in ('git -C "%PROVIDER_DIR%.new" rev-parse HEAD 2^>nul') do set "NEW_COMMIT=%%H"
+    )
+    if "!NEW_COMMIT!"=="%PROVIDER_COMMIT%" (
+        REM move only into a free name: it would put the folder inside a leftover one
+        if exist "%PROVIDER_DIR%" if not exist "%PROVIDER_DIR%.old" move "%PROVIDER_DIR%" "%PROVIDER_DIR%.old" >nul 2>&1
+        if exist "%PROVIDER_DIR%" (
+            set "FOLDER_IN_USE=1"
+        ) else (
+            move "%PROVIDER_DIR%.new" "%PROVIDER_DIR%" >nul 2>&1
+            if exist "%PROVIDER_DIR%" (
+                if exist "%PROVIDER_DIR%.old" rmdir /s /q "%PROVIDER_DIR%.old"
+            ) else (
+                if exist "%PROVIDER_DIR%.old" move "%PROVIDER_DIR%.old" "%PROVIDER_DIR%" >nul 2>&1
+            )
+        )
+    )
+    if exist "%PROVIDER_DIR%.new" rmdir /s /q "%PROVIDER_DIR%.new"
 )
-if not exist "%PROVIDER_DIR%\server" (
-    echo Could not download the provider source. Check your internet connection
-    echo and run %RERUN% again.
+if defined FOLDER_IN_USE (
+    echo The provider folder %PROVIDER_DIR% is in use ^(close UltraSinger,
+    echo or wait for the virus scanner to finish^) - run %RERUN% again.
+    exit /b 3
+)
+set "SRC_COMMIT="
+if exist "%PROVIDER_DIR%\.git" (
+    REM Check out exactly the pinned release; this also drops local changes to it
+    git -C "%PROVIDER_DIR%" -c advice.detachedHead=false checkout --quiet --force "refs/tags/%PROVIDER_TAG%" >nul 2>&1
+    for /f "delims=" %%H in ('git -C "%PROVIDER_DIR%" rev-parse HEAD 2^>nul') do set "SRC_COMMIT=%%H"
+)
+if not "!SRC_COMMIT!"=="%PROVIDER_COMMIT%" (
+    echo Could not download the provider source ^(release %PROVIDER_TAG%^).
+    echo Check your internet connection and run %RERUN% again.
     echo If you are behind a corporate proxy: git and npm honor the same
     echo HTTP_PROXY/HTTPS_PROXY/NO_PROXY variables as the rest of this installer
     echo - set them ^(and UV_SYSTEM_CERTS=1 for TLS-inspecting proxies^) and re-run.
     exit /b 3
 )
 
-REM --- Proxy fix: axios needs proxy:false so the httpsAgent does CONNECT ---
-REM Upstream bug: getFetch() passes a correct proxy-agent as httpsAgent but
-REM omits axios' proxy:false. With HTTP(S)_PROXY set in the environment,
-REM axios' own env-proxy mode then wins and sends an absolute-form GET to
-REM the proxy instead of a CONNECT tunnel - enterprise proxies answer 502
-REM and token generation fails. Verified against a local sniffing proxy.
-set "SM_TS=%PROVIDER_DIR%\server\src\session_manager.ts"
-if exist "%SM_TS%" (
-    findstr /c:"proxy: false" "%SM_TS%" >nul 2>&1
-    if !errorlevel! neq 0 (
-        echo Applying proxy workaround ^(axios proxy:false^)...
-        REM Same-line insert (no newline) - matches the sh script exactly.
-        powershell -NoProfile -Command "$p = '%SM_TS%'; $c = [IO.File]::ReadAllText($p); [IO.File]::WriteAllText($p, $c.Replace('httpsAgent: proxySpec.asDispatcher(logger),', 'httpsAgent: proxySpec.asDispatcher(logger), proxy: false,'))"
-        findstr /c:"proxy: false" "%SM_TS%" >nul 2>&1
-        if !errorlevel! equ 0 (
-            echo Proxy workaround applied.
-        ) else (
-            echo WARNING: proxy workaround did not match ^(upstream may have
-            echo reformatted the source^). Downloads behind an HTTP proxy may
-            echo fail; see the corporate-proxy section in the README.
-        )
+REM --- Build it ---
+REM The current build is renamed out of the way before anything is destroyed:
+REM a rename fails as a whole while the folder is in use (e.g. by a running
+REM provider, which works in it), where deleting it would leave half a build.
+if exist "%SERVER_DIR%\build" if not exist "%SERVER_DIR%\build.old" move "%SERVER_DIR%\build" "%SERVER_DIR%\build.old" >nul 2>&1
+if exist "%SERVER_DIR%\build" (
+    echo The provider build folder %SERVER_DIR%\build is in use ^(close
+    echo UltraSinger or end the node process that runs it, or wait for the virus
+    echo scanner to finish^) - run %RERUN% again.
+    exit /b 3
+)
+REM Start from scratch: a build of another release must neither be started by
+REM the app nor make a failed build look successful (tsc's incremental state
+REM would skip unchanged files, too). npm ci installs exactly the release's
+REM package-lock.json, and tsc is the compiler it installed (npx --no never
+REM downloads one). tsc writes into build.new, which only becomes build once
+REM it is complete: an interrupted build never leaves half of one to start.
+echo Building provider ^(npm ci + tsc, this can take a minute^)...
+if exist "%SERVER_DIR%\build.new" rmdir /s /q "%SERVER_DIR%\build.new"
+if exist "%SERVER_DIR%\tsconfig.tsbuildinfo" del /f /q "%SERVER_DIR%\tsconfig.tsbuildinfo"
+set "BUILD_OK="
+pushd "%SERVER_DIR%"
+call npm ci --include=dev --no-audit --no-fund >nul 2>&1
+if !errorlevel! equ 0 (
+    call npx --no -- tsc --outDir build.new >nul 2>&1
+    if !errorlevel! equ 0 if not exist build (
+        move build.new build >nul 2>&1
+        if exist build set "BUILD_OK=1"
     )
 )
-
-echo Building provider ^(npm install + tsc, this can take a minute^)...
-pushd "%PROVIDER_DIR%\server"
-call npm install --no-audit --no-fund >nul 2>&1
-call npx --yes tsc >nul 2>&1
+if exist build.new rmdir /s /q build.new
+if exist build.old rmdir /s /q build.old
 popd
+if not exist "%SERVER_ENTRY%" set "BUILD_OK="
 
-if exist "%SERVER_ENTRY%" (
+if defined BUILD_OK (
+    >"%BUILD_STAMP%" echo %PROVIDER_COMMIT%
     REM The GUI's first-launch bootstrap starts the server itself right
     REM after this script, so the warm-up below would only double the wait.
     if defined ULTRASINGER_POTOKEN_SKIP_WARMUP (
