@@ -66,6 +66,8 @@ MOVE_S = 1.0
 MOVE_GAIN = 0.3
 # Consecutive lines may overlap this much (s)
 OVERLAP_S = 0.3
+# Log-probability of the tokens on a frame without a usable model output
+UNUSABLE_TOKEN = -1e4
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +257,6 @@ def align_path(
 class _Path:
     tokens: np.ndarray  # token indices on the path, in order
     frames: np.ndarray  # emission frame of each
-    end: int            # frame where the path ends
 
 
 @dataclass
@@ -271,6 +272,13 @@ class _Emission:
 
     def __init__(self, log_probs: np.ndarray, ids: np.ndarray, blank_id: int, frame_s: float):
         self.em, self.ids = with_wildcard(log_probs, ids, blank_id)
+        unusable = np.isnan(self.em).any(axis=1) | np.isposinf(self.em).any(axis=1)
+        if unusable.any():
+            # A frame without a usable model output (NaN) counts as silence: in
+            # the trellis it would make every later frame NaN
+            self.em = self.em.copy()
+            self.em[unusable] = UNUSABLE_TOKEN
+            self.em[unusable, blank_id] = 0.0
         self.blank_id = blank_id
         self.frame_s = frame_s
         self.n_frames = self.em.shape[0]
@@ -281,8 +289,7 @@ class _Emission:
         found = align_path(self.em[f0:f1], self.ids[tokens], self.blank_id, end_cost)
         if found is None:
             return None
-        frames, t_end = found
-        return _Path(tokens, frames + f0, t_end + f0)
+        return _Path(tokens, found[0] + f0)
 
     def placement(self, path: _Path, p0: int, p1: int) -> _Placement:
         """Placement of the tokens at positions p0 to p1 of the path."""
@@ -404,7 +411,9 @@ def _word_times(tokens: LyricsTokens, ranges: dict, placements: dict,
                 frame_s: float) -> list[tuple[int, float, float]]:
     """(word, start s, end s) of the words of the placed lines, as whisperx
     forms them: from the frame of the word's first character to the frame of
-    the token after its last character (or the end of the path)."""
+    the token after its last character; the last token of a path ends one
+    frame after its own, where the path ends (also with a capped end: going
+    on after it never costs less than ending there)."""
     out = []
     for i in sorted(placements):
         path = placements[i].path
@@ -418,7 +427,7 @@ def _word_times(tokens: LyricsTokens, ranges: dict, placements: dict,
                 last[int(tokens.word[k])] = p
         for w in sorted(first):
             q = last[w] + 1
-            end = path.frames[q] if q < len(path.tokens) else path.end
+            end = path.frames[q] if q < len(path.tokens) else path.frames[-1] + 1
             out.append((w, round(float(path.frames[first[w]] * frame_s), 3), round(float(end * frame_s), 3)))
     return out
 

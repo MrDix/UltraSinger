@@ -9,6 +9,9 @@ from modules.Speech_Recognition import lyrics_alignment
 from modules.Speech_Recognition.lyrics_alignment import (
     END_COST,
     LANGUAGES_WITHOUT_SPACES,
+    OVERLAP_S,
+    _Emission,
+    _local,
     _moves,
     _Placement,
     align_lyrics,
@@ -448,6 +451,36 @@ class TestLineCheck:
         assert result.moved == 1
         assert starts_of_line(result, tokens, 10)[0] == pytest.approx(times[10])
 
+    def test_words_of_a_moved_line_overlap_the_previous_line_at_most_a_little(self):
+        tokens, em, times = misplaced_line_song()
+        result = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, times)
+        assert result.moved == 1
+        by_line = {}
+        for w, start, end in result.words:
+            by_line.setdefault(int(tokens.word_line[w]), []).append((start, end))
+        for i in range(1, 20):
+            assert by_line[i][0][0] >= by_line[i - 1][-1][1] - OVERLAP_S
+
+    def test_two_lines_are_not_checked(self):
+        # a short LRC: too few lines for an offset, but the choice still runs
+        tokens, em = spike_song([2.0, 5.0], 400)
+        result = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, [2.0, 5.0])
+        assert (result.fit, result.moved, result.dropped) == (2, 0, [])
+        assert starts_of_line(result, tokens, 1)[0] == pytest.approx(5.0)
+
+    def test_no_local_place_past_the_audio_or_in_a_too_short_window(self):
+        times = lrc_times(20)
+        tokens, em = spike_song(times, frame(times[-1]) + 100)
+        emission = _Emission(em, tokens.ids, BLANK, FRAME_S)
+        rng = (int(line_tokens(tokens, 19)[0]), int(line_tokens(tokens, 19)[-1]) + 1)
+        assert _local(emission, 19, rng, 0.0, times) is not None
+        # an offset that puts the line after the end of the audio
+        assert _local(emission, 19, rng, 30.0, times) is None
+        # a window that the end of the audio cuts to fewer frames than the line has tokens
+        audio_end = len(em) * FRAME_S
+        offset = audio_end - 0.06 + lyrics_alignment.MARGIN_S - times[19]
+        assert _local(emission, 19, rng, offset, times) is None
+
     def test_lines_are_checked_from_five_well_placed_lines_on(self):
         # five lines at least as well placed as the median line give the offset
         tokens, em, times = misplaced_line_song(n_lines=6, line=3)
@@ -538,6 +571,28 @@ class TestPlainLyrics:
         # line 10 stays where the path put it
         assert starts_of_line(result, tokens, 10)[0] < times[10] - 2
         assert len(result.words) == 40
+
+    def test_blank_in_the_first_column_without_a_pad_label(self):
+        # torchaudio's models: the blank is the first label ("-"), not "<pad>"
+        dictionary = {"-": 0, **{c: i for c, i in DICTIONARY.items() if c != "<pad>"}}
+        assert blank_index(dictionary) == 0
+        times = lrc_times(20)
+        tokens, em = spike_song(times, frame(times[-1]) + 100)
+        dash_tokens = lyrics_tokens([line_words(i) for i in range(20)], dictionary, "en")
+        expected = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, times)
+        result = align_lyrics(dash_tokens, [(WHOLE, em)], blank_index(dictionary), FRAME_S, times)
+        assert result.words == expected.words
+
+    def test_unusable_frames_count_as_silence(self):
+        # one NaN frame would make every later frame of the trellis NaN
+        times = lrc_times(20)
+        tokens, em = spike_song(times, frame(times[-1]) + 100)
+        expected = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, times)
+        broken = em.copy()
+        broken[frame(times[5] + 1.5)] = np.nan
+        result = align_lyrics(tokens, [(WHOLE, broken)], BLANK, FRAME_S, times)
+        assert result.words == expected.words
+        assert np.isnan(broken).any()  # the caller's emission is left as it was
 
     def test_no_tokens(self):
         tokens = lyrics_tokens([], DICTIONARY, "en")

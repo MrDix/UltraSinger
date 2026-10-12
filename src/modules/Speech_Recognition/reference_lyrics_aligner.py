@@ -172,10 +172,10 @@ def align_lyrics_to_audio(
     """Align LRC line segments to audio using wav2vec2 forced alignment.
 
     Uses WhisperX's alignment models and path search (see
-    ``lyrics_alignment``). Several segments are the lines of synced lyrics:
-    their start times, the LRC times, choose between alignments and check
-    the lines one by one. A single segment (plain lyrics) is aligned as
-    WhisperX aligns one segment over the whole audio.
+    ``lyrics_alignment``). With several segments (the lines of synced
+    lyrics), their LRC times choose between alignments and check the lines
+    one by one. A single segment (plain lyrics) is aligned as WhisperX
+    aligns one segment over the whole audio.
 
     Args:
         segments: LRC segments from :func:`parse_lrc_synced_lyrics`.
@@ -188,8 +188,10 @@ def align_lyrics_to_audio(
 
     Returns:
         List of ``{"word", "start", "end", "backing", "line_end"}`` dicts,
-        one per aligned word, in the order of the lyrics. Words of lines at
-        the end that the recording does not have are left out.
+        one per aligned word, in the order of the lyrics: a line moved to its
+        LRC time may start up to ``OVERLAP_S`` (0.3 s) before the previous
+        line ends. Words of lines at the end that the recording does not have
+        are left out.
     """
     import whisperx
 
@@ -304,7 +306,7 @@ def _alignment_emissions(model, model_type: str, audio: np.ndarray, device: str,
         if not _out_of_memory(error):
             raise
     if whole is None:
-        print(f"{ULTRASINGER_HEAD} Not enough GPU memory to align the whole song at once "
+        print(f"{ULTRASINGER_HEAD} Not enough memory to align the whole song at once "
               f"-- aligning it in 30-s pieces")
         if pieces is None:
             release_gpu_memory()
@@ -340,9 +342,13 @@ def _align_model_log_probs(model, model_type: str, samples: np.ndarray, device: 
 
 
 def _out_of_memory(error: RuntimeError) -> bool:
+    """Whether the model ran out of memory: on the GPU, or on the CPU, whose
+    allocator reports "not enough memory"."""
     import torch
 
-    return isinstance(error, torch.cuda.OutOfMemoryError) or "out of memory" in str(error)
+    message = str(error)
+    return (isinstance(error, torch.cuda.OutOfMemoryError) or "out of memory" in message
+            or "not enough memory" in message)
 
 
 def _print_line_check(result) -> None:

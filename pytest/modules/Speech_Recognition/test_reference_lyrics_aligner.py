@@ -499,7 +499,7 @@ class TestAlignLyricsToAudio:
         assert len(words) == 40
         assert [w["start"] for w in words[::2]] == pytest.approx([s["start"] for s in segments], abs=0.011)
         out = capsys.readouterr().out
-        assert "Not enough GPU memory" in out
+        assert "Not enough memory" in out
         assert "(30-s pieces," in out
 
     def test_out_of_memory_runtime_error_of_plain_lyrics(self, capsys):
@@ -512,7 +512,18 @@ class TestAlignLyricsToAudio:
         # the whole song first, then the pieces
         assert model.inputs == [len(audio), 35 * 16000, 25 * 16000]
         assert [w["start"] for w in words] == pytest.approx([41.0, 41.12, 41.28, 41.40], abs=0.011)
-        assert "Not enough GPU memory" in capsys.readouterr().out
+        assert "Not enough memory" in capsys.readouterr().out
+
+    def test_cpu_out_of_memory_uses_the_pieces(self, capsys):
+        # the CPU allocator reports "not enough memory"
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0, out_of_memory_from=64 * 16000,
+                                 error=RuntimeError("DefaultCPUAllocator: not enough memory: you tried to allocate"))
+
+        words, _ = align_with(model, audio, segments)
+
+        assert len(words) == 40
+        assert "(30-s pieces," in capsys.readouterr().out
 
     def test_other_runtime_errors_are_raised(self):
         segments = lrc_segments(20)
