@@ -217,6 +217,9 @@ class TestProviderVersions:
         assert status.running is False and status.started_by_us is False
         assert "1.3.1" in status.detail and "2.0.2" in status.detail
         assert "http://127.0.0.1:4416" in status.detail
+        # says what to stop: a node process of an earlier session, or its container
+        assert "node.exe" in status.detail and ".potoken" in status.detail
+        assert "docker ps" in status.detail
         node_exe.assert_not_called()
 
     def test_provider_reporting_no_version_is_not_used(self):
@@ -299,6 +302,20 @@ class TestProviderVersions:
         assert status.running is False and status.process is None
         assert "1.3.1" in status.detail
 
+    def test_a_missing_confirmation_answer_is_asked_again(self, tmp_path):
+        """A slow moment after the start must not stop a good provider."""
+        entry = _built_provider(tmp_path)
+        proc = MagicMock()
+        proc.poll.return_value = None
+        with patch.object(pp, "_ping", side_effect=[None, None, None, "2.0.2"]), \
+             patch.object(pp, "is_provider_running", return_value=True), \
+             patch.object(pp, "_node_exe", return_value="/usr/bin/node"), \
+             patch.object(pp, "_start_node_provider", return_value=proc), \
+             patch("time.sleep"):
+            status = pp.ensure_provider(node_entry=entry)
+        assert status.running is True and status.process is proc
+        proc.terminate.assert_not_called()
+
     def test_started_docker_provider_of_another_major_is_stopped(self, tmp_path):
         with patch.object(pp, "_ping", side_effect=[None, "3.0.0"]), \
              patch.object(pp, "is_provider_running", return_value=True), \
@@ -377,6 +394,9 @@ class TestBootstrapNodeProvider:
         # The GUI manages the server itself - the script must skip warm-up.
         env = popen.call_args.kwargs["env"]
         assert env["ULTRASINGER_POTOKEN_SKIP_WARMUP"] == "1"
+        # its own process group on POSIX, so a cancel reaches its children
+        import os
+        assert popen.call_args.kwargs["start_new_session"] is (os.name != "nt")
 
     def test_returns_false_when_script_missing(self, tmp_path):
         with patch.object(pp, "_setup_script",
@@ -421,6 +441,40 @@ class TestBootstrapNodeProvider:
                                              cancel=cancel)
         assert ok is False
         popen.assert_not_called()
+
+    def test_cancel_stops_the_setup_with_everything_it_started(self, tmp_path):
+        """git, npm and tsc must not keep writing into the provider folder."""
+        import threading
+        script = tmp_path / "setup.bat"
+        script.write_text("rem stub", encoding="utf-8")
+        cancel = threading.Event()
+        proc = MagicMock()
+        proc.poll.side_effect = lambda: cancel.set()  # cancelled while it runs (None)
+        with patch.object(pp, "_setup_script", return_value=script), \
+             patch.object(pp, "_setup_log_path",
+                          return_value=tmp_path / "setup.log"), \
+             patch("shutil.which", return_value="/usr/bin/git"), \
+             patch("subprocess.Popen", return_value=proc), \
+             patch.object(pp, "_terminate_tree") as stop_tree:
+            ok = pp._bootstrap_node_provider(tmp_path / "main.js", cancel=cancel)
+        assert ok is False
+        stop_tree.assert_called_once_with(proc)
+
+    def test_terminate_tree_on_windows(self):
+        proc = MagicMock(pid=1234)
+        with patch.object(pp.os, "name", "nt"), patch("subprocess.run") as run:
+            pp._terminate_tree(proc)
+        assert run.call_args[0][0] == ["taskkill", "/T", "/F", "/PID", "1234"]
+        proc.terminate.assert_called_once()
+
+    def test_terminate_tree_on_posix(self):
+        import signal
+        proc = MagicMock(pid=1234)
+        with patch.object(pp.os, "name", "posix"), \
+             patch.object(pp.os, "killpg", create=True) as killpg:
+            pp._terminate_tree(proc)
+        killpg.assert_called_once_with(1234, signal.SIGTERM)
+        proc.terminate.assert_called_once()
 
     def test_ensure_provider_bootstraps_when_entry_missing(self, tmp_path):
         """Node available but no built provider: self-heal instead of hint."""

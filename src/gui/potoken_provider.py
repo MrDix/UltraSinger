@@ -174,6 +174,23 @@ def _ping(normalized_url: str) -> str | None:
         return None
 
 
+def _confirmed_version(normalized_url: str, attempts: int = 3) -> str | None:
+    """Version of a provider that has just answered a ping.
+
+    A missing answer is asked again, so a slow moment (e.g. the load of a
+    first start) does not count as a provider of the wrong version.
+    """
+    import time
+
+    version = _ping(normalized_url)
+    for _ in range(attempts - 1):
+        if version is not None:
+            break
+        time.sleep(1.0)
+        version = _ping(normalized_url)
+    return version
+
+
 def is_provider_running(base_url: str = DEFAULT_BASE_URL) -> bool:
     """Check whether a bgutil provider server responds on ``base_url``."""
     try:
@@ -302,6 +319,8 @@ def _bootstrap_node_provider(
             cwd=str(_REPO_ROOT),
             env=env,
             creationflags=_CREATE_NO_WINDOW,
+            # its own process group, so a cancel can stop git/npm/tsc too
+            start_new_session=os.name != "nt",
         )
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to run the PO-token provider setup: %s", e)
@@ -314,7 +333,7 @@ def _bootstrap_node_provider(
     while proc.poll() is None:
         if (cancel is not None and cancel.is_set()) \
                 or time.monotonic() >= deadline:
-            _terminate_process(proc)
+            _terminate_tree(proc)
             return False
         time.sleep(1.0)
 
@@ -477,8 +496,11 @@ def _foreign_provider_detail(version: str, expected: str, url: str) -> str:
     return (
         f"A PO-token provider of version {version or 'unknown'} is running on "
         f"{url}, but the plugin is {expected} and only works with a provider "
-        "of the same major version. Stop that provider and restart UltraSinger."
-        + _LIMITED
+        "of the same major version. Usually an earlier UltraSinger session "
+        "left it running: end the node process (node.exe on Windows) that "
+        "runs from .potoken/bgutil-ytdlp-pot-provider, or stop its Docker "
+        f"container ({_CONTAINER_PREFIX}-... in 'docker ps'), then restart "
+        "UltraSinger." + _LIMITED
     )
 
 
@@ -556,7 +578,7 @@ def ensure_provider(
             # routinely delayed by antivirus scanning of node_modules.
             if proc is not None and _wait_until_running(
                     normalized, attempts=120, cancel=cancel, proc=proc):
-                version = _ping(normalized)
+                version = _confirmed_version(normalized)
                 if _same_major(version, expected):
                     return ProviderStatus(
                         running=True, started_by_us=True, base_url=normalized,
@@ -603,7 +625,7 @@ def ensure_provider(
         logger.info("Starting bgutil PO-token provider via Docker ...")
         container_id = _start_docker_provider(docker, port)
         if container_id and _wait_until_running(normalized, cancel=cancel):
-            version = _ping(normalized)
+            version = _confirmed_version(normalized)
             if _same_major(version, expected):
                 return ProviderStatus(
                     running=True, started_by_us=True, base_url=normalized,
@@ -626,6 +648,28 @@ def ensure_provider(
 
     return ProviderStatus(
         running=False, base_url=normalized, detail=node_detail or _SETUP_HINT)
+
+
+def _terminate_tree(proc: subprocess.Popen) -> None:
+    """Stop the setup script together with everything it started.
+
+    Terminating only the script would leave git, npm or tsc running, still
+    writing into the provider folder while the next start reads it.
+    """
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True, timeout=30,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        else:
+            import signal
+
+            os.killpg(proc.pid, signal.SIGTERM)  # started in its own session
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("Failed to stop the PO-token provider setup: %s", e)
+    _terminate_process(proc)
 
 
 def _terminate_process(proc: subprocess.Popen) -> None:

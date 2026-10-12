@@ -142,25 +142,43 @@ REM --- Fetch the pinned release ---
 REM Every git command on the provider folder checks for its .git first: in a
 REM folder without one, git would act on the UltraSinger repository instead.
 if not exist ".potoken" mkdir ".potoken"
+set "FOLDER_IN_USE="
 if exist "%PROVIDER_DIR%\.git" (
     echo Updating the provider source to release %PROVIDER_TAG%...
     git -C "%PROVIDER_DIR%" fetch --quiet --depth 1 --force origin "refs/tags/%PROVIDER_TAG%:refs/tags/%PROVIDER_TAG%" >nul 2>&1
 ) else (
     echo Downloading the provider source ^(release %PROVIDER_TAG%^)...
     REM Into a new folder first: a provider folder without .git (e.g. restored
-    REM from a backup that skips .git) is only replaced once the download worked.
+    REM from a backup that skips .git) is only replaced once the download worked,
+    REM and by renaming it, which fails as a whole while the folder is in use
+    REM where deleting it would leave a damaged folder behind.
     if exist "%PROVIDER_DIR%.new" rmdir /s /q "%PROVIDER_DIR%.new"
+    if exist "%PROVIDER_DIR%.old" rmdir /s /q "%PROVIDER_DIR%.old"
     git clone --quiet --depth 1 --branch "%PROVIDER_TAG%" "%PROVIDER_REPO%" "%PROVIDER_DIR%.new" >nul 2>&1
     set "NEW_COMMIT="
     if exist "%PROVIDER_DIR%.new\.git" (
         for /f "delims=" %%H in ('git -C "%PROVIDER_DIR%.new" rev-parse HEAD 2^>nul') do set "NEW_COMMIT=%%H"
     )
     if "!NEW_COMMIT!"=="%PROVIDER_COMMIT%" (
-        if exist "%PROVIDER_DIR%" rmdir /s /q "%PROVIDER_DIR%"
-        REM only into a free name - move would put it inside a leftover folder
-        if not exist "%PROVIDER_DIR%" move "%PROVIDER_DIR%.new" "%PROVIDER_DIR%" >nul
+        REM move only into a free name: it would put the folder inside a leftover one
+        if exist "%PROVIDER_DIR%" if not exist "%PROVIDER_DIR%.old" move "%PROVIDER_DIR%" "%PROVIDER_DIR%.old" >nul 2>&1
+        if exist "%PROVIDER_DIR%" (
+            set "FOLDER_IN_USE=1"
+        ) else (
+            move "%PROVIDER_DIR%.new" "%PROVIDER_DIR%" >nul 2>&1
+            if exist "%PROVIDER_DIR%" (
+                if exist "%PROVIDER_DIR%.old" rmdir /s /q "%PROVIDER_DIR%.old"
+            ) else (
+                if exist "%PROVIDER_DIR%.old" move "%PROVIDER_DIR%.old" "%PROVIDER_DIR%" >nul 2>&1
+            )
+        )
     )
     if exist "%PROVIDER_DIR%.new" rmdir /s /q "%PROVIDER_DIR%.new"
+)
+if defined FOLDER_IN_USE (
+    echo The provider folder %PROVIDER_DIR% is in use ^(close UltraSinger,
+    echo or wait for the virus scanner to finish^) - run %RERUN% again.
+    exit /b 3
 )
 set "SRC_COMMIT="
 if exist "%PROVIDER_DIR%\.git" (
@@ -182,17 +200,23 @@ REM Start from scratch: a build of another release must neither be started by
 REM the app nor make a failed build look successful (tsc's incremental state
 REM would skip unchanged files, too). npm ci installs exactly the release's
 REM package-lock.json, and tsc is the compiler it installed (npx --no never
-REM downloads one).
+REM downloads one). tsc writes into build.new, which only becomes build once
+REM it is complete: an interrupted build never leaves half of one to start.
 echo Building provider ^(npm ci + tsc, this can take a minute^)...
 if exist "%SERVER_DIR%\build" rmdir /s /q "%SERVER_DIR%\build"
+if exist "%SERVER_DIR%\build.new" rmdir /s /q "%SERVER_DIR%\build.new"
 if exist "%SERVER_DIR%\tsconfig.tsbuildinfo" del /f /q "%SERVER_DIR%\tsconfig.tsbuildinfo"
 set "BUILD_OK="
 pushd "%SERVER_DIR%"
 call npm ci --include=dev --no-audit --no-fund >nul 2>&1
 if !errorlevel! equ 0 (
-    call npx --no -- tsc >nul 2>&1
-    if !errorlevel! equ 0 set "BUILD_OK=1"
+    call npx --no -- tsc --outDir build.new >nul 2>&1
+    if !errorlevel! equ 0 if not exist build (
+        move build.new build >nul 2>&1
+        if exist build set "BUILD_OK=1"
+    )
 )
+if exist build.new rmdir /s /q build.new
 popd
 if not exist "%SERVER_ENTRY%" set "BUILD_OK="
 

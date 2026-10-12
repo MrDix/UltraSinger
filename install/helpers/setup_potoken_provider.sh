@@ -113,6 +113,7 @@ fi
 # Every git command on the provider folder checks for its .git first: in a
 # folder without one, git would act on the UltraSinger repository instead.
 mkdir -p .potoken
+FOLDER_IN_USE=""
 if [ -d "$PROVIDER_DIR/.git" ]; then
     echo "Updating the provider source to release $PROVIDER_TAG..."
     git -C "$PROVIDER_DIR" fetch --quiet --depth 1 --force origin \
@@ -120,14 +121,30 @@ if [ -d "$PROVIDER_DIR/.git" ]; then
 else
     echo "Downloading the provider source (release $PROVIDER_TAG)..."
     # Into a new folder first: a provider folder without .git (e.g. restored
-    # from a backup that skips .git) is only replaced once the download worked.
-    rm -rf "$PROVIDER_DIR.new"
+    # from a backup that skips .git) is only replaced once the download worked,
+    # and by renaming it, which fails as a whole while the folder is in use
+    # (deleting it would leave a damaged folder behind).
+    rm -rf "$PROVIDER_DIR.new" "$PROVIDER_DIR.old"
     git clone --quiet --depth 1 --branch "$PROVIDER_TAG" "$PROVIDER_REPO" "$PROVIDER_DIR.new" >/dev/null 2>&1
     if [ -d "$PROVIDER_DIR.new/.git" ] \
             && [ "$(git -C "$PROVIDER_DIR.new" rev-parse HEAD 2>/dev/null)" = "$PROVIDER_COMMIT" ]; then
-        rm -rf "$PROVIDER_DIR" && mv "$PROVIDER_DIR.new" "$PROVIDER_DIR"
+        if [ ! -e "$PROVIDER_DIR" ] \
+                || { [ ! -e "$PROVIDER_DIR.old" ] && mv "$PROVIDER_DIR" "$PROVIDER_DIR.old" 2>/dev/null; }; then
+            if mv "$PROVIDER_DIR.new" "$PROVIDER_DIR"; then
+                rm -rf "$PROVIDER_DIR.old"
+            else
+                mv "$PROVIDER_DIR.old" "$PROVIDER_DIR" 2>/dev/null
+            fi
+        else
+            FOLDER_IN_USE=1
+        fi
     fi
     rm -rf "$PROVIDER_DIR.new"
+fi
+if [ -n "$FOLDER_IN_USE" ]; then
+    echo "The provider folder $PROVIDER_DIR is in use (close UltraSinger,"
+    echo "or wait for the virus scanner to finish) - run $RERUN again."
+    exit 3
 fi
 SRC_COMMIT=""
 if [ -d "$PROVIDER_DIR/.git" ]; then
@@ -152,10 +169,13 @@ echo "Building provider (npm ci + tsc, this can take a minute)..."
 # the app nor make a failed build look successful (tsc's incremental state
 # would skip unchanged files, too). npm ci installs exactly the release's
 # package-lock.json, and tsc is the compiler it installed (npx --no never
-# downloads one).
-rm -rf "$SERVER_DIR/build" "$SERVER_DIR/tsconfig.tsbuildinfo"
-( cd "$SERVER_DIR" && npm ci --include=dev --no-audit --no-fund >/dev/null 2>&1 && npx --no -- tsc >/dev/null 2>&1 )
+# downloads one). tsc writes into build.new, which only becomes build once
+# it is complete: an interrupted build never leaves half of one to start.
+rm -rf "$SERVER_DIR/build" "$SERVER_DIR/build.new" "$SERVER_DIR/tsconfig.tsbuildinfo"
+( cd "$SERVER_DIR" && npm ci --include=dev --no-audit --no-fund >/dev/null 2>&1 \
+    && npx --no -- tsc --outDir build.new >/dev/null 2>&1 && [ ! -e build ] && mv build.new build )
 BUILD_RC=$?
+rm -rf "$SERVER_DIR/build.new"
 
 if [ "$BUILD_RC" -eq 0 ] && [ -f "$SERVER_ENTRY" ]; then
     printf '%s\n' "$PROVIDER_COMMIT" > "$BUILD_STAMP"
