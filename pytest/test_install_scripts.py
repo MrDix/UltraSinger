@@ -229,6 +229,14 @@ def test_po_token_provider_is_pinned_to_the_plugin_version_in_the_lock():
         assert _assignment(sh, name) == _assignment(bat, name), name
     assert _assignment(sh, "PROVIDER_TAG") == plugin
     assert re.fullmatch(r"[0-9a-f]{40}", _assignment(sh, "PROVIDER_COMMIT"))
+    # the GUI's stand-in for the plugin version (Docker image, expected provider version)
+    gui = (REPO / "src/gui/potoken_provider.py").read_text(encoding="utf-8")
+    assert re.search(rf'^_PINNED_PROVIDER_VERSION = "{re.escape(plugin)}"$', gui, re.MULTILINE)
+    # the requirement allows exactly the pinned major version
+    project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    requirement = next(r for r in project["project"]["optional-dependencies"]["potoken"]
+                       if r.startswith("bgutil-ytdlp-pot-provider"))
+    assert requirement == f"bgutil-ytdlp-pot-provider>={plugin},<{int(plugin.split('.')[0]) + 1}"
     # nothing may fetch or build an unpinned provider any more
     for text in (sh, bat):
         assert "pull --ff-only" not in text and "npm install" not in text and "--yes" not in text
@@ -254,7 +262,7 @@ esac
 """
 STUB_NPM = """#!/bin/bash
 echo "npm $*" >> "$BUILD_STUB_LOG"
-mkdir -p node_modules
+mkdir -p node_modules && touch node_modules/.package-lock.json
 """
 STUB_NPX = """#!/bin/bash
 echo "npx $*" >> "$BUILD_STUB_LOG"
@@ -381,3 +389,29 @@ def test_provider_folder_without_git_metadata_is_downloaded_again(provider):
     assert result.returncode == 0, result.stdout + result.stderr
     assert _commit_of(checkout, "HEAD") == _commit_of(provider["src"], "2.0.0")
     assert not (checkout / "server/leftover").exists()
+    assert not checkout.with_name(checkout.name + ".new").exists()
+
+
+@needs_bash
+def test_provider_folder_without_git_metadata_survives_a_failed_download(provider, tmp_path):
+    """The folder (e.g. restored from a backup without .git) is only replaced by a verified download."""
+    checkout = provider["checkout"]
+    (checkout / "server/build").mkdir(parents=True)
+    (checkout / "server/build/main.js").write_text("working build\n", encoding="utf-8")
+    offline = f"url.{(tmp_path / 'unreachable.git').as_uri()}.insteadOf"
+    result, steps = provider["run"](GIT_CONFIG_KEY_0=offline)
+    assert result.returncode == 3
+    assert (checkout / "server/build/main.js").read_text(encoding="utf-8") == "working build\n"
+    assert not checkout.with_name(checkout.name + ".new").exists()
+    assert steps == []
+
+
+@needs_bash
+def test_provider_with_missing_dependencies_is_rebuilt(provider):
+    """Security software may delete node_modules: build and stamp alone are not enough."""
+    provider["run"]()
+    shutil.rmtree(provider["checkout"] / "server/node_modules")
+    result, steps = provider["run"]()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "already built" not in result.stdout
+    assert steps == ["npm ci --include=dev --no-audit --no-fund", "npx --no -- tsc"]

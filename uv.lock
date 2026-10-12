@@ -3862,7 +3862,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "audio-separator", specifier = ">=0.25" },
-    { name = "bgutil-ytdlp-pot-provider", marker = "extra == 'potoken'", specifier = ">=1.1" },
+    { name = "bgutil-ytdlp-pot-provider", marker = "extra == 'potoken'", specifier = ">=2.0.2,<3" },
     { name = "black", marker = "extra == 'dev'" },
     { name = "chardet", specifier = "<6.0.0" },
     { name = "dataclasses" },

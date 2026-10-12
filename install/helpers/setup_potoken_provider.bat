@@ -113,7 +113,9 @@ if !NODE_MAJOR! LSS %NODE_MIN_MAJOR% (
 )
 
 REM --- Already built from the pinned release? ---
-if exist "%SERVER_ENTRY%" if exist "%BUILD_STAMP%" (
+REM Also needs the installed dependencies (npm ci writes the hidden lockfile):
+REM security software sometimes removes them, and then the build must be redone.
+if exist "%SERVER_ENTRY%" if exist "%SERVER_DIR%\node_modules\.package-lock.json" if exist "%BUILD_STAMP%" (
     set "BUILT_COMMIT="
     set /p BUILT_COMMIT=<"%BUILD_STAMP%"
     if "!BUILT_COMMIT!"=="%PROVIDER_COMMIT%" (
@@ -145,9 +147,20 @@ if exist "%PROVIDER_DIR%\.git" (
     git -C "%PROVIDER_DIR%" fetch --quiet --depth 1 --force origin "refs/tags/%PROVIDER_TAG%:refs/tags/%PROVIDER_TAG%" >nul 2>&1
 ) else (
     echo Downloading the provider source ^(release %PROVIDER_TAG%^)...
-    REM leftover of an interrupted download
-    if exist "%PROVIDER_DIR%" rmdir /s /q "%PROVIDER_DIR%"
-    git clone --quiet --depth 1 --branch "%PROVIDER_TAG%" "%PROVIDER_REPO%" "%PROVIDER_DIR%" >nul 2>&1
+    REM Into a new folder first: a provider folder without .git (e.g. restored
+    REM from a backup that skips .git) is only replaced once the download worked.
+    if exist "%PROVIDER_DIR%.new" rmdir /s /q "%PROVIDER_DIR%.new"
+    git clone --quiet --depth 1 --branch "%PROVIDER_TAG%" "%PROVIDER_REPO%" "%PROVIDER_DIR%.new" >nul 2>&1
+    set "NEW_COMMIT="
+    if exist "%PROVIDER_DIR%.new\.git" (
+        for /f "delims=" %%H in ('git -C "%PROVIDER_DIR%.new" rev-parse HEAD 2^>nul') do set "NEW_COMMIT=%%H"
+    )
+    if "!NEW_COMMIT!"=="%PROVIDER_COMMIT%" (
+        if exist "%PROVIDER_DIR%" rmdir /s /q "%PROVIDER_DIR%"
+        REM only into a free name - move would put it inside a leftover folder
+        if not exist "%PROVIDER_DIR%" move "%PROVIDER_DIR%.new" "%PROVIDER_DIR%" >nul
+    )
+    if exist "%PROVIDER_DIR%.new" rmdir /s /q "%PROVIDER_DIR%.new"
 )
 set "SRC_COMMIT="
 if exist "%PROVIDER_DIR%\.git" (

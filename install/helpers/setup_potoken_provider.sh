@@ -89,7 +89,10 @@ if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ]; then
 fi
 
 # --- Already built from the pinned release? ---------------------------------
-if [ -f "$SERVER_ENTRY" ] && [ "$(tr -d '\r\n' 2>/dev/null < "$BUILD_STAMP")" = "$PROVIDER_COMMIT" ]; then
+# Also needs the installed dependencies (npm ci writes the hidden lockfile):
+# security software sometimes removes them, and then the build must be redone.
+if [ -f "$SERVER_ENTRY" ] && [ -f "$SERVER_DIR/node_modules/.package-lock.json" ] \
+        && [ "$(tr -d '\r\n' 2>/dev/null < "$BUILD_STAMP")" = "$PROVIDER_COMMIT" ]; then
     echo "The provider (release $PROVIDER_TAG) is already built -"
     echo "full-quality video downloads are enabled."
     exit 0
@@ -116,8 +119,15 @@ if [ -d "$PROVIDER_DIR/.git" ]; then
         "refs/tags/$PROVIDER_TAG:refs/tags/$PROVIDER_TAG" >/dev/null 2>&1
 else
     echo "Downloading the provider source (release $PROVIDER_TAG)..."
-    rm -rf "$PROVIDER_DIR"  # leftover of an interrupted download
-    git clone --quiet --depth 1 --branch "$PROVIDER_TAG" "$PROVIDER_REPO" "$PROVIDER_DIR" >/dev/null 2>&1
+    # Into a new folder first: a provider folder without .git (e.g. restored
+    # from a backup that skips .git) is only replaced once the download worked.
+    rm -rf "$PROVIDER_DIR.new"
+    git clone --quiet --depth 1 --branch "$PROVIDER_TAG" "$PROVIDER_REPO" "$PROVIDER_DIR.new" >/dev/null 2>&1
+    if [ -d "$PROVIDER_DIR.new/.git" ] \
+            && [ "$(git -C "$PROVIDER_DIR.new" rev-parse HEAD 2>/dev/null)" = "$PROVIDER_COMMIT" ]; then
+        rm -rf "$PROVIDER_DIR" && mv "$PROVIDER_DIR.new" "$PROVIDER_DIR"
+    fi
+    rm -rf "$PROVIDER_DIR.new"
 fi
 SRC_COMMIT=""
 if [ -d "$PROVIDER_DIR/.git" ]; then
