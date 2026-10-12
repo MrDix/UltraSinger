@@ -9,7 +9,9 @@ relative folder structure. Safety comes first, throughout:
   unparsable chart, zero notes, missing audio file, or an audio file
   ffprobe can't decode. Anything else passes stage 1 -- "when in doubt,
   keep it" (a corrupt song staying in the library is much cheaper than a
-  good song being moved out of it).
+  good song being moved out of it). A file that can't be read right now
+  (locked, no permission, vanished) or an ffprobe that fails to run says
+  nothing about the song: that is an "error" verdict, never a move.
 - Stage 2 (opt-in via ``--stage2``) additionally scores charts against
   their own separated vocals (ptAKF/MEDIUM, same engine as
   ``tools/library_rescore.py``) and flags songs scoring below a
@@ -19,9 +21,11 @@ relative folder structure. Safety comes first, throughout:
   computed and it was below the threshold.
 - The move itself has hard guards: ``corrupt_dir`` may not live inside
   ``source_dir`` (that would cause moved songs to be rescanned / an
-  infinite loop), the two directories may not be identical, and an
+  infinite loop), the two directories may not be identical, an
   existing destination is never overwritten (the song is left in place
-  and logged as an error instead).
+  and logged as an error instead), and a folder that holds other song
+  folders is never moved (it would take those songs along; it is logged
+  as an error instead).
 - Progress is written to a resumable CSV as it happens. A re-run skips
   songs whose previous verdict was terminal (``moved``/``kept``); rows
   that were only "would_move" (dry run) or "error" are re-evaluated,
@@ -58,6 +62,9 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 # Allow "from modules...." imports when this script is run directly (mirrors
 # the pattern used by tools/pitch_tracker_benchmark.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from compare_ultrastar import parse_score_song  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +110,7 @@ def _read_text_lenient(path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _looks_like_ultrastar_txt(path: Path) -> bool:
+def _looks_like_ultrastar_txt(path: Path, *, unreadable: bool = False) -> bool:
     """Lenient content sniff: is this .txt plausibly an UltraStar chart?
 
     Only used to tell song folders apart from "collection" folders that
@@ -111,12 +118,13 @@ def _looks_like_ultrastar_txt(path: Path) -> bool:
     validity is judged later by :func:`evaluate_stage1` via the real
     parser -- a chart that fails *that* check still counts as a song
     folder here, so it can be flagged as stage-1-corrupt rather than
-    silently ignored.
+    silently ignored. *unreadable* is the answer for a file that can't
+    be read.
     """
     try:
         text = _read_text_lenient(path)
     except OSError:
-        return False
+        return unreadable
     if not text.strip():
         return False
     upper = text.upper()
@@ -131,14 +139,12 @@ def _pick_primary_txt(candidates: list[Path]) -> Path:
     of the candidates parse cleanly, the first (alphabetically) is kept
     so stage 1 still has something to flag as corrupt.
     """
-    from ultrastar_score.parser import parse_ultrastar
-
     ordered = sorted(candidates, key=lambda p: p.name)
     best = ordered[0]
     best_notes = -1
     for candidate in ordered:
         try:
-            song = parse_ultrastar(str(candidate))
+            song = parse_score_song(candidate)
             notes = len(song.all_notes)
         except Exception:
             notes = -1
@@ -189,13 +195,34 @@ def find_song_folders(source_dir: Path, *, skip_dir: Path | None = None) -> list
     return folders
 
 
+def _nested_song_folders(dir_path: Path) -> list[Path]:
+    """Song folders anywhere below *dir_path* (not counting itself).
+
+    Uses the same test as :func:`find_song_folders`, except that a .txt
+    which can't be read counts as a chart: a move must never take a song
+    along by mistake. Raises OSError if a subfolder can't be listed.
+    """
+    def _raise(error: OSError) -> None:
+        raise error
+
+    nested = []
+    for dirpath, _dirnames, filenames in os.walk(dir_path, onerror=_raise):
+        current = Path(dirpath)
+        if current == dir_path:
+            continue
+        if any(f.lower().endswith(".txt") and _looks_like_ultrastar_txt(current / f, unreadable=True)
+               for f in filenames):
+            nested.append(current)
+    return nested
+
+
 # ---------------------------------------------------------------------------
 # Stage 1 (no GPU) -- hard corruption only
 # ---------------------------------------------------------------------------
 
 @dataclass
 class Stage1Result:
-    verdict: str  # "ok" | "corrupt"
+    verdict: str  # "ok" | "corrupt" | "error" (could not be checked; never moved)
     reason: str = ""
     audio_path: Path | None = None
 
@@ -227,32 +254,54 @@ def _resolve_ffprobe() -> str | None:
         return shutil.which("ffprobe")
 
 
+def _check_ffprobe(ffprobe_path: str) -> None:
+    """Refuse to run with an ffprobe that does not work at all -- every song
+    would fail the audio check and be moved. Raises ValueError (like the
+    directory guards)."""
+    try:
+        result = subprocess.run([ffprobe_path, "-version"], capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ValueError(f"ffprobe ({ffprobe_path}) does not run: {e}") from e
+    if result.returncode != 0:
+        raise ValueError(f"ffprobe ({ffprobe_path}) does not run (exit code {result.returncode}).")
+
+
+class ProbeError(Exception):
+    """ffprobe itself failed (could not start, timed out, unreadable output);
+    this says nothing about the audio file."""
+
+
 def probe_audio(path: Path, ffprobe_path: str) -> tuple[bool, str]:
     """Run ffprobe on *path*. Returns ``(ok, reason)``; *reason* is only
     meaningful when *ok* is False.
 
-    Not ok when: ffprobe can't be launched, times out, exits non-zero,
-    the output isn't parseable JSON, there's no audio stream, or the
-    reported duration is zero/empty.
+    Not ok when: ffprobe exits non-zero, there's no audio stream, or the
+    reported duration is zero/empty. Raises :class:`ProbeError` when
+    ffprobe can't be launched, times out, or its output isn't parseable
+    JSON.
     """
     cmd = [
         ffprobe_path, "-v", "error", "-print_format", "json",
         "-show_format", "-show_streams", str(path),
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    except subprocess.TimeoutExpired:
-        return False, "ffprobe timeout"
+        # ffprobe writes UTF-8. Decoding it with the console codepage fails on
+        # tags like curly quotes and would lose the whole output.
+        result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+    except subprocess.TimeoutExpired as e:
+        raise ProbeError("ffprobe timeout") from e
     except OSError as e:
-        return False, f"ffprobe launch failed: {e}"
+        raise ProbeError(f"ffprobe launch failed: {e}") from e
 
     if result.returncode != 0:
         return False, f"ffprobe exit {result.returncode}: {result.stderr.strip()[:300]}"
 
     try:
         data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return False, "ffprobe output unparseable"
+    except json.JSONDecodeError as e:
+        raise ProbeError("ffprobe output unparseable") from e
+    if not isinstance(data, dict):
+        raise ProbeError("ffprobe output unparseable")
 
     streams = data.get("streams") or []
     if not any(s.get("codec_type") == "audio" for s in streams):
@@ -283,24 +332,39 @@ def evaluate_stage1(song: SongFolder, *, ffprobe_path: str | None) -> Stage1Resu
     that then simply matches no note lines, which the ``no_notes`` check
     below already catches. Mojibake in an otherwise-valid chart (wrong
     but decodable encoding) is deliberately *not* flagged, per spec: the
-    song still plays, only the lyric text looks wrong.
-    """
-    from ultrastar_score.parser import parse_ultrastar
+    song still plays, only the lyric text looks wrong. An empty ``#GAP``
+    is read as 0, like the games do.
 
+    Read errors (a locked or vanished file, no permission) and ffprobe
+    failures are no evidence of corruption: they give an "error" verdict,
+    which never moves the song.
+    """
     try:
-        parsed = parse_ultrastar(str(song.txt_path))
+        parsed = parse_score_song(song.txt_path)
+    except OSError as e:
+        return Stage1Result("error", f"txt_unreadable: {e}")
     except Exception as e:
         return Stage1Result("corrupt", f"unparsable_txt: {e}")
 
     if len(parsed.all_notes) == 0:
         return Stage1Result("corrupt", "no_notes")
 
-    audio_path = _find_audio_file(song.dir_path, parsed)
+    try:
+        audio_path = _find_audio_file(song.dir_path, parsed)
+    except OSError as e:
+        return Stage1Result("error", f"folder_unreadable: {e}")
     if audio_path is None:
         return Stage1Result("corrupt", "no_audio")
 
     if ffprobe_path:
-        ok, probe_reason = probe_audio(audio_path, ffprobe_path)
+        try:
+            with open(audio_path, "rb") as f:
+                f.read(1)
+            ok, probe_reason = probe_audio(audio_path, ffprobe_path)
+        except OSError as e:
+            return Stage1Result("error", f"audio_unreadable: {e}", audio_path)
+        except ProbeError as e:
+            return Stage1Result("error", f"ffprobe_failed: {e}", audio_path)
         if not ok:
             return Stage1Result("corrupt", f"audio_undecodable: {probe_reason}", audio_path)
 
@@ -338,12 +402,12 @@ def _default_separate(audio_path: Path, temp_dir: Path, *, separator) -> None:
 
 def _default_score_medium(txt_path: Path, vocals_path: Path) -> float:
     """Default stage-2 scoring step: ptAKF MEDIUM score, same approach as
-    ``tools/library_rescore.py``."""
+    ``tools/library_rescore.py``. A ``#RELATIVE:YES`` chart is scored with
+    absolute beats (see :func:`compare_ultrastar.parse_score_song`)."""
     import ultrastar_score
     from ultrastar_score import Difficulty, score_song
-    from ultrastar_score.parser import parse_ultrastar
 
-    song = parse_ultrastar(str(txt_path))
+    song = parse_score_song(txt_path)
     if hasattr(ultrastar_score, "detect_pitch_frames"):
         pitch_frames = ultrastar_score.detect_pitch_frames(str(vocals_path))
         result = score_song(
@@ -427,12 +491,25 @@ def move_song(song: SongFolder, corrupt_dir: Path, *, apply: bool) -> tuple[str,
     preserving its path relative to ``source_dir``. Returns ``(action, reason)``.
 
     Never overwrites an existing destination (skips + logs instead) and
-    never moves ``source_dir`` itself. Move failures (locked file,
+    never moves ``source_dir`` itself. Never moves a folder that holds
+    other song folders either (e.g. a collection folder with a stray
+    chart): the songs inside would go along. Such a folder is reported
+    as an error, in a dry run too. Move failures (locked file,
     permission denied, ...) are caught and reported, never raised -- one
     bad move must not abort the whole run.
     """
     if song.rel_path in (".", ""):
         return "error", "refusing to move source_dir root itself"
+
+    try:
+        nested = _nested_song_folders(song.dir_path)
+    except OSError as e:
+        return "error", f"not_moved: cannot check for song folders inside: {e}"
+    if nested:
+        return "error", (
+            f"contains_song_folders_skipped: {len(nested)} song folder(s) inside, "
+            f"e.g. {min(nested).relative_to(song.dir_path)}"
+        )
 
     dest = corrupt_dir / song.rel_path
 
@@ -516,6 +593,8 @@ def _process_one(
     """Evaluate one song folder end-to-end (stage 1, optionally stage 2,
     then move/skip) and return its CSV row."""
     stage1_result = evaluate_stage1(song, ffprobe_path=ffprobe_path)
+    if stage1_result.verdict == "error":
+        return _row(song, "error", "", "error", stage1_result.reason)
 
     is_corrupt = stage1_result.verdict == "corrupt"
     reason = stage1_result.reason
@@ -603,6 +682,8 @@ def run(
     move_dest_root = corrupt_dir / source_dir.name if source_dir.name else corrupt_dir
 
     resolved_ffprobe = _resolve_ffprobe() if ffprobe_path is _AUTO else ffprobe_path
+    if resolved_ffprobe:
+        _check_ffprobe(resolved_ffprobe)
 
     existing = load_existing_results(log_path)
     songs = find_song_folders(source_dir, skip_dir=corrupt_dir)
@@ -646,17 +727,20 @@ def run(
                     continue
 
             t0 = time.monotonic()
-            row = _process_one(
-                song,
-                corrupt_dir=move_dest_root,
-                apply=apply,
-                ffprobe_path=resolved_ffprobe,
-                stage2=stage2,
-                stage2_threshold=stage2_threshold,
-                separate_fn=own_separate_fn,
-                score_fn=score_fn,
-                temp_dir=temp_dir,
-            )
+            try:
+                row = _process_one(
+                    song,
+                    corrupt_dir=move_dest_root,
+                    apply=apply,
+                    ffprobe_path=resolved_ffprobe,
+                    stage2=stage2,
+                    stage2_threshold=stage2_threshold,
+                    separate_fn=own_separate_fn,
+                    score_fn=score_fn,
+                    temp_dir=temp_dir,
+                )
+            except Exception as e:  # noqa: BLE001 - one song must never abort the run; an error never moves it
+                row = _row(song, "error", "", "error", f"unexpected_error: {e!r}")
             if stage2 and row["stage1_verdict"] == "ok":
                 stage2_time_total += time.monotonic() - t0
                 stage2_done += 1
@@ -685,6 +769,8 @@ def run(
             if action in ("moved", "would_move"):
                 verb = "MOVED" if action == "moved" else "WOULD MOVE"
                 log(f"{verb} {song.rel_path} ({row['reason']})")
+            elif action == "error":
+                log(f"ERROR {song.rel_path} ({row['reason']})")
 
             if i % progress_every == 0 or i == total:
                 elapsed = time.monotonic() - start_time

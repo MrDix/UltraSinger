@@ -9,7 +9,10 @@ separation/scoring are always injected fakes.
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -474,7 +477,6 @@ class TestStage1KeptRecheckedInStage2:
         return d
 
     def test_kept_without_stage2_is_rechecked(self, tmp_path, monkeypatch):
-        import tools.library_triage as lt
         src = tmp_path / "src"; corrupt = tmp_path / "corrupt"
         self._make_song(src, "SongA")
         log = tmp_path / "log.csv"
@@ -487,6 +489,193 @@ class TestStage1KeptRecheckedInStage2:
             called["n"] += 1
             return "ok", "", 95.0
         monkeypatch.setattr(lt, "evaluate_stage2", fake_stage2)
+        # A fake separator, so no real separation model is loaded.
         lt.run(src, corrupt, apply=False, stage2=True, log_path=log,
-               ffprobe_path=None)
+               ffprobe_path=None, separate_fn=lambda audio_path, temp_dir: None,
+               log=lambda *a: None)
         assert called["n"] == 1  # stage2 ran on the previously-kept song
+
+
+# ── Nested song folders ──────────────────────────────────────────────────────
+
+class TestNestedSongFolders:
+    """A flagged folder that holds other song folders (e.g. a collection
+    folder with a stray chart) must never be moved: the songs inside would
+    go along."""
+
+    def _library(self, tmp_path):
+        source = tmp_path / "source"
+        collection = source / "Collection"
+        collection.mkdir(parents=True)
+        _write_chart(collection, "Stray Chart")  # no audio anywhere -> no_audio
+        healthy = _make_song(collection, "Song A")
+        broken = _make_song(collection, "Sub/Song B", notes=False)
+        return source, collection, healthy, broken
+
+    def test_dry_run_reports_the_folder_instead_of_moving_it(self, tmp_path):
+        source, _, _, _ = self._library(tmp_path)
+        summary = lt.run(source, tmp_path / "corrupt", apply=False, log=lambda *a: None)
+        rows = summary.all_rows
+        assert rows["Collection"]["action"] == "error"
+        assert "contains_song_folders_skipped: 2 song folder(s)" in rows["Collection"]["reason"]
+        assert rows[str(Path("Collection/Song A"))]["action"] == "kept"
+        assert rows[str(Path("Collection/Sub/Song B"))]["action"] == "would_move"
+        assert summary.would_move == 1
+
+    def test_apply_moves_only_the_broken_song(self, tmp_path):
+        source, collection, healthy, broken = self._library(tmp_path)
+        corrupt = tmp_path / "corrupt"
+        logged = []
+
+        summary = lt.run(source, corrupt, apply=True, log=logged.append)
+
+        assert (collection / "Stray Chart.txt").exists()
+        assert (healthy / "Song A.txt").exists() and (healthy / "Song A.ogg").exists()
+        assert not broken.exists()
+        assert (corrupt / "source" / "Collection" / "Sub" / "Song B" / "Song B.txt").exists()
+        assert not (corrupt / "source" / "Collection" / "Song A").exists()
+        assert summary.moved == 1 and summary.kept == 1 and summary.errors == 1
+        assert summary.all_rows[str(Path("Collection/Song A"))]["action"] == "kept"
+        assert any(line.startswith("ERROR Collection") for line in logged)
+
+    def test_song_folder_with_other_subfolders_is_still_moved(self, tmp_path):
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Broken Song", notes=False)
+        (song_dir / "covers").mkdir()
+        (song_dir / "covers" / "front.jpg").write_bytes(b"x")
+        (song_dir / "covers" / "readme.txt").write_text("not a chart", encoding="utf-8")
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert summary.moved == 1 and not song_dir.exists()
+
+    def test_unreadable_nested_txt_counts_as_a_song(self, tmp_path, monkeypatch):
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Broken Song", notes=False)
+        (song_dir / "inner").mkdir()
+        locked = song_dir / "inner" / "locked.txt"
+        locked.write_text("#TITLE:x", encoding="utf-8")
+        real_read = lt._read_text_lenient
+
+        def read(path):
+            if path == locked:
+                raise PermissionError(13, "locked")
+            return real_read(path)
+        monkeypatch.setattr(lt, "_read_text_lenient", read)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert song_dir.exists() and summary.moved == 0
+        assert "contains_song_folders_skipped" in summary.all_rows["Broken Song"]["reason"]
+
+
+# ── Read errors and tool failures are not corruption ────────────────────────
+
+class TestStage1ErrorsNeverMove:
+    def test_empty_gap_is_not_corrupt(self, tmp_path):
+        d = tmp_path / "Empty Gap"
+        d.mkdir()
+        _write_chart(d, "Empty Gap", gap="")
+        (d / "Empty Gap.ogg").write_bytes(b"fake audio")
+        result = lt.evaluate_stage1(_song_folder(tmp_path, Path("Empty Gap"), "Empty Gap.txt"), ffprobe_path=None)
+        assert result.verdict == "ok"
+
+    def test_unreadable_chart_is_an_error_not_corrupt(self, tmp_path, monkeypatch):
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Locked Song")
+
+        def locked(path):
+            raise PermissionError(13, "file is locked")
+        monkeypatch.setattr(lt, "parse_score_song", locked)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        row = summary.all_rows["Locked Song"]
+        assert song_dir.exists() and summary.moved == 0
+        assert row["action"] == "error" and row["stage1_verdict"] == "error"
+        assert "txt_unreadable" in row["reason"]
+        assert summary.stage1_corrupt == 0
+
+    def test_vanished_chart_is_an_error(self, tmp_path):
+        _make_song(tmp_path, "Gone")
+        song = _song_folder(tmp_path, Path("Gone"), "Gone.txt")
+        (tmp_path / "Gone" / "Gone.txt").unlink()
+        assert lt.evaluate_stage1(song, ffprobe_path=None).verdict == "error"
+
+    def test_ffprobe_that_cannot_start_is_an_error(self, tmp_path, monkeypatch):
+        _make_song(tmp_path, "Song")
+        song = _song_folder(tmp_path, Path("Song"), "Song.txt")
+
+        def cannot_start(*a, **k):
+            raise OSError("cannot start")
+        monkeypatch.setattr(lt.subprocess, "run", cannot_start)
+
+        result = lt.evaluate_stage1(song, ffprobe_path="ffprobe")
+        assert result.verdict == "error" and "ffprobe_failed" in result.reason
+
+    def test_broken_ffprobe_stops_the_run_before_anything_moves(self, tmp_path, monkeypatch):
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Song")
+        monkeypatch.setattr(lt.subprocess, "run",
+                            lambda cmd, **k: subprocess.CompletedProcess(cmd, 3221225781, b"", b""))
+        with pytest.raises(ValueError, match="ffprobe"):
+            lt.run(source, tmp_path / "corrupt", apply=True, ffprobe_path="ffprobe", log=lambda *a: None)
+        assert song_dir.exists()
+
+
+class TestProbeAudioOutput:
+    def test_non_ascii_tags_do_not_lose_the_output(self, tmp_path, monkeypatch):
+        """ffprobe writes UTF-8. Decoded with the Windows console codepage,
+        tags like ” or Ł turned the output into None and crashed the run."""
+        payload = json.dumps({"streams": [{"codec_type": "audio"}],
+                              "format": {"duration": "12.5", "tags": {"title": "”A” Á Ł"}}},
+                             ensure_ascii=False)
+        child = f"import sys; sys.stdout.buffer.write({ascii(payload)}.encode('utf-8'))"
+        real_run = subprocess.run
+
+        def fake_ffprobe(cmd, **kwargs):
+            return real_run([sys.executable, "-c", child], **kwargs)
+        monkeypatch.setattr(lt.subprocess, "run", fake_ffprobe)
+
+        assert lt.probe_audio(tmp_path / "x.ogg", "ffprobe") == (True, "")
+
+
+class TestRunSurvivesSongErrors:
+    def test_unexpected_error_in_one_song_does_not_stop_the_run(self, tmp_path, monkeypatch):
+        source = tmp_path / "source"
+        _make_song(source, "Song A")
+        _make_song(source, "Song B", notes=False)
+        _make_song(source, "Song C")
+        real = lt._process_one
+
+        def flaky(song, **kwargs):
+            if song.rel_path == "Song A":
+                raise TypeError("the JSON object must be str, bytes or bytearray, not NoneType")
+            return real(song, **kwargs)
+        monkeypatch.setattr(lt, "_process_one", flaky)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert summary.all_rows["Song A"]["action"] == "error"
+        assert (source / "Song A").exists()
+        assert summary.moved == 1 and summary.kept == 1 and summary.errors == 1
+
+
+# ── #RELATIVE charts in stage 2 ──────────────────────────────────────────────
+
+class TestStage2RelativeChart:
+    def test_relative_chart_is_scored_with_absolute_beats(self, tmp_path, monkeypatch):
+        us = pytest.importorskip("ultrastar_score")
+        d = tmp_path / "Song"
+        d.mkdir()
+        txt = _write_chart(d, "Song", extra_lines=["#RELATIVE:YES", ": 0 4 60 a", "- 8 10"])
+        seen = {}
+
+        def fake_score_song(song, vocals_path, difficulty=None, pitch_frames=None):
+            seen["beats"] = [n.start_beat for n in song.all_notes]
+            return types.SimpleNamespace(percentage=90.0)
+        monkeypatch.setattr(us, "score_song", fake_score_song)
+        monkeypatch.setattr(us, "detect_pitch_frames", lambda path: [], raising=False)
+
+        assert lt._default_score_medium(txt, tmp_path / "vocals.wav") == 90.0
+        assert seen["beats"] == [0, 10]

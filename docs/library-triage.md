@@ -51,6 +51,12 @@ that looks like an UltraStar chart (has `#TITLE` / `#BPM` / note lines). Plain
 collection folders, or folders whose only `.txt` is something like a readme,
 are ignored — never moved.
 
+A folder that holds other song folders is never moved, even when it is flagged
+itself (for example a collection folder with a stray chart but no audio):
+moving it would take the songs inside along. It is logged as `error`
+(`contains_song_folders_skipped`) so you can check it by hand; the songs inside
+are checked on their own as usual.
+
 ---
 
 ## Stage 1 — corruption check (always runs, no GPU)
@@ -60,7 +66,7 @@ This is deliberately conservative: when in doubt, the song is kept.
 
 | Verdict | Meaning |
 | --- | --- |
-| `unparsable_txt` | The chart cannot be parsed (e.g. a non-numeric `#BPM`). |
+| `unparsable_txt` | The chart cannot be parsed (e.g. a non-numeric `#BPM`). An empty `#GAP` is fine: it counts as 0, as in the games. |
 | `no_notes` | The chart parses but has zero notes. |
 | `no_audio` | Neither the `#MP3` / `#AUDIO` file nor any audio file (`.mp3/.ogg/.opus/.m4a/.wav/.flac`) is present in the folder. |
 | `audio_undecodable` | `ffprobe` cannot read the audio, or it has no audio stream / zero duration. |
@@ -68,6 +74,12 @@ This is deliberately conservative: when in doubt, the song is kept.
 > Note on garbled text: mojibake (wrong-encoding lyrics) alone is **not** treated
 > as corruption — the song still plays. Truly unreadable charts fall into
 > `no_notes` instead.
+
+A file that cannot be read right now (locked by another program, no permission,
+deleted during the run) says nothing about the song, and neither does an
+`ffprobe` that fails to start or times out. Such songs are logged as `error`
+and stay where they are; the next run checks them again. If `ffprobe` is found
+but does not work at all, the run stops before it checks any song.
 
 ---
 
@@ -79,7 +91,8 @@ actual singing:
 1. Separate the vocals into a **temporary** directory (Mel-Band-Roformer by
    default; the model is loaded once and reused across songs).
 2. Score the chart at **Medium** difficulty against those vocals using the real
-   ptAKF game-scoring engine.
+   ptAKF game-scoring engine. Charts with `#RELATIVE:YES` are read with their
+   real (absolute) note times.
 3. If the score is **below `--stage2-threshold` (default 40 %)**, the song fails
    and is moved. The temporary vocals are always deleted afterwards.
 
@@ -121,10 +134,13 @@ This tool is built to fail safe:
   and writes the CSV log; nothing on disk is changed.
 - **Errors never move a song.** If separation or scoring throws for any reason,
   the song is recorded as `error` and **kept** — a move happens only when a real
-  score was computed and found to be below the threshold.
+  score was computed and found to be below the threshold. The same goes for
+  files that cannot be read and for `ffprobe` failures in Stage 1.
 - **Hard guards:** the run aborts if `<corrupt_dir>` is inside `<source_dir>`
   (which would re-scan moved songs) or equal to it; the source root itself is
   never moved.
+- **No song is taken along:** a folder that holds other song folders is never
+  moved, even when it is flagged itself.
 - **No overwriting:** if a destination already exists, the song is skipped and
   logged instead of overwritten.
 - **Isolated failures:** a single failed move (locked file, permissions) is
