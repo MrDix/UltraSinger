@@ -241,4 +241,7 @@ class TestMatchesSha:
         file = tmp_path / "model.pt"
         file.write_bytes(b"weights")
         assert ms._matches_sha(file, "abc123")
-        assert "is not checked" in capsys.readouterr().out
+        assert "for model.pt, so its content is not checked" in capsys.readouterr().out
+        # a download is checked in a temporary file: the warning names the model
+        assert ms._matches_sha(file, "abc123", name="segmentation.pt")
+        assert "for segmentation.pt," in capsys.readouterr().out

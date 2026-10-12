@@ -105,8 +105,8 @@ def relative_line_break(line: str) -> tuple[float, float] | None:
     """The numbers of a line break ``- <break beat> <shift>`` of a #RELATIVE:YES
     chart, both counted from the start of the current line: the break, and how
     far the start of the next line moves on (a break with one number moves the
-    start there). None without a number; a second value that is not a number
-    counts as missing."""
+    start there). None when the first value is not a finite number; a second
+    value that is not a finite number counts as missing."""
     numbers = []
     for part in line[1:].split()[:2]:
         try:
