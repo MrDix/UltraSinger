@@ -130,9 +130,10 @@ class _FormatProbeWorker(QObject):
                         "", track, flags=re.IGNORECASE,
                     ).strip()
                 elif not artist:
-                    artist = info.get("uploader") or info.get("channel") or ""
+                    from modules.name_matching import artist_from_channel
+                    artist = artist_from_channel(info.get("uploader") or info.get("channel") or "")
                     track = track or video_title
-            lyrics_status = self._check_lrclib(artist, track)
+            lyrics_status = self._check_lrclib(artist, track, duration or None)
 
             # Video platform language metadata
             yt_language = info.get("language") or ""
@@ -163,15 +164,13 @@ class _FormatProbeWorker(QObject):
             self.finished.emit(self._video_id, "", "")
 
     @staticmethod
-    def _check_lrclib(artist: str, title: str) -> str:
+    def _check_lrclib(artist: str, title: str, duration: float | None = None) -> str:
         """Query LRCLIB for lyrics availability (silent, no console output)."""
         if not artist or not title:
             return "\U0001f4dd No metadata"
         try:
-            from modules.lrclib_client import _search_by_fields, _search_by_query
-            result = _search_by_fields(artist, title)
-            if result is None:
-                result = _search_by_query(f"{artist} {title}")
+            from modules.lrclib_client import find_lyrics
+            result = find_lyrics(artist, title, duration)
             if result is None:
                 return "\U0001f4dd No lyrics"
             if result.synced_lyrics:

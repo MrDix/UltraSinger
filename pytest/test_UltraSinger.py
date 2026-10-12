@@ -252,6 +252,27 @@ class TestTranscribeAudioLyricsLanguage(unittest.TestCase):
         correct.assert_called_once()
 
 
+class TestAudioLength(unittest.TestCase):
+    """The lyrics lookup gets the length of the audio to pick the fitting version."""
+
+    def test_length_of_a_wav(self):
+        import os
+        import tempfile
+
+        import numpy as np
+        import soundfile as sf
+
+        from src.UltraSinger import audio_length
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "audio.wav")
+            sf.write(path, np.zeros(16000 * 3), 16000)
+            self.assertAlmostEqual(audio_length(path), 3.0)
+
+    def test_unreadable_file(self):
+        from src.UltraSinger import audio_length
+        self.assertIsNone(audio_length("no such file.wav"))
+
+
 class TestTimingPassesWithModel(unittest.TestCase):
     """Timing refinement and GAP sweep are skipped for notes from the segmentation model."""
 

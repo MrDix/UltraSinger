@@ -263,6 +263,18 @@ class TestGetVideoTitle(unittest.TestCase):
         self.assertEqual(video_title, "Just A Title")
 
     @patch("yt_dlp.YoutubeDL")
+    def test_channel_additions_are_not_part_of_the_artist(self, mock_yt_dl):
+        for channel, expected in (("SomeArtistVEVO", "SomeArtist"), ("Some Artist - Topic", "Some Artist"),
+                                  ("Some Artist Official", "Some Artist"), ("VEVO", "VEVO")):
+            with self.subTest(channel=channel):
+                mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
+                    "title": "Just A Title",
+                    "channel": channel,
+                }
+                artist, _title, _video_title, _language = get_video_title("https://fakeUrl")
+                self.assertEqual(artist, expected)
+
+    @patch("yt_dlp.YoutubeDL")
     def test_get_video_title_artist_without_track_falls_through(self, mock_yt_dl):
         """If yt-dlp provides artist but no track, fall through to title parsing."""
         mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
