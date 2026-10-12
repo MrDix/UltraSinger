@@ -2083,12 +2083,10 @@ def infos_from_audio_video_input_file() -> tuple[str, str, str, MediaInfo]:
         basename_with_ext = f"{basename_without_ext}{extension}"
         audio_ext = extension.lstrip('.')
         video_ext = None
-        os_helper.copy(settings.input_file_path, song_folder_output_path)
-        os_helper.rename(
-            os.path.join(song_folder_output_path, os.path.basename(settings.input_file_path)),
-            os.path.join(song_folder_output_path, basename_with_ext),
-        )
+        # Copied under its new name at once: in the song folder, the input file's
+        # own name could make the path too long
         ultrastar_audio_input_path = os.path.join(song_folder_output_path, basename_with_ext)
+        os_helper.copy(settings.input_file_path, ultrastar_audio_input_path)
 
         # Convert to UltraStar-compatible format if needed
         ultrastar_audio_input_path, audio_ext = convert_to_ultrastar_format(

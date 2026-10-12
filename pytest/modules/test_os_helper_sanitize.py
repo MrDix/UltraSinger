@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
@@ -64,6 +65,50 @@ class TestNameLength:
         target = tmp_path / name
         os_helper.create_folder(str(target))
         assert target.is_dir() and target.name == name
+
+    def test_characters_outside_the_bmp_count_twice(self):
+        # Windows counts the path length in UTF-16 units, where an emoji takes two
+        note = "\U0001F3B5"
+        assert sanitize_filename("Artist - " + note * 25) == "Artist - " + note * 25  # 59 units
+        short = sanitize_filename("Artist - " + note * 26)  # 61 units in 35 characters
+        assert os_helper.utf16_len(short) <= MAX_NAME_CHARS
+        assert re.fullmatch(f"Artist - {note}+ [0-9a-f]{{6}}", short)
+
+    def test_unpaired_surrogate(self):
+        # A file name on Windows can hold one: shortened without an error
+        short = os_helper.cap_name_length("Artist - \ud800" + "x" * 100)
+        assert os_helper.utf16_len(short) <= MAX_NAME_CHARS and short.startswith("Artist - \ud800x")
+
+    def test_utf16_prefix_keeps_whole_characters(self):
+        assert os_helper.utf16_prefix("ab\U0001F3B5c", 3) == "ab"
+        assert os_helper.utf16_prefix("ab\U0001F3B5c", 4) == "ab\U0001F3B5"
+        assert os_helper.utf16_prefix("abc", 10) == "abc"
+
+
+class TestLongInputFileName:
+    """A local input file is copied under the song's name at once: under its own,
+    longer name, the path in the song folder could exceed the Windows path limit."""
+
+    def test_copied_under_the_song_name(self, tmp_path, monkeypatch):
+        import src.UltraSinger as us
+        from src.modules.musicbrainz_client import SongInfo
+
+        source = tmp_path / ("Artist - " + "Long Title " * 8 + ".mp3")
+        source.write_bytes(b"ID3")
+        targets = []
+        copy = os_helper.copy
+
+        def recorded_copy(original, target):
+            targets.append(target)
+            copy(original, target)
+        monkeypatch.setattr(os_helper, "copy", recorded_copy)
+        monkeypatch.setattr(us, "search_musicbrainz", lambda title, artist: SongInfo(title="Title", artist="Artist"))
+        monkeypatch.setattr(us, "is_video_file", lambda path: False)
+        monkeypatch.setattr(us.settings, "input_file_path", str(source))
+        monkeypatch.setattr(us.settings, "output_folder_path", str(tmp_path / "out"))
+        _, folder, audio_path, _ = us.infos_from_audio_video_input_file()
+        assert targets == [audio_path] == [os.path.join(folder, "Artist - Title.mp3")]
+        assert os.listdir(folder) == ["Artist - Title.mp3"]
 
 
 class TestUnusedSongOutputDir:

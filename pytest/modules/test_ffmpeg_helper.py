@@ -109,16 +109,17 @@ class TestSeveralAudioStreams:
     the most channels)."""
 
     def test_first_audio_stream_is_extracted(self, tmp_path):
+        # Encoders that every ffmpeg build has
         video = tmp_path / "video.mkv"
         _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=1",
                 "-f", "lavfi", "-i", "sine=frequency=880:duration=1",
                 "-map", "0:a", "-map", "1:a",
-                "-c:a:0", "libvorbis", "-ac:a:0", "2", "-c:a:1", "ac3", "-ac:a:1", "6",
+                "-c:a:0", "flac", "-ac:a:0", "2", "-c:a:1", "ac3", "-ac:a:1", "6",
                 "-disposition:a:0", "0", "-disposition:a:1", "default", str(video))
         ext = get_audio_codec_and_extension(str(video))
-        assert ext == "ogg"
+        assert ext == "flac"
         audio = tmp_path / f"audio.{ext}"
         extract_audio(str(video), str(audio))
         probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,channels",
                                 "-of", "csv=p=0", str(audio)], check=True, capture_output=True, text=True)
-        assert probe.stdout.split() == ["vorbis,2"]
+        assert probe.stdout.split() == ["flac,2"]

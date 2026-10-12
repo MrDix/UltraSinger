@@ -385,6 +385,26 @@ class TestVideoFormat(unittest.TestCase):
         self.assertEqual(self._pick([_AUDIO, _PREMIUM]), ["616", "251"])
 
 
+class TestPlaylistUrl(unittest.TestCase):
+    """A watch URL that also names a playlist stands for its video: title, download and
+    thumbnail are those of the video, the playlist is not read."""
+
+    @patch("src.modules.Audio.video_platform.yt_dlp.YoutubeDL")
+    def test_only_the_video(self, mock_yt_dl):
+        url = "https://fakeUrl/watch?v=x&list=y"
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "Artist - Title.mp4")
+            open(video, "wb").close()
+            mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
+                "title": "Artist - Title", "thumbnail": None, "requested_downloads": [{"filepath": video}]}
+            get_video_title(url)
+            getattr(video_platform, "__download_video_with_audio")(url, "Artist - Title", folder)
+            getattr(video_platform, "__download_thumbnail")(url, "Artist - Title", folder)
+        options = [call.args[0] for call in mock_yt_dl.call_args_list]
+        self.assertEqual(len(options), 3)
+        self.assertEqual([o.get("noplaylist") for o in options], [True, True, True])
+
+
 class TestOutputTemplate(unittest.TestCase):
     """A "%" in the song name or the output folder is part of the file name, no field of the video's data."""
 

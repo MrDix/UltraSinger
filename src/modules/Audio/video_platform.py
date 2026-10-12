@@ -113,6 +113,8 @@ def get_video_title(url: str, cookiefile: str | None = None,
     ydl_opts = _apply_po_token({
         "cookiefile": cookiefile,
         "logger": _FilteredLogger(),
+        # A watch URL that also names a playlist stands for its video only
+        "noplaylist": True,
     }, po_token)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         result = ydl.extract_info(
@@ -156,6 +158,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         "fragment_retries": _DOWNLOAD_RETRIES,
         "cookiefile": cookiefile,
         "logger": _FilteredLogger(),
+        "noplaylist": True,  # as in get_video_title
     }, po_token)
     return __start_download(ydl_opts, url)
 
@@ -169,6 +172,7 @@ def __download_thumbnail(url: str, clear_filename: str, output_path: str, cookie
         "skip_download": True,
         "writethumbnail": True,
         "cookiefile": cookiefile,
+        "noplaylist": True,  # as in get_video_title
     }, po_token)
 
     try:

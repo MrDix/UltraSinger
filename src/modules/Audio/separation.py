@@ -79,19 +79,27 @@ def _separate_with_demucs(
     output_folder: str,
     model: DemucsModel,
     device: str = "cpu",
+    track_folder: str | None = None,
 ) -> None:
-    """Separate vocals from audio with Demucs."""
+    """Separate vocals from audio with Demucs.
+
+    The stems go to ``<output_folder>/separated/<model>/<track_folder>``, by
+    default a folder named after the input file.
+    """
     print(
         f"{ULTRASINGER_HEAD} Separating vocals from audio with "
         f"{blue_highlighted('demucs')} model {blue_highlighted(model.value)} "
         f"on {red_highlighted(device)}"
     )
+    # Demucs fills in the names in braces of its file name pattern
+    track = "{track}" if track_folder is None else track_folder.replace("{", "{{").replace("}", "}}")
     demucs.separate.main([
         "--two-stems", "vocals",
         "-d", device,
         "--float32",
         "-n", model.value,
         "--out", os.path.join(output_folder, "separated"),
+        "--filename", f"{track}/{{stem}}.{{ext}}",
         input_file_path,
     ])
     # The next model (the transcription) gets the separation's GPU memory
@@ -107,8 +115,8 @@ def create_separator(output_dir: str, force_cpu: bool = False):
     """An audio-separator ``Separator`` that writes WAV stems to ``output_dir``.
 
     The library picks its device itself: the GPU whenever PyTorch finds one
-    (CUDA, or MPS on Apple Silicon). With ``force_cpu`` (--force_cpu) it keeps
-    to the CPU instead.
+    (CUDA, or the MPS backend). With ``force_cpu`` (--force_cpu) it keeps to
+    the CPU instead.
 
     Raises ``ImportError`` if ``audio-separator`` is not installed.
     """
@@ -121,12 +129,17 @@ def create_separator(output_dir: str, force_cpu: bool = False):
         ) from exc
 
     separator_class = _cpu_separator_class(Separator) if force_cpu else Separator
-    return separator_class(
+    separator = separator_class(
         output_dir=output_dir,
         output_format="WAV",
         sample_rate=44100,
         normalization_threshold=0.9,
     )
+    if force_cpu and getattr(getattr(separator, "torch_device", None), "type", None) != "cpu":
+        # A version of the library that picks the device in another way
+        raise RuntimeError("audio-separator did not keep to the CPU (--force_cpu): "
+                           "it no longer picks its device with setup_torch_device")
+    return separator
 
 
 def _cpu_separator_class(separator_class):
@@ -228,11 +241,9 @@ def separate_vocal_from_audio(
 
     basename = os.path.splitext(os.path.basename(audio_output_file_path))[0]
     model_key = resolved_model.value if hasattr(resolved_model, "value") else str(resolved_model)
-    if backend == SeparatorBackend.AUDIO_SEPARATOR:
-        # The audio file of a txt input keeps its own name, which can be longer
-        # than the song names (see os_helper.MAX_NAME_CHARS); Demucs names the
-        # folder after the file itself
-        basename = cap_name_length(basename)
+    # The audio file of a txt input keeps its own name, which can be longer than
+    # the song names (see os_helper.MAX_NAME_CHARS)
+    basename = cap_name_length(basename)
     audio_separation_path = os.path.join(
         cache_folder_path, "separated", model_key, basename,
     )
@@ -269,6 +280,7 @@ def separate_vocal_from_audio(
                     output_folder=cache_folder_path,
                     model=resolved_model,
                     device=pytorch_device,
+                    track_folder=basename,
                 )
             with open(source_key_path, "w", encoding="utf-8") as file:
                 file.write(source_key)

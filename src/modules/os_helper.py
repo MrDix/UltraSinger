@@ -58,8 +58,9 @@ def remove_folder(cache_path):
 FILENAME_REPLACEMENTS = (('?:"', ""), ("<", "("), (">", ")"), ("/\\|*", "-"))
 
 # Characters of a song name ("Artist - Title") in the names of its folder and
-# files. The longest paths made from it are those of the separated stems, on
-# Windows 177 characters plus the user name plus the song name:
+# files, counted as Windows counts them in paths (see utf16_len). The longest
+# paths made from it are those of the separated stems, on Windows 177
+# characters plus the user name plus the song name:
 #   %LOCALAPPDATA%\UltraSinger\cache\<cache folder>\separated\<model>\<song name>\no_vocals.wav
 # and, in a cache kept in the song folder, which holds the name twice:
 #   <output folder>\<song name> (2)\cache\separated\<model>\<song name>\no_vocals.wav
@@ -68,6 +69,23 @@ FILENAME_REPLACEMENTS = (('?:"', ""), ("<", "("), (">", ")"), ("/\\|*", "-"))
 MAX_NAME_CHARS = 60
 # Hex characters of the hash that ends a shortened name
 _NAME_HASH_CHARS = 6
+
+
+def utf16_len(text: str) -> int:
+    """Length of ``text`` as Windows counts it in paths: in UTF-16 units, so a
+    character outside the Basic Multilingual Plane (e.g. an emoji) counts twice."""
+    return len(text) + sum(1 for char in text if ord(char) > 0xFFFF)
+
+
+def utf16_prefix(text: str, units: int) -> str:
+    """The longest beginning of ``text`` that takes at most ``units`` UTF-16
+    units (see utf16_len), of whole characters only."""
+    used = 0
+    for i, char in enumerate(text):
+        used += 2 if ord(char) > 0xFFFF else 1
+        if used > units:
+            return text[:i]
+    return text
 
 
 def sanitize_filename(fname: str) -> str:
@@ -82,13 +100,15 @@ def sanitize_filename(fname: str) -> str:
 
 
 def cap_name_length(name: str, max_chars: int = MAX_NAME_CHARS) -> str:
-    """``name``, or when it is longer than ``max_chars`` characters its
-    beginning (ended at a word) and a short hash of the whole name: a name is
-    always shortened alike, and long names that begin alike stay apart."""
-    if len(name) <= max_chars:
+    """``name``, or when it is longer than ``max_chars`` characters (see
+    utf16_len) its beginning (ended at a word) and a short hash of the whole
+    name: a name is always shortened alike, and long names that begin alike
+    stay apart."""
+    if utf16_len(name) <= max_chars:
         return name
-    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:_NAME_HASH_CHARS]
-    head = name[:max_chars - _NAME_HASH_CHARS - 1]
+    # "surrogatepass": a file name on Windows can hold an unpaired surrogate
+    digest = hashlib.sha256(name.encode("utf-8", "surrogatepass")).hexdigest()[:_NAME_HASH_CHARS]
+    head = utf16_prefix(name, max_chars - _NAME_HASH_CHARS - 1)
     # End at a word, unless that drops more than a third
     word_end = head.rfind(" ")
     if name[len(head)] != " " and word_end >= len(head) * 2 // 3:

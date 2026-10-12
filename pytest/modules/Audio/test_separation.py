@@ -9,7 +9,7 @@ import pytest
 
 from src.modules.Audio import separation
 from src.modules.Audio.separation import AudioSeparatorModel, DemucsModel, SeparatorBackend
-from src.modules.os_helper import MAX_NAME_CHARS
+from src.modules.os_helper import MAX_NAME_CHARS, cap_name_length
 
 
 def _audio_separator(calls):
@@ -73,10 +73,10 @@ class TestSeparationCache:
     def test_demucs_stems_are_keyed_alike(self, tmp_path, song, monkeypatch):
         calls = []
 
-        def demucs(input_file_path, output_folder, model, device):
-            # Demucs makes separated/<model>/<file name>/ in the folder it is given
+        def demucs(input_file_path, output_folder, model, device, track_folder=None):
+            # Demucs makes separated/<model>/<track folder>/ in the folder it is given
             calls.append(input_file_path)
-            out = Path(output_folder, "separated", model.value, Path(input_file_path).stem)
+            out = Path(output_folder, "separated", model.value, track_folder or Path(input_file_path).stem)
             out.mkdir(parents=True, exist_ok=True)
             (out / "vocals.wav").write_bytes(b"vocals")
             (out / "no_vocals.wav").write_bytes(b"instrumental")
@@ -101,6 +101,29 @@ class TestSeparationCache:
         assert len(os.path.basename(folder)) <= MAX_NAME_CHARS
         assert os.path.basename(folder).startswith("Artist - Long Title")
         assert Path(folder, "vocals.wav").read_bytes() == b"vocals of mix"
+
+    @pytest.mark.parametrize("name", ["Artist - " + "Long Title " * 10, "Artist - Title {Live}"])
+    def test_demucs_stem_folder(self, tmp_path, monkeypatch, name):
+        # A long file name gets a short stem folder with Demucs too; braces are no pattern
+        import demucs.separate as demucs_separate
+        song = tmp_path / (name + ".mp3")
+        song.write_bytes(b"mix")
+
+        def main(args):
+            # Writes the stems where Demucs would, from its own arguments
+            opts = demucs_separate.get_parser().parse_args(args)
+            track = opts.tracks[0].name
+            for stem in ("vocals", "no_vocals"):
+                path = opts.out / opts.name / opts.filename.format(
+                    track=track.rsplit(".", 1)[0], trackext=track.rsplit(".", 1)[-1], stem=stem, ext="wav")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"stem")
+        monkeypatch.setattr(separation.demucs.separate, "main", main)
+        monkeypatch.setattr(separation, "release_gpu_memory", lambda: None)
+        folder = separation.separate_vocal_from_audio(str(tmp_path / "cache"), str(song), True, False, "cpu",
+                                                      DemucsModel.HTDEMUCS, backend=SeparatorBackend.DEMUCS)
+        assert os.path.basename(folder) == cap_name_length(os.path.splitext(song.name)[0])
+        assert Path(folder, "vocals.wav").is_file() and Path(folder, "no_vocals.wav").is_file()
 
 
 class _LibrarySeparator:
@@ -153,6 +176,22 @@ class TestForceCpu:
         separator = separation.create_separator(str(tmp_path / "out"), force_cpu=True)
         assert separator.torch_device.type == "cpu"
         assert separator.onnx_execution_provider == ["CPUExecutionProvider"]
+
+    def test_library_version_that_picks_the_device_otherwise(self, tmp_path, monkeypatch):
+        # The override then has no effect: an error, not a separation on the GPU
+        import torch
+        import audio_separator.separator as sepmod
+
+        class RenamedSetup:
+            def __init__(self, output_dir, **kwargs):
+                self.choose_device()
+
+            def choose_device(self):
+                self.torch_device = torch.device("cuda")
+        monkeypatch.setattr(sepmod, "Separator", RenamedSetup)
+        with pytest.raises(RuntimeError, match="did not keep to the CPU"):
+            separation.create_separator(str(tmp_path), force_cpu=True)
+        assert separation.create_separator(str(tmp_path)).torch_device.type == "cuda"
 
     def test_vocal_separation(self, tmp_path, song, library_separator):
         _separate(tmp_path / "cache", song, force_cpu=True)
@@ -218,11 +257,13 @@ class TestPathLength:
     """The paths made from a song name stay below the Windows limit of 260 characters
     (see os_helper.MAX_NAME_CHARS)."""
 
-    def test_longest_paths(self, tmp_path):
+    # Windows counts UTF-16 units: an emoji takes two
+    @pytest.mark.parametrize("title", ["x" * 200, "\U0001F3B5" * 100])
+    def test_longest_paths(self, tmp_path, title):
         from src.modules import conversion_cache
-        from src.modules.os_helper import sanitize_filename
+        from src.modules.os_helper import sanitize_filename, utf16_len
 
-        name = sanitize_filename("Artist - " + "x" * 200)
+        name = sanitize_filename("Artist - " + title)
         song_folder = name + " (99)"
         cache_folder = os.path.basename(conversion_cache.create(song_folder, str(tmp_path)))
         model = max((m.value for m in AudioSeparatorModel), key=len)
@@ -232,4 +273,4 @@ class TestPathLength:
                             cache_folder, "separated", model, stem)
         # An output folder of 50 characters, with the cache kept in the song folder
         kept_cache = ntpath.join("D:\\" + "o" * 47, song_folder, "cache", "separated", model, stem)
-        assert len(cache) < 260 and len(kept_cache) < 260
+        assert utf16_len(cache) < 260 and utf16_len(kept_cache) < 260
