@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .browser_tab import BrowserTab
-from .config import load_config, save_config
+from .config import config_dir, load_config, save_config
 from .cookie_file import remove_cookie_file, remove_stale_copies
 from .models import LLMProvider
 from .preferences_tab import PreferencesTab
@@ -154,9 +154,13 @@ class MainWindow(QMainWindow):
         # Create tabs (Video, Console, Settings)
         self._browser_tab = BrowserTab()
         self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
+        # Private cookie copies and yt-dlp option files of yt-dlp runs that a
+        # crash left behind
+        stale_dirs = {config_dir()}
         if self._browser_tab.probe_cookie_file:
-            # Private cookie copies of yt-dlp runs that a crash left behind
-            remove_stale_copies(Path(self._browser_tab.probe_cookie_file).parent)
+            stale_dirs.add(Path(self._browser_tab.probe_cookie_file).parent)
+        for directory in stale_dirs:
+            remove_stale_copies(directory)
         self._queue_tab = QueueTab()
         self._settings_tab = PreferencesTab(
             self._config, self._browser_tab.cookie_manager

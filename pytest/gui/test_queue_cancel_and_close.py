@@ -228,7 +228,16 @@ class _FakeBrowserTab(QWidget):
 
 
 @pytest.fixture
-def window(monkeypatch):
+def settings_dir(tmp_path, monkeypatch):
+    """The settings directory, cleaned of stale private files when the window starts."""
+    from src.gui import config as config_module
+
+    monkeypatch.setattr(config_module, "_CONFIG_DIR", tmp_path)
+    return tmp_path
+
+
+@pytest.fixture
+def window(monkeypatch, settings_dir):
     from src.gui import main_window
     from src.gui.widgets import llm_provider_list
 
@@ -241,6 +250,23 @@ def window(monkeypatch):
         win = main_window.MainWindow({**_DEFAULTS, "cookie_file": ""})
     with patch.object(main_window, "save_config"):
         yield win
+
+
+def test_start_removes_stale_private_files(settings_dir, monkeypatch):
+    """A crash can leave a cookie copy or a PO-token option file; the next start removes them,
+    also without a cookie file setting."""
+    from src.gui import cookie_file
+    from src.gui import main_window
+    from src.gui.widgets import llm_provider_list
+
+    monkeypatch.setattr(llm_provider_list, "_shutting_down", False)
+    options = cookie_file.write_private_options(settings_dir, "--extractor-args x")
+    copy = cookie_file.write_private_copy(settings_dir, "cookies")
+    with patch.object(main_window, "BrowserTab", _FakeBrowserTab), \
+            patch.object(main_window.MainWindow, "_start_potoken_provider", lambda self: None), \
+            patch.object(main_window.MainWindow, "_start_ytdlp_update_check", lambda self: None):
+        main_window.MainWindow({**_DEFAULTS, "cookie_file": ""})
+    assert not options.exists() and not copy.exists()
 
 
 class TestCloseWindow:

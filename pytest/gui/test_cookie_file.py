@@ -147,9 +147,17 @@ def test_probe_uses_a_private_copy_and_removes_it(tmp_path):
     assert list(tmp_path.iterdir()) == []  # the copy is gone
 
 
-def test_probe_gets_the_po_token_in_a_private_option_file(tmp_path):
-    """Not on yt-dlp's command line, which other local users can read."""
+@pytest.mark.parametrize("with_cookie_setting", [True, False])
+def test_probe_gets_the_po_token_in_a_private_option_file(tmp_path, monkeypatch, with_cookie_setting):
+    """Not on yt-dlp's command line, which other local users can read; the file lives
+    in the settings directory (cleaned at start) also without a cookie file setting."""
+    from src.gui import config as config_module
+
+    settings_dir = tmp_path / "settings"
+    monkeypatch.setattr(config_module, "_CONFIG_DIR", settings_dir)
     host = _ProbeHost(tmp_path)
+    if not with_cookie_setting:
+        host.probe_cookie_file = ""
     host.media_interceptor.get_po_token.return_value = "pot-value"
     seen = {}
 
@@ -167,8 +175,9 @@ def test_probe_gets_the_po_token_in_a_private_option_file(tmp_path):
             thread.join(5)
     assert not any("pot-value" in part for part in seen["cmd"])
     assert seen["text"].split() == ["--extractor-args", "youtube:po_token=web.gvs+pot-value"]
-    assert seen["options"].parent == tmp_path
-    assert list(tmp_path.iterdir()) == []  # option file and cookie copy are gone
+    assert seen["options"].parent == settings_dir
+    assert list(settings_dir.iterdir()) == []  # the option file is gone
+    assert [p.name for p in tmp_path.iterdir()] == ["settings"]  # and the cookie copy
 
 
 def test_shutdown_stops_running_probes(tmp_path):

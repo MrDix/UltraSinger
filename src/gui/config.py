@@ -85,6 +85,9 @@ _DEFAULTS = {
     # Legacy single-LLM keys (kept for migration detection)
     "llm_api_base_url": "https://api.groq.com/openai/v1",
     "llm_model": "qwen/qwen3-32b",
+    # ID of the provider made from these keys: without a keyring it uses the
+    # legacy API key, which then stays in config.json under its old name
+    "llm_legacy_provider_id": "",
     "llm_retry_on_rate_limit": True,
     "llm_retry_wait": 60,
     "llm_retry_max": 3,
@@ -223,6 +226,7 @@ def _migrate_single_llm_to_provider(config: dict) -> None:
         is_default=True,
     )
     config["llm_providers"] = [provider.to_dict()]
+    config["llm_legacy_provider_id"] = provider.id
 
     # Migrate API key in keyring: llm_api_key → llm_api_key_{provider.id}
     try:
@@ -276,6 +280,11 @@ def _secure_directory_windows(path: Path) -> None:
         logger.info("Windows ACL set on %s for user %s", path, username)
     except (subprocess.SubprocessError, FileNotFoundError, OSError) as exc:
         logger.warning("Could not set Windows ACL on %s: %s", path, exc)
+
+
+def config_dir() -> Path:
+    """The settings directory (~/.ultrasinger), private to the user."""
+    return _CONFIG_DIR
 
 
 def _ensure_config_dir() -> None:
@@ -463,12 +472,13 @@ def load_config() -> dict:
 
     # Without a keyring the migration cannot store the key of an older version
     # under its provider; the key stays in config.json under its old name
-    # (save_config). The provider for its URL uses it while it has no own key.
+    # (save_config). The migrated provider uses it while it has no own key and
+    # still has the URL the key was entered for; other providers never do.
     legacy_key = config.get("llm_api_key")
-    if legacy_key:
+    pid = config.get("llm_legacy_provider_id")
+    if legacy_key and pid and not config.get(f"llm_api_key_{pid}"):
         for provider in config.get("llm_providers", []):
-            pid = provider.get("id", "") if isinstance(provider, dict) else ""
-            if (pid and not config.get(f"llm_api_key_{pid}")
+            if (isinstance(provider, dict) and provider.get("id") == pid
                     and provider.get("api_base_url") == config.get("llm_api_base_url")):
                 config[f"llm_api_key_{pid}"] = legacy_key
 

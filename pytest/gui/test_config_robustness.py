@@ -194,17 +194,34 @@ class TestLegacyPlainTextKey:
         env = UltraSingerRunner().build_env({**config, "llm_correct": True, "llm_provider_id": pid})
         assert env[LLM_KEY_ENV] == "legacy-key"
 
-        # A provider for another service never gets this key
+        # Other providers never get this key: one for another service, and one
+        # added later for the same service without a key of its own
         config["llm_providers"].append({"id": "other", "name": "Other",
                                         "api_base_url": "https://other.invalid/v1",
                                         "default_model": "x", "is_default": False})
+        config["llm_providers"].append({"id": "second", "name": "Second",
+                                        "api_base_url": "https://llm.invalid/v1",
+                                        "default_model": "y", "is_default": False})
         save_config(config)
         stored = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
         assert stored["llm_api_key"] == "legacy-key"
+        assert stored["llm_legacy_provider_id"] == pid
         assert not any(k.startswith("llm_api_key_") for k in stored)  # no new key in the file
         again = load_config()  # the next start: no migration any more
         assert again[f"llm_api_key_{pid}"] == "legacy-key"
         assert not again.get("llm_api_key_other")
+        assert not again.get("llm_api_key_second")
+
+    def test_kept_key_is_not_used_by_a_provider_with_another_url(self, config_dir):
+        (config_dir / "config.json").write_text(json.dumps({
+            "llm_api_key": "legacy-key", "llm_api_base_url": "https://llm.invalid/v1"}),
+            encoding="utf-8")
+        config = load_config()
+        pid = config["llm_providers"][0]["id"]
+        config["llm_providers"][0]["api_base_url"] = "https://moved.invalid/v1"  # edited by the user
+        config[f"llm_api_key_{pid}"] = ""
+        save_config(config)
+        assert not load_config().get(f"llm_api_key_{pid}")
 
     def test_stripped_after_the_keyring_took_it(self, config_dir, monkeypatch):
         stored_keys = {}

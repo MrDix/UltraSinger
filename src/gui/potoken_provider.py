@@ -350,8 +350,8 @@ def _start_docker_provider(docker: str, port: int,
             if (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline:
                 proc.kill()
                 proc.communicate()
-                # A container that came up meanwhile must not outlive us
-                _stop_container(docker, name)
+                # A container created meanwhile must not outlive us
+                _remove_container(docker, name)
                 return ""
     if proc.returncode != 0:
         logger.warning(
@@ -504,6 +504,28 @@ def _terminate_process(proc: subprocess.Popen) -> None:
         logger.info("Stopped bgutil PO-token provider (Node.js)")
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to stop Node provider process: %s", e)
+
+
+def _remove_container(docker: str, name: str) -> None:
+    """Remove the container of a cancelled start, if the daemon created one.
+
+    ``docker rm -f`` also removes a container that was created but not yet
+    started (``--rm`` acts only on exit); without a container it just fails.
+    """
+    try:
+        r = subprocess.run(
+            [docker, "rm", "-f", name],
+            capture_output=True, timeout=20,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug("docker rm -f %s failed: %s", name, e)
+        return
+    if r.returncode == 0:
+        logger.info("Removed the bgutil PO-token provider container of a cancelled start")
+    else:
+        logger.debug("docker rm -f %s: %s", name,
+                     r.stderr.decode("utf-8", "replace").strip()[:200])
 
 
 def _stop_container(docker: str, container_id: str) -> None:

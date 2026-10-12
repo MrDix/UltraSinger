@@ -351,10 +351,25 @@ class TestStartDockerProvider:
         proc.communicate.side_effect = [subprocess.TimeoutExpired("docker", 0.5), (b"", b"")]
         with patch("subprocess.Popen", return_value=proc), \
              patch("importlib.metadata.version", return_value="2.0.2"), \
-             patch.object(pp, "_stop_container") as stop:
+             patch.object(pp, "_remove_container") as remove:
             assert pp._start_docker_provider("/usr/bin/docker", 4416, cancel) == ""
         proc.kill.assert_called_once()
-        stop.assert_called_once()  # in case the container came up meanwhile
+        remove.assert_called_once()  # in case the daemon created the container meanwhile
+
+    def test_cancelled_start_removes_also_a_created_container(self, caplog):
+        name = f"{pp._CONTAINER_PREFIX}-123"
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)) as run:
+            pp._remove_container("/usr/bin/docker", name)
+        # rm -f: also a container that was created but not started (--rm acts only on exit)
+        assert run.call_args[0][0] == ["/usr/bin/docker", "rm", "-f", name]
+
+        failed = MagicMock(returncode=1, stderr=b"Error: No such container")
+        with caplog.at_level("DEBUG", logger=pp.logger.name), \
+             patch("subprocess.run", return_value=failed):
+            pp._remove_container("/usr/bin/docker", name)
+        assert all(r.levelname == "DEBUG" for r in caplog.records)
+        assert not any("Removed" in r.getMessage() or "Stopped" in r.getMessage()
+                       for r in caplog.records)
 
     def test_ensure_provider_passes_the_cancel(self, tmp_path):
         cancel = threading.Event()

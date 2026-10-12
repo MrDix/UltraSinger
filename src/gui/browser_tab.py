@@ -6,7 +6,6 @@ import re
 import shlex
 import subprocess
 import shutil
-import tempfile
 import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .config import config_dir
 from .cookie_file import remove_cookie_file, write_private_options
 from .cookie_manager import CookieManager
 from .media_interceptor import MediaInterceptor
@@ -673,22 +673,22 @@ class BrowserTab(QWidget):
         # Export fresh browser cookies for the probe so it sees the same
         # formats as the authenticated download (badge accuracy). The probe
         # gets its own copy, which its yt-dlp may write back to.
-        private_dir = (Path(self.probe_cookie_file).parent if self.probe_cookie_file
-                       else Path(tempfile.gettempdir()))
         cookie_file = ""
         if self.probe_cookie_file and self.cookie_manager.has_video_cookies:
             try:
-                cookie_file = str(self.cookie_manager.export_private_copy(private_dir))
+                cookie_file = str(self.cookie_manager.export_private_copy(
+                    Path(self.probe_cookie_file).parent))
             except OSError as e:
                 logger.warning("Cookie export for format probe failed: %s", e)
-        # The PO token goes to yt-dlp in a private option file: a command line
-        # can be read by other local users
+        # The PO token goes to yt-dlp in a private option file in the settings
+        # directory (cleaned at start): a command line can be read by other
+        # local users
         options_file = ""
         po_token = self.media_interceptor.get_po_token()
         if po_token:
             try:
                 options_file = str(write_private_options(
-                    private_dir,
+                    config_dir(),
                     "--extractor-args "
                     + shlex.quote(f"youtube:po_token=web.gvs+{po_token}") + "\n"))
             except OSError as e:
