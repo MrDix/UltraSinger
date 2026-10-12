@@ -122,7 +122,8 @@ if exist "%SERVER_DIR%\build.old" rmdir /s /q "%SERVER_DIR%\build.old"
 REM --- Already built from the pinned release? ---
 REM Also needs the installed dependencies (npm ci writes the hidden lockfile):
 REM security software sometimes removes them, and then the build must be redone.
-if exist "%SERVER_ENTRY%" if exist "%SERVER_DIR%\node_modules\.package-lock.json" if exist "%BUILD_STAMP%" (
+REM utils.js holds the version the GUI checks; without it the GUI asks for a rebuild.
+if exist "%SERVER_ENTRY%" if exist "%SERVER_DIR%\build\utils.js" if exist "%SERVER_DIR%\node_modules\.package-lock.json" if exist "%BUILD_STAMP%" (
     set "BUILT_COMMIT="
     set /p BUILT_COMMIT=<"%BUILD_STAMP%"
     if "!BUILT_COMMIT!"=="%PROVIDER_COMMIT%" (

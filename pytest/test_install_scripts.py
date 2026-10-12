@@ -268,7 +268,7 @@ STUB_NPX = """#!/bin/bash
 echo "npx $*" >> "$BUILD_STUB_LOG"
 out=build
 while [ $# -gt 0 ]; do [ "$1" = "--outDir" ] && out="$2"; shift; done
-mkdir -p "$out" && echo built > "$out/main.js"
+mkdir -p "$out" && echo built > "$out/main.js" && echo 'export const VERSION = "x";' > "$out/utils.js"
 """
 BUILD_STEPS = ["npm ci --include=dev --no-audit --no-fund", "npx --no -- tsc --outDir build.new"]
 
@@ -489,6 +489,18 @@ def test_provider_with_missing_dependencies_is_rebuilt(provider):
     assert steps == BUILD_STEPS
 
 
+@needs_bash
+def test_provider_build_without_its_version_file_is_rebuilt(provider):
+    """The GUI reads the version from build/utils.js and asks for a rebuild without it."""
+    provider["run"]()
+    (provider["checkout"] / "server/build/utils.js").unlink()
+    result, steps = provider["run"]()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "already built" not in result.stdout
+    assert steps == BUILD_STEPS
+    assert (provider["checkout"] / "server/build/utils.js").exists()
+
+
 # --------------------------------------------------------------------------
 # install/helpers/setup_potoken_provider.bat, run for real with cmd.exe
 # against the same stand-in (Windows only)
@@ -521,6 +533,7 @@ STUB_NPX_CMD = (
     ':built\r\n'
     'if not exist "%OUT%" mkdir "%OUT%"\r\n'
     '>"%OUT%\\main.js" echo built\r\n'
+    '>"%OUT%\\utils.js" echo export const VERSION = "x";\r\n'
     'exit /b 0\r\n'
 )
 

@@ -95,7 +95,9 @@ rm -rf "$PROVIDER_DIR.new" "$PROVIDER_DIR.old" "$SERVER_DIR/build.new" "$SERVER_
 # --- Already built from the pinned release? ---------------------------------
 # Also needs the installed dependencies (npm ci writes the hidden lockfile):
 # security software sometimes removes them, and then the build must be redone.
-if [ -f "$SERVER_ENTRY" ] && [ -f "$SERVER_DIR/node_modules/.package-lock.json" ] \
+# utils.js holds the version the GUI checks; without it the GUI asks for a rebuild.
+if [ -f "$SERVER_ENTRY" ] && [ -f "$SERVER_DIR/build/utils.js" ] \
+        && [ -f "$SERVER_DIR/node_modules/.package-lock.json" ] \
         && [ "$(tr -d '\r\n' 2>/dev/null < "$BUILD_STAMP")" = "$PROVIDER_COMMIT" ]; then
     echo "The provider (release $PROVIDER_TAG) is already built -"
     echo "full-quality video downloads are enabled."
