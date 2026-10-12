@@ -287,6 +287,12 @@ def run() -> tuple[str, Score, Score]:
     _remote_stt_used = False  # tracks whether remote STT supplied the lyrics text
     _plain_lyrics_used = False  # tracks whether aligned plain lyrics made the notes
 
+    # Remote speech-to-text replaces the local transcription: that only runs
+    # (as the fallback below) when neither found lyrics nor the remote text
+    # could be aligned
+    remote_first = (not settings.ignore_audio and settings.remote_stt
+                    and not settings.disable_reference_lyrics)
+
     # Early LRCLIB lookup: if synced lyrics are available, we can skip the
     # expensive Whisper transcription entirely (~2 min saved per song).
     # Language detection uses Whisper tiny (~2-3s) when not explicitly set.
@@ -301,7 +307,13 @@ def run() -> tuple[str, Score, Score]:
                 process_data.media_info.artist, process_data.media_info.title,
                 duration=audio_length(process_data.process_data_paths.whisper_audio_path),
             )
-            if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
+            early_synced = early_lyrics_info.synced_lyrics if early_lyrics_info is not None else None
+            # Plain lyrics are kept here when they can make the notes before a
+            # transcription: when the synced ones fail to align, or instead of
+            # the remote text. Otherwise the transcription's own lookup takes them.
+            early_plain = (early_lyrics_info.plain_lyrics
+                           if early_lyrics_info is not None and (early_synced or remote_first) else None)
+            if early_synced or early_plain:
                 # Detect language if not explicitly set and no video platform hint.
                 # Platform metadata is deliberately NOT trusted for rejecting
                 # lyrics: it reflects upload settings and is often a default
@@ -315,22 +327,19 @@ def run() -> tuple[str, Score, Score]:
                     )
                     language_is_confident = probability >= CONFIDENT_AUDIO_LANGUAGE
                     _lang_source = "whisper_fast"
+            if early_synced:
                 # Lyrics in another language than the (confidently known) sung
                 # language are another version of the song - aligning them
                 # would put wrong words onto the vocals.
                 use_lyrics, lyrics_language = check_lyrics_language(
-                    early_lyrics_info.synced_lyrics, process_data.media_info.language,
-                    language_is_confident,
+                    early_synced, process_data.media_info.language, language_is_confident,
                 )
                 if not use_lyrics:
-                    if _lang_source == "whisper_fast":
-                        # The full transcription below determines the language again
-                        _lang_source = "pending"
+                    process_data.synced_lyrics_other_language = lyrics_language
                     print(
                         f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the found synced lyrics are in "
                         f"{blue_highlighted(lyrics_language)}, not in the sung language "
-                        f"({blue_highlighted(process_data.media_info.language)}) — ignoring them and "
-                        f"transcribing with Whisper"
+                        f"({blue_highlighted(process_data.media_info.language)}) — ignoring them"
                     )
                 else:
                     if lyrics_language:
@@ -340,14 +349,33 @@ def run() -> tuple[str, Score, Score]:
                             f"{blue_highlighted(process_data.media_info.language)}; if the result is poor, "
                             f"set the language with --language"
                         )
-                    process_data.synced_lyrics = early_lyrics_info.synced_lyrics
+                    process_data.synced_lyrics = early_synced
                     whisper_skipped = True
                     print(
                         f"{ULTRASINGER_HEAD} "
                         f"{cyan_highlighted('Synced lyrics found — skipping the transcription')}"
                     )
+            if early_plain and (whisper_skipped or remote_first):
+                use_lyrics, lyrics_language = check_lyrics_language(
+                    early_plain, process_data.media_info.language, language_is_confident,
+                )
+                if use_lyrics:
+                    process_data.plain_lyrics = early_plain
+                else:
+                    print(
+                        f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the found plain lyrics are in "
+                        f"{blue_highlighted(lyrics_language)}, not in the sung language "
+                        f"({blue_highlighted(process_data.media_info.language)}) — ignoring them"
+                    )
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Early lyrics lookup failed: {e}")
+
+    if remote_first and not whisper_skipped:
+        whisper_skipped = True
+        print(
+            f"{ULTRASINGER_HEAD} "
+            f"{cyan_highlighted('Remote speech-to-text is on — the local transcription only runs if it fails')}"
+        )
 
     if not settings.ignore_audio and not whisper_skipped:
         lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
@@ -556,7 +584,8 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Falling back to local Whisper")
 
         if not reference_first_used:
-            # If Whisper was skipped but reference-first failed, run Whisper now
+            # If the transcription was skipped (synced lyrics found early, or
+            # remote speech-to-text) but nothing could be aligned, run it now
             if whisper_skipped:
                 print(f"{ULTRASINGER_HEAD} Running Whisper as fallback")
                 initial_language = process_data.media_info.language
@@ -581,6 +610,10 @@ def run() -> tuple[str, Score, Score]:
                         f"— retrying reference pipeline"
                     )
                     try:
+                        # (the synced lyrics may only have been found by the transcription's lookup)
+                        from modules.Speech_Recognition.reference_lyrics_aligner import (
+                            create_midi_segments_from_reference_lyrics,
+                        )
                         ref_segments = create_midi_segments_from_reference_lyrics(
                             synced_lyrics=process_data.synced_lyrics,
                             audio_path=process_data.process_data_paths.whisper_audio_path,
@@ -988,6 +1021,7 @@ def run() -> tuple[str, Score, Score]:
             reference_recovered=_reference_recovered,
             remote_stt_used=_remote_stt_used,
             plain_lyrics_used=_plain_lyrics_used,
+            rejected_synced_language=process_data.synced_lyrics_other_language,
             model_segmentation_used=model_segmentation_used,
         )
 
@@ -1104,6 +1138,7 @@ def _write_settings_info_file(
         reference_recovered: bool = False,
         remote_stt_used: bool = False,
         plain_lyrics_used: bool = False,
+        rejected_synced_language: str | None = None,
         model_segmentation_used: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
@@ -1149,19 +1184,24 @@ def _write_settings_info_file(
             f.write(f"  No-speech threshold:      {settings.no_speech_threshold}\n")
             f.write("\n")
 
-            # Pipeline: what made the notes. The transcription runs unless synced
-            # lyrics found before it could be aligned (whisper_skipped); plain
-            # lyrics are only looked up after it.
+            # Pipeline: what made the notes. The transcription is skipped while
+            # synced lyrics found before it, or remote speech-to-text, can make
+            # them (whisper_skipped); it only runs when they fail.
             f.write("[Pipeline]\n")
-            synced_line = ("  LRCLIB synced lyrics:     found (but alignment failed)\n" if has_synced_lyrics
-                           else "  LRCLIB synced lyrics:     not found\n")
+            if has_synced_lyrics:
+                synced_line = "  LRCLIB synced lyrics:     found (but alignment failed)\n"
+            elif rejected_synced_language:
+                synced_line = (f"  LRCLIB synced lyrics:     found but rejected (in {rejected_synced_language}, "
+                               "another language than the singing)\n")
+            else:
+                synced_line = "  LRCLIB synced lyrics:     not found\n"
             if settings.ignore_audio:
                 f.write("  Pipeline:                 Re-pitch (notes and lyrics of the UltraStar txt)\n")
                 f.write("  Transcription:            skipped\n")
             elif settings.disable_reference_lyrics:
                 f.write("  Pipeline:                 Standard transcription (reference lyrics disabled)\n")
                 f.write("  LRCLIB synced lyrics:     found (not aligned: reference lyrics disabled)\n"
-                        if has_synced_lyrics else "  LRCLIB synced lyrics:     not found\n")
+                        if has_synced_lyrics else synced_line)
                 f.write("  Transcription:            full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
             elif reference_first_used and reference_recovered:
@@ -1172,25 +1212,25 @@ def _write_settings_info_file(
             elif reference_first_used and remote_stt_used:
                 f.write("  Pipeline:                 Remote STT (text) + local alignment\n")
                 f.write(synced_line)
-                f.write("  Transcription:            skipped\n" if whisper_skipped
-                        else "  Transcription:            full (its text replaced by the remote STT text)\n")
+                f.write("  Transcription:            skipped\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and plain_lyrics_used:
                 f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
                 f.write(synced_line)
                 f.write("  LRCLIB plain lyrics:      found\n")
-                f.write("  Transcription:            full (its text replaced by the plain lyrics)\n")
+                f.write("  Transcription:            skipped\n" if whisper_skipped
+                        else "  Transcription:            full (its text replaced by the plain lyrics)\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and has_synced_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
             elif has_synced_lyrics:
                 f.write("  Pipeline:                 Transcription (reference-first failed, fell back)\n")
-                f.write("  LRCLIB synced lyrics:     found (but alignment failed)\n")
+                f.write(synced_line)
                 f.write("  Transcription:            full\n")
             else:
                 f.write("  Pipeline:                 Standard transcription\n")
-                f.write("  LRCLIB synced lyrics:     not found\n")
+                f.write(synced_line)
                 f.write("  Transcription:            full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
             # Language detection method
@@ -1348,6 +1388,9 @@ def _write_settings_info_file(
                         f.write(f"  Status:                   FAILED (all {llm_result.chunks_total} chunks failed{retry_info})\n")
                     if llm_result.last_error:
                         f.write(f"  Last error:               {llm_result.last_error}\n")
+                elif whisper_skipped:
+                    # It corrects the words of the local transcription
+                    f.write("  Status:                   not run (no local transcription to correct)\n")
             f.write("\n")
 
             # Remote STT
@@ -1710,6 +1753,10 @@ def is_url(path: str) -> bool:
 
 
 def InitProcessData():
+    if not is_url(settings.input_file_path) and not os.path.isfile(settings.input_file_path):
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} the input file "
+              f"{blue_highlighted(settings.input_file_path)} does not exist")
+        sys.exit(1)
     settings.input_file_is_ultrastar_txt = settings.input_file_path.lower().endswith(".txt")
     if settings.input_file_is_ultrastar_txt:
         # Parse Ultrastar txt
@@ -1843,13 +1890,15 @@ def TranscribeAudio(process_data):
                         f"{blue_highlighted(lyrics_language)}, not in the sung language "
                         f"({blue_highlighted(process_data.media_info.language)}) — ignoring them"
                     )
+                    # Also the ones the early lookup kept for the language it
+                    # knew then: a retry must not align them
                     if kind == "synced":
                         synced_lyrics = None
-                        # Also the ones the early lookup kept for the language
-                        # it knew then: a retry must not align them
                         process_data.synced_lyrics = None
+                        process_data.synced_lyrics_other_language = lyrics_language
                     else:
                         plain_lyrics = None
+                        process_data.plain_lyrics = None
             # Save synced lyrics for reference-first pipeline (independent of plain lyrics)
             if synced_lyrics:
                 process_data.synced_lyrics = synced_lyrics
@@ -2671,6 +2720,12 @@ def init_settings(argv: list[str]) -> Settings:
         settings.chart_style = "singable"
     if not settings.ptakf_refit_explicit:
         settings.ptakf_refit = settings.chart_style == "score"
+
+    # The interactive mode asks for the input itself
+    if not settings.input_file_path and not settings.interactive_mode:
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} no input given: use -i with an audio or "
+              f"video file, an UltraStar .txt or a video link (see -h for the options)")
+        sys.exit(1)
 
     if settings.output_folder_path == "":
         if is_url(settings.input_file_path):

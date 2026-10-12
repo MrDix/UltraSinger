@@ -42,3 +42,4 @@ class ProcessData:
     parsed_file: Optional[UltrastarTxtValue] = None
     synced_lyrics: Optional[str] = None  # Synced LRC lyrics from LRCLIB (for reference-first pipeline)
     plain_lyrics: Optional[str] = None  # Plain text lyrics from LRCLIB (for plain-lyrics alignment and pitch_notes overlay)
+    synced_lyrics_other_language: Optional[str] = None  # Language of found synced lyrics not used: another one than the singing

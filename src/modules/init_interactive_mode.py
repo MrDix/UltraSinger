@@ -1,7 +1,7 @@
 from rich.console import Console  
 from rich.table import Table
 from Settings import Settings  
-from modules.Audio.separation import DemucsModel
+from modules.Audio.separation import AudioSeparatorModel, DemucsModel, SeparatorBackend
 from modules.Speech_Recognition.Whisper import WhisperModel
 
 import os  
@@ -192,7 +192,14 @@ def init_settings_interactive(settings: Settings) -> Settings:
     get_input_file(console, settings, ULTRASINGER_HEAD)
     get_output_folder(console, settings, ULTRASINGER_HEAD)  
     settings.whisper_model = select_model(console, ULTRASINGER_HEAD, WhisperModel, "Whisper", WhisperModel.LARGE_V2)  
-    settings.demucs_model = select_model(console, ULTRASINGER_HEAD, DemucsModel, "Demucs", DemucsModel.HTDEMUCS)  
+    # The model of the separator in use (--separator, by default audio_separator);
+    # a custom audio_separator model file given with --audio_separator_model is kept
+    if settings.separator_backend == SeparatorBackend.DEMUCS:
+        settings.demucs_model = select_model(console, ULTRASINGER_HEAD, DemucsModel, "Demucs",
+                                             settings.demucs_model)
+    elif isinstance(settings.audio_separator_model, AudioSeparatorModel):
+        settings.audio_separator_model = select_model(console, ULTRASINGER_HEAD, AudioSeparatorModel,
+                                                      "Separation", settings.audio_separator_model)
   
     configure_additional_options(console, settings, ULTRASINGER_HEAD)  
   

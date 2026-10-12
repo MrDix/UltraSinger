@@ -58,6 +58,15 @@ class TestOptionErrors(unittest.TestCase):
         code, _ = _stop(["-i", "test.mp3", "--whisper", "no-such-model"])
         self.assertEqual(code, 1)
 
+    def test_missing_input(self):
+        code, out = _stop(["--plot", "-o", "out"])
+        self.assertEqual(code, 1)
+        self.assertIn("no input given: use -i", out)
+
+    def test_interactive_mode_asks_for_the_input(self):
+        self.assertTrue(init_settings(["--interactive"]).interactive_mode)
+        init_settings(["-i", "test.mp3"])
+
 
 class TestInputKindOptions(unittest.TestCase):
     def test_http_link_gets_the_default_output_folder(self):
@@ -100,8 +109,10 @@ class _Console:
 
     def __init__(self, answers):
         self.answers = answers
+        self.prompts = []
 
     def input(self, prompt):
+        self.prompts.append(prompt)
         for topic, answer in self.answers.items():
             if topic in prompt:
                 return answer
@@ -112,18 +123,36 @@ class _Console:
 
 
 class TestInteractiveMode(unittest.TestCase):
-    def _ask(self, force_cpu):
+    def _ask(self, force_cpu="n", separator_backend=None, answers=None):
         from modules import init_interactive_mode
         from Settings import Settings
 
         settings = Settings()
+        if separator_backend is not None:
+            settings.separator_backend = separator_backend
         answers = {"input file": "song.mp3", "additional options": "y",
-                   "Force [green]CPU usage": force_cpu, "ffmpeg": "C:/tools/ffmpeg/bin"}
-        with patch.object(init_interactive_mode, "Console", lambda: _Console(answers)), \
+                   "Force [green]CPU usage": force_cpu, "ffmpeg": "C:/tools/ffmpeg/bin", **(answers or {})}
+        console = _Console(answers)
+        with patch.object(init_interactive_mode, "Console", lambda: console), \
                 patch.dict(os.environ), contextlib.redirect_stdout(io.StringIO()):
             init_interactive_mode.init_settings_interactive(settings)
             cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        self.prompts = " ".join(console.prompts)
         return settings, cuda_visible
+
+    def test_separation_model_of_the_default_separator(self):
+        from modules.Audio.separation import AudioSeparatorModel
+
+        settings, _ = self._ask(answers={"Separation model[/green]": "1"})
+        self.assertNotIn("Demucs", self.prompts)
+        self.assertEqual(settings.audio_separator_model, list(AudioSeparatorModel)[0])
+
+    def test_demucs_model_with_the_demucs_separator(self):
+        from modules.Audio.separation import DemucsModel, SeparatorBackend
+
+        settings, _ = self._ask(separator_backend=SeparatorBackend.DEMUCS, answers={"Demucs model[/green]": "2"})
+        self.assertNotIn("Separation", self.prompts)
+        self.assertEqual(settings.demucs_model, list(DemucsModel)[1])
 
     def test_answers_are_kept(self):
         settings, _ = self._ask(force_cpu="n")

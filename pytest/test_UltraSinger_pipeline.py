@@ -55,9 +55,14 @@ def _transcription(words, language):
 
 
 def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_language=("en", 0.95),
-         align=None, **settings_values):
-    """Run run() with fakes. Returns the notes it wrote, its output and the output folder's files."""
+         align=None, plain_align=None, remote=None, lyrics_check=None, mocks=None, **settings_values):
+    """Run run() with fakes. Returns the notes it wrote, its output and the output folder's files.
+
+    ``align``/``plain_align``: fake alignment of synced/plain lyrics (the remote text is aligned
+    as plain lyrics), ``remote``: fake remote speech-to-text, ``mocks``: a dict that receives the
+    mocks of TranscribeAudio, the plain-lyrics alignment and the remote speech-to-text."""
     written = {}
+    mocks = {} if mocks is None else mocks
 
     def create_txt(data):
         written["notes"] = [(n.word, n.start, n.end, n.note) for n in data.midi_segments]
@@ -86,19 +91,27 @@ def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_lang
                 ("detect_key_from_audio", lambda path: ("C", "major")),
                 ("pitch_audio", lambda paths: pitched_data),
                 ("TranscribeAudio", transcribe),
-                ("check_lyrics_language", lambda lyrics, language, confident: (True, None)),
+                ("check_lyrics_language", lyrics_check or (lambda lyrics, language, confident: (True, None))),
                 ("CreateUltraStarTxt", create_txt),
                 ("create_sheet", lambda *args: None),
                 ("finish_cache_folder", lambda path: None),
                 ("print_support", lambda: None),
         ):
-            stack.enter_context(patch.object(us, name, side_effect=fake))
+            mocks[name] = stack.enter_context(patch.object(us, name, side_effect=fake))
         stack.enter_context(patch("modules.lrclib_client.search_lyrics", return_value=early_lyrics))
         stack.enter_context(patch("modules.Speech_Recognition.Whisper.detect_language_with_confidence",
                                   return_value=fast_language))
+        stack.enter_context(patch("modules.Speech_Recognition.Whisper.detect_language_from_audio",
+                                  return_value=fast_language[0]))
         stack.enter_context(patch(
             "modules.Speech_Recognition.reference_lyrics_aligner.create_midi_segments_from_reference_lyrics",
             side_effect=align))
+        mocks["plain_align"] = stack.enter_context(patch(
+            "modules.Speech_Recognition.reference_lyrics_aligner.create_midi_segments_from_plain_lyrics",
+            side_effect=plain_align or (lambda **kwargs: [])))
+        mocks["remote"] = stack.enter_context(patch(
+            "modules.Speech_Recognition.remote_stt.transcribe_remote",
+            side_effect=remote or (lambda **kwargs: None)))
         stack.enter_context(contextlib.redirect_stdout(out))
         try:
             us.run()
@@ -180,10 +193,6 @@ class TestPipelineInInfoFile(unittest.TestCase):
         self.assertIn("Transcription:            skipped", info)
         self.assertNotIn("Reference-Lyrics-First", info)
 
-    def test_remote_stt_after_the_transcription(self):
-        info = self._info(reference_first_used=True, remote_stt_used=True)
-        self.assertIn("Transcription:            full (its text replaced by the remote STT text)", info)
-
     def test_plain_lyrics_after_failed_synced_alignment(self):
         info = self._info(reference_first_used=True, has_synced_lyrics=True, plain_lyrics_used=True)
         self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
@@ -209,6 +218,105 @@ class TestPipelineInInfoFile(unittest.TestCase):
     def test_language_hint_only_with_language_option(self):
         info = self._info(lang_source="video_platform", detected_language="en")
         self.assertIn("Transcriber language hint: no (auto-detect)", info)
+
+    def test_rejected_synced_lyrics(self):
+        info = self._info(rejected_synced_language="de")
+        self.assertIn("LRCLIB synced lyrics:     found but rejected (in de, another language than the singing)",
+                      info)
+        self.assertNotIn("not found", info)
+
+
+_ALIGNED = [us.MidiSegment("C4", 1.0, 1.4, "hello "), us.MidiSegment("D4", 1.5, 2.0, "world ")]
+_ALIGNED_NOTES = [("hello ", 1.0, 1.4, "C4"), ("world ", 1.5, 2.0, "D4")]
+
+
+def _aligned(**kwargs):
+    """A fake alignment of lyrics or of the remote text."""
+    return [us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED]
+
+
+class TestRemoteSpeechToText(unittest.TestCase):
+    """--remote_stt replaces the local transcription; that only runs when nothing could be aligned."""
+
+    def _remote_run(self, remote_text, early_lyrics=None, **settings_values):
+        mocks = {}
+        notes, out, files = _run(
+            _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5),
+            _transcription([("one ", 1.0, 1.24), ("two ", 1.5, 1.74)], "en"),
+            early_lyrics=early_lyrics, plain_align=_aligned, remote=lambda **kwargs: remote_text,
+            mocks=mocks, remote_stt=True, write_settings_info=True, bpm_override=60.0, **settings_values,
+        )
+        return notes, files["ultrasinger_parameter.info"], mocks
+
+    def test_remote_text_without_local_transcription(self):
+        notes, info, mocks = self._remote_run("hello world", llm_correct_lyrics=True)
+        mocks["TranscribeAudio"].assert_not_called()
+        mocks["remote"].assert_called_once()
+        self.assertEqual(mocks["plain_align"].call_args.kwargs["plain_lyrics"], "hello world")
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("Pipeline:                 Remote STT (text) + local alignment", info)
+        self.assertIn("Transcription:            skipped", info)
+        self.assertIn("Status:                   not run (no local transcription to correct)", info)
+
+    def test_remote_failure_falls_back_to_the_local_transcription(self):
+        notes, info, mocks = self._remote_run(None)
+        mocks["remote"].assert_called_once()
+        mocks["TranscribeAudio"].assert_called_once()
+        self.assertEqual([n[0] for n in notes], ["one ", "two "])
+        self.assertIn("Pipeline:                 Standard transcription", info)
+        self.assertIn("Transcription:            full", info)
+
+    def test_plain_lyrics_are_preferred_over_the_remote_text(self):
+        lyrics = SimpleNamespace(synced_lyrics=None, plain_lyrics="hello world")
+        notes, info, mocks = self._remote_run("other words", early_lyrics=lyrics)
+        mocks["remote"].assert_not_called()  # no audio leaves the machine when found lyrics align
+        mocks["TranscribeAudio"].assert_not_called()
+        self.assertEqual(mocks["plain_align"].call_args.kwargs["plain_lyrics"], "hello world")
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
+        self.assertIn("Transcription:            skipped", info)
+
+    def test_without_remote_option_the_transcription_runs_first(self):
+        mocks = {}
+        _run(_process_data(), _pitch_track([(1.0, 1.24, "C4")], length=2.5),
+             _transcription([("one ", 1.0, 1.24)], "en"), mocks=mocks, bpm_override=60.0)
+        mocks["TranscribeAudio"].assert_called_once()
+        mocks["remote"].assert_not_called()
+
+
+class TestPlainLyricsAfterFailedSyncedAlignment(unittest.TestCase):
+    """Synced lyrics found before the transcription fail to align: their plain lyrics are tried next."""
+
+    def test_plain_lyrics_make_the_notes(self):
+        mocks = {}
+        lyrics = SimpleNamespace(synced_lyrics="[00:01.00] hello world", plain_lyrics="hello world")
+        notes, _, files = _run(
+            _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5),
+            _transcription([("one ", 1.0, 1.24)], "en"), early_lyrics=lyrics,
+            align=lambda **kwargs: [], plain_align=_aligned, mocks=mocks, write_settings_info=True,
+        )
+        mocks["TranscribeAudio"].assert_not_called()
+        mocks["remote"].assert_not_called()  # without --remote_stt no audio is sent
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
+        self.assertIn("LRCLIB synced lyrics:     found (but alignment failed)", info)
+        self.assertIn("Transcription:            skipped", info)
+
+
+class TestRejectedSyncedLyricsInRun(unittest.TestCase):
+    def test_info_file_says_found_but_rejected(self):
+        def lyrics_check(lyrics, language, confident):
+            return False, "de"
+
+        _, _, files = _run(
+            _process_data(), _pitch_track([(1.0, 1.24, "C4")], length=2.5),
+            _transcription([("one ", 1.0, 1.24)], "en"),
+            early_lyrics=SimpleNamespace(synced_lyrics="[00:01.00] eins zwei", plain_lyrics=None),
+            lyrics_check=lyrics_check, write_settings_info=True, bpm_override=60.0,
+        )
+        self.assertIn("LRCLIB synced lyrics:     found but rejected (in de, another language than the singing)",
+                      files["ultrasinger_parameter.info"])
 
 
 class TestRejectedSyncedLyricsAreDropped(unittest.TestCase):
@@ -241,7 +349,8 @@ class TestRejectedSyncedLyricsAreDropped(unittest.TestCase):
 class TestInputKinds(unittest.TestCase):
     """InitProcessData: what the input (-i) is and what --ignore_audio needs."""
 
-    def _init(self, input_path, ignore_audio=False):
+    def _init(self, input_name, ignore_audio=False, create=True):
+        """InitProcessData for the input ``input_name``: a link, or a file made in a temporary folder."""
         def must_not_run(*args, **kwargs):
             raise AssertionError("this input must not be handled as audio or video")
 
@@ -249,21 +358,30 @@ class TestInputKinds(unittest.TestCase):
         downloaded = ("Artist - Song Title", "out", "out/Artist - Song Title.mp3",
                       us.MediaInfo(title="Song Title", artist="Artist"))
         out = io.StringIO()
-        with patch.object(us.settings, "input_file_path", input_path), \
-                patch.object(us.settings, "ignore_audio", ignore_audio), \
-                patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
-                patch.object(us.settings, "output_folder_path", "out"), \
-                patch.object(us.settings, "video_url", None), \
-                patch.object(us, "parse_ultrastar_txt", return_value=parsed), \
-                patch.object(us, "from_ultrastar_txt", return_value=_process_data()), \
-                patch.object(us, "download_from_video_platform", return_value=downloaded) as download, \
-                patch.object(us, "search_musicbrainz", side_effect=must_not_run), \
-                contextlib.redirect_stdout(out):
-            process_data = us.InitProcessData()
-            return process_data, us.settings.ignore_audio, download, out.getvalue()
+        with tempfile.TemporaryDirectory() as folder:
+            input_path = input_name
+            if not us.is_url(input_name):
+                input_path = os.path.join(folder, input_name)
+                if create:
+                    open(input_path, "wb").close()
+            with patch.object(us.settings, "input_file_path", input_path), \
+                    patch.object(us.settings, "ignore_audio", ignore_audio), \
+                    patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                    patch.object(us.settings, "output_folder_path", "out"), \
+                    patch.object(us.settings, "video_url", None), \
+                    patch.object(us, "parse_ultrastar_txt", return_value=parsed), \
+                    patch.object(us, "from_ultrastar_txt", return_value=_process_data()), \
+                    patch.object(us, "download_from_video_platform", return_value=downloaded) as download, \
+                    patch.object(us, "search_musicbrainz", side_effect=must_not_run), \
+                    contextlib.redirect_stdout(out):
+                try:
+                    process_data = us.InitProcessData()
+                    return process_data, us.settings.ignore_audio, download, out.getvalue()
+                finally:
+                    self.output = out.getvalue()
 
     def test_txt_in_upper_case_is_an_ultrastar_txt(self):
-        process_data, ignore_audio, _, _ = self._init("songs/SONG.TXT")
+        process_data, ignore_audio, _, _ = self._init("SONG.TXT")
         self.assertTrue(ignore_audio)
         self.assertEqual(process_data.basename, "Artist - Song Title")
 
@@ -272,10 +390,18 @@ class TestInputKinds(unittest.TestCase):
         download.assert_called_once()
 
     def test_ignore_audio_needs_a_txt(self):
-        for path in ("song.mp3", "https://example.invalid/watch?v=1"):
-            with self.subTest(path=path), self.assertRaises(SystemExit) as stop:
-                self._init(path, ignore_audio=True)
+        for name in ("song.mp3", "https://example.invalid/watch?v=1"):
+            with self.subTest(name=name), self.assertRaises(SystemExit) as stop:
+                self._init(name, ignore_audio=True)
             self.assertEqual(stop.exception.code, 1)
+            self.assertIn("--ignore_audio needs an UltraStar .txt", self.output)
+
+    def test_missing_input_file(self):
+        for name in ("song.mp3", "song.txt"):
+            with self.subTest(name=name), self.assertRaises(SystemExit) as stop:
+                self._init(name, create=False)
+            self.assertEqual(stop.exception.code, 1)
+            self.assertIn("does not exist", self.output)
 
 
 class TestVideoUrlNaming(unittest.TestCase):

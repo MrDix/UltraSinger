@@ -319,9 +319,9 @@ _Not all options working now!_
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain
                             precise word-level timing — dramatically improving lyrics coverage and timing
-                            accuracy. Without synced lyrics, plain lyrics are aligned the same way, then
-                            a --remote_stt text. When disabled, or when none of them can be aligned, the
-                            notes come from the transcription.
+                            accuracy. Without synced lyrics (or when their alignment fails), plain lyrics
+                            are aligned the same way, then a --remote_stt text. When disabled, or when
+                            none of them can be aligned, the notes come from the transcription.
                             Enabled by default.
 
     [freestyle detection]
@@ -703,7 +703,7 @@ The pipeline is **enabled by default** and falls back to the standard transcript
 
 **Placing the lines:** The words are placed with wav2vec2 forced alignment over the whole vocal track, and the LRC times of the lines check the result. Four alignments are made: with the model run over the whole song or over 30-s pieces, each with two ways of ending the path after the last word. The one with the most lines at their LRC times is used. A line that lands in a poor place moves to a clearly better place near its LRC time, and lines at the end that the recording does not have (lyrics of a longer version) are left out. On a benchmark of 89 songs, the share of words that start more than 1 s off went from 6.5 % to 4.9 %. When there is not enough memory to run the model over the whole song at once, the 30-s pieces are used alone.
 
-**Plain lyrics** from LRCLIB (without timestamps) are looked up after the transcription. They first **post-correct** it by comparing words against the verified lyrics text, improving recall by ~5 percentage points. When no synced lyrics were found, the plain lyrics are then aligned with wav2vec2 in the same way and make the notes. Only when that fails too does the timing come from the transcription.
+**Plain lyrics** from LRCLIB (without timestamps) are aligned with wav2vec2 in the same way when no synced lyrics were found or the synced ones could not be aligned, and then make the notes. Only when that fails too do the words come from remote speech-to-text (`--remote_stt`) or the transcription. When the transcription runs, the plain lyrics also **post-correct** its words by comparing them against the verified lyrics text, improving recall by ~5 percentage points.
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used.
 
@@ -725,7 +725,7 @@ These features are experimental and disabled by default. They may change or be r
 
 #### LLM Lyric Correction (`--llm_correct`)
 
-Post-corrects WhisperX transcription using an OpenAI-compatible LLM API. The LLM sees sentence-level context and fixes misheard or misspelled words while preserving all timing data. If the API is unreachable or returns an error, the original lyrics are kept unchanged (fail-open).
+Post-corrects WhisperX transcription using an OpenAI-compatible LLM API. The LLM sees sentence-level context and fixes misheard or misspelled words while preserving all timing data. If the API is unreachable or returns an error, the original lyrics are kept unchanged (fail-open). It corrects the words of the local transcription, so it does not run when that is skipped (synced lyrics found before it, or remote speech-to-text).
 
 Related flags:
 * `--llm_api_base_url` -- Base URL of the API (default: `https://api.openai.com/v1`)
@@ -785,8 +785,10 @@ Sends the song's audio to an external OpenAI-compatible speech-to-text API (e.g.
 **Where it fits in the lyrics-source order:**
 1. LRCLIB synced lyrics (unchanged, highest priority)
 2. LRCLIB plain lyrics + local alignment (unchanged)
-3. **Remote STT text + local alignment** (new — only if enabled and no LRCLIB lyrics found)
+3. **Remote STT text + local alignment** (new — only if enabled and no LRCLIB lyrics were found or could be aligned)
 4. Local transcription, Qwen3-ASR or Whisper (default fallback, and still the default when remote STT is disabled)
+
+With remote STT enabled, the local transcription is skipped: it only runs when none of the sources above could be aligned.
 
 Any remote STT failure (network error, timeout, auth error, oversized file, empty response) fails open to the local transcription — a conversion never aborts because of it.
 

@@ -147,9 +147,9 @@ def print_help() -> None:
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain precise
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.
-                            Without synced lyrics, plain lyrics are aligned the same way, then a --remote_stt
-                            text. When disabled, or when none of them can be aligned, the notes come from the
-                            transcription.
+                            Without synced lyrics (or when their alignment fails), plain lyrics are aligned
+                            the same way, then a --remote_stt text. When disabled, or when none of them
+                            can be aligned, the notes come from the transcription.
 
     [freestyle detection]
     --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
@@ -210,7 +210,9 @@ def print_help() -> None:
 
 
     [llm lyric correction]
-    --llm_correct           Enable LLM-based lyric correction (requires API key)
+    --llm_correct           Enable LLM-based lyric correction (requires API key). It corrects the words of
+                            the local transcription, so it does not run when that is skipped (synced
+                            lyrics found before it, --remote_stt).
     --llm_api_base_url      OpenAI-compatible API base URL >> ((default) is https://api.openai.com/v1)
     --llm_api_key           API key for LLM service (or set LLM_API_KEY env var)
     --llm_model             LLM model name >> ((default) is gpt-4o-mini)
