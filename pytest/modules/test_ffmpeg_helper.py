@@ -16,6 +16,7 @@ from modules.ffmpeg_helper import (
     _has_real_video_stream,
     convert_to_ultrastar_format,
     extract_audio,
+    get_audio_codec_and_extension,
     is_video_file,
 )
 
@@ -99,3 +100,25 @@ class TestSameBytesEveryTime:
         for run in ("a", "b"):
             extract_audio(str(source), str(tmp_path / f"{run}.ogg"))
         assert (tmp_path / "a.ogg").read_bytes() == (tmp_path / "b.ogg").read_bytes()
+
+
+@needs_ffmpeg
+class TestSeveralAudioStreams:
+    """A video with audio in several languages: the first audio stream is extracted, whose
+    codec names the file extension (ffmpeg alone takes the default one, else the one with
+    the most channels)."""
+
+    def test_first_audio_stream_is_extracted(self, tmp_path):
+        video = tmp_path / "video.mkv"
+        _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                "-f", "lavfi", "-i", "sine=frequency=880:duration=1",
+                "-map", "0:a", "-map", "1:a",
+                "-c:a:0", "libvorbis", "-ac:a:0", "2", "-c:a:1", "ac3", "-ac:a:1", "6",
+                "-disposition:a:0", "0", "-disposition:a:1", "default", str(video))
+        ext = get_audio_codec_and_extension(str(video))
+        assert ext == "ogg"
+        audio = tmp_path / f"audio.{ext}"
+        extract_audio(str(video), str(audio))
+        probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,channels",
+                                "-of", "csv=p=0", str(audio)], check=True, capture_output=True, text=True)
+        assert probe.stdout.split() == ["vorbis,2"]
