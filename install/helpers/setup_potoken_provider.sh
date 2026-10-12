@@ -1,8 +1,9 @@
 #!/bin/bash
 # Set up the bgutil PO-token provider (Node.js server) so video downloads
 # get full-quality formats. Non-fatal: the parent install script keeps going
-# regardless. Exit codes: 0 = provider ready, 2 = Node.js/git missing,
-# 3 = build failed. Arg $1 = the install script to name in the re-run hint.
+# regardless. Exit codes: 0 = provider ready, 2 = Node.js/git missing or
+# Node.js too old, 3 = download or build failed. Arg $1 = the install script
+# to name in the re-run hint.
 #
 # Must be run from the repository root (the install scripts cd there first).
 
@@ -11,7 +12,18 @@ set +e  # never abort the parent install script
 RERUN="${1:-the install script you just ran}"
 PROVIDER_DIR=".potoken/bgutil-ytdlp-pot-provider"
 PROVIDER_REPO="https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git"
-SERVER_ENTRY="$PROVIDER_DIR/server/build/main.js"
+# The provider release that is built, pinned by its tag and verified by its
+# commit, so neither a newer release nor a moved tag runs unreviewed code.
+# Keep it at the version of the bgutil-ytdlp-pot-provider plugin in uv.lock
+# (server and plugin are released together) and in sync with
+# setup_potoken_provider.bat. NODE_MIN_MAJOR is the release's "engines" entry.
+PROVIDER_TAG="2.0.2"
+PROVIDER_COMMIT="26475e9d3665b972c4aeb83b4dbaafcf64b88438"
+NODE_MIN_MAJOR=22
+SERVER_DIR="$PROVIDER_DIR/server"
+SERVER_ENTRY="$SERVER_DIR/build/main.js"
+# The commit the current build was made from
+BUILD_STAMP="$SERVER_DIR/build/.ultrasinger-commit"
 
 echo ""
 echo "============================================================"
@@ -43,24 +55,44 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     fi
 fi
 
-if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+NODE_MAJOR=""
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null)"
+    case "$NODE_MAJOR" in
+        ''|*[!0-9]*) NODE_MAJOR=0 ;;
+    esac
+fi
+
+if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ]; then
     echo ""
     echo "------------------------------------------------------------"
-    echo " ACTION REQUIRED - Node.js is needed for full-quality"
-    echo " video downloads. UltraSinger still works, but video"
-    echo " downloads stay limited to 360p until this is done:"
+    if [ -z "$NODE_MAJOR" ]; then
+        echo " ACTION REQUIRED - Node.js is needed for full-quality"
+        echo " video downloads. UltraSinger still works, but video"
+        echo " downloads stay limited to 360p until this is done:"
+    else
+        echo " ACTION REQUIRED - Node.js $NODE_MIN_MAJOR or newer is needed for"
+        echo " full-quality video downloads (found $(node --version 2>/dev/null))."
+        echo " The provider is not updated until this is done:"
+    fi
     echo ""
-    echo "   1. Install Node.js LTS:"
+    echo "   1. Install Node.js LTS ($NODE_MIN_MAJOR or newer):"
     echo "        macOS:  brew install node   (or https://nodejs.org)"
-    echo "        Debian/Ubuntu:  sudo apt install nodejs npm"
-    echo "        Fedora:         sudo dnf install nodejs"
-    echo "        or download from https://nodejs.org"
+    echo "        Linux:  https://nodejs.org/en/download (the packages of"
+    echo "                many distributions are older than $NODE_MIN_MAJOR)"
     echo "   2. Open a NEW terminal (so Node.js is on the PATH)"
     echo "   3. Run the installer again:"
     echo "        $RERUN"
     echo "------------------------------------------------------------"
     echo ""
     exit 2
+fi
+
+# --- Already built from the pinned release? ---------------------------------
+if [ -f "$SERVER_ENTRY" ] && [ "$(tr -d '\r\n' 2>/dev/null < "$BUILD_STAMP")" = "$PROVIDER_COMMIT" ]; then
+    echo "The provider (release $PROVIDER_TAG) is already built -"
+    echo "full-quality video downloads are enabled."
+    exit 0
 fi
 
 if ! command -v git >/dev/null 2>&1; then
@@ -74,20 +106,29 @@ if ! command -v git >/dev/null 2>&1; then
     exit 2
 fi
 
-# --- Fetch and build the provider -------------------------------------------
+# --- Fetch the pinned release -------------------------------------------------
+# Every git command on the provider folder checks for its .git first: in a
+# folder without one, git would act on the UltraSinger repository instead.
 mkdir -p .potoken
 if [ -d "$PROVIDER_DIR/.git" ]; then
-    echo "Updating provider source..."
-    # Discard our local proxy patch (re-applied below) so ff-only pulls work
-    git -C "$PROVIDER_DIR" checkout -- . >/dev/null 2>&1
-    git -C "$PROVIDER_DIR" pull --ff-only >/dev/null 2>&1
+    echo "Updating the provider source to release $PROVIDER_TAG..."
+    git -C "$PROVIDER_DIR" fetch --quiet --depth 1 --force origin \
+        "refs/tags/$PROVIDER_TAG:refs/tags/$PROVIDER_TAG" >/dev/null 2>&1
 else
-    echo "Downloading provider source..."
-    git clone --depth 1 "$PROVIDER_REPO" "$PROVIDER_DIR" >/dev/null 2>&1
+    echo "Downloading the provider source (release $PROVIDER_TAG)..."
+    rm -rf "$PROVIDER_DIR"  # leftover of an interrupted download
+    git clone --quiet --depth 1 --branch "$PROVIDER_TAG" "$PROVIDER_REPO" "$PROVIDER_DIR" >/dev/null 2>&1
 fi
-if [ ! -d "$PROVIDER_DIR/server" ]; then
-    echo "Could not download the provider source. Check your internet"
-    echo "connection and run $RERUN again."
+SRC_COMMIT=""
+if [ -d "$PROVIDER_DIR/.git" ]; then
+    # Check out exactly the pinned release; this also drops local changes to it
+    git -C "$PROVIDER_DIR" -c advice.detachedHead=false checkout --quiet --force \
+        "refs/tags/$PROVIDER_TAG" >/dev/null 2>&1
+    SRC_COMMIT="$(git -C "$PROVIDER_DIR" rev-parse HEAD 2>/dev/null)"
+fi
+if [ "$SRC_COMMIT" != "$PROVIDER_COMMIT" ]; then
+    echo "Could not download the provider source (release $PROVIDER_TAG)."
+    echo "Check your internet connection and run $RERUN again."
     echo "If you are behind a corporate proxy: git and npm honor the same"
     echo "HTTP_PROXY/HTTPS_PROXY/NO_PROXY variables as the rest of this"
     echo "installer - set them (and UV_SYSTEM_CERTS=1 for TLS-inspecting"
@@ -95,32 +136,19 @@ if [ ! -d "$PROVIDER_DIR/server" ]; then
     exit 3
 fi
 
-# --- Proxy fix: axios needs proxy:false so the httpsAgent does CONNECT ------
-# Upstream bug: getFetch() passes a correct proxy-agent as httpsAgent but
-# omits axios' `proxy: false`. With HTTP(S)_PROXY set in the environment,
-# axios' own env-proxy mode then wins and sends an absolute-form GET to the
-# proxy instead of a CONNECT tunnel - enterprise proxies answer 502 and
-# token generation fails. Verified against a local sniffing proxy.
-SM_TS="$PROVIDER_DIR/server/src/session_manager.ts"
-if [ -f "$SM_TS" ] && ! grep -q "proxy: false" "$SM_TS"; then
-    echo "Applying proxy workaround (axios proxy:false)..."
-    # Insert on the SAME line (no newline in the replacement) so this works
-    # identically under GNU and BSD/macOS sed, which treats \n as a literal n.
-    sed -i.bak 's|httpsAgent: proxySpec.asDispatcher(logger),|httpsAgent: proxySpec.asDispatcher(logger), proxy: false,|' "$SM_TS" \
-        && rm -f "$SM_TS.bak"
-    if grep -q "proxy: false" "$SM_TS"; then
-        echo "Proxy workaround applied."
-    else
-        echo "WARNING: proxy workaround did not match (upstream may have"
-        echo "reformatted the source). Downloads behind an HTTP proxy may fail;"
-        echo "see the corporate-proxy section in the README."
-    fi
-fi
+# --- Build it ------------------------------------------------------------------
+echo "Building provider (npm ci + tsc, this can take a minute)..."
+# Start from scratch: a build of another release must neither be started by
+# the app nor make a failed build look successful (tsc's incremental state
+# would skip unchanged files, too). npm ci installs exactly the release's
+# package-lock.json, and tsc is the compiler it installed (npx --no never
+# downloads one).
+rm -rf "$SERVER_DIR/build" "$SERVER_DIR/tsconfig.tsbuildinfo"
+( cd "$SERVER_DIR" && npm ci --include=dev --no-audit --no-fund >/dev/null 2>&1 && npx --no -- tsc >/dev/null 2>&1 )
+BUILD_RC=$?
 
-echo "Building provider (npm install + tsc, this can take a minute)..."
-( cd "$PROVIDER_DIR/server" && npm install --no-audit --no-fund >/dev/null 2>&1 && npx --yes tsc >/dev/null 2>&1 )
-
-if [ -f "$SERVER_ENTRY" ]; then
+if [ "$BUILD_RC" -eq 0 ] && [ -f "$SERVER_ENTRY" ]; then
+    printf '%s\n' "$PROVIDER_COMMIT" > "$BUILD_STAMP"
     # The GUI's first-launch bootstrap starts the server itself right after
     # this script, so the warm-up below would only double the wait.
     if [ -n "${ULTRASINGER_POTOKEN_SKIP_WARMUP:-}" ]; then
