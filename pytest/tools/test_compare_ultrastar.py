@@ -23,9 +23,13 @@ from compare_ultrastar import (
     _parse_bpm,
     _parse_gap,
     _pct,
+    absolute_chart_text,
     align_words,
     compare,
+    declared_encoding,
+    parse_score_song,
     parse_ultrastar,
+    read_chart_text,
 )
 
 
@@ -207,6 +211,11 @@ class TestBeatToMs:
     def test_comma_gap_parsing(self):
         """GAP may use comma as decimal separator."""
         assert _parse_gap("5000,5") == 5000.5
+
+    def test_empty_gap_is_zero(self):
+        """An empty #GAP counts as 0, as the games read it."""
+        assert _parse_gap("") == 0.0
+        assert _parse_gap("  ") == 0.0
 
 
 # ── Tilde note grouping ─────────────────────────────────────────────────────
@@ -748,3 +757,145 @@ class TestEdgeCases:
         assert parsed.notes == []
         assert parsed.word_groups == []
         assert parsed.bpm == 0.0
+
+
+# ── Text encoding ───────────────────────────────────────────────────────────
+
+class TestReadChartText:
+    """Feature: charts are decoded the way the games read them."""
+
+    def test_bom_does_not_hide_the_first_header(self, tmp_path):
+        """A UTF-8 BOM before #VERSION must not drop the version (48 semitones off)."""
+        p = tmp_path / "bom.txt"
+        p.write_bytes(b"\xef\xbb\xbf#VERSION:1.2.0\n#BPM:300\n#GAP:0\n: 0 4 12 la\nE\n")
+        parsed = parse_ultrastar(p)
+        assert parsed.version == "1.2.0"
+        assert parsed.notes[0].midi == 60
+
+    def test_cp1252_lyrics(self, tmp_path):
+        p = tmp_path / "cp1252.txt"
+        p.write_bytes("#BPM:300\n#GAP:0\n: 0 4 60 sch\xf6n\nE\n".encode("cp1252"))
+        assert parse_ultrastar(p).notes[0].word == "sch\xf6n"
+
+    @pytest.mark.parametrize("newline", ["\n", "\r\n"])
+    def test_encoding_tag_is_honoured(self, tmp_path, newline):
+        """A CP1250 chart (Polish/Czech) is read in CP1250, not as Windows-1252."""
+        p = tmp_path / "cp1250.txt"
+        lines = ["#TITLE:Title", "#ENCODING:CP1250", "#BPM:300", "#GAP:0", ": 0 4 60 łąka", "E", ""]
+        p.write_bytes(newline.join(lines).encode("cp1250"))
+        assert parse_ultrastar(p).notes[0].word == "łąka"
+
+    def test_utf8_wins_over_a_stale_encoding_tag(self, tmp_path):
+        p = tmp_path / "utf8.txt"
+        p.write_bytes("#ENCODING:CP1250\n#BPM:300\n#GAP:0\n: 0 4 60 łąka\nE\n".encode("utf-8"))
+        assert read_chart_text(p).splitlines()[3].endswith("łąka")
+
+    @pytest.mark.parametrize("value", ["Auto", "", "nonsense", "UTF-16", "base64"])
+    def test_unusable_encoding_tags_are_ignored(self, value):
+        assert declared_encoding(f"#TITLE:x\n#ENCODING:{value}\n".encode("ascii")) is None
+
+    def test_known_encoding_tag(self):
+        assert declared_encoding(b"#TITLE:x\r\n#encoding: cp1250 \r\n") == "cp1250"
+
+    def test_utf16_with_byte_order_mark(self, tmp_path):
+        p = tmp_path / "utf16.txt"
+        p.write_bytes("#VERSION:1.2.0\r\n#BPM:300\r\n#GAP:0\r\n: 0 4 12 ła\r\nE\r\n".encode("utf-16"))
+        parsed = parse_ultrastar(p)
+        assert parsed.version == "1.2.0" and parsed.notes[0].word == "ła"
+
+
+# ── #RELATIVE charts ────────────────────────────────────────────────────────
+
+_RELATIVE_CHART = [
+    "#TITLE:Title", "#ARTIST:Artist", "#BPM:300", "#GAP:1000", "#RELATIVE:YES",
+    ": 0 4 60 one", ": 4 4 62 two",
+    "- 8 10",
+    ": 0 4 64 three", ": 4 4 65 four",
+    "- 6",
+    ": 2 4 67 five",
+    "E",
+]
+
+
+class TestRelativeCharts:
+    """Feature: #RELATIVE:YES beats count from the start of their line."""
+
+    @pytest.mark.parametrize("newline", ["\n", "\r\n"])
+    def test_beats_are_made_absolute(self, tmp_path, newline):
+        p = tmp_path / "rel.txt"
+        p.write_bytes(newline.join(_RELATIVE_CHART + [""]).encode("utf-8"))
+        parsed = parse_ultrastar(p)
+        # "- 8 10" moves the line start to 10; "- 6" (no second number) by 6 more
+        assert [n.start_beat for n in parsed.notes] == [0, 4, 10, 14, 18]
+        assert parsed.notes[2].start_ms == pytest.approx(_beat_to_ms(10, 300, 1000))
+        assert parsed.linebreak_count == 2
+
+    def test_absolute_chart_unchanged(self):
+        text = "\n".join(c for c in _RELATIVE_CHART if not c.startswith("#RELATIVE")) + "\n"
+        assert absolute_chart_text(text) == text
+
+    def test_conversion_drops_the_tag_and_keeps_other_lines(self):
+        out = absolute_chart_text("\n".join(_RELATIVE_CHART) + "\n").splitlines()
+        assert "#RELATIVE:YES" not in out
+        assert out[:4] == _RELATIVE_CHART[:4]
+        assert out[4:] == [": 0 4 60 one", ": 4 4 62 two", "- 8", ": 10 4 64 three", ": 14 4 65 four",
+                           "- 16", ": 18 4 67 five", "E"]
+
+    def test_duet_tracks_keep_their_own_line_start(self):
+        text = "\n".join(["#BPM:300", "#RELATIVE:yes", "P1", ": 0 2 60 a", "- 4 8", ": 0 2 60 b",
+                          "P2", ": 0 2 60 c", "- 2 3", ": 0 2 60 d", "E"])
+        beats = [int(line.split()[1]) for line in absolute_chart_text(text).splitlines() if line.startswith(":")]
+        assert beats == [0, 8, 0, 3]
+
+    def test_score_library_gets_absolute_beats(self, tmp_path):
+        pytest.importorskip("ultrastar_score")
+        p = tmp_path / "rel.txt"
+        p.write_bytes("\r\n".join(_RELATIVE_CHART + [""]).encode("utf-8"))
+        song = parse_score_song(p)
+        assert [n.start_beat for n in song.all_notes] == [0, 4, 10, 14, 18]
+        assert len(song.lines) == 3
+        assert p.read_bytes().count(b"#RELATIVE") == 1  # the chart itself is untouched
+
+
+class TestParseScoreSong:
+    """Feature: the score library reads charts the way the games do."""
+
+    def test_empty_gap_reads_as_zero(self, tmp_path):
+        pytest.importorskip("ultrastar_score")
+        p = tmp_path / "gap.txt"
+        p.write_bytes(b"#TITLE:Title\r\n#BPM:300\r\n#GAP:\r\n: 0 4 60 la\r\nE\r\n")
+        song = parse_score_song(p)
+        assert song.gap == 0.0 and len(song.all_notes) == 1
+
+    def test_plain_chart_parsed_as_it_is(self, tmp_path):
+        pytest.importorskip("ultrastar_score")
+        p = tmp_path / "plain.txt"
+        p.write_bytes(b"#TITLE:Title\n#MP3:song.mp3\n#BPM:300\n#GAP:500\n: 3 4 60 la\nE\n")
+        song = parse_score_song(p)
+        assert song.gap == 500.0 and song.audio == "song.mp3"
+        assert [n.start_beat for n in song.all_notes] == [3]
+
+    def test_utf16_relative_chart_with_empty_gap(self, tmp_path):
+        pytest.importorskip("ultrastar_score")
+        p = tmp_path / "utf16.txt"
+        chart = [line if line != "#GAP:1000" else "#GAP:" for line in _RELATIVE_CHART]
+        p.write_bytes("\r\n".join(chart + [""]).encode("utf-16"))
+        song = parse_score_song(p)
+        assert song.gap == 0.0
+        assert [n.start_beat for n in song.all_notes] == [0, 4, 10, 14, 18]
+
+    def test_copy_for_the_score_library_keeps_line_endings(self, tmp_path, monkeypatch):
+        us_parser = pytest.importorskip("ultrastar_score.parser")
+        seen = []
+        monkeypatch.setattr(us_parser, "parse_ultrastar", lambda path: seen.append(Path(path).read_bytes()))
+        p = tmp_path / "rel.txt"
+        p.write_bytes("\r\n".join(_RELATIVE_CHART + [""]).encode("utf-8"))
+        parse_score_song(p)
+        assert seen and b"\r\r\n" not in seen[0] and seen[0].count(b"\r\n") == len(_RELATIVE_CHART) - 1
+
+    def test_non_numeric_bpm_still_fails(self, tmp_path):
+        pytest.importorskip("ultrastar_score")
+        p = tmp_path / "bad.txt"
+        p.write_bytes(b"#TITLE:Title\n#BPM:fast\n#GAP:\n: 0 4 60 la\nE\n")
+        with pytest.raises(ValueError):
+            parse_score_song(p)

@@ -2,6 +2,8 @@
 
 Developer tool for evaluating generated UltraStar files against reference files.
 Handles format differences automatically (v1.2.0 pitch convention vs legacy raw MIDI).
+Its chart reading helpers (text encoding, ``#RELATIVE`` beats) are shared by
+the other tools in this folder.
 
 Usage:
     uv run python tools/compare_ultrastar.py generated.txt reference.txt
@@ -12,9 +14,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import re
 import sys
+import tempfile
 import unicodedata
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -229,8 +233,12 @@ def _parse_header_value(line: str) -> str:
 
 
 def _parse_gap(raw: str) -> float:
-    """Parse GAP value (may use comma as decimal separator). Returns ms."""
-    return float(raw.replace(",", "."))
+    """Parse GAP value (may use comma as decimal separator). Returns ms.
+
+    An empty value counts as 0, as the games read it.
+    """
+    raw = raw.strip()
+    return float(raw.replace(",", ".")) if raw else 0.0
 
 
 def _parse_bpm(raw: str) -> float:
@@ -289,11 +297,128 @@ def _version_ge(version: str, threshold: str) -> bool:
 
 _NOTE_TYPES = {":", "*", "F", "R", "G"}
 
+_ENCODING_TAG_RE = re.compile(rb"(?:^|(?<=\r))[ \t]*#ENCODING:[ \t]*([^\r\n]*)", re.IGNORECASE | re.MULTILINE)
+
+
+def declared_encoding(raw: bytes) -> str | None:
+    """The codec a ``#ENCODING:`` tag names (e.g. ``cp1250``), if Python knows it.
+
+    Values like ``Auto`` and codecs that do not keep ASCII as it is (the tag
+    itself was found as plain ASCII) give None.
+    """
+    match = _ENCODING_TAG_RE.search(raw)
+    if not match:
+        return None
+    name = match.group(1).decode("ascii", errors="ignore").strip()
+    try:
+        codec = codecs.lookup(name).name if name else None
+        if codec and "#ENCODING:".encode(codec) == b"#ENCODING:":
+            return codec
+    except (LookupError, UnicodeError):
+        pass
+    return None
+
+
+def read_chart_text(path: str | Path) -> str:
+    """Decode an UltraStar TXT the way the games read it.
+
+    A UTF-8 byte order mark is dropped (it would hide the first header line)
+    and a UTF-16 one is honoured. Valid UTF-8 is read as UTF-8; a legacy
+    chart is read in the codepage its ``#ENCODING:`` tag names (e.g.
+    CP1250), else as Windows-1252.
+    """
+    raw = Path(path).read_bytes()
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        try:
+            return raw.decode("utf-16")
+        except UnicodeDecodeError:
+            pass
+    if raw.startswith(codecs.BOM_UTF8):
+        raw = raw[len(codecs.BOM_UTF8):]
+    for encoding in ("utf-8", declared_encoding(raw), "cp1252"):
+        if encoding:
+            try:
+                return raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+    return raw.decode("latin-1")
+
+
+_RELATIVE_TAG_RE = re.compile(r"\s*#RELATIVE:\s*YES\s*", re.IGNORECASE)
+_RELATIVE_NOTE_RE = re.compile(r"^(\s*[:*FRG]\s+)(-?\d+)(?=\s)")
+_RELATIVE_BREAK_RE = re.compile(r"^\s*-\s*(-?\d+)(?:\s+(-?\d+))?")
+_TRACK_RE = re.compile(r"^\s*P\s*\d+\s*$", re.IGNORECASE)
+
+
+def absolute_chart_text(text: str) -> str:
+    """Rewrite a ``#RELATIVE:YES`` chart with absolute beats; other charts are returned as they are.
+
+    In a relative chart the beats count from the start of their line. A line
+    break ``- a b`` ends the line at beat ``a`` and moves the start of the next
+    line by ``b`` beats (by ``a`` when ``b`` is missing). The result has
+    absolute beats and no ``#RELATIVE`` tag, so any parser reads it right.
+    Each duet track (``P1``/``P2``) keeps its own line start.
+    """
+    lines = text.splitlines(keepends=True)
+    if not any(_RELATIVE_TAG_RE.fullmatch(line) for line in lines):
+        return text
+    out: list[str] = []
+    starts: dict[str, int] = {}  # line start per track
+    track = ""
+    ended = False
+    for line in lines:
+        content = line.rstrip("\r\n")
+        newline = line[len(content):]
+        if ended:
+            out.append(line)
+            continue
+        if _RELATIVE_TAG_RE.fullmatch(content):
+            continue
+        start = starts.get(track, 0)
+        note = _RELATIVE_NOTE_RE.match(content)
+        line_break = None if note else _RELATIVE_BREAK_RE.match(content)
+        if content.strip().upper() == "E":
+            ended = True
+        elif _TRACK_RE.match(content):
+            track = re.sub(r"\s", "", content).upper()
+        elif note:
+            line = f"{note.group(1)}{int(note.group(2)) + start}{content[note.end():]}{newline}"
+        elif line_break:
+            end = int(line_break.group(1))
+            shift = int(line_break.group(2)) if line_break.group(2) is not None else end
+            starts[track] = start + shift
+            line = f"- {end + start}{newline}"
+        out.append(line)
+    return "".join(out)
+
+
+_EMPTY_GAP_RE = re.compile(r"(?:^|(?<=\r))[ \t]*#GAP:[ \t]*(?:\r\n|\n|\r|$)", re.IGNORECASE | re.MULTILINE)
+
+
+def parse_score_song(path: str | Path):
+    """Parse a chart with ``ultrastar_score`` the way the games read it.
+
+    The score library reads every chart with absolute beats and fails on an
+    empty ``#GAP``. A ``#RELATIVE:YES`` chart is therefore rewritten with
+    absolute beats, and an empty ``#GAP`` (0 for the games) is dropped, in a
+    temporary copy that is parsed instead. Other charts are parsed as they are.
+    """
+    from ultrastar_score import parser as score_parser
+
+    text = read_chart_text(path)
+    prepared = _EMPTY_GAP_RE.sub("", absolute_chart_text(text))
+    if prepared == text:
+        return score_parser.parse_ultrastar(str(path))
+    with tempfile.TemporaryDirectory(prefix="chart_") as tmp:
+        copy = Path(tmp) / "chart.txt"
+        copy.write_text(prepared, encoding="utf-8", newline="")
+        return score_parser.parse_ultrastar(str(copy))
+
 
 def parse_ultrastar(path: str | Path) -> ParsedFile:
     """Parse an UltraStar TXT file and return normalised data."""
     path = Path(path)
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = absolute_chart_text(read_chart_text(path))
 
     headers: dict[str, str] = {}
     version: str | None = None

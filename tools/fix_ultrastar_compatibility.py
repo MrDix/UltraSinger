@@ -7,7 +7,12 @@ compatibility issues:
    UltraStar Play only supports mp3, ogg, and wav. Songs with incompatible
    audio formats (aac, flac, opus, m4a, wma, etc.) are converted to OGG Vorbis
    using FFmpeg, and the TXT file references are updated accordingly.
-   Original audio files are preserved (never deleted).
+   Original audio files are preserved (never deleted). FFmpeg writes to a
+   temporary file that becomes the OGG only once the conversion succeeded.
+   An OGG that already exists is reused only when ffprobe confirms it is
+   complete; an incomplete one (an aborted run of an older version could
+   leave one) is kept as ``<name>.ogg.bak`` and converted again. An OGG the
+   chart already uses for other audio (e.g. #INSTRUMENTAL) is never touched.
 
 2. Non-Standard Tag Removal (always):
    Tags not part of the official UltraStar format specification (e.g. #COMMENT:)
@@ -16,7 +21,13 @@ compatibility issues:
 3. Encoding Normalization (--normalize-encoding):
    TXT files in legacy encodings (CP1252, Latin-1, etc.) are converted to UTF-8
    for universal compatibility across all UltraStar derivatives (USDX, UltraStar
-   Play, Performous, Vocaluxe). The deprecated #ENCODING: tag is removed.
+   Play, Performous, Vocaluxe). A legacy file is read in the codepage its
+   #ENCODING: tag names (e.g. CP1250 for Polish or Czech charts). The
+   deprecated #ENCODING: tag is removed.
+
+TXT files are rewritten through a temporary file in the same folder that
+replaces the chart in one step, so a full disk or an interrupted run never
+leaves a truncated chart behind.
 
 Usage:
     uv run python tools/fix_ultrastar_compatibility.py "D:\\UltraStar\\Songs"
@@ -27,10 +38,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,6 +53,10 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if sys.stderr and hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from compare_ultrastar import declared_encoding  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +82,10 @@ _TXT_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
 
 TXT_ENCODING_WRITE = "utf-8"
 
+# An existing OGG shorter than its source by more than this is an aborted
+# conversion, not a complete one.
+OGG_LENGTH_TOLERANCE_S = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Encoding helpers
@@ -74,8 +96,10 @@ def _read_txt_lines(path: Path) -> tuple[list[str], str]:
 
     Returns (lines, encoding_used).  The fallback chain is:
       1. UTF-8 (with BOM)  — modern files
-      2. Windows-1252      — Western European (ö ü ä é è ñ ł etc.)
-      3. Latin-1           — never fails (maps all 256 byte values)
+      2. The codepage the file's ``#ENCODING:`` tag names, if any
+         (e.g. CP1250 for Polish or Czech charts)
+      3. Windows-1252      — Western European (ö ü ä é è ñ etc.)
+      4. Latin-1           — never fails (maps all 256 byte values)
 
     Decoding uses strict mode: invalid bytes raise ``UnicodeDecodeError``
     which triggers the next fallback encoding automatically.
@@ -87,7 +111,9 @@ def _read_txt_lines(path: Path) -> tuple[list[str], str]:
     raw = path.read_bytes()
     has_bom = raw.startswith(b"\xef\xbb\xbf")
 
-    for enc in _TXT_ENCODINGS:
+    for enc in (_TXT_ENCODINGS[0], declared_encoding(raw), *_TXT_ENCODINGS[1:]):
+        if not enc:
+            continue
         try:
             text = raw.decode(enc)
             # Report "utf-8" when no BOM was present, even though the
@@ -100,6 +126,33 @@ def _read_txt_lines(path: Path) -> tuple[list[str], str]:
 
     # Should never reach here (latin-1 never raises), but just in case
     return raw.decode("latin-1").splitlines(keepends=True), "latin-1"
+
+
+def _write_txt_atomic(path: Path, lines: list[str], encoding: str) -> None:
+    """Replace the TXT at *path* with *lines* without ever losing the chart.
+
+    The text goes to a temporary file in the same folder, is flushed to the
+    disk and then replaces the chart in one step (``os.replace``): a full
+    disk, an encoding error or a killed process leaves either the old or the
+    new chart, never a truncated one. The file mode is kept.
+    """
+    mode = stat.S_IMODE(path.stat().st_mode)
+    # A short name: the chart's own path may already be close to the length limit.
+    fd, tmp_name = tempfile.mkstemp(prefix=".chart-", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
+            f.writelines(lines)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        os.chmod(path, mode)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass  # a leftover temporary file is harmless, the chart is untouched
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +360,13 @@ def check_ffmpeg() -> str:
 
 
 def convert_to_ogg(ffmpeg_path: str, input_path: Path, output_path: Path) -> None:
-    """Convert an audio file to OGG Vorbis using FFmpeg."""
+    """Convert an audio file to OGG Vorbis using FFmpeg.
+
+    FFmpeg writes to a temporary ``.part`` file next to *output_path* that
+    is renamed to *output_path* only after a successful conversion, so an
+    aborted run never leaves a partial OGG under the final name.
+    """
+    part_path = output_path.with_name(output_path.name + ".part")
     cmd = [
         ffmpeg_path,
         "-i", str(input_path),
@@ -316,11 +375,100 @@ def convert_to_ogg(ffmpeg_path: str, input_path: Path, output_path: Path) -> Non
         "-loglevel", "error",
         "-codec:a", "libvorbis",
         "-q:a", "6",               # High quality VBR (~192 kbps)
-        str(output_path),
+        "-f", "ogg",               # The .part name does not tell FFmpeg the format
+        str(part_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg conversion failed: {result.stderr.strip()}")
+    try:
+        # FFmpeg writes UTF-8 (e.g. file names in error messages); the console
+        # codepage could not decode all of it and would lose the message.
+        result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace")
+        if result.returncode != 0:
+            raise RuntimeError(f"FFmpeg conversion failed: {result.stderr.strip()}")
+        os.replace(part_path, output_path)
+    finally:
+        try:
+            part_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def find_ffprobe(ffmpeg_path: str | None) -> str | None:
+    """The ffprobe next to *ffmpeg_path*, else the one on PATH (None if there is none)."""
+    if ffmpeg_path:
+        ffmpeg = Path(ffmpeg_path)
+        sibling = ffmpeg.with_name("ffprobe" + ffmpeg.suffix)
+        if sibling.is_file():
+            return str(sibling)
+    return shutil.which("ffprobe")
+
+
+def _audio_seconds(ffprobe_path: str, path: Path) -> float | None:
+    """Length of the first audio stream of *path* in seconds (the container's
+    length if the stream does not tell), or None if ffprobe finds no audio."""
+    cmd = [
+        ffprobe_path, "-v", "error", "-select_streams", "a:0",
+        "-show_entries", "stream=duration:format=duration", "-of", "json", str(path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+        data = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not data.get("streams"):
+        return None
+    for value in (data["streams"][0].get("duration"), (data.get("format") or {}).get("duration")):
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            continue
+        if seconds > 0:
+            return seconds
+    return None
+
+
+def ogg_is_complete(ogg_path: Path, source_path: Path, ffprobe_path: str | None) -> bool:
+    """Whether an existing OGG can be trusted as the conversion of *source_path*.
+
+    It must not be empty, ffprobe must find audio in it, and it must not be
+    clearly shorter than the source (an aborted conversion). Without ffprobe
+    this cannot be checked, so the OGG is not trusted.
+    """
+    try:
+        if ogg_path.stat().st_size == 0:
+            return False
+    except OSError:
+        return False
+    if not ffprobe_path:
+        return False
+    ogg_seconds = _audio_seconds(ffprobe_path, ogg_path)
+    if ogg_seconds is None:
+        return False
+    source_seconds = _audio_seconds(ffprobe_path, source_path)
+    return source_seconds is None or ogg_seconds >= source_seconds - OGG_LENGTH_TOLERANCE_S
+
+
+def _is_same_file(a: Path, b: Path) -> bool:
+    """Whether *a* and *b* are the same existing file (however they are spelled)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _tag_names_file(af: AudioFileInfo, path: Path) -> bool:
+    """Whether the tag *af* names the file *path* itself. A file that was only
+    found as a stand-in for a missing one (the single file with the same
+    extension, see :func:`_resolve_audio_file`) does not count."""
+    return af.full_path.name.lower() == Path(af.filename).name.lower() and _is_same_file(af.full_path, path)
+
+
+def _unused_path(path: Path) -> Path:
+    """*path*, or *path* with a number appended if that name is taken."""
+    candidate, n = path, 1
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}.{n}")
+        n += 1
+    return candidate
 
 
 # ---------------------------------------------------------------------------
@@ -351,16 +499,16 @@ def update_txt_tags(txt_path: Path, replacements: dict[str, str]) -> None:
                 value = stripped[colon_idx + 1:].strip()
                 if tag_part in ("#MP3:", "#AUDIO:", "#VOCALS:", "#INSTRUMENTAL:"):
                     if value in replacements:
-                        # Preserve original tag case from the file
+                        # Preserve original tag case and line ending from the file
                         original_tag = stripped[: colon_idx + 1]
-                        line = f"{original_tag}{replacements[value]}\n"
+                        ending = line[len(line.rstrip("\r\n")):] or "\n"
+                        line = f"{original_tag}{replacements[value]}{ending}"
                         updated = True
         new_lines.append(line)
 
     if updated:
         # Preserve original encoding — use detected encoding, not UTF-8
-        with open(txt_path, "w", encoding=detected_enc, newline="") as f:
-            f.writelines(new_lines)
+        _write_txt_atomic(txt_path, new_lines, detected_enc)
 
 
 # ---------------------------------------------------------------------------
@@ -403,8 +551,7 @@ def normalize_txt_encoding(txt_path: Path) -> tuple[bool, bool]:
 
     # Only write if something actually changed
     if encoding_changed or encoding_tag_removed:
-        with open(txt_path, "w", encoding=TXT_ENCODING_WRITE, newline="") as f:
-            f.writelines(new_lines)
+        _write_txt_atomic(txt_path, new_lines, TXT_ENCODING_WRITE)
 
     return encoding_changed, encoding_tag_removed
 
@@ -439,8 +586,7 @@ def remove_non_standard_tags(txt_path: Path) -> bool:
         new_lines.append(line)
 
     if removed:
-        with open(txt_path, "w", encoding=detected_enc, newline="") as f:
-            f.writelines(new_lines)
+        _write_txt_atomic(txt_path, new_lines, detected_enc)
 
     return removed
 
@@ -532,6 +678,7 @@ def process_song(
     file_replacements: dict[str, str] = {}  # old_filename → new_filename
     renames_to_do: list[tuple[AudioFileInfo, Path]] = []     # just rename (e.g. .us3 → .mp3)
     conversions_to_do: list[tuple[AudioFileInfo, Path]] = []  # FFmpeg conversion → .ogg
+    ogg_sources: dict[Path, AudioFileInfo] = {}               # planned .ogg → its source
 
     for af in needs_conversion:
         if af.filename in file_replacements:
@@ -562,6 +709,24 @@ def process_song(
         else:
             new_basename = f"{stem}.ogg"
             new_path = af.full_path.parent / new_basename
+            other = ogg_sources.get(new_path)
+            if other is not None and not _is_same_file(other.full_path, af.full_path):
+                # Two different files would become the same OGG, so one tag
+                # would end up pointing at the other file's audio.
+                result.status = "error"
+                result.error_msg = f"{other.filename} and {af.filename} would both become {new_basename}"
+                return result
+            users = [o.tag for o in song_info.audio_files if _tag_names_file(o, new_path)]
+            if users:
+                # The chart already plays this OGG as other audio (e.g. an
+                # instrumental): it is no conversion of this file.
+                result.status = "error"
+                result.error_msg = (
+                    f"{new_basename} already exists and is used by {users[0].rstrip(':')}; "
+                    f"convert {af.filename} by hand"
+                )
+                return result
+            ogg_sources[new_path] = af
             conversions_to_do.append((af, new_path))
 
         new_filename = f"{prefix}{new_basename}"
@@ -582,14 +747,33 @@ def process_song(
         # Perform FFmpeg conversions first — resolve ffmpeg lazily on first need
         for af, ogg_path in conversions_to_do:
             if ogg_path.is_file():
-                # OGG already exists (previous run?) — skip conversion but still update TXT
-                result.warnings.append(
-                    f"{ogg_path.name} already exists, skipping conversion"
-                )
-            else:
-                if ffmpeg_path is None:
-                    ffmpeg_path = check_ffmpeg()
+                if ogg_is_complete(ogg_path, af.full_path, find_ffprobe(ffmpeg_path)):
+                    # OGG already exists (previous run?) — skip conversion but still update TXT
+                    result.warnings.append(
+                        f"{ogg_path.name} already exists, skipping conversion"
+                    )
+                    continue
+            if ffmpeg_path is None:
+                ffmpeg_path = check_ffmpeg()
+            # Empty, unreadable or shorter than the source: an aborted
+            # conversion must not become the song's audio. A non-empty one is
+            # kept under another name in case it is a file of the user's.
+            kept = None
+            if ogg_path.is_file():
+                if ogg_path.stat().st_size > 0:
+                    kept = _unused_path(ogg_path.with_name(ogg_path.name + ".bak"))
+                    ogg_path.rename(kept)
+                    result.warnings.append(
+                        f"{ogg_path.name} looked incomplete, kept it as {kept.name} and converted again"
+                    )
+                else:
+                    result.warnings.append(f"{ogg_path.name} was empty, converted again")
+            try:
                 convert_to_ogg(ffmpeg_path, af.full_path, ogg_path)
+            except BaseException:
+                if kept is not None and not ogg_path.exists():
+                    kept.rename(ogg_path)
+                raise
 
         # Update TXT file with new filenames — before renames so that on
         # failure the original filenames still match the files on disk.
@@ -762,7 +946,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         epilog=(
             "UltraStar Play supports mp3, ogg, and wav. "
             "Other formats (aac, flac, opus, m4a, wma, ...) are converted to OGG Vorbis. "
-            "Original audio files are never deleted. "
+            "Original audio files are never deleted; an existing OGG that looks "
+            "incomplete is kept as <name>.ogg.bak before it is converted again. "
             "Use --normalize-encoding to also convert legacy text encodings "
             "(CP1252, Latin-1, etc.) to UTF-8 for universal compatibility."
         ),
@@ -819,13 +1004,21 @@ def main(argv: list[str] | None = None) -> int:
     # Parse and process each song
     results: list[ConversionResult] = []
     for txt_path in txt_files:
-        song_info = parse_song_info(txt_path)
-        if song_info is None:
-            continue
-        result = process_song(
-            song_info, ffmpeg_path, args.dry_run,
-            normalize_encoding=args.normalize_encoding,
-        )
+        song_info = None
+        try:
+            song_info = parse_song_info(txt_path)
+            if song_info is None:
+                continue
+            result = process_song(
+                song_info, ffmpeg_path, args.dry_run,
+                normalize_encoding=args.normalize_encoding,
+            )
+        except Exception as e:  # noqa: BLE001 - one broken song must not stop the run
+            result = ConversionResult(
+                song_info=song_info or SongInfo(txt_path=txt_path, song_dir=txt_path.parent),
+                status="error",
+                error_msg=f"Unexpected error: {e}",
+            )
         results.append(result)
 
         # Progress indicator for conversions

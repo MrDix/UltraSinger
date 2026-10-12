@@ -7,6 +7,7 @@ is processed and UltraSinger itself is never started.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -102,6 +103,12 @@ class TestLoadChart:
     def test_relative_format_pitch(self, tmp_path):
         p = _write_chart(tmp_path / "a.txt", [": 0 4 0 la"], extra_headers=["#VERSION:1.2.0"])
         assert cb.load_chart(p)[0].midi == 48
+
+    def test_relative_beats(self, tmp_path):
+        # #RELATIVE:YES: beats count from the line start; "- 8 10" moves it to beat 10
+        p = _write_chart(tmp_path / "a.txt", [": 0 4 60 one", "- 8 10", ": 0 4 62 two"],
+                         extra_headers=["#RELATIVE:YES"])
+        assert [n.start_ms for n in cb.load_chart(p)] == [pytest.approx(1000), pytest.approx(1500)]
 
 
 # ── metrics ──────────────────────────────────────────────────────────────────
@@ -419,6 +426,11 @@ class TestLoadWords:
         p.write_bytes("\n".join(["#BPM:300", "#GAP:0", ": 0 2 60 sch\xf6n", "E"]).encode("cp1252"))
         assert _words(p) == [("schon", 0)]
 
+    def test_relative_chart(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 2 60 one", "- 3 10", ": 0 2 60 two", "- 4", ": 2 2 60 three"],
+                         extra_headers=["#RELATIVE:YES"])
+        assert _words(p) == [("one", 1000), ("two", 1500), ("three", 1800)]
+
 
 class TestAlignWords:
     def test_order_preserving(self):
@@ -690,6 +702,49 @@ class TestJoinArgsValue:
     def test_parser_accepts_flag_value(self):
         args = cb.build_parser().parse_args(cb._join_args_value(["convert", "w", "--args", "--syllable_split"]))
         assert args.args == "--syllable_split"
+
+
+class TestSplitArgs:
+    def test_windows_path_keeps_its_backslashes(self):
+        assert cb.split_args(r"--segmentation_model D:\Seg\model.pt", posix=False) == \
+            ["--segmentation_model", r"D:\Seg\model.pt"]
+
+    @pytest.mark.parametrize("quoted", [r'"D:\My Models\model.pt"', r"'D:\My Models\model.pt'"])
+    def test_windows_quotes_group_and_are_dropped(self, quoted):
+        assert cb.split_args(f"--segmentation_model {quoted} --chart_style score", posix=False) == \
+            ["--segmentation_model", r"D:\My Models\model.pt", "--chart_style", "score"]
+
+    def test_windows_apostrophe_inside_a_word_kept(self):
+        assert cb.split_args(r"--x D:\Rock'n'Roll\m.pt", posix=False) == ["--x", r"D:\Rock'n'Roll\m.pt"]
+
+    @pytest.mark.parametrize("quote", ['"', "'"])
+    def test_windows_quotes_after_equals(self, quote):
+        value = f"--segmentation_model={quote}D:\\My Models\\model.pt{quote} --x"
+        assert cb.split_args(value, posix=False) == [r"--segmentation_model=D:\My Models\model.pt", "--x"]
+
+    def test_windows_unclosed_quote(self):
+        with pytest.raises(ValueError, match="closing quotation"):
+            cb.split_args('--x "D:\\a b', posix=False)
+
+    def test_posix_rules_elsewhere(self):
+        assert cb.split_args("--x 'a b' c\\ d", posix=True) == ["--x", "a b", "c d"]
+
+    def test_empty(self):
+        assert cb.split_args("", posix=False) == [] and cb.split_args("", posix=True) == []
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows paths only matter on Windows")
+    def test_convert_keeps_a_windows_path(self, tmp_path, monkeypatch):
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "songs.json").write_text(json.dumps([{"id": "song_001"}]), encoding="utf-8")
+        seen = []
+
+        def fake_convert(song, run_dir, extra_args, *a, **k):
+            seen.append(extra_args)
+            return {"returncode": 0, "seconds": 0, "txt": None}
+        monkeypatch.setattr(cb, "convert_song", fake_convert)
+        cb.main(["convert", str(work), "--args", r"--segmentation_model D:\Seg\model.pt"])
+        assert seen == [["--segmentation_model", r"D:\Seg\model.pt"]]
 
 
 class TestPrune:
