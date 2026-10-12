@@ -159,6 +159,22 @@ def test_shutdown_stops_running_probes(tmp_path):
     assert host._probes == []
 
 
+def test_probe_cancelled_after_yt_dlp_skips_the_lyrics_lookup():
+    worker = _FormatProbeWorker("vid")
+    results = []
+    worker.finished.connect(lambda *args: results.append(args))
+
+    def dump_then_close(self):
+        self.cancel()  # the window closes right after yt-dlp has answered
+        return '{"title": "Artist - Song Title", "formats": []}'
+
+    with patch.object(_FormatProbeWorker, "_dump_json", dump_then_close), \
+            patch.object(_FormatProbeWorker, "_check_lrclib") as lookup:
+        worker.run()
+    lookup.assert_not_called()
+    assert results == []
+
+
 def test_probe_cancel_kills_yt_dlp():
     worker = _FormatProbeWorker("vid")
     process = MagicMock(returncode=-9)

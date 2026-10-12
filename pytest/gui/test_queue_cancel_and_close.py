@@ -162,6 +162,20 @@ class _EndlessConversion(ConversionWorker):
         self._stop.set()
 
 
+class _StubbornConversion(_EndlessConversion):
+    """A conversion whose processes survive the cancel (e.g. a child ignores SIGTERM)."""
+
+    def run(self):
+        self._stop.wait(60)
+        self.finished.emit(-2)
+
+    def cancel(self):
+        self._cancelled = True
+
+    def force_kill(self):
+        self._stop.set()
+
+
 class TestRunnerShutdown:
     def test_shutdown_cancels_and_joins_the_thread(self):
         runner = UltraSingerRunner()
@@ -172,6 +186,18 @@ class TestRunnerShutdown:
         runner.shutdown()
         assert thread.isFinished()
         assert not runner.is_running
+
+    def test_processes_surviving_the_cancel_are_killed(self, monkeypatch):
+        monkeypatch.setattr(UltraSingerRunner, "_SHUTDOWN_GRACE_MS", 100)
+        runner = UltraSingerRunner()
+        with patch("src.gui.ultrasinger_runner.ConversionWorker", _StubbornConversion):
+            runner.start(["-i", "x.mp3"])
+        thread = runner._thread
+        assert _process_events_until(thread.isRunning)
+        start = time.monotonic()
+        runner.shutdown()
+        assert thread.isFinished()
+        assert time.monotonic() - start < 10  # killed, not waited out
 
     def test_shutdown_without_a_conversion(self):
         UltraSingerRunner().shutdown()

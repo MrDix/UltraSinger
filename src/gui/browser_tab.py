@@ -171,7 +171,11 @@ class _FormatProbeWorker(QObject):
                     from modules.name_matching import artist_from_channel
                     artist = artist_from_channel(info.get("uploader") or info.get("channel") or "")
                     track = track or video_title
+            if self._cancelled:  # the window is closing
+                return
             lyrics_status = self._check_lrclib(artist, track, duration or None)
+            if self._cancelled:
+                return
 
             # Video platform language metadata
             yt_language = info.get("language") or ""

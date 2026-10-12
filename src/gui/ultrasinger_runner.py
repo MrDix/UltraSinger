@@ -227,6 +227,31 @@ class ConversionWorker(QObject):
             except OSError:
                 pass
 
+    def force_kill(self):
+        """Kill the whole process tree outright, after a cancel() that did not end it.
+
+        E.g. a child that ignores SIGTERM keeps the output pipe open, so run()
+        would read on forever.
+        """
+        proc = self._process
+        if proc is None:
+            return
+        try:
+            if _IS_WINDOWS:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                # The group outlives its leader: start_new_session made the pid its id
+                os.killpg(proc.pid, 9)  # SIGKILL
+        except (OSError, subprocess.SubprocessError):
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
     def _wait_and_kill(self):
         """Wait for process to terminate; force-kill if it doesn't."""
         proc = self._process
@@ -306,6 +331,9 @@ class UltraSingerRunner(QObject):
         if self._worker:
             self._worker.cancel()
 
+    # How long a cancelled conversion may take to end before its processes are killed outright
+    _SHUTDOWN_GRACE_MS = 10_000
+
     def shutdown(self):
         """Cancel a running conversion and wait for its thread (the window is closing).
 
@@ -314,10 +342,14 @@ class UltraSingerRunner(QObject):
         thread = self._thread
         if thread is None:
             return
-        if self._worker:
-            self._worker.cancel()
+        worker = self._worker
+        if worker:
+            worker.cancel()
         thread.quit()
-        # No timeout: cancel() has stopped the process tree whose output run() reads
+        if not thread.wait(self._SHUTDOWN_GRACE_MS) and worker:
+            logger.warning("The conversion did not end after the cancel; killing its processes")
+            worker.force_kill()
+        # No timeout: the processes whose output run() reads are gone now
         thread.wait()
         self._thread = None
         self._worker = None

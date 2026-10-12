@@ -180,6 +180,19 @@ class TestLegacyPlainTextKey:
         assert stored_keys["llm_api_key"] == "legacy-key"
 
 
+def test_load_creates_the_config_directory(tmp_path, monkeypatch):
+    """Created on start through the owner-only path, before e.g. a cookie export could create it."""
+    directory = tmp_path / "new_config_dir"
+    monkeypatch.setattr(config_module, "_CONFIG_DIR", directory)
+    monkeypatch.setattr(config_module, "_CONFIG_FILE", directory / "config.json")
+    monkeypatch.setattr(secrets_module, "_keyring_available", False)
+    secured = []
+    monkeypatch.setattr(config_module, "_secure_directory", secured.append)
+    load_config()
+    assert directory.is_dir()
+    assert secured == [directory]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
 class TestPrivatePermissions:
     def test_existing_directory_and_files_are_restricted(self, config_dir):

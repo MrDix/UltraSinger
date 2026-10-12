@@ -427,12 +427,14 @@ def load_config() -> dict:
     config = dict(_DEFAULTS)
     stored = _read_stored_config()
     config.update(_checked_values(stored))
-    if _CONFIG_DIR.exists():
-        try:
-            _ensure_config_dir()
-            _secure_existing_files(config)
-        except OSError as exc:
-            logger.warning("Could not restrict permissions in %s: %s", _CONFIG_DIR, exc)
+    # Create the config directory now, so that nothing else (e.g. the cookie
+    # export) creates it without owner-only permissions; restrict existing
+    # files of older versions.
+    try:
+        _ensure_config_dir()
+        _secure_existing_files(config)
+    except OSError as exc:
+        logger.warning("Could not prepare config directory %s: %s", _CONFIG_DIR, exc)
 
     # Migrate legacy single-LLM to multi-provider. Only a config without a
     # provider list gets one: a list the user has emptied stays empty.
