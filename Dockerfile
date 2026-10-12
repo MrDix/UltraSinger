@@ -14,9 +14,9 @@ RUN apt-get update \
     && apt-get clean  \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
+# Install uv, pinned to the version the install scripts use. In /bin it can
+# also be run by the non-root user below (/root is not readable for it).
+COPY --from=ghcr.io/astral-sh/uv:0.12.24 /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 
 # copy pyproject.toml first to leverage container image build cache
@@ -40,9 +40,20 @@ RUN uv pip uninstall --system torchcodec 2>/dev/null || true
 # copy sources late to allow for caching of layers which contain all the dependencies
 COPY . /app/UltraSinger
 
+# The container runs as UID 1000, which has no home directory in this image
+# (HOME would be "/"): without a writable one, the downloaded models (Hugging
+# Face, torch hub) and the other caches would go to /.cache and fail with a
+# PermissionError. World-writable (like /tmp), so another ID given with
+# "--user" can use it too.
+ENV HOME=/home/ultrasinger
+ENV XDG_CACHE_HOME=$HOME/.cache \
+    HF_HOME=$HOME/.cache/huggingface \
+    TORCH_HOME=$HOME/.cache/torch
 
 # no need to run as root
-RUN chown -R 1000:1000 /app/UltraSinger
+RUN mkdir -p "$XDG_CACHE_HOME" \
+    && chown -R 1000:1000 /app/UltraSinger "$HOME" \
+    && chmod 1777 "$HOME" "$XDG_CACHE_HOME"
 USER 1000:1000
 
 WORKDIR /app/UltraSinger/src
