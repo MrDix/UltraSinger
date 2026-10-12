@@ -112,6 +112,13 @@ if !NODE_MAJOR! LSS %NODE_MIN_MAJOR% (
     exit /b 2
 )
 
+REM Leftovers of an interrupted run: the download, the replaced folder, and the
+REM new or replaced build
+if exist "%PROVIDER_DIR%.new" rmdir /s /q "%PROVIDER_DIR%.new"
+if exist "%PROVIDER_DIR%.old" rmdir /s /q "%PROVIDER_DIR%.old"
+if exist "%SERVER_DIR%\build.new" rmdir /s /q "%SERVER_DIR%\build.new"
+if exist "%SERVER_DIR%\build.old" rmdir /s /q "%SERVER_DIR%\build.old"
+
 REM --- Already built from the pinned release? ---
 REM Also needs the installed dependencies (npm ci writes the hidden lockfile):
 REM security software sometimes removes them, and then the build must be redone.
@@ -152,8 +159,6 @@ if exist "%PROVIDER_DIR%\.git" (
     REM from a backup that skips .git) is only replaced once the download worked,
     REM and by renaming it, which fails as a whole while the folder is in use
     REM where deleting it would leave a damaged folder behind.
-    if exist "%PROVIDER_DIR%.new" rmdir /s /q "%PROVIDER_DIR%.new"
-    if exist "%PROVIDER_DIR%.old" rmdir /s /q "%PROVIDER_DIR%.old"
     git clone --quiet --depth 1 --branch "%PROVIDER_TAG%" "%PROVIDER_REPO%" "%PROVIDER_DIR%.new" >nul 2>&1
     set "NEW_COMMIT="
     if exist "%PROVIDER_DIR%.new\.git" (
@@ -196,6 +201,16 @@ if not "!SRC_COMMIT!"=="%PROVIDER_COMMIT%" (
 )
 
 REM --- Build it ---
+REM The current build is renamed out of the way before anything is destroyed:
+REM a rename fails as a whole while the folder is in use (e.g. by a running
+REM provider, which works in it), where deleting it would leave half a build.
+if exist "%SERVER_DIR%\build" if not exist "%SERVER_DIR%\build.old" move "%SERVER_DIR%\build" "%SERVER_DIR%\build.old" >nul 2>&1
+if exist "%SERVER_DIR%\build" (
+    echo The provider build folder %SERVER_DIR%\build is in use ^(close
+    echo UltraSinger or end the node process that runs it, or wait for the virus
+    echo scanner to finish^) - run %RERUN% again.
+    exit /b 3
+)
 REM Start from scratch: a build of another release must neither be started by
 REM the app nor make a failed build look successful (tsc's incremental state
 REM would skip unchanged files, too). npm ci installs exactly the release's
@@ -203,7 +218,6 @@ REM package-lock.json, and tsc is the compiler it installed (npx --no never
 REM downloads one). tsc writes into build.new, which only becomes build once
 REM it is complete: an interrupted build never leaves half of one to start.
 echo Building provider ^(npm ci + tsc, this can take a minute^)...
-if exist "%SERVER_DIR%\build" rmdir /s /q "%SERVER_DIR%\build"
 if exist "%SERVER_DIR%\build.new" rmdir /s /q "%SERVER_DIR%\build.new"
 if exist "%SERVER_DIR%\tsconfig.tsbuildinfo" del /f /q "%SERVER_DIR%\tsconfig.tsbuildinfo"
 set "BUILD_OK="
@@ -217,6 +231,7 @@ if !errorlevel! equ 0 (
     )
 )
 if exist build.new rmdir /s /q build.new
+if exist build.old rmdir /s /q build.old
 popd
 if not exist "%SERVER_ENTRY%" set "BUILD_OK="
 

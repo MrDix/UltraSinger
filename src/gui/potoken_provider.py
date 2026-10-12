@@ -174,17 +174,20 @@ def _ping(normalized_url: str) -> str | None:
         return None
 
 
-def _confirmed_version(normalized_url: str, attempts: int = 3) -> str | None:
+def _confirmed_version(
+    normalized_url: str, cancel: threading.Event | None = None, attempts: int = 3,
+) -> str | None:
     """Version of a provider that has just answered a ping.
 
     A missing answer is asked again, so a slow moment (e.g. the load of a
-    first start) does not count as a provider of the wrong version.
+    first start) does not count as a provider of the wrong version - unless
+    the app is closing (``cancel``): then None, so the caller stops it.
     """
     import time
 
     version = _ping(normalized_url)
     for _ in range(attempts - 1):
-        if version is not None:
+        if version is not None or (cancel is not None and cancel.is_set()):
             break
         time.sleep(1.0)
         version = _ping(normalized_url)
@@ -225,34 +228,29 @@ _VERSION_IN_BUILD = re.compile(r'\bVERSION\s*=\s*"([^"]+)"')
 def _build_version(entry: Path) -> str:
     """Version of the Node provider built at ``entry`` ("" if unknown).
 
-    The server reports the VERSION constant of its compiled utils module;
-    the release's server/package.json has the same version.
+    It is the VERSION constant of the compiled utils module, which is also
+    what the server reports.
     """
     try:
         found = _VERSION_IN_BUILD.search(
             (entry.parent / "utils.js").read_text(encoding="utf-8", errors="replace"))
-        if found:
-            return found.group(1)
     except OSError:
-        pass
-    try:
-        package = json.loads(
-            (entry.parent.parent / "package.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
         return ""
-    version = package.get("version") if isinstance(package, dict) else None
-    return version if isinstance(version, str) else ""
+    return found.group(1) if found else ""
 
 
 def _node_build_problem(entry: Path, expected: str) -> str:
     """Why the Node provider build at ``entry`` must not be started ("" if it may).
 
-    Its major version must be the plugin's, and its dependencies must be
-    installed (npm writes the hidden lockfile; security software sometimes
-    deletes node_modules).
+    The build must be complete, its major version must be the plugin's, and
+    its dependencies must be installed (npm writes the hidden lockfile;
+    security software sometimes deletes node_modules).
     """
     if not entry.is_file():
         return "is missing"
+    if not (entry.parent / "utils.js").is_file():
+        # e.g. what a build that was partly deleted leaves: never start it
+        return "is incomplete (parts of it are missing)"
     version = _build_version(entry)
     if not _same_major(version, expected):
         return (f"is version {version}" if version else "has an unknown version") \
@@ -578,7 +576,7 @@ def ensure_provider(
             # routinely delayed by antivirus scanning of node_modules.
             if proc is not None and _wait_until_running(
                     normalized, attempts=120, cancel=cancel, proc=proc):
-                version = _confirmed_version(normalized)
+                version = _confirmed_version(normalized, cancel)
                 if _same_major(version, expected):
                     return ProviderStatus(
                         running=True, started_by_us=True, base_url=normalized,
@@ -625,7 +623,7 @@ def ensure_provider(
         logger.info("Starting bgutil PO-token provider via Docker ...")
         container_id = _start_docker_provider(docker, port)
         if container_id and _wait_until_running(normalized, cancel=cancel):
-            version = _confirmed_version(normalized)
+            version = _confirmed_version(normalized, cancel)
             if _same_major(version, expected):
                 return ProviderStatus(
                     running=True, started_by_us=True, base_url=normalized,
@@ -669,19 +667,21 @@ def _terminate_tree(proc: subprocess.Popen) -> None:
             os.killpg(proc.pid, signal.SIGTERM)  # started in its own session
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to stop the PO-token provider setup: %s", e)
-    _terminate_process(proc)
+    _terminate_process(proc, "the PO-token provider setup")
 
 
-def _terminate_process(proc: subprocess.Popen) -> None:
+def _terminate_process(
+    proc: subprocess.Popen, what: str = "bgutil PO-token provider (Node.js)",
+) -> None:
     try:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-        logger.info("Stopped bgutil PO-token provider (Node.js)")
+        logger.info("Stopped %s", what)
     except (OSError, subprocess.SubprocessError) as e:
-        logger.warning("Failed to stop Node provider process: %s", e)
+        logger.warning("Failed to stop %s: %s", what, e)
 
 
 def _stop_container(docker: str, container_id: str) -> None:

@@ -88,6 +88,10 @@ if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ]; then
     exit 2
 fi
 
+# Leftovers of an interrupted run: the download, the replaced folder, and the
+# new or replaced build
+rm -rf "$PROVIDER_DIR.new" "$PROVIDER_DIR.old" "$SERVER_DIR/build.new" "$SERVER_DIR/build.old"
+
 # --- Already built from the pinned release? ---------------------------------
 # Also needs the installed dependencies (npm ci writes the hidden lockfile):
 # security software sometimes removes them, and then the build must be redone.
@@ -124,7 +128,6 @@ else
     # from a backup that skips .git) is only replaced once the download worked,
     # and by renaming it, which fails as a whole while the folder is in use
     # (deleting it would leave a damaged folder behind).
-    rm -rf "$PROVIDER_DIR.new" "$PROVIDER_DIR.old"
     git clone --quiet --depth 1 --branch "$PROVIDER_TAG" "$PROVIDER_REPO" "$PROVIDER_DIR.new" >/dev/null 2>&1
     if [ -d "$PROVIDER_DIR.new/.git" ] \
             && [ "$(git -C "$PROVIDER_DIR.new" rev-parse HEAD 2>/dev/null)" = "$PROVIDER_COMMIT" ]; then
@@ -164,6 +167,17 @@ if [ "$SRC_COMMIT" != "$PROVIDER_COMMIT" ]; then
 fi
 
 # --- Build it ------------------------------------------------------------------
+# The current build is renamed out of the way before anything is destroyed: a
+# rename fails as a whole while the folder is in use (on Windows, e.g. by a
+# running provider, which works in it), where deleting it would leave half a
+# build behind.
+if [ -e "$SERVER_DIR/build" ] \
+        && { [ -e "$SERVER_DIR/build.old" ] || ! mv "$SERVER_DIR/build" "$SERVER_DIR/build.old" 2>/dev/null; }; then
+    echo "The provider build folder $SERVER_DIR/build is in use (close"
+    echo "UltraSinger or end the node process that runs it, or wait for the virus"
+    echo "scanner to finish) - run $RERUN again."
+    exit 3
+fi
 echo "Building provider (npm ci + tsc, this can take a minute)..."
 # Start from scratch: a build of another release must neither be started by
 # the app nor make a failed build look successful (tsc's incremental state
@@ -171,11 +185,11 @@ echo "Building provider (npm ci + tsc, this can take a minute)..."
 # package-lock.json, and tsc is the compiler it installed (npx --no never
 # downloads one). tsc writes into build.new, which only becomes build once
 # it is complete: an interrupted build never leaves half of one to start.
-rm -rf "$SERVER_DIR/build" "$SERVER_DIR/build.new" "$SERVER_DIR/tsconfig.tsbuildinfo"
+rm -rf "$SERVER_DIR/build.new" "$SERVER_DIR/tsconfig.tsbuildinfo"
 ( cd "$SERVER_DIR" && npm ci --include=dev --no-audit --no-fund >/dev/null 2>&1 \
     && npx --no -- tsc --outDir build.new >/dev/null 2>&1 && [ ! -e build ] && mv build.new build )
 BUILD_RC=$?
-rm -rf "$SERVER_DIR/build.new"
+rm -rf "$SERVER_DIR/build.new" "$SERVER_DIR/build.old"
 
 if [ "$BUILD_RC" -eq 0 ] && [ -f "$SERVER_ENTRY" ]; then
     printf '%s\n' "$PROVIDER_COMMIT" > "$BUILD_STAMP"

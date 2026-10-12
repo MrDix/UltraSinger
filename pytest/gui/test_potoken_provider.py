@@ -279,6 +279,19 @@ class TestProviderVersions:
         start.assert_not_called()
         assert status.running is True and status.container_id == "abc123"
 
+    def test_half_build_is_never_started(self, tmp_path):
+        """main.js without the rest (e.g. a build folder that was partly deleted)."""
+        entry = _built_provider(tmp_path)
+        (entry.parent / "utils.js").unlink()
+        (entry.parent.parent / "package.json").write_text('{"version": "2.0.2"}', encoding="utf-8")
+        with patch.object(pp, "_node_exe", return_value="/usr/bin/node"), \
+             patch.object(pp, "_start_node_provider") as start, \
+             patch.object(pp, "_docker_exe", return_value=None):
+            status = pp.ensure_provider(node_entry=entry)
+        start.assert_not_called()
+        pp._bootstrap_node_provider.assert_called_once()  # a rebuild was tried
+        assert status.running is False and "incomplete" in status.detail
+
     def test_node_build_without_dependencies_is_not_started(self, tmp_path):
         entry = _built_provider(tmp_path, dependencies=False)
         with patch.object(pp, "_node_exe", return_value="/usr/bin/node"), \
@@ -351,13 +364,37 @@ class TestVersionHelpers:
         entry = _built_provider(tmp_path, version="2.0.2")
         assert pp._build_version(entry) == "2.0.2"
 
-    def test_build_version_falls_back_to_package_json(self, tmp_path):
+    def test_build_version_comes_from_the_compiled_server_only(self, tmp_path):
+        """package.json belongs to the checkout, which can be newer than what was built."""
         entry = _built_provider(tmp_path)
         (entry.parent / "utils.js").unlink()
-        (entry.parent.parent / "package.json").write_text('{"version": "1.3.1"}', encoding="utf-8")
-        assert pp._build_version(entry) == "1.3.1"
-        (entry.parent.parent / "package.json").unlink()
+        (entry.parent.parent / "package.json").write_text('{"version": "2.0.2"}', encoding="utf-8")
         assert pp._build_version(entry) == ""
+
+    def test_a_half_build_is_incomplete(self, tmp_path):
+        """What a partly deleted build leaves (main.js only) is never started."""
+        entry = _built_provider(tmp_path)
+        (entry.parent / "utils.js").unlink()
+        (entry.parent.parent / "package.json").write_text('{"version": "2.0.2"}', encoding="utf-8")
+        assert pp._node_build_problem(entry, "2.0.2") == "is incomplete (parts of it are missing)"
+        assert pp._node_build_problem(_built_provider(tmp_path), "2.0.2") == ""
+
+    def test_closing_the_app_ends_the_confirmation_retries(self):
+        import threading
+        cancel = threading.Event()
+        cancel.set()
+        with patch.object(pp, "_ping", return_value=None) as ping, patch("time.sleep") as sleep:
+            assert pp._confirmed_version("http://127.0.0.1:4416", cancel) is None
+        ping.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_stopping_the_setup_is_not_logged_as_a_stopped_provider(self, caplog):
+        proc = MagicMock(pid=1234)
+        with patch.object(pp.os, "name", "nt"), patch("subprocess.run"), \
+             caplog.at_level("INFO", logger=pp.logger.name):
+            pp._terminate_tree(proc)
+        assert "Stopped the PO-token provider setup" in caplog.text
+        assert "(Node.js)" not in caplog.text
 
     def test_same_major(self):
         assert pp._same_major("2.0.1", "2.0.2")

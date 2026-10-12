@@ -356,6 +356,7 @@ def test_provider_checkout_of_another_release_is_moved_and_rebuilt(provider, tmp
     assert (checkout / "server/src/main.ts").read_text(encoding="utf-8") == "// 2.0.0\n"
     assert (checkout / "server/build/main.js").read_text(encoding="utf-8") == "built\n"
     assert not (checkout / "server/tsconfig.tsbuildinfo").exists()  # a full, not an incremental build
+    assert not (checkout / "server/build.old").exists()
     assert steps == BUILD_STEPS
 
 
@@ -431,6 +432,50 @@ def test_provider_folder_in_use_is_kept_whole(provider):
     assert (checkout / "server/build/utils.js").exists()
     for leftover in (".new", ".old"):
         assert not checkout.with_name(checkout.name + leftover).exists()
+
+
+LEFTOVERS = (".new", ".old")  # next to the provider folder; build.new/build.old inside server/
+
+
+def _make_leftovers(checkout: Path) -> None:
+    """What a run stopped half way leaves behind."""
+    for folder in [checkout.with_name(checkout.name + s) for s in LEFTOVERS] \
+            + [checkout / "server" / "build.new", checkout / "server" / "build.old"]:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "leftover").write_text("x", encoding="utf-8")
+
+
+def _leftovers(checkout: Path) -> list[str]:
+    """Temporary folders of the helper that must not stay behind."""
+    return [s for s in LEFTOVERS if checkout.with_name(checkout.name + s).exists()] \
+        + [b for b in ("build.new", "build.old") if (checkout / "server" / b).exists()]
+
+
+@needs_bash
+def test_provider_leftovers_of_an_interrupted_run_are_removed(provider):
+    provider["run"]()
+    _make_leftovers(provider["checkout"])
+    result, steps = provider["run"]()
+    assert result.returncode == 0 and "already built" in result.stdout
+    assert _leftovers(provider["checkout"]) == []
+
+
+@needs_bash
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows refuses to rename a folder in use")
+def test_provider_build_in_use_is_kept_whole(provider):
+    """E.g. the running provider works in build: the rebuild stops before anything is deleted."""
+    provider["run"]()
+    checkout = provider["checkout"]
+    shutil.rmtree(checkout / "server/node_modules")  # forces a rebuild
+    with open(checkout / "server/build/main.js", "rb"):
+        result, steps = provider["run"]()
+    assert result.returncode == 3
+    assert "build folder" in result.stdout and "is in use" in result.stdout
+    assert "did not complete" not in result.stdout
+    assert steps == []  # npm ci never started
+    assert (checkout / "server/build/main.js").read_text(encoding="utf-8") == "built\n"
+    assert (checkout / "server/build/.ultrasinger-commit").exists()
+    assert _leftovers(checkout) == []
 
 
 @needs_bash
@@ -516,12 +561,6 @@ def bat_provider(tmp_path):
             "offline": f"url.{(tmp_path / 'unreachable.git').as_uri()}.insteadOf"}
 
 
-def _leftovers(checkout: Path) -> list[str]:
-    """Temporary folders of the helper that must not stay behind."""
-    return [s for s in (".new", ".old") if checkout.with_name(checkout.name + s).exists()] \
-        + (["build.new"] if (checkout / "server" / "build.new").exists() else [])
-
-
 @needs_cmd
 def test_bat_provider_is_built_from_the_pinned_release_and_then_kept(bat_provider):
     result, steps = bat_provider["run"]()
@@ -575,6 +614,32 @@ def test_bat_provider_folder_in_use_is_kept_whole(bat_provider):
     assert "is in use" in result.stdout and "Could not download" not in result.stdout
     assert (checkout / "server/build/main.js").read_text(encoding="utf-8") == "working build\n"
     assert (checkout / "server/build/utils.js").exists()
+    assert _leftovers(checkout) == []
+
+
+@needs_cmd
+def test_bat_provider_leftovers_of_an_interrupted_run_are_removed(bat_provider):
+    bat_provider["run"]()
+    _make_leftovers(bat_provider["checkout"])
+    result, steps = bat_provider["run"]()
+    assert result.returncode == 0 and "already built" in result.stdout
+    assert _leftovers(bat_provider["checkout"]) == []
+
+
+@needs_cmd
+def test_bat_provider_build_in_use_is_kept_whole(bat_provider):
+    """E.g. the running provider works in build: the rebuild stops before anything is deleted."""
+    bat_provider["run"]()
+    checkout = bat_provider["checkout"]
+    shutil.rmtree(checkout / "server/node_modules")  # forces a rebuild
+    with open(checkout / "server/build/main.js", "rb"):
+        result, steps = bat_provider["run"]()
+    assert result.returncode == 3
+    assert "build folder" in result.stdout and "is in use" in result.stdout
+    assert "did not complete" not in result.stdout
+    assert steps == []  # npm ci never started
+    assert (checkout / "server/build/main.js").exists()
+    assert (checkout / "server/build/.ultrasinger-commit").exists()
     assert _leftovers(checkout) == []
 
 
