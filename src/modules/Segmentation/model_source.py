@@ -92,9 +92,9 @@ def _remote_file(owner: str, repo: str, path: str, token: str | None) -> tuple[s
 
 
 def _matches_sha(file: Path, sha: str) -> bool:
-    """Whether the file's content has the git blob SHA ``sha`` (the SHA GitHub
-    reports for it). A SHA that is neither SHA-1 nor SHA-256 cannot be checked
-    and counts as matching."""
+    """Whether the file's content has the git blob SHA ``sha`` (the SHA the
+    repository reports for it). A SHA that is neither SHA-1 nor SHA-256 cannot
+    be checked and counts as matching."""
     hash_type = {40: hashlib.sha1, 64: hashlib.sha256}.get(len(sha))
     if hash_type is None or not re.fullmatch(r"[0-9a-f]+", sha):
         return True

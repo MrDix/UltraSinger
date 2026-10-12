@@ -858,6 +858,24 @@ class TestRepitchedTxt(unittest.TestCase):
         self.assertTrue(text.startswith("#TITLE:Title\n"))
         self.assertIn(": 0 2 4 a\n", text)
 
+    def test_relative_chart_is_written_with_absolute_beats(self):
+        from src.modules.Ultrastar.ultrastar_parser import parse
+
+        original = (b"#TITLE:Title\n#RELATIVE:yes\n#BPM:300\n#GAP:0\n"
+                    b": 0 4 0 one\n: 4 4 0 two\n- 10 12\n: 0 4 0 three\n* 4 4 0 four\n- 8 10\nF 2 4 0 five\nE\n")
+        text = self._repitch(original, [1, 2, 3, 4, 5])
+        # the scoring package and the games read the new file without #RELATIVE
+        self.assertEqual(text, "#TITLE:Title\n#BPM:300\n#GAP:0\n"
+                               ": 0 4 1 one\n: 4 4 2 two\n- 10\n: 12 4 3 three\n* 16 4 4 four\n- 20\n"
+                               "F 24 4 0 five\nE\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, content in (("original.txt", original), ("new.txt", text.encode("utf-8"))):
+                with open(os.path.join(tmp, name), "wb") as f:
+                    f.write(content)
+            beats = [[n.startBeat for n in parse(os.path.join(tmp, name)).UltrastarNoteLines]
+                     for name in ("original.txt", "new.txt")]
+        self.assertEqual(beats[0], beats[1])
+
 
 if __name__ == "__main__":
     unittest.main()

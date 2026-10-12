@@ -10,7 +10,7 @@ import librosa
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Ultrastar.coverter.ultrastar_converter import ultrastar_note_to_midi_note
 from modules.Ultrastar.ultrastar_parser import parse
-from modules.Ultrastar.ultrastar_score_calculator import calculate_score
+from modules.Ultrastar.ultrastar_score_calculator import Points, calculate_score, get_score
 
 # 300 #BPM: a beat is 0.05 s, so each 20-beat note lasts 1 s (11 parts of 0.09 s)
 CHART = """#TITLE:Title
@@ -67,6 +67,25 @@ class TestCalculateScore(unittest.TestCase):
         self.assertEqual(simple.golden, 0)
         self.assertEqual(simple.line_bonus, 333)  # one of the three scored notes
         self.assertEqual(simple.score, 2583)
+
+
+class TestGetScore(unittest.TestCase):
+    def _score(self, hits: int, parts: int, line_bonus: float):
+        points = Points()
+        points.notes, points.parts, points.line_bonus = hits, parts, line_bonus
+        return get_score(points)
+
+    def test_scale_does_not_depend_on_the_line_bonus_earned(self):
+        # half of the parts hit: without a complete note, and with one complete note of three
+        without_line = self._score(3, 6, 0.0)
+        with_line = self._score(3, 6, 1000 / 3)
+        self.assertEqual(without_line.notes, 4500)
+        self.assertEqual(without_line.score, 4500)
+        self.assertEqual(with_line.score, 4833)
+        self.assertLessEqual(without_line.score, with_line.score)
+
+    def test_no_parts(self):
+        self.assertEqual(self._score(0, 0, 0.0).score, 0)
 
 
 if __name__ == "__main__":

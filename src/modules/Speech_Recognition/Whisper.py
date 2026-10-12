@@ -317,7 +317,7 @@ def transcribe_with_whisper(
     except ValueError as value_error:
         if (
             "Requested float16 compute type, but the target device or backend do not support efficient float16 computation."
-            in str(value_error.args[0])
+            in str(value_error)
         ):
             print(value_error)
             print(
@@ -330,7 +330,7 @@ def transcribe_with_whisper(
         print(MEMORY_ERROR_MESSAGE)
         raise oom_exception
     except Exception as exception:
-        if "CUDA failed with error out of memory" in str(exception.args[0]):
+        if "CUDA failed with error out of memory" in str(exception):
             print(exception)
             print(MEMORY_ERROR_MESSAGE)
         raise exception

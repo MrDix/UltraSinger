@@ -46,6 +46,26 @@ class TestUltraStarParser(unittest.TestCase):
         # no cover in the chart: the online lookup is tried (here without network)
         mock_fetch_cover.assert_called_once()
 
+    def test_found_cover_is_named_like_the_song_folder(self):
+        import io
+        from types import SimpleNamespace
+
+        from PIL import Image
+
+        from modules.Ultrastar.ultrastar_parser import _fetch_musicbrainz_cover
+
+        image = io.BytesIO()
+        Image.new("RGB", (4, 3), "red").save(image, "PNG")
+        chart = UltrastarTxtValue()
+        chart.artist, chart.title = "Artist", "What?"
+        found = SimpleNamespace(cover_image_data=image.getvalue(), cover_url="https://example.com/cover.jpg")
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("modules.musicbrainz_client.search_musicbrainz", return_value=found):
+            _fetch_musicbrainz_cover(chart, tmp)
+            self.assertEqual(chart.cover, "Artist - What [CO].jpg")
+            self.assertTrue(os.path.isfile(os.path.join(tmp, chart.cover)))
+        self.assertEqual(chart.coverUrl, "https://example.com/cover.jpg")
+
 
 CHART = """#TITLE:Song Title: Part 2
 #ARTIST:Artist
@@ -101,6 +121,20 @@ class TestParse(unittest.TestCase):
             self.assertEqual(chart_encoding(_write(tmp, content)), "cp1250")
             self.assertEqual(chart_encoding(_write(tmp, b"\xef\xbb\xbf#TITLE:x\n")), "utf-8-sig")
             self.assertEqual(chart_encoding(_write(tmp, "#TITLE:é\n".encode("utf-8"))), "utf-8")
+
+    def test_utf8_chart_with_a_stale_encoding_tag(self):
+        # re-saved in UTF-8 by an editor that kept the old tag
+        chart = self._parse("#ENCODING:CP1252\n#TITLE:Grüße\n".encode("utf-8"))
+        self.assertEqual(chart.title, "Grüße")
+
+    def test_encoding_tag_that_is_no_text_encoding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for tag in ("rot13", "base64", "UTF-16", "no such codec"):
+                content = f"#ENCODING:{tag}\n#TITLE:Grüße\n"
+                self.assertEqual(chart_encoding(_write(tmp, content.encode("cp1252"))), "cp1252", tag)
+                self.assertEqual(chart_encoding(_write(tmp, content.encode("utf-8"))), "utf-8", tag)
+                self.assertEqual(chart_encoding(_write(tmp, f"#ENCODING:{tag}\n#TITLE:x\n".encode())), "utf-8", tag)
+        self.assertEqual(self._parse("#ENCODING:rot13\n#TITLE:Grüße\n".encode("cp1252")).title, "Grüße")
 
     def test_missing_or_empty_gap_starts_at_zero(self):
         for gap_line in ("", "#GAP:\n", "#GAP: \n"):

@@ -36,36 +36,46 @@ def chart_encoding(input_file: str) -> str:
     """The encoding to read an UltraStar txt file with.
 
     UTF-8 when the file starts with a byte order mark (which is then left out
-    when reading). Otherwise the encoding its #ENCODING tag names (older
-    charts) or UTF-8, as long as the file decodes with it, else CP1252, the
-    encoding of many older hand-made charts.
+    when reading), or when it is valid UTF-8 with non-ASCII characters (also
+    under a stale #ENCODING tag, as an editor that saves in UTF-8 leaves it;
+    text in a single-byte encoding is practically never valid UTF-8).
+    Otherwise the encoding its #ENCODING tag names (older charts) if the file
+    decodes with it, else UTF-8 or, when that fails, CP1252, the encoding of
+    many older hand-made charts.
     """
     with open(input_file, "rb") as file:
         data = file.read()
     if data.startswith(codecs.BOM_UTF8):
         return "utf-8-sig"
+    try:
+        data.decode(FILE_ENCODING)
+        utf8 = True
+    except UnicodeDecodeError:
+        utf8 = False
+    if utf8 and not data.isascii():
+        return FILE_ENCODING
     tag = _ENCODING_TAG_RE.search(data)
     declared = _codec_of_encoding_tag(tag.group(1).decode("ascii", "replace")) if tag else None
-    for encoding in (declared, FILE_ENCODING):
-        if encoding is None:
-            continue
+    if declared:
         try:
-            data.decode(encoding)
-            return encoding
-        except UnicodeDecodeError:
+            data.decode(declared)
+            return declared
+        except (UnicodeDecodeError, LookupError):
             pass
-    return "cp1252"
+    return FILE_ENCODING if utf8 else "cp1252"
 
 
 def _codec_of_encoding_tag(value: str) -> str | None:
     """Python codec of an #ENCODING tag value ("UTF8", "CP1252", ...); None for
-    "AUTO", "LOCALE" and unknown names."""
+    "AUTO", "LOCALE", unknown names and codecs that are no text encoding or do
+    not read the tag itself (ASCII) as ASCII."""
     value = value.strip()
     if value.upper() in ("", "AUTO", "LOCALE"):
         return None
     try:
-        return codecs.lookup(value).name
-    except LookupError:
+        codec = codecs.lookup(value).name
+        return codec if b"#ENCODING:".decode(codec) == "#ENCODING:" else None
+    except (LookupError, UnicodeDecodeError):
         return None
 
 
@@ -73,6 +83,24 @@ def read_chart_lines(input_file: str) -> list[str]:
     """The lines of an UltraStar txt file (decoded as ``chart_encoding`` says)."""
     with open(input_file, "r", encoding=chart_encoding(input_file), errors="replace") as file:
         return file.readlines()
+
+
+def is_relative_tag(line: str) -> bool:
+    """Whether the line is ``#RELATIVE:YES``: the beats of each line count from the line's own start."""
+    tag, separator, value = line.partition(":")
+    return (bool(separator) and tag.strip().upper() == f"#{UltrastarTxtTag.RELATIVE.value}"
+            and value.strip().upper() == "YES")
+
+
+def relative_line_break(line: str) -> tuple[float, float] | None:
+    """The numbers of a line break ``- <break beat> <shift>`` of a #RELATIVE:YES
+    chart, both counted from the start of the current line: the break, and how
+    far the start of the next line moves on (a break with one number moves the
+    start there). None without numbers."""
+    parts = line[1:].split()
+    if not parts:
+        return None
+    return float(parts[0]), float(parts[1] if len(parts) > 1 else parts[0])
 
 
 def parse(input_file: str) -> UltrastarTxtValue:
@@ -121,7 +149,7 @@ def parse(input_file: str) -> UltrastarTxtValue:
             elif tag == UltrastarTxtTag.VIDEOURL.value:
                 ultrastar_class.videoUrl = value
             elif tag == UltrastarTxtTag.RELATIVE.value:
-                relative = value.strip().upper() == "YES"
+                relative = is_relative_tag(line)
         elif line.startswith(NOTE_LINE_PREFIXES):
             parts = line.split()
             # [0] F : * R G
@@ -143,10 +171,9 @@ def parse(input_file: str) -> UltrastarTxtValue:
 
             # todo: Progress?
         elif relative and line.startswith(UltrastarTxtTag.LINEBREAK.value):
-            parts = line[1:].split()
-            if parts:
-                # The shift is the second number; a break with only one moves the start there
-                line_start_beat += float(parts[1] if len(parts) > 1 else parts[0])
+            numbers = relative_line_break(line)
+            if numbers:
+                line_start_beat += numbers[1]
 
     return ultrastar_class
 
@@ -268,7 +295,10 @@ def _fetch_musicbrainz_cover(
             ultrastar_class.artist.strip(),
         )
         if song_info.cover_image_data:
-            basename = f"{ultrastar_class.artist.strip()} - {ultrastar_class.title.strip()}"
+            # A name that is valid as a file name, like the song folder's
+            basename = os_helper.sanitize_filename(
+                f"{ultrastar_class.artist.strip()} - {ultrastar_class.title.strip()}"
+            )
             save_image(song_info.cover_image_data, basename, output_dir)
             cover_filename = basename + " [CO].jpg"
             ultrastar_class.cover = cover_filename

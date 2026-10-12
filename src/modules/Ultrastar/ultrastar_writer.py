@@ -10,7 +10,8 @@ from modules.Ultrastar.coverter.ultrastar_converter import (
     real_bpm_to_ultrastar_bpm,
     second_to_beat, )
 from modules.Ultrastar.coverter.ultrastar_midi_converter import convert_midi_note_to_ultrastar_note
-from modules.Ultrastar.ultrastar_parser import NOTE_LINE_PREFIXES, read_chart_lines
+from modules.Ultrastar.ultrastar_parser import NOTE_LINE_PREFIXES, is_relative_tag, read_chart_lines, \
+    relative_line_break
 from modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag, UltrastarTxtNoteTypeTag, \
     FILE_ENCODING
 from modules.Ultrastar.ultrastar_score_calculator import Score
@@ -413,32 +414,52 @@ def create_repitched_txt_from_ultrastar_data(
 
     ``note_numbers`` holds a pitch for every note line of the original, in
     order. Normal and golden notes get it; freestyle and rap notes, whose pitch
-    the games do not score, keep theirs. The file is written in UTF-8.
+    the games do not score, keep theirs. The file is written in UTF-8, and a
+    #RELATIVE:YES chart with absolute beats (the beats the parser reads), so
+    that every reader of the new file, like the game score, places the notes
+    right.
     """
     print(f"{ULTRASINGER_HEAD} Creating repitched ultrastar txt -> {output_repitched_ultrastar}")
 
     txt = read_chart_lines(input_file)
 
     i = 0
+    relative = False
+    line_start_beat = 0.0  # #RELATIVE:YES: the beat the current line's beats count from
     with open(output_repitched_ultrastar, "w", encoding=FILE_ENCODING) as file:
         for line in txt:
             if line.startswith(NOTE_LINE_PREFIXES):
+                parts = re.findall(r"\S+|\s+", line)
+                # between are whitespaces
+                # [0] : * F R G
+                # [2] start beat
+                # [4] duration
+                # [6] pitch
+                # [8] word
+                if relative:
+                    parts[2] = _beat_text(float(parts[2]) + line_start_beat)
                 if line.startswith((f"{UltrastarTxtNoteTypeTag.NORMAL.value} ",
                                     f"{UltrastarTxtNoteTypeTag.GOLDEN.value} ")):
-                    parts = re.findall(r"\S+|\s+", line)
-                    # between are whitespaces
-                    # [0] : or *
-                    # [2] start beat
-                    # [4] duration
-                    # [6] pitch
-                    # [8] word
                     parts[6] = str(note_numbers[i])
-                    line = "".join(parts)
+                line = "".join(parts)
                 # one pitch per note line, whatever its type
                 i += 1
+            elif is_relative_tag(line):
+                relative = True
+                continue  # the beats are written absolute
+            elif relative and line.startswith(UltrastarTxtTag.LINEBREAK.value):
+                numbers = relative_line_break(line)
+                if numbers:
+                    line = f"{UltrastarTxtTag.LINEBREAK.value} {_beat_text(line_start_beat + numbers[0])}\n"
+                    line_start_beat += numbers[1]
             elif line.upper().startswith(f"#{UltrastarTxtTag.ENCODING.value}:"):
                 line = f"#{UltrastarTxtTag.ENCODING.value}:UTF8\n"
             file.write(line)
+
+
+def _beat_text(beat: float) -> str:
+    """A beat as written in a chart: a whole number without a decimal point."""
+    return str(int(beat)) if float(beat).is_integer() else str(beat)
 
 
 def _append_creator_header_suffix(ultrastar_file_output: str, suffix: str) -> None:

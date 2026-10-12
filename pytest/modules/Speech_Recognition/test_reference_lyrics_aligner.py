@@ -107,12 +107,17 @@ class TestParseLrcSyncedLyrics:
 
     def test_other_tags_are_not_sung(self):
         lrc = "[ar:Artist]\n[ti:Song Title]\n[length:03:20]\n[00:10.00][Chorus]\n" \
-              "[00:12.00] [Verse 2] Hello (oh) world\n[Bridge]"
+              "[00:12.00] [Verse 2] Hello (oh) world\n[Bridge]\n[00:14.00][Pre-Chorus x2] Again\n" \
+              "[00:16.00] [Verse 1: Artist] [offset:+100] Last"
         segs = parse_lrc_synced_lyrics(lrc)
-        assert len(segs) == 1
-        # a bracketed part within the line stays a backing vocal
-        assert segs[0]["text"] == "Hello \x00oh world"
+        assert [s["text"] for s in segs] == ["Hello \x00oh world", "Again", "Last"]
         assert segs[0]["start"] == pytest.approx(12.0)
+
+    def test_backing_vocal_at_the_start_of_a_line_is_sung(self):
+        lrc = "[00:12.00] [oh yeah] Hello world\n[00:14.00][Hey] come on\n[00:16.00] [Chorus] [ooh] la"
+        segs = parse_lrc_synced_lyrics(lrc)
+        assert [s["text"] for s in segs] == [
+            "\x00oh \x00yeah Hello world", "\x00Hey come on", "\x00ooh la"]
 
 
 # ---------------------------------------------------------------------------

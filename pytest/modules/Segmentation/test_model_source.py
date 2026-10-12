@@ -21,7 +21,7 @@ _real_check_loads = ms._check_loads  # the fixture below replaces it
 
 
 def blob_sha(content: bytes) -> str:
-    """The SHA GitHub reports for a file: the SHA-1 of its git blob."""
+    """The SHA the repository reports for a file: the SHA-1 of its git blob."""
     return hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
 
 

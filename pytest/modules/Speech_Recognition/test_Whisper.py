@@ -227,8 +227,8 @@ class DetectLanguageFromAudioTest(unittest.TestCase):
     @patch("faster_whisper.WhisperModel")
     @patch("whisperx.load_audio")
     def test_gpu_without_float16_falls_back(self, mock_load_audio, mock_fw_model_cls):
-        """Older GPUs (e.g. GTX 10xx) have no efficient float16: the detection
-        must still work, or the synced-lyrics fast path is lost."""
+        """On older GPUs without efficient float16 the detection must still
+        work, or the synced-lyrics fast path is lost."""
         import numpy as np
         mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
         model = MagicMock()
@@ -324,6 +324,20 @@ class TorchLoadOverrideTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             transcribe_with_whisper("/fake/audio.wav", WhisperModel.TINY, device="cpu")
         self.assert_torch_load_is_safe()
+
+
+class TranscribeWithWhisperErrorsTest(unittest.TestCase):
+    """Errors reach the caller as they are, also without a message."""
+
+    @patch("whisperx.load_audio")
+    @patch("whisperx.load_model")
+    def test_errors_without_arguments_are_passed_on(self, mock_load_model, mock_load_audio):
+        for error in (RuntimeError(), ValueError()):
+            with self.subTest(error=type(error).__name__):
+                mock_load_model.side_effect = error
+                with self.assertRaises(type(error)) as raised:
+                    transcribe_with_whisper("/fake/audio.wav", WhisperModel.TINY, device="cpu")
+                self.assertIs(raised.exception, error)
 
 
 class TranscribeWithWhisperAlignModelTest(unittest.TestCase):

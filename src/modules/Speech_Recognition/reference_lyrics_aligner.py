@@ -53,10 +53,16 @@ from modules.Speech_Recognition.lyrics_alignment import (
 # LRC parsing
 # ---------------------------------------------------------------------------
 
-# A tag at the start of an LRC line: a time ("[01:23.45]"), an ID tag
-# ("[ar:Artist]") or a section label ("[Chorus]")
+# A bracket at the start of an LRC line: a time ("[01:23.45]"), an ID tag
+# ("[ar:Artist]"), a section label ("[Chorus]") or a backing vocal ("[oh yeah]")
 _LRC_TAG_RE = re.compile(r"\s*\[([^\]]*)\]")
 _LRC_TIME_RE = re.compile(r"(\d+):(\d+(?:\.\d+)?)")
+_LRC_ID_TAG_RE = re.compile(r"[A-Za-z#]+:")
+_LRC_SECTION_RE = re.compile(
+    r"(?:pre-?|post-?)?(?:chorus|verse|bridge|intro|outro|hook|refrain|interlude|instrumental|solo|break"
+    r"|breakdown|coda)(?:\s*\d+)?(?:\s*x\s*\d+)?(?:\s*:.*)?",
+    re.IGNORECASE,
+)
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
@@ -72,8 +78,9 @@ def parse_lrc_synced_lyrics(
 
     A line with several time tags (``"[00:12.00][01:30.00] Chorus line"``)
     is sung at each of these times. Word times of enhanced LRC
-    (``"<00:12.50>"``) and other tags at the start of a line (``"[Chorus]"``)
-    are not sung and are left out.
+    (``"<00:12.50>"``), ID tags (``"[ar:Artist]"``) and section labels at the
+    start of a line (``"[Chorus]"``, ``"[Verse 2]"``) are not sung and are left
+    out; other brackets are backing vocals, wherever they are.
 
     Args:
         synced_lyrics: Raw LRC text, e.g. ``"[01:23.45] Hello world\\n..."``.
@@ -95,9 +102,12 @@ def parse_lrc_synced_lyrics(
         times: list[float] = []
         pos = 0
         while m := _LRC_TAG_RE.match(raw_line, pos):
-            time_tag = _LRC_TIME_RE.fullmatch(m.group(1).strip())
+            content = m.group(1).strip()
+            time_tag = _LRC_TIME_RE.fullmatch(content)
             if time_tag:
                 times.append(int(time_tag.group(1)) * 60 + float(time_tag.group(2)))
+            elif not (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(content)):
+                break  # a backing vocal: part of the text
             pos = m.end()
         text = " ".join(_LRC_WORD_TIME_RE.sub("", raw_line[pos:]).split())
         if text:

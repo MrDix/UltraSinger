@@ -77,11 +77,12 @@ def get_score(points: Points) -> Score:
     """Score calculation."""
 
     score = Score()
-    # Max possible note points: 9000 if line bonus is possible, else full 10000
-    # (line bonus takes up to 1000 of the 10000 total when lines exist)
+    # Max possible note points: 9000, as scored notes always make the line
+    # bonus possible (it takes up to 1000 of the 10000 total); whether this
+    # singing earned any of it must not change the scale
     score.max_score = (
         MAX_SONG_SCORE - MAX_SONG_LINE_BONUS
-        if points.line_bonus > 0
+        if points.parts > 0
         else MAX_SONG_SCORE
     )
     if(points.parts == 0):
