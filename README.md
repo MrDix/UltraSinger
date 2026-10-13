@@ -3,11 +3,9 @@
 ![Status](https://img.shields.io/badge/status-development-yellow)
 
 ![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/MrDix/UltraSinger/main.yml)
-[![GitHub](https://img.shields.io/github/license/rakuri255/UltraSinger)](https://github.com/rakuri255/UltraSinger/blob/main/LICENSE)
+[![GitHub](https://img.shields.io/github/license/MrDix/UltraSinger)](https://github.com/MrDix/UltraSinger/blob/main/LICENSE)
 [![CodeFactor](https://www.codefactor.io/repository/github/rakuri255/ultrasinger/badge)](https://www.codefactor.io/repository/github/rakuri255/ultrasinger)
-[![Check Requirements](https://github.com/rakuri255/UltraSinger/actions/workflows/main.yml/badge.svg)](https://github.com/rakuri255/UltraSinger/actions/workflows/main.yml)
-[![Pytest](https://github.com/rakuri255/UltraSinger/actions/workflows/pytest.yml/badge.svg)](https://github.com/rakuri255/UltraSinger/actions/workflows/pytest.yml)
-[![docker](https://github.com/rakuri255/UltraSinger/actions/workflows/docker.yml/badge.svg)](https://hub.docker.com/r/rakuri255/ultrasinger)
+[![Check Requirements](https://github.com/MrDix/UltraSinger/actions/workflows/main.yml/badge.svg)](https://github.com/MrDix/UltraSinger/actions/workflows/main.yml)
 [![Tests (fork)](https://github.com/MrDix/UltraSinger/actions/workflows/tests.yml/badge.svg)](https://github.com/MrDix/UltraSinger/actions/workflows/tests.yml)
 
 <p align="center" dir="auto">
