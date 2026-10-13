@@ -299,6 +299,7 @@ def run() -> tuple[str, Score, Score]:
     _reference_recovered = False  # tracks recovery after language correction
     _remote_stt_used = False  # tracks whether remote STT supplied the lyrics text
     _plain_lyrics_used = False  # tracks whether aligned plain lyrics made the notes
+    _plain_lyrics_placement = None  # how their lines were placed (PlainLyricsPlacement)
 
     # Early LRCLIB lookup: if synced lyrics are available, we can skip the
     # expensive Whisper transcription entirely (~2 min saved per song).
@@ -484,7 +485,10 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Reference-first pipeline failed: {e}")
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
 
-        # Fallback: Plain lyrics alignment when no synced lyrics available
+        # Fallback: Plain lyrics alignment when no synced lyrics available.
+        # The transcription's words give their lines times; there are none
+        # when it was skipped (synced lyrics found before it failed to align,
+        # or remote speech-to-text runs first)
         if not reference_first_used and process_data.plain_lyrics and not settings.disable_reference_lyrics:
             try:
                 from modules.Speech_Recognition.reference_lyrics_aligner import (
@@ -497,7 +501,7 @@ def run() -> tuple[str, Score, Score]:
                         f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
                         f"Language unknown — falling back to English alignment model"
                     )
-                plain_segments = create_midi_segments_from_plain_lyrics(
+                plain_segments, plain_placement = create_midi_segments_from_plain_lyrics(
                     plain_lyrics=process_data.plain_lyrics,
                     audio_path=process_data.process_data_paths.whisper_audio_path,
                     language=ref_language,
@@ -506,11 +510,13 @@ def run() -> tuple[str, Score, Score]:
                     allowed_notes=allowed_notes_for_key,
                     melisma_split=settings.pitch_change_split,
                     align_model_name=settings.whisper_align_model,
+                    transcription_words=process_data.transcription_words,
                 )
                 if plain_segments:
                     process_data.midi_segments = plain_segments
                     reference_first_used = True
                     _plain_lyrics_used = True
+                    _plain_lyrics_placement = plain_placement
                     process_data.transcribed_data = [
                         TranscribedData(
                             word=seg.word,
@@ -568,7 +574,7 @@ def run() -> tuple[str, Score, Score]:
                         create_midi_segments_from_plain_lyrics,
                     )
                     ref_language = process_data.media_info.language or "en"
-                    remote_segments = create_midi_segments_from_plain_lyrics(
+                    remote_segments, _ = create_midi_segments_from_plain_lyrics(
                         plain_lyrics=remote_text,
                         audio_path=process_data.process_data_paths.whisper_audio_path,
                         language=ref_language,
@@ -1038,6 +1044,7 @@ def run() -> tuple[str, Score, Score]:
             reference_recovered=_reference_recovered,
             remote_stt_used=_remote_stt_used,
             plain_lyrics_used=_plain_lyrics_used,
+            plain_lyrics_placement=_plain_lyrics_placement,
             rejected_synced_language=process_data.synced_lyrics_other_language,
             model_segmentation_used=model_segmentation_used,
         )
@@ -1169,6 +1176,7 @@ def _write_settings_info_file(
         reference_recovered: bool = False,
         remote_stt_used: bool = False,
         plain_lyrics_used: bool = False,
+        plain_lyrics_placement: "PlainLyricsPlacement | None" = None,
         rejected_synced_language: str | None = None,
         model_segmentation_used: bool = False,
 ) -> None:
@@ -1251,6 +1259,8 @@ def _write_settings_info_file(
                 f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
                 f.write(synced_line)
                 f.write("  LRCLIB plain lyrics:      found\n")
+                if plain_lyrics_placement is not None:
+                    f.write(f"  Plain lyrics placed:      {plain_lyrics_placement}\n")
                 f.write("  Transcription:            skipped\n" if whisper_skipped
                         else "  Transcription:            full (its text replaced by the plain lyrics)\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
@@ -1889,6 +1899,10 @@ def TranscribeAudio(process_data):
             process_data.media_info.language = transcription_result.detected_language
 
     process_data.transcribed_data = transcription_result.transcribed_data
+    # The words where the transcriber placed them, before the corrections below
+    # change transcribed_data (the lyrics correction rewrites its words in
+    # place): their times anchor the lines of plain lyrics
+    process_data.transcription_words = [(w.word, w.start, w.end) for w in transcription_result.transcribed_data]
 
     # Lyrics lookup correction (before LLM — uses verified reference lyrics)
     lyrics_lookup_result = None

@@ -13,6 +13,7 @@ from unittest.mock import patch
 import librosa
 
 import src.UltraSinger as us
+from modules.Speech_Recognition.reference_lyrics_aligner import PlainLyricsPlacement
 from src.modules.Ultrastar.ultrastar_txt import FormatVersion
 
 
@@ -109,7 +110,7 @@ def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_lang
             side_effect=align))
         mocks["plain_align"] = stack.enter_context(patch(
             "modules.Speech_Recognition.reference_lyrics_aligner.create_midi_segments_from_plain_lyrics",
-            side_effect=plain_align or (lambda **kwargs: [])))
+            side_effect=plain_align or (lambda **kwargs: ([], PlainLyricsPlacement()))))
         mocks["remote"] = stack.enter_context(patch(
             "modules.Speech_Recognition.remote_stt.transcribe_remote",
             side_effect=remote or (lambda **kwargs: None)))
@@ -201,6 +202,21 @@ class TestPipelineInInfoFile(unittest.TestCase):
         self.assertIn("LRCLIB synced lyrics:     found (but alignment failed)", info)
         self.assertIn("Transcription:            full (its text replaced by the plain lyrics)", info)
 
+    def test_how_the_plain_lyrics_were_placed(self):
+        for placement, text in (
+                (PlainLyricsPlacement(48, 45, True, True),
+                 "line by line (45 of 48 lines anchored by the transcription's words)"),
+                (PlainLyricsPlacement(48, 20, True, False),
+                 "as one block (20 of 48 lines anchored by the transcription's words, too few)"),
+                (PlainLyricsPlacement(48, 0, False, False), "as one block (no transcription words)")):
+            with self.subTest(text=text):
+                info = self._info(reference_first_used=True, plain_lyrics_used=True, plain_lyrics_placement=placement)
+                self.assertIn(f"  Plain lyrics placed:      {text}\n", info)
+        # not for the remote text
+        info = self._info(reference_first_used=True, remote_stt_used=True,
+                          plain_lyrics_placement=PlainLyricsPlacement(1, 0, False, False))
+        self.assertNotIn("Plain lyrics placed", info)
+
     def test_synced(self):
         info = self._info(reference_first_used=True, has_synced_lyrics=True, whisper_skipped=True)
         self.assertIn("Pipeline:                 Reference-Lyrics-First (synced)", info)
@@ -236,8 +252,11 @@ _ALIGNED_NOTES = [("hello ", 1.0, 1.4, "C4"), ("world ", 1.5, 2.0, "D4")]
 
 
 def _aligned(**kwargs):
-    """A fake alignment of lyrics or of the remote text."""
-    return [us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED]
+    """A fake alignment of plain lyrics or of the remote text: line by line
+    when it gets words of a transcription."""
+    words = bool(kwargs.get("transcription_words"))
+    placement = PlainLyricsPlacement(lines=2, anchored=2 if words else 0, with_words=words, line_by_line=words)
+    return [us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED], placement
 
 
 class TestRemoteSpeechToText(unittest.TestCase):
@@ -322,10 +341,80 @@ class TestPlainLyricsAfterFailedSyncedAlignment(unittest.TestCase):
         mocks["TranscribeAudio"].assert_not_called()
         mocks["remote"].assert_not_called()  # without --remote_stt no audio is sent
         self.assertEqual(notes, _ALIGNED_NOTES)
+        # no transcription ran: no words to give the lines times
+        self.assertEqual(mocks["plain_align"].call_args.kwargs["transcription_words"], [])
         info = files["ultrasinger_parameter.info"]
         self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
         self.assertIn("LRCLIB synced lyrics:     found (but alignment failed)", info)
+        self.assertIn("Plain lyrics placed:      as one block (no transcription words)", info)
         self.assertIn("Transcription:            skipped", info)
+
+
+class TestPlainLyricsLineTimes(unittest.TestCase):
+    """The transcription's words, as it placed them, give the lines of the plain lyrics their times."""
+
+    def test_transcription_words_reach_the_plain_lyrics(self):
+        heard = [("helo ", 1.0, 1.3), ("world ", 1.5, 1.8)]
+
+        def transcribe(process_data):
+            # the lyrics lookup of the transcription found plain lyrics and corrected its words
+            process_data.transcription_words = list(heard)
+            process_data.transcribed_data = [_syllable("hello ", 1.0, 1.3), _syllable("world ", 1.5, 1.8)]
+            process_data.plain_lyrics = "hello world"
+            return None, None
+
+        mocks = {}
+        notes, out, files = _run(
+            _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5), transcribe,
+            plain_align=_aligned, mocks=mocks, write_settings_info=True,
+        )
+        mocks["TranscribeAudio"].assert_called_once()
+        call = mocks["plain_align"].call_args.kwargs
+        self.assertEqual((call["plain_lyrics"], call["transcription_words"]), ("hello world", heard))
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
+        self.assertIn("Plain lyrics placed:      line by line (2 of 2 lines anchored by the transcription's words)",
+                      info)
+        self.assertIn("Transcription:            full (its text replaced by the plain lyrics)", info)
+
+
+class TestTranscriptionWordsAreKept(unittest.TestCase):
+    """TranscribeAudio keeps the words where the transcriber placed them, before the corrections change them."""
+
+    def test_words_before_the_corrections(self):
+        process_data = SimpleNamespace(
+            process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
+            media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
+        )
+        heard = [_syllable("helo, ", 1.0, 1.3), _syllable("world ", 1.5, 1.8)]
+        transcription = SimpleNamespace(detected_language="en", transcribed_data=heard)
+
+        def correct(data, lyrics):
+            # as the lyrics correction: the words are rewritten in place
+            for word in data:
+                word.word = word.word.replace("helo", "hello")
+            return data, None
+
+        lyrics = SimpleNamespace(synced_lyrics=None, plain_lyrics="hello, world")
+        with patch.object(us, "transcribe_audio", return_value=transcription), \
+                patch.object(us, "check_lyrics_language", return_value=(True, None)), \
+                patch("modules.Speech_Recognition.lyrics_corrector.correct_transcription_from_lyrics",
+                      side_effect=correct), \
+                patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data[1:]), \
+                patch("modules.lrclib_client.search_lyrics", return_value=lyrics), \
+                patch.object(us.settings, "lyrics_lookup", True), \
+                patch.object(us.settings, "llm_correct_lyrics", False), \
+                patch.object(us.settings, "hyphenation", False), \
+                patch.object(us.settings, "language", None), \
+                contextlib.redirect_stdout(io.StringIO()):
+            us.TranscribeAudio(process_data)
+
+        # corrected, without punctuation, and the first word removed as silence
+        self.assertEqual([w.word for w in process_data.transcribed_data], ["world "])
+        self.assertEqual(heard[0].word, "hello ")
+        self.assertEqual(process_data.transcription_words, [("helo, ", 1.0, 1.3), ("world ", 1.5, 1.8)])
 
 
 class TestRejectedSyncedLyricsInRun(unittest.TestCase):

@@ -19,12 +19,19 @@ backtrack as whisperx) is checked against these LRC times:
 On a benchmark of 89 songs, the share of words that start more than 1 s off
 fell from 6.5 % to 4.9 % (more than 3 s off: from 4.6 % to 3.1 %).
 
+Plain lyrics have no times; the words of a transcription give their lines
+times (line_times_from_words), and with enough of them the lines are aligned
+as above. On the same benchmark, with the LRC lines without their times as
+plain lyrics, this put 4.8 % of the words more than 1 s off, against 6.5 % for
+one path over all lines.
+
 The functions work on numpy arrays; the caller runs the model.
 """
 
 from __future__ import annotations
 
 import statistics
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -68,6 +75,18 @@ MOVE_GAIN = 0.3
 OVERLAP_S = 0.3
 # Log-probability of the tokens on a frame without a usable model output
 UNUSABLE_TOKEN = -1e4
+# Line times from the words of a transcription: the sung seconds per word are
+# the median step between paired words, limited to WORD_S_RANGE, or WORD_S
+# when there are fewer than WORD_STEPS such steps
+WORD_S = 0.35
+WORD_S_RANGE = (0.15, 1.0)
+WORD_STEPS = 10
+# A transcribed word this long (s) gives no line time: its start is often the
+# start of the piece it was transcribed in
+LONG_WORD_S = 3.0
+# Plain lyrics are aligned with these line times when at least this share of
+# their lines, and at least RELIABLE_LINES lines, got one from a word
+ANCHORED_SHARE = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -490,3 +509,122 @@ def align_lyrics(
     placements, dropped, moved = _check_lines(em, ranges, lines, line_times, placed, end_cost)
     return LyricsAlignment(_word_times(tokens, ranges, placements, frame_s), label, end_cost is not None,
                            len(lines), fit, moved, dropped)
+
+
+# ---------------------------------------------------------------------------
+# Line times of plain lyrics from the words of a transcription
+# ---------------------------------------------------------------------------
+
+def _word_key(text: str) -> str:
+    """The word without case, accents, apostrophes and punctuation ("Don't" -> "dont")."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if c.isalnum() and not unicodedata.combining(c)).casefold()
+
+
+def _common_words(a: list[str], b: list[str]) -> list[tuple[int, int]]:
+    """Pairs (index in a, index in b) of equal words, in order: a longest
+    common subsequence (of the equally long ones, the one the backtrack from
+    the end meets first)."""
+    if not a or not b:
+        return []
+    b_words = np.array(b, dtype=object)
+    score = np.zeros((len(a) + 1, len(b) + 1), dtype=np.int32)
+    for i, word in enumerate(a, 1):
+        paired = np.where(b_words == word, score[i - 1, :-1] + 1, 0)
+        score[i, 1:] = np.maximum.accumulate(np.maximum(score[i - 1, 1:], paired))
+    pairs, i, j = [], len(a), len(b)
+    while i > 0 and j > 0:
+        if score[i, j] == score[i - 1, j]:
+            i -= 1
+        elif score[i, j] == score[i, j - 1]:
+            j -= 1
+        else:
+            pairs.append((i - 1, j - 1))
+            i, j = i - 1, j - 1
+    return pairs[::-1]
+
+
+def _longest_in_order(values: list[float]) -> list[int]:
+    """Indices of a longest non-decreasing subsequence of the values (on a
+    tie, the one that ends first, each element after the first one that fits)."""
+    n = len(values)
+    if not n:
+        return []
+    best, prev = [1] * n, [-1] * n
+    for i in range(n):
+        for j in range(i):
+            if values[j] <= values[i] and best[j] + 1 > best[i]:
+                best[i], prev[i] = best[j] + 1, j
+    i = max(range(n), key=lambda k: best[k])
+    out = []
+    while i >= 0:
+        out.append(i)
+        i = prev[i]
+    return out[::-1]
+
+
+def line_times_from_words(
+    lines: list[list[str]],
+    words: list[tuple[str, float, float]],
+) -> tuple[Optional[list[float]], int]:
+    """Times (s) of the lines of plain lyrics from the words of a transcription.
+
+    ``lines`` holds the words of each line, ``words`` the transcribed words
+    as (text, start s, end s), in the order of the transcription.
+
+    1. The words of the lyrics are paired in order with transcribed words
+       that are the same without case, accents and punctuation (a longest
+       common subsequence).
+    2. The sung seconds per word: the median step from start to start of two
+       consecutive words of a line paired with two consecutive transcribed
+       words (limited to WORD_S_RANGE; WORD_S with fewer than WORD_STEPS such
+       steps).
+    3. A line is anchored at the start of its first paired word, minus the
+       seconds per word for each word before it in the line (not before 0).
+       Transcribed words longer than LONG_WORD_S anchor nothing: their start
+       is often the start of the piece they were transcribed in.
+    4. Of these anchors, a longest run in time order is kept.
+    5. The other lines are spread by their words between the anchored lines
+       around them; before the first and after the last one, at the seconds
+       per word.
+
+    Returns the time of each line (None without any anchor) and the number of
+    anchored lines.
+    """
+    lyric = [(i, p, _word_key(w)) for i, line in enumerate(lines) for p, w in enumerate(line)]
+    keyed = [k for k, (_, _, key) in enumerate(lyric) if key]
+    heard = [(key, start, end) for key, start, end in ((_word_key(w), s, e) for w, s, e in words)
+             if key and start is not None and end is not None]
+    pair = {keyed[a]: b for a, b in _common_words([lyric[k][2] for k in keyed], [h[0] for h in heard])}
+    steps = [heard[pair[k + 1]][1] - heard[pair[k]][1] for k in pair
+             if k + 1 in pair and lyric[k + 1][0] == lyric[k][0] and pair[k + 1] == pair[k] + 1]
+    word_s = float(np.clip(statistics.median(steps), *WORD_S_RANGE)) if len(steps) >= WORD_STEPS else WORD_S
+    anchor = {}
+    for k in sorted(pair):
+        _, start, end = heard[pair[k]]
+        i, p, _ = lyric[k]
+        if i not in anchor and end - start <= LONG_WORD_S:
+            anchor[i] = max(0.0, start - p * word_s)
+    order = sorted(anchor)
+    anchor = {order[k]: anchor[order[k]] for k in _longest_in_order([anchor[i] for i in order])}
+    if not anchor:
+        return None, 0
+    # index of the first word of each line
+    first_word = np.concatenate([[0], np.cumsum([len(line) for line in lines])])[:-1]
+    anchored = sorted(anchor)
+    times = []
+    for i in range(len(lines)):
+        if i in anchor:
+            t = anchor[i]
+        else:
+            prev = max((a for a in anchored if a < i), default=None)
+            nxt = min((a for a in anchored if a > i), default=None)
+            if prev is not None and nxt is not None:
+                t = anchor[prev] + (anchor[nxt] - anchor[prev]) * (
+                    first_word[i] - first_word[prev]) / (first_word[nxt] - first_word[prev])
+            elif nxt is not None:
+                t = max(0.0, anchor[nxt] - (first_word[nxt] - first_word[i]) * word_s)
+            else:
+                t = anchor[prev] + (first_word[i] - first_word[prev]) * word_s
+        times.append(float(t))
+    return times, len(anchor)

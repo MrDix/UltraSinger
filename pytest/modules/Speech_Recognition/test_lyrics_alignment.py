@@ -10,6 +10,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     END_COST,
     LANGUAGES_WITHOUT_SPACES,
     OVERLAP_S,
+    WORD_S,
     _Emission,
     _local,
     _moves,
@@ -20,6 +21,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     blank_index,
     emission_in_pieces,
     end_row,
+    line_times_from_words,
     lyrics_tokens,
     trellis,
     with_wildcard,
@@ -623,3 +625,135 @@ class TestWordTimes:
         tokens, em, times = misplaced_line_song()
         result = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, times)
         assert [w for w, _, _ in result.words] == list(range(40))
+
+
+# ---------------------------------------------------------------------------
+# Line times of plain lyrics from the words of a transcription
+# ---------------------------------------------------------------------------
+
+
+def heard(*words) -> list[tuple[str, float, float]]:
+    """Transcribed words (text, start): each lasts 0.3 s."""
+    return [(text, start, start + 0.3) for text, start in words]
+
+
+def steady_song(n_lines: int, step: float, first: float = 10.0):
+    """Lines of three words, every word heard ``step`` s after the one before it."""
+    lines = [[f"{LETTERS[i] * 2}{k}" for k in range(3)] for i in range(n_lines)]
+    words = [(w, first + step * n, first + step * n + 0.2) for n, w in enumerate(w for line in lines for w in line)]
+    return lines, words
+
+
+class TestLineTimesFromWords:
+
+    def test_line_starts_at_its_first_paired_word(self):
+        lines = [["hello", "dear", "world"], ["come", "on", "now"]]
+        # the first word of the first line was not heard: its time is that of
+        # "dear" minus one word (0.35 s with too few steps to measure it)
+        times, anchored = line_times_from_words(lines, heard(("dear", 10.0), ("world", 10.4), ("come", 15.0)))
+        assert times == pytest.approx([10.0 - WORD_S, 15.0])
+        assert anchored == 2
+
+    def test_words_paired_without_case_accents_and_punctuation(self):
+        lines = [["Don't", "go"], ["CAFÉ,", "now!"]]
+        times, anchored = line_times_from_words(lines, heard(("dont ", 3.0), ("cafe", 8.0)))
+        assert times == pytest.approx([3.0, 8.0])
+        assert anchored == 2
+
+    def test_words_paired_in_order(self):
+        # a chorus sung twice: each line pairs with its own occurrence
+        lines = [["la", "di", "da"], ["verse", "words"], ["la", "di", "da"]]
+        words = heard(("la", 5.0), ("di", 5.4), ("da", 5.8), ("verse", 10.0), ("words", 10.4),
+                      ("la", 20.0), ("di", 20.4), ("da", 20.8))
+        times, anchored = line_times_from_words(lines, words)
+        assert times == pytest.approx([5.0, 10.0, 20.0])
+        assert anchored == 3
+
+    def test_frequent_words_are_paired_in_a_long_text(self):
+        # a longest common subsequence pairs them all; a matcher that skips the
+        # frequent elements of long sequences (difflib's) pairs none of them here
+        lines = [["la"] * 5 for _ in range(60)]
+        words = heard(("oh", 1.0), *[("la", 2.0 + 0.4 * n) for n in range(300)])
+        times, anchored = line_times_from_words(lines, words)
+        assert anchored == 60
+        assert times == pytest.approx([2.0 + 2.0 * i for i in range(60)])
+
+    def test_seconds_per_word_from_the_steps_between_paired_words(self):
+        # ten steps of 0.5 s between consecutive words of a line give 0.5 s per word
+        lines, words = steady_song(6, 0.5)
+        lines[5] = ["unheard", "unheard"] + lines[5]
+        times, _ = line_times_from_words(lines, words)
+        # the last line's first paired word is its third word
+        assert times[5] == pytest.approx(words[15][1] - 2 * 0.5)
+
+    def test_fewer_steps_give_the_default(self):
+        # five lines: ten steps within lines, but the first line's word is missed
+        lines, words = steady_song(5, 0.5)
+        del words[1]  # its two steps are gone: eight are left
+        lines.append(["unheard", lines[0][0]])
+        words.append((lines[0][0], 30.0, 30.2))
+        times, _ = line_times_from_words(lines, words)
+        assert times[5] == pytest.approx(30.0 - WORD_S)
+
+    @pytest.mark.parametrize("step,per_word", [(2.0, 1.0), (0.1, 0.15)])
+    def test_seconds_per_word_are_limited(self, step, per_word):
+        lines, words = steady_song(6, step)
+        lines.append(["unheard", "late"])
+        words.append(("late", 200.0, 200.2))
+        times, _ = line_times_from_words(lines, words)
+        assert times[6] == pytest.approx(200.0 - per_word)
+
+    def test_steps_across_lines_or_missed_words_do_not_count(self):
+        # one word per line: no step lies within a line, so the default holds
+        lines = [[f"w{i}"] for i in range(12)] + [["unheard", "last"]]
+        words = heard(*[(f"w{i}", 1.0 * i) for i in range(12)], ("last", 50.0))
+        times, _ = line_times_from_words(lines, words)
+        assert times[12] == pytest.approx(50.0 - WORD_S)
+
+    def test_long_transcribed_word_gives_no_line_time(self):
+        lines = [["one", "two", "three"]]
+        # "one" lasts 4 s: its start is that of its piece, "two" places the line
+        words = [("one", 0.0, 4.0), ("two", 4.2, 4.5), ("three", 4.6, 4.9)]
+        times, anchored = line_times_from_words(lines, words)
+        assert times == pytest.approx([4.2 - WORD_S])
+        assert anchored == 1
+
+    def test_anchors_out_of_time_order_are_dropped(self):
+        lines = [["aa", "x"], ["bb", "x"], ["cc", "x"], ["dd", "x"]]
+        # the second line was heard before the first one
+        times, anchored = line_times_from_words(lines, heard(("aa", 10.0), ("bb", 5.0), ("cc", 20.0), ("dd", 30.0)))
+        assert anchored == 3
+        # it lies between the first and the third line, by its words
+        assert times == pytest.approx([10.0, 15.0, 20.0, 30.0])
+
+    def test_lines_between_anchors_are_spread_by_their_words(self):
+        lines = [["aa", "x"], ["y", "y", "y"], ["z"], ["bb", "x"]]
+        times, anchored = line_times_from_words(lines, heard(("aa", 10.0), ("bb", 22.0)))
+        assert anchored == 2
+        # words before each line: 0, 2, 5, 6
+        assert times == pytest.approx([10.0, 14.0, 20.0, 22.0])
+
+    def test_lines_before_and_after_the_anchors_at_the_seconds_per_word(self):
+        lines = [["x"], ["x", "x"], ["aa", "x", "x"], ["y"], ["five", "words", "in", "this", "line"], ["z"]]
+        times, anchored = line_times_from_words(lines, heard(("aa", 1.0)))
+        assert anchored == 1
+        # words before each line: 0, 1, 3, 6, 7, 12; the first line would start before 0
+        assert times == pytest.approx([0.0, 1.0 - 2 * WORD_S, 1.0, 1.0 + 3 * WORD_S, 1.0 + 4 * WORD_S,
+                                       1.0 + 9 * WORD_S])
+
+    def test_no_line_time_before_zero(self):
+        lines = [["x", "x", "x", "aa"]]
+        times, _ = line_times_from_words(lines, heard(("aa", 0.5)))
+        assert times == [0.0]
+
+    def test_no_anchor(self):
+        lines = [["hello", "world"]]
+        assert line_times_from_words(lines, []) == (None, 0)
+        assert line_times_from_words(lines, heard(("other", 1.0))) == (None, 0)
+        assert line_times_from_words([], heard(("hello", 1.0))) == (None, 0)
+
+    def test_words_without_letters_are_not_paired(self):
+        lines = [["...", "-", "go"]]
+        times, anchored = line_times_from_words(lines, heard(("...", 1.0), ("go", 2.0)))
+        assert anchored == 1
+        assert times == pytest.approx([2.0 - 2 * WORD_S])
