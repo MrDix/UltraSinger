@@ -140,12 +140,14 @@ class TestParseLrcSyncedLyrics:
     def test_lines_that_are_only_a_label_are_not_sung(self):
         lrc = "[00:10.00] (Chorus)\n[00:12.00] Verse 2:\n[00:14.00] (Break) it down\n" \
               "[00:16.00] {Pre-Chorus x2}\n[00:18.00] Chorus: the words go on\n" \
-              "[00:20.00] Bridge: hold on tight:\n[00:22.00] (Verse 1: Artist)"
+              "[00:20.00] Bridge: hold on tight:\n[00:22.00] (Verse 1: Artist)\n" \
+              "[00:24.00] (Verse 1: Artist) Hello world (oh)"
         segs = parse_lrc_synced_lyrics(lrc)
         # a label word in brackets before sung words is a backing vocal, and a
         # colon after a label word is sung text when more follows
         assert [s["text"] for s in segs] == ["\x00Break it down", "Chorus: the words go on",
-                                             "Bridge: hold on tight:"]
+                                             "Bridge: hold on tight:",
+                                             "\x00Verse \x001: \x00Artist Hello world \x00oh"]
         assert segs[0]["start"] == pytest.approx(14.0)
 
 

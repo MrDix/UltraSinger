@@ -114,7 +114,8 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
     rest = _REPEAT_MARK_RE.sub(" ", raw_line[pos:])
     text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [rest])).split())
     # Only a label: "(Chorus)", "{Verse 2}", "Chorus:" (but "(Break) it down" is sung)
-    if ((text[:1] + text[-1:] in ("()", "{}") and _LRC_SECTION_RE.fullmatch(text[1:-1].strip()))
+    whole = _LRC_TAG_RE.fullmatch(text)
+    if ((whole and whole.group(1)[0] in "({" and _LRC_SECTION_RE.fullmatch(whole.group(1)[1:-1].strip()))
             or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
         text = ""
     return times, _mark_bracketed_words(text)
