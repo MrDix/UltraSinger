@@ -72,10 +72,10 @@ _LRC_SECTION_RE = re.compile(
     r"|breakdown|coda)(?:\s*\d+)?(?:\s*x\s*\d+)?(?:\s*:.*)?",
     re.IGNORECASE,
 )
-# A repeat mark: "x2", "2x", "3 times", "repeat", "repeat chorus" (not
+# A repeat mark: "x2", "2x", "3 times", "repeat", "repeat chorus x2" (not
 # "twice": "(twice)" may be a sung echo)
 _REPEAT = r"(?:[x×]\s*\d+|\d+\s*[x×]|\d+\s*times)"
-_REPEAT_RE = re.compile(rf"{_REPEAT}|repeat(?:\s*(?:chorus|{_REPEAT}))?", re.IGNORECASE)
+_REPEAT_RE = re.compile(rf"{_REPEAT}|repeat(?:\s*chorus)?(?:\s*{_REPEAT})?", re.IGNORECASE)
 # A repeat mark in brackets anywhere in a line: "Hello world (x2)"
 _REPEAT_MARK_RE = re.compile(rf"[\(\[\{{]\s*(?:{_REPEAT_RE.pattern})\s*[\)\]\}}]", re.IGNORECASE)
 # A word time of enhanced LRC: "<01:23.45>"
@@ -90,11 +90,12 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
 
     Brackets at the start of the line are time tags (``"[01:23.45]"``), ID
     tags (``"[ar:Artist]"``), section labels (``"[Chorus]"``,
-    ``"(Verse 2)"``), repeat marks (``"(x2)"``) or backing vocals. Repeat
+    ``"[Verse 2]"``), repeat marks (``"(x2)"``) or backing vocals. Repeat
     marks are not sung wherever they are, and neither is a line that is only
-    a section label with a colon (``"Chorus:"``). Word times of enhanced LRC
-    (``"<00:12.50>"``) are left out. The other brackets are backing vocals:
-    their words are prefixed with ``\\x00`` (see ``_mark_bracketed_words``).
+    a section label in other brackets (``"(Chorus)"``) or with a colon
+    (``"Chorus:"``). Word times of enhanced LRC (``"<00:12.50>"``) are left
+    out. The other brackets are backing vocals: their words are prefixed
+    with ``\\x00`` (see ``_mark_bracketed_words``).
     """
     times: list[float] = []
     sung: list[str] = []  # backing vocals among the brackets at the start
@@ -105,13 +106,16 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
         time_tag = _LRC_TIME_RE.fullmatch(content) if bracket.startswith("[") else None
         if time_tag:
             times.append(int(time_tag.group(1)) * 60 + float(time_tag.group(2)))
-        elif not ((bracket.startswith("[") and _LRC_ID_TAG_RE.match(content))
-                  or _LRC_SECTION_RE.fullmatch(content) or _REPEAT_RE.fullmatch(content)):
+        elif not ((bracket.startswith("[")
+                   and (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(content)))
+                  or _REPEAT_RE.fullmatch(content)):
             sung.append(bracket)
         pos = m.end()
     rest = _REPEAT_MARK_RE.sub(" ", raw_line[pos:])
     text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [rest])).split())
-    if text.endswith(":") and _LRC_SECTION_RE.fullmatch(text):
+    # Only a label: "(Chorus)", "{Verse 2}", "Chorus:" (but "(Break) it down" is sung)
+    if ((text[:1] + text[-1:] in ("()", "{}") and _LRC_SECTION_RE.fullmatch(text[1:-1].strip()))
+            or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
         text = ""
     return times, _mark_bracketed_words(text)
 

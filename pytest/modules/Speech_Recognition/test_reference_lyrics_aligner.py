@@ -131,18 +131,21 @@ class TestParseLrcSyncedLyrics:
     def test_repeat_marks_are_not_sung(self):
         lrc = "[00:10.00] Hello world (x2)\n[00:12.00] (2x) Again [Repeat Chorus]\n" \
               "[00:14.00] La {3 times} la (repeat)\n[00:16.00] (x 4)\n[00:18.00] (oh) yeah\n" \
-              "[00:20.00] Say it twice (twice)"
+              "[00:20.00] Say it twice (twice)\n[00:22.00] Go (Repeat chorus x2)"
         segs = parse_lrc_synced_lyrics(lrc)
         # an echo like "(twice)" is sung
         assert [s["text"] for s in segs] == ["Hello world", "Again", "La la", "\x00oh yeah",
-                                             "Say it twice \x00twice"]
+                                             "Say it twice \x00twice", "Go"]
 
-    def test_section_labels_in_round_brackets_and_with_a_colon_are_not_sung(self):
-        lrc = "[00:10.00] (Chorus)\n[00:12.00] Verse 2:\n[00:14.00] (Bridge) text\n" \
-              "[00:16.00] {Pre-Chorus x2}\n[00:18.00] Chorus: the words go on"
+    def test_lines_that_are_only_a_label_are_not_sung(self):
+        lrc = "[00:10.00] (Chorus)\n[00:12.00] Verse 2:\n[00:14.00] (Break) it down\n" \
+              "[00:16.00] {Pre-Chorus x2}\n[00:18.00] Chorus: the words go on\n" \
+              "[00:20.00] Bridge: hold on tight:\n[00:22.00] (Verse 1: Artist)"
         segs = parse_lrc_synced_lyrics(lrc)
-        # a colon in the middle of a line is sung text
-        assert [s["text"] for s in segs] == ["text", "Chorus: the words go on"]
+        # a label word in brackets before sung words is a backing vocal, and a
+        # colon after a label word is sung text when more follows
+        assert [s["text"] for s in segs] == ["\x00Break it down", "Chorus: the words go on",
+                                             "Bridge: hold on tight:"]
         assert segs[0]["start"] == pytest.approx(14.0)
 
 
