@@ -1323,6 +1323,30 @@ def test_bat_update_reports_no_incomplete_update_when_the_pull_fails(bat_update,
     assert not list((tmp_path / "tmp").glob("ultrasinger_update_*"))  # no copy kept
 
 
+@needs_cmd
+def test_bat_update_carries_on_right_after_the_pull_in_the_pulled_file(bat_update):
+    """The running update.bat continues at its byte offset in the file its pull replaced (see the hash test)."""
+    app, run = bat_update
+    marker = "MARKER - THE PULLED UPDATE.BAT GOES ON HERE"
+    seed = app.parent / "seed"
+    data = (seed / "install" / "update.bat").read_bytes()
+    end = data.index(UPDATE_BAT_PULL_LINE) + len(UPDATE_BAT_PULL_LINE)
+    (seed / "install" / "update.bat").write_bytes(data[:end] + f"echo {marker}\r\n".encode() + data[end:])
+    _git(seed, "commit", "-qam", "update.bat")
+    _git(seed, "push", "-q", "origin", "main")
+    _make_cuda(app, "cu126")
+    result, calls = run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count(marker) == 1, result.stdout
+    assert result.stdout.count("Pulling latest changes") == 1 and result.stdout.count("Update completed.") == 1
+    assert "whl/cu126" in (app / "pyproject.toml").read_text(encoding="utf-8")
+    assert calls == ["lock --upgrade-package yt-dlp", "sync --extra gui --extra scoring --extra potoken"]
+    # cmd.exe prints its errors to stderr; apart from them, only git's fetch and checkout notes end up there
+    unexpected = [line for line in result.stderr.splitlines()
+                  if line.strip() and not line.startswith(("From ", "Updated ")) and " -> " not in line]
+    assert unexpected == [], result.stderr
+
+
 @pytest.fixture
 def bat_install(tmp_path, stub_uv_exe):
     """A CPU installation with a working .venv for the Windows install scripts; uv and the provider are stubs."""
