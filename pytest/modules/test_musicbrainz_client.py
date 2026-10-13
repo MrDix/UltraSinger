@@ -1,7 +1,15 @@
 """Test the musicbrainz_client module."""
 
+import io
+import socket
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
+from urllib.error import HTTPError
+
+import musicbrainzngs
+
+from src.modules import musicbrainz_client
 from src.modules.musicbrainz_client import search_musicbrainz
 
 
@@ -235,8 +243,8 @@ class TestCoverArt404Detection(unittest.TestCase):
         self.assertIn("No cover art on MusicBrainz", out)
 
     def test_other_status_is_loud(self):
-        _, out = self._run(503)
-        self.assertIn("Cover art download failed", out)
+        _, out = self._run(400)
+        self.assertIn("MusicBrainz request failed", out)
 
 
 def _recording(title, artist):
@@ -576,3 +584,93 @@ class TestNumberedTitles(unittest.TestCase):
                                     'recording-list': [_recording('Wanted Part 3', 'Wanted Artist')]}
         info = search_musicbrainz('Wanted Part 2', 'Wanted Artist')
         self.assertEqual(info.title, 'Wanted Part 2')
+
+
+def _response_error(status):
+    """What musicbrainzngs raises for HTTP 400, 404 and 411."""
+    return musicbrainzngs.ResponseError(cause=HTTPError("u", status, "msg", None, None))
+
+
+class TestNotFoundAnswers(unittest.TestCase):
+    """A request that MusicBrainz answers with "not found" or "bad request" has no result: no crash."""
+
+    def test_merged_release_group(self):
+        # The search still lists a release group that was merged into another one
+        recording = TestYear._recording(('Album', '1989-03-21'))
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [recording]}), \
+                patch('musicbrainzngs.get_release_group_by_id', side_effect=_response_error(404)), \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual((info.title, info.year), ('Wanted Title', '1989'))
+
+    def test_bad_request(self):
+        with patch('musicbrainzngs.search_recordings', side_effect=_response_error(400)):
+            info = search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual((info.artist, info.title), ('Wanted Artist', 'Wanted Title'))
+
+
+class _Clock:
+    """Stand-in for the time module of musicbrainz_client: no waiting, and a clock that only the test moves."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+class TestRequestLimits(unittest.TestCase):
+    """Requests time out, and a lookup stops asking once its failed requests took too long."""
+
+    def setUp(self):
+        self.clock = _Clock()
+        patcher = patch.object(musicbrainz_client, "time", self.clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        musicbrainz_client._failed_seconds = 0.0
+        self.addCleanup(setattr, musicbrainz_client, "_failed_seconds", 0.0)
+
+    def _overloaded(self, *args, **kwargs):
+        # musicbrainzngs gives up on a request to an overloaded server after about a minute
+        self.clock.now += 56
+        raise musicbrainzngs.NetworkError("retried 8 times")
+
+    def test_requests_have_a_timeout(self):
+        timeouts = []
+
+        def search(*args, **kwargs):
+            timeouts.append(socket.getdefaulttimeout())
+            return {'recording-count': 0, 'recording-list': []}
+        before = socket.getdefaulttimeout()
+        with patch('musicbrainzngs.search_recordings', side_effect=search):
+            search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual(timeouts, [musicbrainz_client.REQUEST_TIMEOUT_SECONDS] * 2)
+        self.assertEqual(socket.getdefaulttimeout(), before)
+
+    def test_cover_search_stops_when_the_server_does_not_answer(self):
+        get_image = musicbrainz_client.__dict__["__get_image"]
+        releases = [{'id': f'r{i}', 'status': 'Official'} for i in range(15)]
+        out = io.StringIO()
+        with patch('musicbrainzngs.get_image_front', side_effect=self._overloaded) as front, redirect_stdout(out):
+            self.assertEqual(get_image(releases), (None, None))
+        # Not 3 tries for each of the 15 releases, 43 minutes
+        self.assertEqual(front.call_count, 1)
+        self.assertIn("MusicBrainz does not answer", out.getvalue())
+
+    def test_quick_failure_is_tried_again(self):
+        request = musicbrainz_client.__dict__["__musicbrainz_request"]
+        answers = [musicbrainzngs.NetworkError("connection reset"), {'release-group': {}}]
+        with patch('musicbrainzngs.get_release_group_by_id', side_effect=answers) as group:
+            self.assertEqual(request(lambda: musicbrainzngs.get_release_group_by_id('g')), {'release-group': {}})
+        self.assertEqual(group.call_count, 2)
+
+    def test_each_lookup_starts_afresh(self):
+        with patch('musicbrainzngs.search_recordings', side_effect=self._overloaded) as search:
+            search_musicbrainz('Wanted Title', 'Wanted Artist')
+            self.assertEqual(search.call_count, 1)  # the second search of the lookup is not made
+            search_musicbrainz('Wanted Title', 'Wanted Artist')
+        self.assertEqual(search.call_count, 2)

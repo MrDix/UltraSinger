@@ -37,17 +37,23 @@ def from_ultrastar_txt(ultrastar_txt: UltrastarTxtValue) -> ProcessData:
 def create_ultrastar_txt_from_midi_segments(
         song_folder_output_path: str,
         input_file_path: str,
-        title: str,
+        basename: str,
         midi_segments: list[MidiSegment],
+        cover: str | None = None,
+        cover_url: str | None = None,
 ) -> str:
-    """Create Ultrastar txt from Ultrastar data"""
-    output_repitched_ultrastar = os.path.join(song_folder_output_path, title + ".txt")
+    """Create Ultrastar txt from Ultrastar data, as ``<basename>.txt`` (a name
+    that is valid as a file name, like the song folder's); ``cover`` and
+    ``cover_url`` (the cover in the song folder) are written into its header"""
+    output_repitched_ultrastar = os.path.join(song_folder_output_path, basename + ".txt")
     ultrastar_note_numbers = convert_midi_notes_to_ultrastar_notes(midi_segments)
 
     create_repitched_txt_from_ultrastar_data(
         input_file_path,
         ultrastar_note_numbers,
         output_repitched_ultrastar,
+        cover,
+        cover_url,
     )
     return output_repitched_ultrastar
 
@@ -71,8 +77,15 @@ def create_ultrastar_txt_from_automation(
         raise Exception("Missing Audio extension. It is required to create Ultrastar txt")
     ultrastar_txt.mp3 = basename + "." + media_info.audio_extension
     ultrastar_txt.audio = basename + "." + media_info.audio_extension
-    ultrastar_txt.vocals = basename + " [Vocals]." + media_info.audio_extension
-    ultrastar_txt.instrumental = basename + " [Instrumental]." + media_info.audio_extension
+    # The stems are only there when the vocals were separated
+    vocals = basename + " [Vocals]." + media_info.audio_extension
+    ultrastar_txt.vocals = (
+        vocals if os_helper.check_file_exists(os.path.join(song_folder_output_path, vocals)) else None
+    )
+    instrumental = basename + " [Instrumental]." + media_info.audio_extension
+    ultrastar_txt.instrumental = (
+        instrumental if os_helper.check_file_exists(os.path.join(song_folder_output_path, instrumental)) else None
+    )
     if media_info.video_extension is not None:
         ultrastar_txt.video = basename + "." + media_info.video_extension
     ultrastar_txt.language = media_info.language

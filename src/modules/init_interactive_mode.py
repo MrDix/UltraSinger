@@ -1,9 +1,8 @@
 from rich.console import Console  
 from rich.table import Table
 from Settings import Settings  
-from modules.Audio.separation import DemucsModel
+from modules.Audio.separation import AudioSeparatorModel, DemucsModel, SeparatorBackend
 from modules.Speech_Recognition.Whisper import WhisperModel
-from modules.DeviceDetection.device_detection import check_gpu_support
 
 import os  
   
@@ -22,7 +21,8 @@ def get_output_folder(console, settings, header):
     if output_folder:  
         settings.output_folder_path = output_folder  
     else:  
-        dirname = os.getcwd() if settings.input_file_path.startswith("https:") else os.path.dirname(settings.input_file_path)  
+        is_url = settings.input_file_path.lower().startswith(("http://", "https://"))
+        dirname = os.getcwd() if is_url else os.path.dirname(settings.input_file_path)
         settings.output_folder_path = os.path.join(dirname, "output")  
   
 def select_model(console, header, model_enum, model_type, default_model):  
@@ -119,12 +119,11 @@ def configure_additional_options(console, settings, header):
             f"{header} Force [green]CPU usage[/green]? ([bright_green]y[/bright_green]/[bright_red]n[/bright_red], default '[bright_red]n[/bright_red]'): "  
         ).strip().lower() == 'y'  
   
-        # Device settings based on CPU usage  
-        if settings.force_cpu:  
-            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  
-        else:  
-            settings.tensorflow_device, settings.pytorch_device = check_gpu_support()  
-  
+        # Device settings based on CPU usage (the GPU check runs after the
+        # interactive mode and keeps the CPU when it is forced)
+        if settings.force_cpu:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
         # Force Whisper CPU Usage  
         settings.force_whisper_cpu = console.input(  
             f"{header} Force [green]Whisper CPU usage[/green]? ([bright_green]y[/bright_green]/[bright_red]n[/bright_red], default '[bright_red]n[/bright_red]'): "  
@@ -184,7 +183,7 @@ def configure_additional_options(console, settings, header):
             f"\n{header} Enter the path to [green]ffmpeg[/green] executable folder (leave empty for default): "
         ).strip()
         if ffmpeg_path:
-            settings.ffmpeg_path = ffmpeg_path
+            settings.user_ffmpeg_path = ffmpeg_path
   
 def init_settings_interactive(settings: Settings) -> Settings:  
     ULTRASINGER_HEAD = "[bold green][UltraSinger][/bold green]"  
@@ -193,7 +192,14 @@ def init_settings_interactive(settings: Settings) -> Settings:
     get_input_file(console, settings, ULTRASINGER_HEAD)
     get_output_folder(console, settings, ULTRASINGER_HEAD)  
     settings.whisper_model = select_model(console, ULTRASINGER_HEAD, WhisperModel, "Whisper", WhisperModel.LARGE_V2)  
-    settings.demucs_model = select_model(console, ULTRASINGER_HEAD, DemucsModel, "Demucs", DemucsModel.HTDEMUCS)  
+    # The model of the separator in use (--separator, by default audio_separator);
+    # a custom audio_separator model file given with --audio_separator_model is kept
+    if settings.separator_backend == SeparatorBackend.DEMUCS:
+        settings.demucs_model = select_model(console, ULTRASINGER_HEAD, DemucsModel, "Demucs",
+                                             settings.demucs_model)
+    elif isinstance(settings.audio_separator_model, AudioSeparatorModel):
+        settings.audio_separator_model = select_model(console, ULTRASINGER_HEAD, AudioSeparatorModel,
+                                                      "Separation", settings.audio_separator_model)
   
     configure_additional_options(console, settings, ULTRASINGER_HEAD)  
   

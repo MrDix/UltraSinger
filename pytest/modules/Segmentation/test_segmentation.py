@@ -375,6 +375,90 @@ class TestPlaceLyrics:
         idx = [j for j, _ in path]
         assert idx == sorted(idx)
 
+    def test_same_path_as_the_former_dense_tables(self):
+        rng = np.random.default_rng(5)
+        for _ in range(150):
+            length = rng.uniform(5000, 90000)
+            starts = np.sort(rng.uniform(0, length, rng.integers(1, 60)))
+            syl_starts = np.sort(rng.uniform(0, length, rng.integers(1, 60)))
+            if rng.random() < 0.3:  # notes far from all syllables: the rows are widened
+                starts = np.sort(np.concatenate([starts, rng.uniform(length + 20000, length + 40000, 3)]))
+            if rng.random() < 0.3:  # equal times: ties between paths
+                starts = np.round(starts / 1000) * 1000
+                syl_starts = np.round(syl_starts / 1000) * 1000
+            syl = [seg_lyrics.Syllable(f"s{i} ", t, t + rng.uniform(50, 900)) for i, t in enumerate(syl_starts)]
+            assert seg_lyrics.align_syllables(starts, syl) == _former_align_syllables(starts, syl)
+
+    def test_memory_grows_with_the_notes_only(self):
+        import tracemalloc
+
+        # 12.5 minutes: 1500 notes and syllables, 0.5 s apart. Dense tables took
+        # 1500 x 1500 x 24 B = 51 MB here (an hour: 1.2 GB), the bands about 2 MB.
+        starts = np.arange(1500) * 500.0
+        syl = [seg_lyrics.Syllable(f"s{i} ", t, t + 400) for i, t in enumerate(starts)]
+        tracemalloc.start()
+        try:
+            path = seg_lyrics.align_syllables(starts, syl)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert path == [(i, True) for i in range(1500)]
+        assert peak < 10 * 2 ** 20
+
+
+def _former_align_syllables(note_starts_ms, syllables):
+    """align_syllables as it was, with dense notes x syllables tables."""
+    MAX_SKIP, BAND_MS = seg_lyrics.MAX_SKIP, seg_lyrics.BAND_MS
+    k_notes, m = len(note_starts_ms), len(syllables)
+    if k_notes == 0 or m == 0:
+        return []
+    inf = np.inf
+    sa = np.array([s.start_ms for s in syllables])
+    sb = np.array([s.end_ms for s in syllables])
+    dp = np.full((k_notes, m), inf)
+    back = np.full((k_notes, m, 2), -1, dtype=np.int64)
+
+    def start_cost(i, j):
+        return min(abs(note_starts_ms[i] - sa[j]), seg_lyrics.MAX_START_COST_MS)
+
+    for j in range(min(m, MAX_SKIP + 1)):
+        dp[0, j] = start_cost(0, j) + j * seg_lyrics.DROP_COST_MS
+        back[0, j] = (-1, 1)
+
+    def fill_row(i, j_from, j_to):
+        for j in range(max(j_from, 0), min(j_to, m)):
+            best = dp[i - 1, j] + seg_lyrics.CONTINUE_COST_MS + max(0.0, note_starts_ms[i] - sb[j])
+            arg = (j, 0)
+            for skip in range(MAX_SKIP + 1):
+                pj = j - 1 - skip
+                if pj < 0:
+                    break
+                c = dp[i - 1, pj] + start_cost(i, j) + skip * seg_lyrics.DROP_COST_MS
+                if c < best:
+                    best, arg = c, (pj, 1)
+            dp[i, j] = best
+            back[i, j] = arg
+
+    for i in range(1, k_notes):
+        lo = int(np.searchsorted(sa, note_starts_ms[i] - BAND_MS))
+        hi = int(np.searchsorted(sa, note_starts_ms[i] + BAND_MS))
+        fill_row(i, lo - MAX_SKIP, hi + 1)
+        if not np.isfinite(dp[i]).any():
+            reach = np.flatnonzero(np.isfinite(dp[i - 1]))
+            if len(reach):
+                fill_row(i, int(reach[0]), int(reach[-1]) + MAX_SKIP + 2)
+    final = dp[k_notes - 1] + (m - 1 - np.arange(m)) * seg_lyrics.DROP_COST_MS
+    if not np.isfinite(final).any():
+        return []
+    j = int(np.argmin(final))
+    path = [(0, True)] * k_notes
+    for i in range(k_notes - 1, -1, -1):
+        pj, is_start = back[i, j]
+        path[i] = (j, bool(is_start))
+        if pj >= 0:
+            j = int(pj)
+    return path
+
 
 # ── pipeline step ───────────────────────────────────────────────────────────
 
@@ -593,14 +677,14 @@ class TestLeadVocalPitch:
 
     def test_analysis_comes_with_the_stem_path(self, monkeypatch):
         import modules.Segmentation.features as feats
-        monkeypatch.setattr(lead_vocal, "separate_lead_vocal", lambda v, c: "cache/lead.wav")
+        monkeypatch.setattr(lead_vocal, "separate_lead_vocal", lambda v, c, **kw: "cache/lead.wav")
         monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(160, np.float32))
         monkeypatch.setattr(feats, "analyse_vocal", lambda y: "analysis")
         assert lead_vocal.lead_vocal_analysis("v.wav", "cache") == ("cache/lead.wav", "analysis")
 
 
 class TestSegmenterLeadPitch:
-    def _run(self, tmp_path, monkeypatch, lead_result):
+    def _run(self, tmp_path, monkeypatch, lead_result, **kwargs):
         model = tmp_path / "m.pt"
         save_model(model, SegNet())
         vocal = tmp_path / "v.wav"
@@ -618,32 +702,41 @@ class TestSegmenterLeadPitch:
         monkeypatch.setattr(dec, "decode_notes", fake_decode)
         monkeypatch.setattr(lead_vocal, "lead_vocal_analysis", lead_result)
         result = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en",
-                                              lead_vocal_pitch=True, cache_folder=str(tmp_path))
+                                              lead_vocal_pitch=True, cache_folder=str(tmp_path), **kwargs)
         return result, seen
 
     def test_reliable_lead_is_used(self, tmp_path, monkeypatch):
         lead = _analysis(200, midi=64)
-        result, seen = self._run(tmp_path, monkeypatch, lambda p, c: ("lead.wav", lead))
+        result, seen = self._run(tmp_path, monkeypatch, lambda p, c, **kw: ("lead.wav", lead))
         assert result.segments and seen["pitch_analysis"] is lead and seen["check_analysis"] is None
         assert result.pitch_audio_path == "lead.wav"  # later steps compare the notes with the lead stem
 
     def test_unreliable_lead_only_checks_the_pitches(self, tmp_path, monkeypatch):
         lead = _analysis(200, midi=64)
         lead.f0_conf[:150] = 0.1
-        result, seen = self._run(tmp_path, monkeypatch, lambda p, c: ("lead.wav", lead))
+        result, seen = self._run(tmp_path, monkeypatch, lambda p, c, **kw: ("lead.wav", lead))
         assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is lead
         assert result.pitch_audio_path == str(tmp_path / "v.wav")
 
     def test_separation_error_falls_back(self, tmp_path, monkeypatch):
-        def boom(p, c):
+        def boom(p, c, **kw):
             raise RuntimeError("no model")
         result, seen = self._run(tmp_path, monkeypatch, boom)
         assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is None
         assert result.pitch_audio_path == str(tmp_path / "v.wav")
 
     def test_too_little_gpu_memory_falls_back(self, tmp_path, monkeypatch, capsys):
-        def no_memory(p, c):
+        def no_memory(p, c, **kw):
             raise lead_vocal.NotEnoughGpuMemory("only 1.0 GB of GPU memory free, the separation needs about 2.2 GB")
         result, seen = self._run(tmp_path, monkeypatch, no_memory)
         assert result.segments and seen["pitch_analysis"] is None and seen["check_analysis"] is None
         assert "lead-vocal pitch skipped: only 1.0 GB" in capsys.readouterr().out
+
+    def test_force_cpu_reaches_the_lead_separation(self, tmp_path, monkeypatch):
+        calls = []
+
+        def lead(p, c, **kw):
+            calls.append(kw)
+            return "lead.wav", _analysis(200, midi=64)
+        self._run(tmp_path, monkeypatch, lead, force_cpu=True)
+        assert calls == [{"force_cpu": True}]

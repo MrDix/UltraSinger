@@ -59,6 +59,13 @@ class TestMergeSyllableSegmentsDefault(unittest.TestCase):
         result_midi, result_data = merge_syllable_segments(midi, data, BPM, preserve_syllables=False)
         self.assertEqual(len(result_data), 2)
 
+    def test_unpaired_lists_raise(self):
+        """Notes and syllables are paired by index: a difference must not drop notes silently."""
+        data = [_td("hel", 0.0, 0.25, is_hyphen=True, is_word_end=False)]
+        midi = [_ms("C4", 0.0, 0.25, "hel"), _ms("D4", 0.25, 0.5, "lo ")]
+        with self.assertRaises(ValueError):
+            merge_syllable_segments(midi, data, BPM)
+
 
 class TestMergeSyllableSegmentsPreserve(unittest.TestCase):
     """Tests for preserve_syllables=True (--syllable_split mode)."""

@@ -1,5 +1,6 @@
 """Midi creator module"""
 
+import bisect
 import math
 import os
 import statistics
@@ -116,8 +117,10 @@ def confidence_weighted_median_note(
 
 
 def find_nearest_index(array: list[float], value: float) -> int:
-    """Nearest index in array"""
-    idx = np.searchsorted(array, value, side="left")
+    """Nearest index in array (sorted ascending, like the frame times of a pitch track)"""
+    # bisect searches the list as it is; np.searchsorted would first copy the
+    # whole list into an array, on every call (quadratic over a song's notes)
+    idx = bisect.bisect_left(array, value)
     if idx > 0 and (
         idx == len(array)
         or math.fabs(value - array[idx - 1]) < math.fabs(value - array[idx])
@@ -206,7 +209,7 @@ def create_midi_segments_from_transcribed_data(transcribed_data: list[Transcribe
         allowed_notes: Optional set of allowed note names for key quantization
 
     Returns:
-        List of MidiSegments
+        List of MidiSegments (empty for an empty transcription)
     """
     start_times = []
     end_times = []
@@ -234,6 +237,7 @@ def create_midi_segments_from_transcribed_data(transcribed_data: list[Transcribe
                     midi_segments[i].line_break_after = True
 
         return midi_segments
+    return []
 
 
 def create_repitched_midi_segments_from_ultrastar_txt(pitched_data: PitchedData, ultrastar_txt: UltrastarTxtValue) -> list[MidiSegment]:

@@ -1,7 +1,7 @@
 """Language detection constants — side-effect-free module.
 
 Extracted from Whisper.py so tests can import these constants without
-triggering the torch.load patch or whisperx import side effects.
+the whisperx import side effects.
 """
 
 # Core languages with high-quality Whisper transcription AND wav2vec2

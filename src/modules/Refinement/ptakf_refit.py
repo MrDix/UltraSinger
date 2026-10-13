@@ -32,6 +32,7 @@ import statistics
 from functools import lru_cache
 
 import librosa
+import numpy as np
 
 from modules.Midi.MidiSegment import MidiSegment
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
@@ -104,23 +105,27 @@ def _segment_beat_tones(beat_tones: list[int]) -> list[tuple[int, int, int]]:
     for run_start, run_end in runs:
         run = beat_tones[run_start:run_end]
         n = len(run)
+        # cum_hits[c, k]: beats of run[:k] that a note of pitch class c hits, so
+        # the hits of run[j:i] are cum_hits[c, i] - cum_hits[c, j]
+        cum_hits = np.zeros((12, n + 1), dtype=np.int64)
+        cum_hits[:, 1:] = np.cumsum(
+            [[bt >= 0 and abs(_fold(bt - c)) <= _TOL for bt in run] for c in range(12)], axis=1)
         # DP: best partition of run[:i] into segments of >= _MIN_SEG_BEATS
-        # (a shorter final tail is allowed); each split costs _SPLIT_PENALTY
-        neg = float("-inf")
-        dp = [neg] * (n + 1)
+        # (a shorter final tail is allowed); each split costs _SPLIT_PENALTY.
+        # Of equally good partitions the one with the earliest last cut wins.
+        dp = np.full(n + 1, -np.inf)
         back: list[int | None] = [None] * (n + 1)
         dp[0] = 0.0
         for i in range(1, n + 1):
-            for j in range(i):
-                if dp[j] == neg:
-                    continue
-                if i - j < _MIN_SEG_BEATS and i != n:
-                    continue
-                _, best_h = _best_class(run[j:i])
-                val = dp[j] + best_h - _SPLIT_PENALTY
-                if val > dp[i]:
-                    dp[i] = val
-                    back[i] = j
+            n_j = i if i == n else i - _MIN_SEG_BEATS + 1  # the segment run[j:i] for j < n_j
+            if n_j <= 0:
+                continue
+            best_h = (cum_hits[:, i:i + 1] - cum_hits[:, :n_j]).max(axis=0)
+            vals = dp[:n_j] + best_h - _SPLIT_PENALTY
+            j = int(np.argmax(vals))
+            if vals[j] > dp[i]:
+                dp[i] = vals[j]
+                back[i] = j
         cuts = []
         i = n
         while i > 0:

@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 
+import librosa
 from packaging import version
 from unittest.mock import patch, mock_open
 from src.modules.Ultrastar.ultrastar_writer import (
@@ -821,6 +822,106 @@ class TestLinebreakBeat(unittest.TestCase):
             for pause in range(0, 200, 7):
                 beat = self._beat(pause, timing)
                 self.assertTrue(100 <= beat <= 100 + pause, (timing, pause, beat))
+
+
+class TestRepitchedTxt(unittest.TestCase):
+    """The re-pitched chart: the original with the new pitches (one per note line)."""
+
+    def _repitch(self, original: bytes, pitches: list[int], **cover) -> str:
+        from src.modules.Ultrastar.coverter.ultrastar_txt_converter import create_ultrastar_txt_from_midi_segments
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = os.path.join(tmp, "input.txt")
+            with open(input_file, "wb") as f:
+                f.write(original)
+            segments = [MidiSegment(librosa.midi_to_note(48 + p), 0.0, 1.0, "w") for p in pitches]
+            output = create_ultrastar_txt_from_midi_segments(tmp, input_file, "Artist - Title", segments, **cover)
+            with open(output, "r", encoding="utf-8") as f:
+                return f.read()
+
+    def test_every_note_line_takes_its_own_pitch(self):
+        original = (b"#TITLE:Title\n#BPM:300\n"
+                    b": 0 2 0 one\n* 2 2 0 gold\nF 4 2 0 free\nR 6 2 0 rap\n- 9\nG 10 2 0 gr\n: 12 2 0 two\nE\n")
+        text = self._repitch(original, [1, 2, 3, 4, 5, 6])
+        notes = [line for line in text.splitlines() if line[:2] in (": ", "* ", "F ", "R ", "G ")]
+        # normal and golden notes are re-pitched, freestyle and rap notes keep their pitch
+        self.assertEqual(notes, [": 0 2 1 one", "* 2 2 2 gold", "F 4 2 0 free", "R 6 2 0 rap",
+                                 "G 10 2 0 gr", ": 12 2 6 two"])
+
+    def test_hand_made_charts_in_other_encodings(self):
+        original = "#TITLE:Grüße\n#ENCODING:CP1252\n#BPM:300\n: 0 2 0 Grün\nE\n".encode("cp1252")
+        text = self._repitch(original, [3])
+        self.assertIn("#TITLE:Grüße\n", text)
+        self.assertIn(": 0 2 3 Grün\n", text)
+        self.assertIn("#ENCODING:UTF8\n", text)  # written in UTF-8
+        text = self._repitch(b"\xef\xbb\xbf#TITLE:Title\n: 0 2 0 a\n", [4])
+        self.assertTrue(text.startswith("#TITLE:Title\n"))
+        self.assertIn(": 0 2 4 a\n", text)
+
+    def test_relative_chart_is_written_with_absolute_beats(self):
+        from src.modules.Ultrastar.ultrastar_parser import parse
+
+        original = (b"#TITLE:Title\n#RELATIVE:yes\n#BPM:300\n#GAP:0\n"
+                    b": 0 4 0 one\n: 4 4 0 two\n- 10 12\n: 0 4 0 three\n* 4 4 0 four\n- 8 10\nF 2 4 0 five\nE\n")
+        text = self._repitch(original, [1, 2, 3, 4, 5])
+        # the scoring package and the games read the new file without #RELATIVE
+        self.assertEqual(text, "#TITLE:Title\n#BPM:300\n#GAP:0\n"
+                               ": 0 4 1 one\n: 4 4 2 two\n- 10\n: 12 4 3 three\n* 16 4 4 four\n- 20\n"
+                               "F 24 4 0 five\nE\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, content in (("original.txt", original), ("new.txt", text.encode("utf-8"))):
+                with open(os.path.join(tmp, name), "wb") as f:
+                    f.write(content)
+            beats = [[n.startBeat for n in parse(os.path.join(tmp, name)).UltrastarNoteLines]
+                     for name in ("original.txt", "new.txt")]
+        self.assertEqual(beats[0], beats[1])
+
+    def test_relative_line_break_that_is_not_a_number(self):
+        original = b"#RELATIVE:YES\n#BPM:300\n: 0 4 0 one\n- x\n: 2 4 0 two\n- 8 text\n: 1 4 0 three\nE\n"
+        text = self._repitch(original, [1, 2, 3])
+        # the unreadable break is kept as it is and moves nothing
+        self.assertEqual(text, "#BPM:300\n: 0 4 1 one\n- x\n: 2 4 2 two\n- 8\n: 9 4 3 three\nE\n")
+
+    def test_note_line_with_a_tab_after_its_type(self):
+        from src.modules.Ultrastar.ultrastar_parser import parse
+
+        original = b"#RELATIVE:YES\n#BPM:300\n: 0 4 0 one\n- 8\n:\t2 4 0 tab\n*\t6 2 0 gold\nE\n"
+        text = self._repitch(original, [1, 2, 3])
+        self.assertEqual(text, "#BPM:300\n: 0 4 1 one\n- 8\n:\t10 4 2 tab\n*\t14 2 3 gold\nE\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "new.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            notes = parse(path).UltrastarNoteLines
+        self.assertEqual([(n.startBeat, n.pitch, n.word) for n in notes],
+                         [(0, 1, "one"), (10, 2, "tab"), (14, 3, "gold")])
+
+    def test_cover_found_online_replaces_the_missing_one(self):
+        original = (b"#TITLE:Title\n#COVER:missing.jpg\n#COVERURL:https://example.com/old.jpg\n#BPM:300\n"
+                    b": 0 2 0 a\nE\n")
+        text = self._repitch(original, [1], cover="Artist - Title [CO].jpg",
+                             cover_url="https://example.com/new.jpg")
+        self.assertEqual(text, "#TITLE:Title\n#COVER:Artist - Title [CO].jpg\n"
+                               "#COVERURL:https://example.com/new.jpg\n#BPM:300\n: 0 2 1 a\nE\n")
+
+    def test_cover_is_added_to_a_chart_without_one(self):
+        text = self._repitch(b"#TITLE:Title\n#BPM:300\n\n: 0 2 0 a\nE\n", [1],
+                             cover="Artist - Title [CO].jpg", cover_url="https://example.com/new.jpg")
+        # at the end of the header; a cover URL is only replaced, never added
+        self.assertEqual(text, "#TITLE:Title\n#BPM:300\n#COVER:Artist - Title [CO].jpg\n\n: 0 2 1 a\nE\n")
+        self.assertEqual(self._repitch(b"#TITLE:Title\n#COVER:c.jpg\n: 0 2 0 a\nE\n", [1]),
+                         "#TITLE:Title\n#COVER:c.jpg\n: 0 2 1 a\nE\n")
+
+    def test_cover_goes_after_the_last_header_tag(self):
+        cover = "Artist - Title [CO].jpg"
+        # a blank line inside the header, and one before it
+        self.assertEqual(self._repitch(b"#TITLE:Title\n\n#BPM:300\n: 0 2 0 a\nE\n", [1], cover=cover),
+                         f"#TITLE:Title\n\n#BPM:300\n#COVER:{cover}\n: 0 2 1 a\nE\n")
+        self.assertEqual(self._repitch(b"\n#TITLE:Title\n#BPM:300\n: 0 2 0 a\nE\n", [1], cover=cover),
+                         f"\n#TITLE:Title\n#BPM:300\n#COVER:{cover}\n: 0 2 1 a\nE\n")
+        # the body may start with a duet player or a line break
+        self.assertEqual(self._repitch(b"#TITLE:Title\n\nP1\n: 0 2 0 a\nE\n", [1], cover=cover),
+                         f"#TITLE:Title\n#COVER:{cover}\n\nP1\n: 0 2 1 a\nE\n")
 
 
 if __name__ == "__main__":
