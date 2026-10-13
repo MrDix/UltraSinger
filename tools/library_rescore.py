@@ -47,7 +47,7 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from compare_ultrastar import parse_score_song  # noqa: E402
+from compare_ultrastar import parse_score_song, require_score_library  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +220,13 @@ def run(
     """Discover, (re)score, and CSV-append results for one library scan.
 
     Kept separate from ``main()`` so tests can inject a fake ``score_fn``
-    without touching real audio decoding.
+    without touching real audio decoding. Raises ``ValueError`` before
+    anything is written (or ``--fresh`` deletes the CSV) when the default
+    scoring needs the optional scoring package and it is missing: every
+    song would end up as an error row, and those are not retried.
     """
+    if score_fn is score_medium:
+        require_score_library()
     discovery = find_song_dirs(root)
     entries = discovery.entries
     if limit is not None:
@@ -340,7 +345,11 @@ def main() -> None:
     output_path = Path(args.output)
 
     print(f"Scanne {root} ...")
-    summary = run(root, output_path, limit=args.limit, fresh=args.fresh)
+    try:
+        summary = run(root, output_path, limit=args.limit, fresh=args.fresh)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
     _print_report(summary)
 
 

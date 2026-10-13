@@ -30,6 +30,7 @@ from compare_ultrastar import (
     parse_score_song,
     parse_ultrastar,
     read_chart_text,
+    require_score_library,
 )
 
 
@@ -796,6 +797,7 @@ class TestReadChartText:
 
     def test_known_encoding_tag(self):
         assert declared_encoding(b"#TITLE:x\r\n#encoding: cp1250 \r\n") == "cp1250"
+        assert declared_encoding(b"\xef\xbb\xbf#ENCODING:CP1250\n#TITLE:x\n") == "cp1250"  # first line after a BOM
 
     def test_utf16_with_byte_order_mark(self, tmp_path):
         p = tmp_path / "utf16.txt"
@@ -859,6 +861,14 @@ class TestRelativeCharts:
 
 class TestParseScoreSong:
     """Feature: the score library reads charts the way the games do."""
+
+    def test_require_score_library(self, monkeypatch):
+        pytest.importorskip("ultrastar_score")
+        require_score_library()  # installed: no error
+        monkeypatch.setitem(sys.modules, "ultrastar_score", None)
+        monkeypatch.setitem(sys.modules, "ultrastar_score.parser", None)
+        with pytest.raises(ValueError, match="scoring"):
+            require_score_library()
 
     def test_empty_gap_reads_as_zero(self, tmp_path):
         pytest.importorskip("ultrastar_score")

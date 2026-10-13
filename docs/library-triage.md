@@ -42,6 +42,10 @@ library_triage.py <source_dir> <corrupt_dir> [options]
 - `<corrupt_dir>` — where broken songs are moved. **Created automatically if it
   does not exist.** Must **not** be inside `<source_dir>`.
 
+The tool reads every chart with the optional scoring package (`ultrastar-score`).
+The install scripts include it; otherwise install the `scoring` extra
+(`uv sync --extra scoring`). Without it the tool stops before it checks any song.
+
 ---
 
 ## What counts as a "song"
@@ -49,7 +53,8 @@ library_triage.py <source_dir> <corrupt_dir> [options]
 A folder is treated as a song when it directly contains at least one `.txt`
 that looks like an UltraStar chart (has `#TITLE` / `#BPM` / note lines). Plain
 collection folders, or folders whose only `.txt` is something like a readme,
-are ignored — never moved.
+are ignored — never moved. A `.txt` that cannot be read counts as a chart, so its
+folder is reported (see `error` below) instead of being skipped.
 
 A folder that holds other song folders is never moved, even when it is flagged
 itself (for example a collection folder with a stray chart but no audio):
@@ -72,14 +77,19 @@ This is deliberately conservative: when in doubt, the song is kept.
 | `audio_undecodable` | `ffprobe` cannot read the audio, or it has no audio stream / zero duration. |
 
 > Note on garbled text: mojibake (wrong-encoding lyrics) alone is **not** treated
-> as corruption — the song still plays. Truly unreadable charts fall into
-> `no_notes` instead.
+> as corruption — the song still plays. A `.txt` whose content does not look like
+> a chart at all (e.g. binary garbage) is not taken for a chart, so its folder is
+> only a song if another chart-like `.txt` is in it.
 
 A file that cannot be read right now (locked by another program, no permission,
 deleted during the run) says nothing about the song, and neither does an
-`ffprobe` that fails to start or times out. Such songs are logged as `error`
-and stay where they are; the next run checks them again. If `ffprobe` is found
-but does not work at all, the run stops before it checks any song.
+`ffprobe` that fails to start, crashes or times out, or any other unexpected
+failure while a chart is checked. The same goes for a folder in which a `.txt`
+could not be read while the library was scanned, and for a chart that changed
+since the scan or no longer looks like one when it is checked (e.g. half-written
+while an editor saves it). Such songs are logged as `error` and stay where they
+are; the next run checks them again. If `ffprobe` is found but does not work at
+all, the run stops before it checks any song.
 
 ---
 

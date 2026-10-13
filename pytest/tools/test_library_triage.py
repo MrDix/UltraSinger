@@ -555,23 +555,199 @@ class TestNestedSongFolders:
         (song_dir / "inner").mkdir()
         locked = song_dir / "inner" / "locked.txt"
         locked.write_text("#TITLE:x", encoding="utf-8")
-        real_read = lt._read_text_lenient
+        real_read, real_parse = lt._read_text_lenient, lt.parse_score_song
 
         def read(path):
             if path == locked:
                 raise PermissionError(13, "locked")
             return real_read(path)
+
+        def parse(path):
+            if Path(path) == locked:
+                raise PermissionError(13, "locked")
+            return real_parse(path)
         monkeypatch.setattr(lt, "_read_text_lenient", read)
+        monkeypatch.setattr(lt, "parse_score_song", parse)
 
         summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
 
-        assert song_dir.exists() and summary.moved == 0
+        assert song_dir.exists() and locked.exists() and summary.moved == 0
         assert "contains_song_folders_skipped" in summary.all_rows["Broken Song"]["reason"]
+        assert summary.all_rows[str(Path("Broken Song/inner"))]["action"] == "error"
+
+    def test_utf16_song_inside_a_flagged_folder_is_not_taken_along(self, tmp_path):
+        source = tmp_path / "source"
+        collection = source / "Collection"
+        collection.mkdir(parents=True)
+        _write_chart(collection, "Stray Chart")  # no audio anywhere -> no_audio
+        song_dir = collection / "Song U"
+        song_dir.mkdir()
+        chart = "#TITLE:Song U\r\n#ARTIST:Artist\r\n#MP3:Song U.ogg\r\n#BPM:300\r\n#GAP:0\r\n: 0 4 60 la\r\nE\r\n"
+        (song_dir / "Song U.txt").write_bytes(chart.encode("utf-16"))
+        (song_dir / "Song U.ogg").write_bytes(b"fake audio")
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert (song_dir / "Song U.txt").exists() and summary.moved == 0
+        assert "contains_song_folders_skipped: 1" in summary.all_rows["Collection"]["reason"]
+        assert summary.all_rows[str(Path("Collection/Song U"))]["action"] == "kept"
 
 
 # ── Read errors and tool failures are not corruption ────────────────────────
 
 class TestStage1ErrorsNeverMove:
+    def test_missing_score_library_stops_the_run_before_anything_moves(self, tmp_path, monkeypatch):
+        """Without the optional scoring package every chart would look
+        unparsable: the run must refuse to start instead of moving the library."""
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Song A")
+        monkeypatch.setitem(sys.modules, "ultrastar_score", None)
+        monkeypatch.setitem(sys.modules, "ultrastar_score.parser", None)
+
+        with pytest.raises(ValueError, match="scoring"):
+            lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert (song_dir / "Song A.txt").exists()
+        assert not (tmp_path / "corrupt").exists()
+
+    @pytest.mark.parametrize("error", [MemoryError(), ImportError("no module"), RuntimeError("boom")])
+    def test_parser_failure_that_is_no_parse_error_never_moves(self, tmp_path, monkeypatch, error):
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Song A")
+
+        def failing_parse(path):
+            raise error
+        monkeypatch.setattr(lt, "parse_score_song", failing_parse)
+
+        result = lt.evaluate_stage1(_song_folder(source, Path("Song A"), "Song A.txt"), ffprobe_path=None)
+        assert result.verdict == "error" and "parse_failed" in result.reason
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+        assert song_dir.exists() and summary.moved == 0
+        assert summary.all_rows["Song A"]["action"] == "error"
+
+    def test_unreadable_chart_is_not_judged_by_another_chart(self, tmp_path, monkeypatch):
+        """The real chart can't be read right now, a stray chart next to it is
+        broken: the folder must not be judged (and moved) by the stray one."""
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Song")  # Song.txt + Song.ogg
+        _write_chart(song_dir, "Aaa Stray", bpm="fast")  # sorts first, unparsable
+        real_parse = lt.parse_score_song
+
+        def parse(path):
+            if Path(path).name == "Song.txt":
+                raise PermissionError(13, "file is locked")
+            return real_parse(path)
+        monkeypatch.setattr(lt, "parse_score_song", parse)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert song_dir.exists() and summary.moved == 0
+        assert "txt_unchecked: Song.txt" in summary.all_rows["Song"]["reason"]
+
+    @pytest.mark.parametrize("layout", ["song", "covers"])
+    def test_txt_locked_only_while_scanning_never_moves_the_folder(self, tmp_path, monkeypatch, layout):
+        """A plain notes/readme file is locked (e.g. by a sync client) while the
+        library is scanned and readable again when its folder is checked: it
+        must not become the folder's chart and get it moved as "no notes"."""
+        source = tmp_path / "source"
+        if layout == "song":
+            folder = _make_song(source, "Artist - Song")
+            locked_name = "Zzz notes.txt"
+        else:
+            folder = source / "Covers"
+            folder.mkdir(parents=True)
+            (folder / "front.jpg").write_bytes(b"x")
+            locked_name = "readme.txt"
+        (folder / locked_name).write_text("just some notes", encoding="utf-8")
+        scanning = {"on": False}
+        real_read, real_parse, real_find = lt._read_text_lenient, lt.parse_score_song, lt.find_song_folders
+
+        def read(path):
+            if scanning["on"] and Path(path).name == locked_name:
+                raise PermissionError(13, "locked")
+            return real_read(path)
+
+        def parse(path):
+            if scanning["on"] and Path(path).name == locked_name:
+                raise PermissionError(13, "locked")
+            return real_parse(path)
+
+        def find(*a, **k):
+            scanning["on"] = True
+            try:
+                return real_find(*a, **k)
+            finally:
+                scanning["on"] = False
+        monkeypatch.setattr(lt, "_read_text_lenient", read)
+        monkeypatch.setattr(lt, "parse_score_song", parse)
+        monkeypatch.setattr(lt, "find_song_folders", find)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert folder.is_dir() and (folder / locked_name).exists() and summary.moved == 0
+        row = summary.all_rows[folder.name]
+        assert row["action"] == "error" and f"txt_unchecked: {locked_name}" in row["reason"]
+
+    def test_chart_emptied_after_scanning_is_an_error(self, tmp_path, monkeypatch):
+        """An editor saving the chart (truncate, then write) right when the
+        folder is checked must not make it look like a chart without notes."""
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Song")
+        real_find = lt.find_song_folders
+
+        def find(*a, **k):
+            folders = real_find(*a, **k)
+            (song_dir / "Song.txt").write_bytes(b"")
+            return folders
+        monkeypatch.setattr(lt, "find_song_folders", find)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert song_dir.exists() and summary.moved == 0
+        assert "txt_changed" in summary.all_rows["Song"]["reason"]
+
+    def test_chart_half_written_after_scanning_is_an_error(self, tmp_path, monkeypatch):
+        """Headers written, notes not yet: it still looks like a chart, but it
+        is not the file the scan saw, so it is not judged as "no notes"."""
+        source = tmp_path / "source"
+        song_dir = _make_song(source, "Song")
+        real_find = lt.find_song_folders
+
+        def find(*a, **k):
+            folders = real_find(*a, **k)
+            (song_dir / "Song.txt").write_text("#TITLE:Song\n#BPM:120\n#GAP:0\n", encoding="utf-8")
+            return folders
+        monkeypatch.setattr(lt, "find_song_folders", find)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert song_dir.exists() and summary.moved == 0
+        assert "txt_changed: Song.txt changed since the scan" in summary.all_rows["Song"]["reason"]
+
+    def test_unchanged_chart_without_notes_is_still_corrupt(self, tmp_path):
+        source = tmp_path / "source"
+        _make_song(source, "No Notes", notes=False)
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+        assert summary.moved == 1 and summary.all_rows["No Notes"]["reason"] == "no_notes"
+
+    def test_folder_whose_only_txt_cannot_be_read_is_reported(self, tmp_path, monkeypatch):
+        source = tmp_path / "source"
+        song_dir = source / "Locked Song"
+        song_dir.mkdir(parents=True)
+        locked = song_dir / "Locked Song.txt"
+        locked.write_text("#TITLE:x\n#BPM:120\n: 0 4 60 la\nE\n", encoding="utf-8")
+        (song_dir / "Locked Song.ogg").write_bytes(b"fake audio")
+
+        def unreadable(path):
+            raise PermissionError(13, "file is locked")
+        monkeypatch.setattr(lt, "_read_text_lenient", unreadable)
+        monkeypatch.setattr(lt, "parse_score_song", unreadable)
+
+        summary = lt.run(source, tmp_path / "corrupt", apply=True, log=lambda *a: None)
+
+        assert locked.exists() and summary.moved == 0
+        assert summary.all_rows["Locked Song"]["action"] == "error"
+
     def test_empty_gap_is_not_corrupt(self, tmp_path):
         d = tmp_path / "Empty Gap"
         d.mkdir()
@@ -593,7 +769,7 @@ class TestStage1ErrorsNeverMove:
         row = summary.all_rows["Locked Song"]
         assert song_dir.exists() and summary.moved == 0
         assert row["action"] == "error" and row["stage1_verdict"] == "error"
-        assert "txt_unreadable" in row["reason"]
+        assert "txt_unchecked" in row["reason"]
         assert summary.stage1_corrupt == 0
 
     def test_vanished_chart_is_an_error(self, tmp_path):

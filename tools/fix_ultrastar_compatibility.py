@@ -4,9 +4,10 @@ Scans a directory tree for UltraStar TXT files and fixes three categories of
 compatibility issues:
 
 1. Audio Format Conversion:
-   UltraStar Play only supports mp3, ogg, and wav. Songs with incompatible
-   audio formats (aac, flac, opus, m4a, wma, etc.) are converted to OGG Vorbis
-   using FFmpeg, and the TXT file references are updated accordingly.
+   Some UltraStar-compatible games only support mp3, ogg, and wav. Songs with
+   incompatible audio formats (aac, flac, opus, m4a, wma, etc.) are converted
+   to OGG Vorbis using FFmpeg, and the TXT file references are updated
+   accordingly.
    Original audio files are preserved (never deleted). FFmpeg writes to a
    temporary file that becomes the OGG only once the conversion succeeded.
    An OGG that already exists is reused only when ffprobe confirms it is
@@ -16,14 +17,13 @@ compatibility issues:
 
 2. Non-Standard Tag Removal (always):
    Tags not part of the official UltraStar format specification (e.g. #COMMENT:)
-   are removed. These cause warnings in modern players like UltraStar Play.
+   are removed. These cause warnings in some modern games.
 
 3. Encoding Normalization (--normalize-encoding):
    TXT files in legacy encodings (CP1252, Latin-1, etc.) are converted to UTF-8
-   for universal compatibility across all UltraStar derivatives (USDX, UltraStar
-   Play, Performous, Vocaluxe). A legacy file is read in the codepage its
-   #ENCODING: tag names (e.g. CP1250 for Polish or Czech charts). The
-   deprecated #ENCODING: tag is removed.
+   for universal compatibility across all UltraStar-compatible games. A legacy
+   file is read in the codepage its #ENCODING: tag names (e.g. CP1250 for
+   Polish or Czech charts). The deprecated #ENCODING: tag is removed.
 
 TXT files are rewritten through a temporary file in the same folder that
 replaces the chart in one step, so a full disk or an interrupted run never
@@ -520,8 +520,7 @@ def _is_utf8_no_bom(enc: str) -> bool:
 
     Returns False for ``"utf-8-sig"`` because the BOM should be stripped
     during normalization — UTF-8 without BOM is the universal encoding
-    supported by all UltraStar derivatives (USDX, UltraStar Play,
-    Performous, Vocaluxe).
+    supported by all UltraStar-compatible games.
     """
     return enc.lower().replace("-", "").replace("_", "") == "utf8"
 
@@ -561,7 +560,7 @@ def normalize_txt_encoding(txt_path: Path) -> tuple[bool, bool]:
 # ---------------------------------------------------------------------------
 
 # Tags that are not part of any official UltraStar format specification
-# and cause warnings in modern players (e.g. UltraStar Play).
+# and cause warnings in some modern games.
 _NON_STANDARD_TAGS = {"#COMMENT:"}
 
 
@@ -678,7 +677,7 @@ def process_song(
     file_replacements: dict[str, str] = {}  # old_filename → new_filename
     renames_to_do: list[tuple[AudioFileInfo, Path]] = []     # just rename (e.g. .us3 → .mp3)
     conversions_to_do: list[tuple[AudioFileInfo, Path]] = []  # FFmpeg conversion → .ogg
-    ogg_sources: dict[Path, AudioFileInfo] = {}               # planned .ogg → its source
+    planned: dict[Path, AudioFileInfo] = {}                   # new file → its source
 
     for af in needs_conversion:
         if af.filename in file_replacements:
@@ -702,20 +701,27 @@ def process_song(
 
         # Check if this is a renamed compatible format (e.g. .us3 = .mp3)
         real_ext = RENAME_TO_COMPATIBLE.get(af.extension)
-        if real_ext:
-            new_basename = f"{stem}.{real_ext}"
-            new_path = af.full_path.parent / new_basename
-            renames_to_do.append((af, new_path))
-        else:
-            new_basename = f"{stem}.ogg"
-            new_path = af.full_path.parent / new_basename
-            other = ogg_sources.get(new_path)
-            if other is not None and not _is_same_file(other.full_path, af.full_path):
-                # Two different files would become the same OGG, so one tag
+        new_basename = f"{stem}.{real_ext or 'ogg'}"
+        new_path = af.full_path.parent / new_basename
+        other = planned.get(new_path)
+        if other is not None:
+            if not _is_same_file(other.full_path, af.full_path):
+                # Two different files would become the same file, so one tag
                 # would end up pointing at the other file's audio.
                 result.status = "error"
                 result.error_msg = f"{other.filename} and {af.filename} would both become {new_basename}"
                 return result
+            # The same file under another spelling: already planned.
+        elif real_ext:
+            if new_path.exists() and not _is_same_file(new_path, af.full_path):
+                # The rename would have to replace that file, and the chart
+                # would play its audio (e.g. the instrumental) instead.
+                result.status = "error"
+                result.error_msg = f"{new_basename} already exists; rename {af.filename} by hand"
+                return result
+            if not new_path.exists():
+                renames_to_do.append((af, new_path))
+        else:
             users = [o.tag for o in song_info.audio_files if _tag_names_file(o, new_path)]
             if users:
                 # The chart already plays this OGG as other audio (e.g. an
@@ -726,8 +732,8 @@ def process_song(
                     f"convert {af.filename} by hand"
                 )
                 return result
-            ogg_sources[new_path] = af
             conversions_to_do.append((af, new_path))
+        planned.setdefault(new_path, af)
 
         new_filename = f"{prefix}{new_basename}"
         file_replacements[af.filename] = new_filename
@@ -775,20 +781,29 @@ def process_song(
                     kept.rename(ogg_path)
                 raise
 
-        # Update TXT file with new filenames — before renames so that on
-        # failure the original filenames still match the files on disk.
-        update_txt_tags(song_info.txt_path, file_replacements)
-
-        # Perform renames last (no re-encoding needed).  Done after TXT
-        # update so the TXT already points to the new name if this step
-        # fails partially.
-        for af, new_path in renames_to_do:
-            if new_path.is_file():
-                result.warnings.append(
-                    f"{new_path.name} already exists, skipping rename"
-                )
-            else:
+        # Renames next (no re-encoding needed), then the TXT update. If a
+        # rename or the TXT update fails, the renamed files are put back, so
+        # the chart still matches the files on disk.
+        renamed: list[tuple[Path, Path]] = []
+        try:
+            for af, new_path in renames_to_do:
+                if new_path.exists():  # appeared since the check above
+                    raise FileExistsError(f"{new_path.name} already exists; rename {af.filename} by hand")
                 af.full_path.rename(new_path)
+                renamed.append((af.full_path, new_path))
+            update_txt_tags(song_info.txt_path, file_replacements)
+        except BaseException as e:
+            stuck = []
+            for old_path, new_path in reversed(renamed):
+                try:
+                    if old_path.exists():  # never replace a file that appeared meanwhile
+                        raise FileExistsError(old_path)
+                    new_path.rename(old_path)
+                except OSError:
+                    stuck.append(f"{new_path.name} (was {old_path.name})")
+            if stuck and isinstance(e, Exception):
+                raise RuntimeError(f"{e}; could not rename back: {', '.join(stuck)}") from e
+            raise
 
         result.status = "converted"
 
@@ -944,7 +959,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "to OGG Vorbis and optionally normalize TXT file encoding to UTF-8."
         ),
         epilog=(
-            "UltraStar Play supports mp3, ogg, and wav. "
+            "Some UltraStar-compatible games only support mp3, ogg, and wav. "
             "Other formats (aac, flac, opus, m4a, wma, ...) are converted to OGG Vorbis. "
             "Original audio files are never deleted; an existing OGG that looks "
             "incomplete is kept as <name>.ogg.bak before it is converted again. "

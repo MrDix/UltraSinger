@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -575,6 +576,17 @@ class TestChooseInput:
             raise AssertionError("must not probe audio files")
         monkeypatch.setattr(cb, "has_audio_stream", boom)
         assert cb.choose_input(self._song("song.mp3")).name == "song.mp3"
+
+    def test_non_ascii_ffprobe_output_is_decoded(self, monkeypatch):
+        """ffprobe writes UTF-8; decoded with the Windows console codepage,
+        characters like Ł used to turn the output into None."""
+        child = "import sys; sys.stdout.buffer.write('0\\n\\u0141\\u201d'.encode('utf-8'))"
+        real_run = subprocess.run
+
+        def fake_ffprobe(cmd, **kwargs):
+            return real_run([sys.executable, "-c", child], **kwargs)
+        monkeypatch.setattr(cb.subprocess, "run", fake_ffprobe)
+        assert cb.has_audio_stream(Path("clip.mp4")) is True
 
     def test_missing_ffprobe_assumes_sound(self, monkeypatch):
         def no_exe(*a, **k):

@@ -279,6 +279,62 @@ class TestExistingOgg:
         assert txt.read_bytes() == "\r\n".join(self.LINES + [""]).replace("song.flac", "song.ogg").encode()
 
 
+# ── Renamed formats (.us3 → .mp3) ────────────────────────────────────────────
+
+class TestRename:
+    LINES = ["#TITLE:Title", "#ARTIST:Artist", "#MP3:song.us3", "#BPM:300", "#GAP:0", ": 0 4 60 la", "E"]
+
+    def test_us3_is_renamed_and_the_chart_rewired(self, tmp_path):
+        txt = _song(tmp_path, self.LINES, files=("song.us3",))
+        result = fx.process_song(fx.parse_song_info(txt), None, dry_run=False)
+        assert result.status == "converted"
+        assert sorted(p.name for p in txt.parent.iterdir()) == ["song.mp3", "song.txt"]
+        assert "#MP3:song.mp3" in txt.read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_existing_target_is_never_taken(self, tmp_path, dry_run):
+        """song.mp3 is the chart's instrumental: renaming song.us3 onto it, or
+        pointing #MP3 at it, would lose or swap the audio."""
+        lines = self.LINES[:3] + ["#INSTRUMENTAL:song.mp3"] + self.LINES[3:]
+        txt = _song(tmp_path, lines, files=("song.us3",))
+        (txt.parent / "song.mp3").write_bytes(b"instrumental audio")
+
+        result = fx.process_song(fx.parse_song_info(txt), None, dry_run=dry_run)
+
+        assert result.status == "error" and "rename song.us3 by hand" in result.error_msg
+        assert (txt.parent / "song.mp3").read_bytes() == b"instrumental audio"
+        assert (txt.parent / "song.us3").read_bytes() == b"fake audio"
+        assert txt.read_bytes() == "\n".join(lines + [""]).encode()
+
+    def test_failed_chart_update_puts_the_renamed_file_back(self, tmp_path, monkeypatch):
+        txt = _song(tmp_path, self.LINES, files=("song.us3",))
+
+        def failing_update(txt_path, replacements):
+            raise OSError(28, "No space left on device")
+        monkeypatch.setattr(fx, "update_txt_tags", failing_update)
+
+        result = fx.process_song(fx.parse_song_info(txt), None, dry_run=False)
+
+        assert result.status == "error"
+        assert sorted(p.name for p in txt.parent.iterdir()) == ["song.txt", "song.us3"]
+        assert "#MP3:song.us3" in txt.read_text(encoding="utf-8")
+
+    def test_rollback_never_replaces_a_file_that_appeared(self, tmp_path, monkeypatch):
+        txt = _song(tmp_path, self.LINES, files=("song.us3",))
+
+        def failing_update(txt_path, replacements):
+            (txt_path.parent / "song.us3").write_bytes(b"new file meanwhile")
+            raise OSError(28, "No space left on device")
+        monkeypatch.setattr(fx, "update_txt_tags", failing_update)
+
+        result = fx.process_song(fx.parse_song_info(txt), None, dry_run=False)
+
+        assert result.status == "error"
+        assert "No space left" in result.error_msg and "could not rename back: song.mp3" in result.error_msg
+        assert (txt.parent / "song.us3").read_bytes() == b"new file meanwhile"
+        assert (txt.parent / "song.mp3").read_bytes() == b"fake audio"
+
+
 # ── One song never stops the run ─────────────────────────────────────────────
 
 class TestRunSurvivesSongErrors:

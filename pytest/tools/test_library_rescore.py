@@ -252,6 +252,31 @@ class TestErrorPath:
         assert call_count[0] == 1
 
 
+# ── Missing scoring package ──────────────────────────────────────────────────
+
+class TestMissingScoreLibrary:
+    def test_refuses_before_touching_the_results(self, tmp_path, monkeypatch):
+        """Every song would become an error row (never retried), and --fresh
+        would delete the previous results first."""
+        _make_song_dir(tmp_path, "Song One", with_vocals=True)
+        output = tmp_path / "out.csv"
+        append_result(output, {"pfad": "old", "medium_pct": "50.0", "notes": 1, "status": "ok", "fehler": ""},
+                      write_header=True)
+        before = output.read_bytes()
+        monkeypatch.setitem(sys.modules, "ultrastar_score", None)
+        monkeypatch.setitem(sys.modules, "ultrastar_score.parser", None)
+
+        with pytest.raises(ValueError, match="scoring"):
+            run(tmp_path, output, fresh=True, log=lambda *a: None)
+        assert output.read_bytes() == before
+
+    def test_injected_score_function_needs_no_package(self, tmp_path, monkeypatch):
+        _make_song_dir(tmp_path, "Song One", with_vocals=True)
+        monkeypatch.setitem(sys.modules, "ultrastar_score", None)
+        summary = run(tmp_path, tmp_path / "out.csv", score_fn=lambda t, v: (50.0, 1), log=lambda *a: None)
+        assert summary.scored_this_run == 1
+
+
 # ── #RELATIVE charts ─────────────────────────────────────────────────────────
 
 class TestRelativeChart:
