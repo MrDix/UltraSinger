@@ -77,6 +77,7 @@ class TestOctaveConsistencySetting(unittest.TestCase):
                 path = Path(d) / "config.json"
                 path.write_text(json.dumps({"octave_consistency": stored}), encoding="utf-8")
                 with patch.object(config_module, "_CONFIG_FILE", path), \
+                        patch.object(config_module, "_CONFIG_DIR", Path(d)), \
                         patch("src.gui.secrets.get_secret", return_value=""), \
                         patch("src.gui.secrets.store_secret", return_value=False):
                     self.assertEqual(config_module.load_config()["octave_consistency"], expected)

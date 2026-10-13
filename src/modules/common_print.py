@@ -41,6 +41,8 @@ def print_help() -> None:
                             platform limits downloads to a reduced format set or blocks them (HTTP 403).
                             The GUI captures this token automatically from its embedded browser
                             and passes it through; for CLI use see yt-dlp's PO token guide.
+                            Can also be given as ULTRASINGER_YT_PO_TOKEN environment variable, which keeps
+                            it out of the process list.
 
     [separation]
     --separator             Vocal separation backend: demucs|audio_separator >> ((default) is audio_separator)

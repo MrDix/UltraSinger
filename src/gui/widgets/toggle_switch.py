@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QAbstractButton
 class ToggleSwitch(QAbstractButton):
     """Animated toggle switch that replaces checkboxes for on/off settings."""
 
+    # Emitted on every change of the checked state: by mouse, keyboard or setChecked()
     toggled_signal = Signal(bool)
 
     # Colors
@@ -34,6 +35,7 @@ class ToggleSwitch(QAbstractButton):
         self._animation = QPropertyAnimation(self, b"offset", self)
         self._animation.setDuration(200)
         self._animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.toggled.connect(self._on_toggled)
 
     def get_offset(self) -> float:
         return self._offset
@@ -64,16 +66,9 @@ class ToggleSwitch(QAbstractButton):
         p.drawEllipse(int(self._offset), 4, 20, 20)
         p.end()
 
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._animate()
-            self.toggled_signal.emit(self.isChecked())
-
-    def setChecked(self, checked: bool):
-        super().setChecked(checked)
-        self._offset = 26.0 if checked else 4.0
-        self.update()
+    def _on_toggled(self, checked: bool):
+        self._animate()
+        self.toggled_signal.emit(checked)
 
     def _animate(self):
         self._animation.stop()

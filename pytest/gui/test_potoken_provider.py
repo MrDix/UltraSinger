@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.metadata
+import subprocess
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -596,11 +598,12 @@ class TestStopProvider:
 
 class TestStartDockerProvider:
     def _docker_command(self, version):
-        result = MagicMock(returncode=0, stdout=b"abc123\n", stderr=b"")
-        with patch("subprocess.run", return_value=result) as run, \
+        proc = MagicMock(returncode=0)
+        proc.communicate.return_value = (b"abc123\n", b"")
+        with patch("subprocess.Popen", return_value=proc) as popen, \
              patch("importlib.metadata.version", version):
             assert pp._start_docker_provider("/usr/bin/docker", 4416) == "abc123"
-        return run.call_args[0][0]
+        return popen.call_args[0][0]
 
     def test_port_is_published_on_loopback_only(self):
         cmd = self._docker_command(MagicMock(return_value="2.0.2"))
@@ -612,3 +615,42 @@ class TestStartDockerProvider:
         assert self._docker_command(MagicMock(return_value="2.0.2"))[-1] == f"{image}:2.0.2"
         missing = MagicMock(side_effect=importlib.metadata.PackageNotFoundError)
         assert self._docker_command(missing)[-1] == f"{image}:{pp._PINNED_PROVIDER_VERSION}"
+
+    def test_cancel_ends_a_slow_start(self):
+        """Closing the GUI while the image is pulled must not wait for the 60 s limit."""
+        cancel = threading.Event()
+        cancel.set()
+        proc = MagicMock(returncode=None)
+        proc.communicate.side_effect = [subprocess.TimeoutExpired("docker", 0.5), (b"", b"")]
+        with patch("subprocess.Popen", return_value=proc), \
+             patch("importlib.metadata.version", return_value="2.0.2"), \
+             patch.object(pp, "_remove_container") as remove:
+            assert pp._start_docker_provider("/usr/bin/docker", 4416, cancel) == ""
+        proc.kill.assert_called_once()
+        remove.assert_called_once()  # in case the daemon created the container meanwhile
+
+    def test_cancelled_start_removes_also_a_created_container(self, caplog):
+        name = f"{pp._CONTAINER_PREFIX}-123"
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)) as run:
+            pp._remove_container("/usr/bin/docker", name)
+        # rm -f: also a container that was created but not started (--rm acts only on exit)
+        assert run.call_args[0][0] == ["/usr/bin/docker", "rm", "-f", name]
+
+        failed = MagicMock(returncode=1, stderr=b"Error: No such container")
+        with caplog.at_level("DEBUG", logger=pp.logger.name), \
+             patch("subprocess.run", return_value=failed):
+            pp._remove_container("/usr/bin/docker", name)
+        assert all(r.levelname == "DEBUG" for r in caplog.records)
+        assert not any("Removed" in r.getMessage() or "Stopped" in r.getMessage()
+                       for r in caplog.records)
+
+    def test_ensure_provider_passes_the_cancel(self, tmp_path):
+        cancel = threading.Event()
+        with patch.object(pp, "_plugin_version", return_value="2.0.2"), \
+             patch.object(pp, "_ping", return_value=None), \
+             patch.object(pp, "_node_exe", return_value=None), \
+             patch.object(pp, "_docker_exe", return_value="/usr/bin/docker"), \
+             patch.object(pp, "_docker_available", return_value=True), \
+             patch.object(pp, "_start_docker_provider", return_value="") as start:
+            pp.ensure_provider(node_entry=tmp_path / "nope.js", cancel=cancel)
+        assert start.call_args[0][2] is cancel

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QLocale, Qt, Signal
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -32,7 +32,7 @@ from pathlib import Path
 from .config import _DEFAULTS, octave_consistency_choice
 from .models import LLMProvider
 from .widgets import SettingsCard, ToggleSwitch
-from .widgets.llm_provider_list import _ModelFetcher, filter_stt_models
+from .widgets.llm_provider_list import _ModelFetcher, filter_stt_models, start_model_fetch
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ class ConversionSettingsForm(QWidget):
         models = ["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3",
                   "tiny.en", "base.en", "small.en", "medium.en"]
         self._whisper_model.addItems(models)
-        self._whisper_model.setCurrentText(self._config.get("whisper_model", "large-v2"))
+        self._select_text(self._whisper_model, "whisper_model")
         card.add_row("Whisper Model", self._whisper_model,
                      "The AI model used for speech-to-text. "
                      "Larger models produce more accurate lyrics but take longer. "
@@ -192,8 +192,8 @@ class ConversionSettingsForm(QWidget):
 
         self._whisper_compute = _NoScrollComboBox()
         self._whisper_compute.addItems(["auto", "float32", "float16", "int8"])
-        raw_ct = self._config.get("whisper_compute_type", "")
-        self._whisper_compute.setCurrentText(raw_ct if raw_ct else "auto")
+        self._select_text(self._whisper_compute, "whisper_compute_type",
+                          self._config.get("whisper_compute_type") or "auto", default="auto")
         card.add_row("Compute Type", self._whisper_compute,
                      "Numeric precision for Whisper inference. "
                      "'auto' picks float16 on GPU (fast) or int8 on CPU (memory-efficient). "
@@ -261,7 +261,7 @@ class ConversionSettingsForm(QWidget):
         # Pitcher backend
         self._pitcher = _NoScrollComboBox()
         self._pitcher.addItems(["swiftf0", "fcpe"])
-        self._pitcher.setCurrentText(self._config.get("pitcher", "swiftf0"))
+        self._select_text(self._pitcher, "pitcher")
         card.add_row("Pitch Detection", self._pitcher,
                      "Pitch detection backend. 'swiftf0' (default) is ONNX-based and CPU-only, "
                      "fast and lightweight. 'fcpe' (torchfcpe) is GPU-accelerated with "
@@ -275,8 +275,7 @@ class ConversionSettingsForm(QWidget):
         # Separator backend
         self._separator_backend = _NoScrollComboBox()
         self._separator_backend.addItems(["audio_separator", "demucs"])
-        self._separator_backend.setCurrentText(
-            self._config.get("separator_backend", "audio_separator"))
+        self._select_text(self._separator_backend, "separator_backend")
         card.add_row("Separation Backend", self._separator_backend,
                      "Which library to use for vocal isolation. "
                      "'audio_separator' (default) runs deterministic Roformer-based models "
@@ -291,9 +290,7 @@ class ConversionSettingsForm(QWidget):
             "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt",
         ]
         self._audio_separator_model.addItems(audio_sep_models)
-        self._audio_separator_model.setCurrentText(
-            self._config.get("audio_separator_model",
-                             "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt"))
+        self._select_text(self._audio_separator_model, "audio_separator_model")
         card.add_row("Audio-Separator Model", self._audio_separator_model,
                      "The model for audio-separator backend. "
                      "'Mel-Band Roformer' (default) gives better real-world results in "
@@ -309,7 +306,7 @@ class ConversionSettingsForm(QWidget):
         demucs_models = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "hdemucs_mmi",
                         "mdx", "mdx_extra", "mdx_q", "mdx_extra_q", "SIG"]
         self._demucs_model.addItems(demucs_models)
-        self._demucs_model.setCurrentText(self._config.get("demucs_model", "htdemucs"))
+        self._select_text(self._demucs_model, "demucs_model")
         card.add_row("Demucs Model", self._demucs_model,
                      "The Demucs model (only used when backend is 'demucs'). "
                      "'htdemucs' is the default and works well for most songs. "
@@ -338,8 +335,10 @@ class ConversionSettingsForm(QWidget):
         self._lang_mode_group = QButtonGroup(self)
         self._lang_auto = QRadioButton("Auto-detect")
         self._lang_auto.setToolTip(
-            "Detect the language of the lyrics: from the video platform's metadata "
-            "for video URLs, otherwise by Whisper from the singing.")
+            "Detect the language from the singing: the transcription detects it, or a "
+            "quick detection when the transcription is skipped. Only when found synced "
+            "lyrics let the transcription be skipped (without remote speech-to-text), "
+            "the video platform's language of a video URL is used.")
         self._lang_manual = QRadioButton("Manual selection")
         self._lang_manual.setToolTip(
             "Always use the language chosen below (useful when the detection picks "
@@ -361,7 +360,7 @@ class ConversionSettingsForm(QWidget):
             "cs", "ro", "hu", "el", "he", "th", "id", "vi", "ms", "tl",
         ]
         self._language_combo.addItems(languages)
-        self._language_combo.setCurrentText(self._config.get("language", "en"))
+        self._select_text(self._language_combo, "language")
         self._language_combo.setEnabled(is_manual)
         card.add_row("Language", self._language_combo,
                      "The language of the song lyrics. "
@@ -374,9 +373,10 @@ class ConversionSettingsForm(QWidget):
         )
 
         card.add_info(
-            "Language priority: Manual selection > video platform metadata > "
-            "Whisper auto-detect. For video URLs, the video language is used "
-            "automatically when set to Auto-detect."
+            "Manual selection always wins. With Auto-detect the language detected from "
+            "the singing is used. The video platform's language of a video URL is only "
+            "used when found synced lyrics let the transcription be skipped (without "
+            "remote speech-to-text)."
         )
 
         self._main_layout.addWidget(card)
@@ -389,8 +389,7 @@ class ConversionSettingsForm(QWidget):
         # Chart style (singable vs score-maximising)
         self._chart_style = _NoScrollComboBox()
         self._chart_style.addItems(["singable", "score"])
-        self._chart_style.setCurrentText(
-            self._config.get("chart_style", "singable"))
+        self._select_text(self._chart_style, "chart_style")
         card.add_row("Chart Style", self._chart_style,
                      "'singable' (recommended): natural, held notes like a "
                      "professional karaoke chart — the best result to actually "
@@ -1014,7 +1013,7 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._llm_retry.setChecked(
                                _DEFAULTS["llm_retry_on_rate_limit"]))
 
-        self._llm_retry_wait = QSpinBox()
+        self._llm_retry_wait = _NoScrollSpinBox()
         self._llm_retry_wait.setRange(5, 300)
         self._llm_retry_wait.setSuffix(" s")
         self._llm_retry_wait.setValue(self._config.get("llm_retry_wait", 60))
@@ -1023,7 +1022,7 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._llm_retry_wait.setValue(
                          _DEFAULTS["llm_retry_wait"]))
 
-        self._llm_retry_max = QSpinBox()
+        self._llm_retry_max = _NoScrollSpinBox()
         self._llm_retry_max.setRange(1, 10)
         self._llm_retry_max.setValue(self._config.get("llm_retry_max", 3))
         card.add_row("Max retries per chunk", self._llm_retry_max,
@@ -1111,8 +1110,7 @@ class ConversionSettingsForm(QWidget):
             self._fetch_remote_stt_models)
         model_row.addWidget(self._remote_stt_model_fetch_btn)
 
-        self._remote_stt_model_fetch_thread: QThread | None = None
-        self._remote_stt_model_fetcher = None
+        self._remote_stt_fetching = False
 
         card.add_row("Model", model_container,
                      "Model name to request from the remote speech-to-text "
@@ -1144,7 +1142,7 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._remote_stt_retry.setChecked(
                                _DEFAULTS["remote_stt_retry_on_rate_limit"]))
 
-        self._remote_stt_retry_wait = QSpinBox()
+        self._remote_stt_retry_wait = _NoScrollSpinBox()
         self._remote_stt_retry_wait.setRange(5, 300)
         self._remote_stt_retry_wait.setSuffix(" s")
         self._remote_stt_retry_wait.setValue(
@@ -1154,7 +1152,7 @@ class ConversionSettingsForm(QWidget):
                      reset_callback=lambda: self._remote_stt_retry_wait.setValue(
                          _DEFAULTS["remote_stt_retry_wait"]))
 
-        self._remote_stt_retry_max = QSpinBox()
+        self._remote_stt_retry_max = _NoScrollSpinBox()
         self._remote_stt_retry_max.setRange(1, 10)
         self._remote_stt_retry_max.setValue(
             self._config.get("remote_stt_retry_max", 3))
@@ -1167,7 +1165,7 @@ class ConversionSettingsForm(QWidget):
             self._remote_stt_api_base_url.setEnabled(on)
             self._remote_stt_api_key.setEnabled(on)
             self._remote_stt_model.setEnabled(on)
-            self._remote_stt_model_fetch_btn.setEnabled(on)
+            self._remote_stt_model_fetch_btn.setEnabled(on and not self._remote_stt_fetching)
             self._remote_stt_timeout.setEnabled(on)
             self._remote_stt_retry.setEnabled(on)
             self._remote_stt_retry_wait.setEnabled(on)
@@ -1182,30 +1180,18 @@ class ConversionSettingsForm(QWidget):
         """Fetch models from the remote STT provider's API and filter them
         down to speech-to-text-capable models (see ``filter_stt_models``)."""
         url = self._remote_stt_api_base_url.text().strip()
-        if not url:
+        if not url or self._remote_stt_fetching:
             return
 
+        fetcher = _ModelFetcher(url, self._remote_stt_api_key.text())
+        fetcher.finished_raw.connect(self._on_remote_stt_models_fetched)
+        fetcher.error.connect(self._on_remote_stt_fetch_error)
+        fetcher.done.connect(self._cleanup_remote_stt_fetch)
+        if not start_model_fetch(fetcher):
+            return  # the application is quitting
+        self._remote_stt_fetching = True
         self._remote_stt_model_fetch_btn.setEnabled(False)
         self._remote_stt_model_fetch_btn.setToolTip("Fetching models...")
-
-        self._remote_stt_model_fetch_thread = QThread()
-        self._remote_stt_model_fetcher = _ModelFetcher(
-            url, self._remote_stt_api_key.text())
-        self._remote_stt_model_fetcher.moveToThread(
-            self._remote_stt_model_fetch_thread)
-
-        self._remote_stt_model_fetch_thread.started.connect(
-            self._remote_stt_model_fetcher.run)
-        self._remote_stt_model_fetcher.finished_raw.connect(
-            self._on_remote_stt_models_fetched)
-        self._remote_stt_model_fetcher.error.connect(
-            self._on_remote_stt_fetch_error)
-        self._remote_stt_model_fetcher.finished_raw.connect(
-            self._cleanup_remote_stt_fetch)
-        self._remote_stt_model_fetcher.error.connect(
-            self._cleanup_remote_stt_fetch)
-
-        self._remote_stt_model_fetch_thread.start()
 
     def _on_remote_stt_models_fetched(self, raw_models: list[dict]):
         """Populate the model combobox with the filtered speech-to-text models."""
@@ -1231,11 +1217,8 @@ class ConversionSettingsForm(QWidget):
         self._remote_stt_model_fetch_btn.setToolTip(f"Fetch failed: {error}")
 
     def _cleanup_remote_stt_fetch(self):
+        self._remote_stt_fetching = False
         self._remote_stt_model_fetch_btn.setEnabled(self._remote_stt.isChecked())
-        if self._remote_stt_model_fetch_thread:
-            self._remote_stt_model_fetch_thread.quit()
-            self._remote_stt_model_fetch_thread.wait(2000)
-            self._remote_stt_model_fetch_thread = None
 
     # ─── Scoring ─────────────────────────────────────────────────────────
 
@@ -1277,9 +1260,7 @@ class ConversionSettingsForm(QWidget):
 
         self._format_version = _NoScrollComboBox()
         self._format_version.addItems(["0.3.0", "1.0.0", "1.1.0", "1.2.0"])
-        self._format_version.setCurrentText(
-            self._config.get("format_version", "1.2.0")
-        )
+        self._select_text(self._format_version, "format_version")
         card.add_row("Format Version", self._format_version,
                      "UltraStar TXT format version. "
                      "1.2.0 is the latest standard with full metadata support. "
@@ -1431,12 +1412,18 @@ class ConversionSettingsForm(QWidget):
         self._bpm_override.setPlaceholderText("Auto-detect")
         bpm_validator = QDoubleValidator(1.0, 500.0, 2, self)
         bpm_validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        # The CLI reads the BPM with a decimal point; in the user's locale the
+        # validator would accept a decimal comma (e.g. "120,5" in German).
+        c_locale = QLocale.c()
+        c_locale.setNumberOptions(QLocale.NumberOption.RejectGroupSeparator)
+        bpm_validator.setLocale(c_locale)
         self._bpm_override.setValidator(bpm_validator)
         bpm_val = self._config.get("bpm_override", "")
         if bpm_val:
             self._bpm_override.setText(str(bpm_val))
         card.add_row("BPM Override", self._bpm_override,
-                     "Manually set the song's tempo in beats per minute. "
+                     "Manually set the song's tempo in beats per minute "
+                     "(decimals with a point, e.g. 120.5). "
                      "Leave empty to auto-detect the BPM. "
                      "Use this when auto-detection picks the wrong tempo "
                      "(common with very slow or very fast songs).",
@@ -1522,20 +1509,18 @@ class ConversionSettingsForm(QWidget):
 
         Args:
             providers: Available LLM providers.
-            selected_id: ID of the provider to pre-select.  If empty,
-                         the default provider is selected.
+            selected_id: ID of the provider to pre-select.  If empty or
+                         no longer listed, the default provider is selected.
         """
         self._llm_provider.clear()
-        default_idx = 0
-        for i, p in enumerate(providers):
+        for p in providers:
             label = f"{p.name} ({p.default_model})" if p.name else p.default_model
             self._llm_provider.addItem(label, userData=p.id)
-            if selected_id and p.id == selected_id:
-                default_idx = i
-            elif not selected_id and p.is_default:
-                default_idx = i
+        index = self._llm_provider.findData(selected_id) if selected_id else -1
+        if index < 0:
+            index = next((i for i, p in enumerate(providers) if p.is_default), 0)
         if self._llm_provider.count() > 0:
-            self._llm_provider.setCurrentIndex(default_idx)
+            self._llm_provider.setCurrentIndex(index)
 
     def get_selected_provider_id(self) -> str:
         """Return the ID of the currently selected LLM provider."""
@@ -1631,6 +1616,21 @@ class ConversionSettingsForm(QWidget):
                 "Train a segmentation model on your own UltraStar song library. "
                 "The finished model is set here automatically.")
 
+    def _select_text(self, combo: QComboBox, key: str, value=None, *, default=None) -> None:
+        """Select the configured value of ``key`` (or ``value``) in ``combo``.
+
+        A value the combo does not offer, e.g. from a hand-edited config,
+        selects the default rather than the first entry.
+        """
+        if value is None:
+            value = self._config.get(key, _DEFAULTS[key])
+        if default is None:
+            default = _DEFAULTS[key]
+        if combo.findText(str(value)) < 0:
+            logger.warning("Unknown value %r for the setting '%s', using %r", value, key, default)
+            value = default
+        combo.setCurrentText(str(value))
+
     def _set_transcriber(self, value) -> None:
         index = self._transcriber.findData(value)
         self._transcriber.setCurrentIndex(index if index >= 0 else 0)
@@ -1648,7 +1648,7 @@ class ConversionSettingsForm(QWidget):
         return {
             "whisper_model": self._whisper_model.currentText(),
             "whisper_batch_size": self._whisper_batch_size.value(),
-            "whisper_compute_type": None if self._whisper_compute.currentText() == "auto"
+            "whisper_compute_type": "" if self._whisper_compute.currentText() == "auto"
                                      else self._whisper_compute.currentText(),
             "whisper_align_model": self._align_model.text(),
             "vad_onset": self._vad_onset.value(),

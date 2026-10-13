@@ -45,6 +45,8 @@ class QueueManager(QObject):
         self._potoken_available = False  # bgutil PO-token provider is running
         self._download_thread: QThread | None = None
         self._download_worker = None  # MediaDownloadWorker | None
+        # Item, merged config and target path of the running pre-download
+        self._predownload: tuple[QueueItem, dict, str] | None = None
 
         self._runner.line_output.connect(self.line_output.emit)
         self._runner.line_output.connect(self._parse_output_line)
@@ -107,7 +109,6 @@ class QueueManager(QObject):
                     input_type=item.input_type,
                     title=item.title,
                     video_id=item.video_id,
-                    yt_language=item.yt_language,
                     settings_overrides=copy.deepcopy(item.settings_overrides),
                 )
                 self._items.append(clone)
@@ -158,7 +159,10 @@ class QueueManager(QObject):
         self._run_next()
 
     def cancel_current(self):
-        """Cancel the currently running item (runner or pre-download)."""
+        """Cancel the currently running item (runner or pre-download).
+
+        A cancelled pre-download ends the item in _on_predownload_finished.
+        """
         if self._download_worker is not None:
             self._download_worker.cancel()
         if self._current_item and self._runner.is_running:
@@ -171,6 +175,19 @@ class QueueManager(QObject):
             if item.status == "pending":
                 item.status = "cancelled"
                 self.item_status_changed.emit(item.id, "cancelled")
+
+    def shutdown(self):
+        """Cancel all work and wait for its threads (the window is closing).
+
+        A QThread destroyed while it runs aborts the application.
+        """
+        self.cancel_all()
+        thread = self._download_thread
+        if thread is not None:
+            thread.quit()
+            # No timeout: cancel() has killed the ffmpeg process run() waits for
+            thread.wait()
+        self._runner.shutdown()
 
     def _emit_finished(self, cancelled: bool = False):
         """Emit queue_finished with summary counts."""
@@ -198,29 +215,11 @@ class QueueManager(QObject):
 
         self.item_status_changed.emit(next_item.id, "running")
 
-        # Merge global config with per-song overrides
+        # Merge global config with per-song overrides. In auto language mode
+        # the CLI reads the video platform's language itself (from the URL, or
+        # from --video_url for an intercepted download) and, unlike a
+        # --language, does not trust it to reject lyrics.
         merged = {**self._global_config, **next_item.settings_overrides}
-
-        # Video platform language as explicit --language hint: if no manual
-        # language is set and the video has language metadata from yt-dlp,
-        # pass it via --language so the subprocess uses it immediately.
-        # (The core also extracts it from yt-dlp, but for the interceptor
-        # path where a local file is passed, the CLI flag is the only way.)
-        if (
-            merged.get("language_mode") != "manual"
-            and not merged.get("language")
-            and next_item.yt_language
-        ):
-            merged["language_mode"] = "manual"
-            merged["language"] = next_item.yt_language
-            self.line_output.emit(
-                f"[Queue] Video platform language hint: "
-                f"--language {next_item.yt_language}"
-            )
-            logger.info(
-                "Using video platform language '%s' as --language for '%s'",
-                next_item.yt_language, next_item.title,
-            )
 
         next_item.resolved_config = dict(merged)
 
@@ -366,34 +365,39 @@ class QueueManager(QObject):
         )
         self._download_thread = thread
         self._download_worker = worker
+        self._predownload = (item, merged, audio_path)
 
         worker.progress.connect(self.line_output.emit)
+        # Queued: the worker emits from the download thread, the queue must
+        # continue on the GUI thread
         worker.finished.connect(
-            lambda ok, path, err: self._on_predownload_finished(
-                ok, path, err, item, merged
-            )
+            self._on_predownload_finished, Qt.ConnectionType.QueuedConnection
         )
 
         thread.start()
 
-    def _on_predownload_finished(
-        self,
-        success: bool,
-        audio_path: str,
-        error_msg: str,
-        item: QueueItem,
-        merged: dict,
-    ):
+    def _on_predownload_finished(self, success: bool, _path: str, error_msg: str):
         """Handle completion of the intercepted audio pre-download."""
+        if self._predownload is None:
+            return
+        item, merged, audio_path = self._predownload
+        worker = self._download_worker
+        thread = self._download_thread
+        self._predownload = None
         self._download_thread = None
         self._download_worker = None
+        if thread is not None:
+            thread.quit()
+            thread.wait()  # the worker has returned
+            thread.deleteLater()
 
-        # Bail out if item was cancelled while downloading
-        if item.status == "cancelled":
+        # The user cancelled while downloading: end the item and the queue
+        if worker is not None and worker.is_cancelled:
             try:
                 Path(audio_path).unlink(missing_ok=True)
             except OSError:
                 pass
+            self._on_item_finished(-2)
             return
 
         if success and Path(audio_path).exists():

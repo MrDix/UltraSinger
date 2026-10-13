@@ -200,7 +200,7 @@ To restore full-quality downloads UltraSinger uses the maintained [`bgutil-ytdlp
 
 Once a provider responds on `http://127.0.0.1:4416`, `yt-dlp` uses it transparently for every download (GUI and CLI). If no provider is available the app still works, but video downloads fall back to the limited formats.
 
-Provider behaviour can be tuned in the GUI config (`~/.ultrasinger`): `potoken_auto_start` (check on launch), `potoken_auto_start_node` / `potoken_auto_start_docker` (allow the respective auto-launch), `potoken_base_url` (custom server URL).
+Provider behaviour can be tuned in the GUI config (`~/.ultrasinger`): `potoken_auto_start` (check on launch), `potoken_auto_start_node` / `potoken_auto_start_docker` (allow the respective auto-launch), `potoken_base_url` (custom server URL). Save `config.json` as UTF-8. If the GUI cannot read it, it starts with the default settings and keeps a copy of the file as `config.json.<date>-<time>.bak`; a single setting with a wrong value falls back to its default (see the log).
 
 ## 🌐 Corporate proxy / firewall
 
@@ -452,6 +452,8 @@ _Not all options working now!_
                             with the cookies, restoring full-quality downloads. For manual CLI
                             use see yt-dlp's PO token guide
                             (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
+                            Can also be given as ULTRASINGER_YT_PO_TOKEN environment
+                            variable, which keeps it out of the process list.
 
     [device]
     --force_cpu             Force all steps to be processed on CPU.

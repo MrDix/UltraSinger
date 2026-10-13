@@ -417,32 +417,49 @@ def _docker_image() -> str:
     return f"{_DOCKER_IMAGE}:{_expected_version()}"
 
 
-def _start_docker_provider(docker: str, port: int) -> str:
+def _start_docker_provider(docker: str, port: int,
+                           cancel: threading.Event | None = None) -> str:
     """Best-effort: launch the provider container.
 
     Returns the container id on success, "" on failure.  Uses a
     process-unique container name and captures the id so cleanup only ever
     touches the container this process started.  The port is published on
     the loopback address only, so other machines cannot use the provider.
+    ``cancel`` ends a slow start (the first one pulls the image), e.g. when
+    the GUI closes.
     """
+    import time
+
     name = f"{_CONTAINER_PREFIX}-{os.getpid()}"
     try:
-        r = subprocess.run(
+        proc = subprocess.Popen(
             [docker, "run", "-d", "--rm", "--name", name,
              "-p", f"127.0.0.1:{port}:4416", _docker_image()],
-            capture_output=True, timeout=60,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=_CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to start bgutil provider via Docker: %s", e)
         return ""
-    if r.returncode != 0:
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=0.5)
+            break
+        except subprocess.TimeoutExpired:
+            if (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline:
+                proc.kill()
+                proc.communicate()
+                # A container created meanwhile must not outlive us
+                _remove_container(docker, name)
+                return ""
+    if proc.returncode != 0:
         logger.warning(
             "docker run for bgutil provider failed: %s",
-            r.stderr.decode("utf-8", "replace").strip()[:300],
+            stderr.decode("utf-8", "replace").strip()[:300],
         )
         return ""
-    return r.stdout.decode("utf-8", "replace").strip()
+    return stdout.decode("utf-8", "replace").strip()
 
 
 def _wait_until_running(
@@ -621,7 +638,7 @@ def ensure_provider(
     docker = _docker_exe() if auto_start_docker else None
     if docker and _docker_available(docker):
         logger.info("Starting bgutil PO-token provider via Docker ...")
-        container_id = _start_docker_provider(docker, port)
+        container_id = _start_docker_provider(docker, port, cancel)
         if container_id and _wait_until_running(normalized, cancel=cancel):
             version = _confirmed_version(normalized, cancel)
             if _same_major(version, expected):
@@ -682,6 +699,28 @@ def _terminate_process(
         logger.info("Stopped %s", what)
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Failed to stop %s: %s", what, e)
+
+
+def _remove_container(docker: str, name: str) -> None:
+    """Remove the container of a cancelled start, if the daemon created one.
+
+    ``docker rm -f`` also removes a container that was created but not yet
+    started (``--rm`` acts only on exit); without a container it just fails.
+    """
+    try:
+        r = subprocess.run(
+            [docker, "rm", "-f", name],
+            capture_output=True, timeout=20,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug("docker rm -f %s failed: %s", name, e)
+        return
+    if r.returncode == 0:
+        logger.info("Removed the bgutil PO-token provider container of a cancelled start")
+    else:
+        logger.debug("docker rm -f %s: %s", name,
+                     r.stderr.decode("utf-8", "replace").strip()[:200])
 
 
 def _stop_container(docker: str, container_id: str) -> None:
