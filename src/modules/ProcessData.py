@@ -3,7 +3,7 @@ from modules.Speech_Recognition.TranscribedData import TranscribedData
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Ultrastar.ultrastar_txt import UltrastarTxtValue
 from modules.Midi.MidiSegment import MidiSegment
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 @dataclass
 class ProcessDataPaths:
@@ -37,6 +37,9 @@ class ProcessData:
     basename: Optional[str] = None
     media_info: Optional[MediaInfo] = None
     transcribed_data: Optional[List[TranscribedData]] = field(default_factory=list)
+    # The transcription's words as (text, start s, end s), as the transcriber placed them: the
+    # corrections of transcribed_data do not change them (they give plain lyrics their line times)
+    transcription_words: List[Tuple[str, float, float]] = field(default_factory=list)
     pitched_data: Optional[PitchedData] = None
     midi_segments: Optional[List[MidiSegment]] = field(default_factory=list)
     parsed_file: Optional[UltrastarTxtValue] = None

@@ -17,6 +17,10 @@ Pipeline:
     4. Optionally split notes at pitch changes within word boundaries
        (melisma-aware splitting)
 
+Plain lyrics (without timestamps) get their line times from the words of a
+transcription and then go the same way; without enough of these times, their
+lines are aligned on one path over the whole song.
+
 This produces MidiSegments where every word from the reference lyrics has
 a note with accurate timing and pitch -- solving the lyrics coverage and
 timing accuracy problems of the Whisper-only pipeline.
@@ -25,6 +29,7 @@ timing accuracy problems of the Whisper-only pipeline.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 import librosa
@@ -41,10 +46,13 @@ from modules.Midi.midi_creator import (
 )
 from modules.Audio.key_detector import quantize_note_to_key
 from modules.Speech_Recognition.lyrics_alignment import (
+    ANCHORED_SHARE,
+    RELIABLE_LINES,
     SAMPLE_RATE,
     align_lyrics,
     blank_index,
     emission_in_pieces,
+    line_times_from_words,
     lyrics_tokens,
 )
 
@@ -54,8 +62,8 @@ from modules.Speech_Recognition.lyrics_alignment import (
 # ---------------------------------------------------------------------------
 
 # A bracket at the start of an LRC line: a time ("[01:23.45]"), an ID tag
-# ("[ar:Artist]"), a section label ("[Chorus]") or a backing vocal ("[oh yeah]",
-# "(la)")
+# ("[ar:Artist]"), a section label ("[Chorus]"), a repeat mark ("(x2)") or a
+# backing vocal ("[oh yeah]", "(la)")
 _LRC_TAG_RE = re.compile(r"\s*(\[[^\]]*\]|\([^)]*\)|\{[^}]*\})")
 _LRC_TIME_RE = re.compile(r"(\d+):(\d+(?:\.\d+)?)")
 _LRC_ID_TAG_RE = re.compile(r"[A-Za-z#]+:")
@@ -64,11 +72,48 @@ _LRC_SECTION_RE = re.compile(
     r"|breakdown|coda)(?:\s*\d+)?(?:\s*x\s*\d+)?(?:\s*:.*)?",
     re.IGNORECASE,
 )
+# A repeat mark: "x2", "2x", "3 times", "repeat", "repeat chorus" (not
+# "twice": "(twice)" may be a sung echo)
+_REPEAT = r"(?:[x×]\s*\d+|\d+\s*[x×]|\d+\s*times)"
+_REPEAT_RE = re.compile(rf"{_REPEAT}|repeat(?:\s*(?:chorus|{_REPEAT}))?", re.IGNORECASE)
+# A repeat mark in brackets anywhere in a line: "Hello world (x2)"
+_REPEAT_MARK_RE = re.compile(rf"[\(\[\{{]\s*(?:{_REPEAT_RE.pattern})\s*[\)\]\}}]", re.IGNORECASE)
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
 
 _BRACKET_RE = re.compile(r"[\(\[\{]([^)\]\}]*)[\)\]\}]")
+
+
+def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
+    """The times (s) of the time tags of a line of lyrics and its sung text.
+
+    Brackets at the start of the line are time tags (``"[01:23.45]"``), ID
+    tags (``"[ar:Artist]"``), section labels (``"[Chorus]"``,
+    ``"(Verse 2)"``), repeat marks (``"(x2)"``) or backing vocals. Repeat
+    marks are not sung wherever they are, and neither is a line that is only
+    a section label with a colon (``"Chorus:"``). Word times of enhanced LRC
+    (``"<00:12.50>"``) are left out. The other brackets are backing vocals:
+    their words are prefixed with ``\\x00`` (see ``_mark_bracketed_words``).
+    """
+    times: list[float] = []
+    sung: list[str] = []  # backing vocals among the brackets at the start
+    pos = 0
+    while m := _LRC_TAG_RE.match(raw_line, pos):
+        bracket = m.group(1)
+        content = bracket[1:-1].strip()
+        time_tag = _LRC_TIME_RE.fullmatch(content) if bracket.startswith("[") else None
+        if time_tag:
+            times.append(int(time_tag.group(1)) * 60 + float(time_tag.group(2)))
+        elif not ((bracket.startswith("[") and _LRC_ID_TAG_RE.match(content))
+                  or _LRC_SECTION_RE.fullmatch(content) or _REPEAT_RE.fullmatch(content)):
+            sung.append(bracket)
+        pos = m.end()
+    rest = _REPEAT_MARK_RE.sub(" ", raw_line[pos:])
+    text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [rest])).split())
+    if text.endswith(":") and _LRC_SECTION_RE.fullmatch(text):
+        text = ""
+    return times, _mark_bracketed_words(text)
 
 
 def parse_lrc_synced_lyrics(
@@ -79,10 +124,10 @@ def parse_lrc_synced_lyrics(
 
     A line with several time tags (``"[00:12.00][01:30.00] Chorus line"``)
     is sung at each of these times. Word times of enhanced LRC
-    (``"<00:12.50>"``), ID tags (``"[ar:Artist]"``) and section labels among
-    the brackets at the start of a line (``"[Chorus]"``, ``"[Verse 2]"``) are
-    not sung and are left out; other brackets are backing vocals, wherever
-    they are.
+    (``"<00:12.50>"``), ID tags (``"[ar:Artist]"``), section labels among
+    the brackets at the start of a line (``"[Chorus]"``, ``"[Verse 2]"``) and
+    repeat marks (``"(x2)"``) are not sung and are left out; other brackets
+    are backing vocals, wherever they are (see ``_lyrics_line``).
 
     Args:
         synced_lyrics: Raw LRC text, e.g. ``"[01:23.45] Hello world\\n..."``.
@@ -101,20 +146,7 @@ def parse_lrc_synced_lyrics(
     """
     lines: list[dict] = []
     for raw_line in synced_lyrics.strip().splitlines():
-        times: list[float] = []
-        sung: list[str] = []  # backing vocals among the brackets at the start
-        pos = 0
-        while m := _LRC_TAG_RE.match(raw_line, pos):
-            bracket = m.group(1)
-            content = bracket[1:-1].strip()
-            time_tag = _LRC_TIME_RE.fullmatch(content) if bracket.startswith("[") else None
-            if time_tag:
-                times.append(int(time_tag.group(1)) * 60 + float(time_tag.group(2)))
-            elif not (bracket.startswith("[")
-                      and (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(content))):
-                sung.append(bracket)
-            pos = m.end()
-        text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [raw_line[pos:]])).split())
+        times, text = _lyrics_line(raw_line)
         if text:
             lines.extend({"time": time_s, "text": text} for time_s in times)
 
@@ -134,18 +166,27 @@ def parse_lrc_synced_lyrics(
         else:
             end = line["time"] + 10.0
 
-        # Mark bracketed words (backing vocals) with \x00 prefix
-        # e.g. "(oh yeah)" -> "\x00oh \x00yeah"
-        raw_text = line["text"]
-        marked_text = _mark_bracketed_words(raw_text)
-
         segments.append({
-            "text": marked_text,
+            "text": line["text"],
             "start": line["time"],
             "end": end,
         })
 
     return segments
+
+
+def parse_plain_lyrics(plain_lyrics: str) -> list[str]:
+    """The sung lines of plain lyrics (no timestamps), read as the lines of
+    LRC lyrics are (see ``parse_lrc_synced_lyrics``): ID tags, section labels
+    and repeat marks are left out, and the words in other brackets are
+    marked as backing vocals with a ``\\x00`` prefix. Empty lines are skipped.
+    """
+    texts = []
+    for raw_line in plain_lyrics.strip().splitlines():
+        _, text = _lyrics_line(raw_line)
+        if text:
+            texts.append(text)
+    return texts
 
 
 def _mark_bracketed_words(text: str) -> str:
@@ -195,14 +236,16 @@ def align_lyrics_to_audio(
     language: str,
     device: str = "cpu",
     align_model_name: Optional[str] = None,
+    line_time: Optional[str] = "LRC time",
 ) -> list[dict]:
     """Align LRC line segments to audio using wav2vec2 forced alignment.
 
     Uses WhisperX's alignment models and path search (see
-    ``lyrics_alignment``). With several segments (the lines of synced
-    lyrics), their LRC times choose between alignments and check the lines
-    one by one. A single segment (plain lyrics) is aligned as WhisperX
-    aligns one segment over the whole audio.
+    ``lyrics_alignment``). With several segments that have times (the lines
+    of synced lyrics), these times choose between alignments and check the
+    lines one by one. Segments without times (plain lyrics), or a single
+    segment, are aligned on one path over the whole audio, as WhisperX
+    aligns one segment.
 
     Args:
         segments: LRC segments from :func:`parse_lrc_synced_lyrics`.
@@ -212,6 +255,10 @@ def align_lyrics_to_audio(
         align_model_name: Optional custom alignment model (e.g. from
             ``--whisper_align_model``).  Passed to
             ``whisperx.load_align_model(model_name=...)``.
+        line_time: What the ``start`` of the segments is, as the console
+            names it: ``"LRC time"`` for synced lyrics, ``"time from the
+            transcription"`` for plain lyrics with line times from its words.
+            None: the segments have no times.
 
     Returns:
         List of ``{"word", "start", "end", "backing", "line_end"}`` dicts,
@@ -236,7 +283,7 @@ def align_lyrics_to_audio(
             line_times.append(seg["start"])
             backing.extend(w.startswith("\x00") for w in seg_words)
     total_lrc_words = len(backing)
-    synced = len(lines) > 1
+    timed = line_time is not None and len(lines) > 1
 
     print(f"{ULTRASINGER_HEAD} Loading alignment model for reference lyrics")
     align_model = audio = None
@@ -277,7 +324,7 @@ def align_lyrics_to_audio(
         tokens = lyrics_tokens(lines, dictionary, align_metadata["language"])
         emissions = []
         if len(tokens.ids) and n_samples:
-            emissions = _alignment_emissions(align_model, align_metadata["type"], audio, device, synced)
+            emissions = _alignment_emissions(align_model, align_metadata["type"], audio, device, timed)
     finally:
         # Drop the model (and the audio) before going on: the first call imports
         # libraries, one of which keeps the traceback of a failed optional
@@ -291,13 +338,13 @@ def align_lyrics_to_audio(
     if emissions:
         frame_s = n_samples / SAMPLE_RATE / len(emissions[0][1])
         result = align_lyrics(
-            tokens, emissions, blank_index(dictionary), frame_s, line_times if synced else None,
+            tokens, emissions, blank_index(dictionary), frame_s, line_times if timed else None,
         )
 
     words: list[dict] = []
     if result is not None:
-        if synced:
-            _print_line_check(result)
+        if timed:
+            _print_line_check(result, line_time)
         last_of_line = {}  # line -> index of its last word
         for w, start, end in result.words:
             last_of_line[int(tokens.word_line[w])] = len(words)
@@ -321,15 +368,15 @@ def align_lyrics_to_audio(
 
 
 def _alignment_emissions(model, model_type: str, audio: np.ndarray, device: str,
-                         synced: bool) -> list[tuple[str, np.ndarray]]:
+                         timed: bool) -> list[tuple[str, np.ndarray]]:
     """The emissions to align with, as (label, log-probabilities): of the whole
-    song and, for synced lyrics, of 30-s pieces; of the pieces alone when the
-    whole song does not fit in the GPU memory."""
+    song and, for lines with times, of 30-s pieces; of the pieces alone when
+    the whole song does not fit in the GPU memory."""
 
     def run(samples: np.ndarray) -> np.ndarray:
         return _align_model_log_probs(model, model_type, samples, device)
 
-    pieces = emission_in_pieces(run, audio) if synced else None
+    pieces = emission_in_pieces(run, audio) if timed else None
     whole = None
     try:
         whole = run(audio)
@@ -382,16 +429,16 @@ def _out_of_memory(error: RuntimeError) -> bool:
             or "not enough memory" in message)
 
 
-def _print_line_check(result) -> None:
-    """Which alignment of the synced lyrics was used, and what the line check changed."""
+def _print_line_check(result, line_time: str) -> None:
+    """Which alignment of the lines with times was used, and what the line check changed."""
     end = "capped end" if result.capped else "free end"
     print(
         f"{ULTRASINGER_HEAD} Lyrics alignment: {blue_highlighted(str(result.fit))} of "
-        f"{blue_highlighted(str(result.lines))} lines at their LRC time ({result.emission}, {end})"
+        f"{blue_highlighted(str(result.lines))} lines at their {line_time} ({result.emission}, {end})"
     )
     changes = []
     if result.moved:
-        changes.append(f"moved {_count_lines(result.moved)} to their LRC time")
+        changes.append(f"moved {_count_lines(result.moved)} to their {line_time}")
     if result.dropped:
         changes.append(
             f"left out {_count_lines(len(result.dropped))} at the end that the recording does not have")
@@ -924,6 +971,24 @@ def create_midi_segments_from_reference_lyrics(
               f"falling back to standard pipeline")
         return []
 
+    return _notes_from_words(words, pitched_data, allowed_notes, melisma_split, threshold_st, min_note_ms,
+                             "Reference-first pipeline", "LRC linebreaks")
+
+
+def _notes_from_words(
+    words: list[dict],
+    pitched_data: PitchedData,
+    allowed_notes: Optional[set[str]],
+    melisma_split: bool,
+    threshold_st: float,
+    min_note_ms: float,
+    pipeline: str,
+    line_breaks: str,
+) -> list[MidiSegment]:
+    """MidiSegments of the words from :func:`align_lyrics_to_audio` (steps 2b
+    to 4): words in brackets become freestyle notes, a line break follows the
+    last word of each line. ``pipeline`` names the result in the console, and
+    ``line_breaks`` where the line breaks come from."""
     # Step 2b: Trim word boundaries to actual voiced regions.
     # CTC alignment stretches the last word in each line to fill the gap
     # until the next line -- this assigns seconds of silence to a single
@@ -1024,16 +1089,33 @@ def create_midi_segments_from_reference_lyrics(
         info_parts.append(f"{freestyle_count} freestyle/backing")
     line_break_count = sum(1 for s in midi_segments if s.line_break_after)
     if line_break_count > 0:
-        info_parts.append(f"{line_break_count} LRC linebreaks")
+        info_parts.append(f"{line_break_count} {line_breaks}")
     info_suffix = f" ({', '.join(info_parts)})" if info_parts else ""
     print(
-        f"{ULTRASINGER_HEAD} Reference-first pipeline: "
+        f"{ULTRASINGER_HEAD} {pipeline}: "
         f"{blue_highlighted(str(total_notes))} notes from "
         f"{blue_highlighted(str(words_with_pitch))} words"
         + info_suffix
     )
 
     return midi_segments
+
+
+@dataclass
+class PlainLyricsPlacement:
+    """How the lines of plain lyrics were placed in time."""
+    lines: int = 0              # lines with words
+    anchored: int = 0           # of these, the lines a transcribed word gave a time
+    with_words: bool = False    # whether there were words of a transcription
+    line_by_line: bool = False  # aligned with these line times, as synced lyrics are
+
+    def __str__(self) -> str:
+        if self.line_by_line:
+            return f"line by line ({self.anchored} of {self.lines} lines anchored by the transcription's words)"
+        if not self.with_words:
+            return "as one block (no transcription words)"
+        return (f"as one block ({self.anchored} of {self.lines} lines anchored by the transcription's words, "
+                f"too few)")
 
 
 def create_midi_segments_from_plain_lyrics(
@@ -1047,12 +1129,17 @@ def create_midi_segments_from_plain_lyrics(
     threshold_st: float = 2.0,
     min_note_ms: float = 80.0,
     align_model_name: Optional[str] = None,
-) -> list[MidiSegment]:
+    transcription_words: Optional[list[tuple[str, float, float]]] = None,
+) -> tuple[list[MidiSegment], PlainLyricsPlacement]:
     """Create MidiSegments from plain lyrics (no timestamps) + forced alignment.
 
     This is a fallback when LRCLIB provides plain_lyrics but no synced_lyrics.
-    The plain text is fed directly to WhisperX forced alignment which uses
-    CTC to find word positions in the audio.
+    Each line of the lyrics, read as by :func:`parse_plain_lyrics`, becomes a
+    line of the chart. The words of a transcription give the lines times
+    (``line_times_from_words``). When at least ``ANCHORED_SHARE`` of the
+    lines, and at least ``RELIABLE_LINES``, got one, the lines are aligned
+    with these times as synced lyrics are; otherwise all of them on one path
+    over the whole song, as WhisperX aligns one segment.
 
     Args:
         plain_lyrics: Raw plain text lyrics (line breaks separate lines).
@@ -1065,72 +1152,49 @@ def create_midi_segments_from_plain_lyrics(
         threshold_st: Semitone threshold for melisma detection.
         min_note_ms: Minimum note duration for melisma splits.
         align_model_name: Optional custom alignment model name.
+        transcription_words: The words of a transcription of the song as
+            ``(text, start s, end s)``, where the transcriber placed them.
 
     Returns:
-        List of MidiSegments with lyrics and pitch.
+        The MidiSegments with lyrics and pitch (none when the lyrics could
+        not be aligned), and how the lines were placed.
     """
-    if not plain_lyrics or not plain_lyrics.strip():
-        return []
-
-    # Clean up the lyrics: normalize line breaks, strip empty lines
-    lines = [line.strip() for line in plain_lyrics.replace("\r\n", "\n").split("\n")]
-    lines = [line for line in lines if line]
+    placement = PlainLyricsPlacement(with_words=bool(transcription_words))
+    texts, lines = [], []
+    for text in parse_plain_lyrics(plain_lyrics or ""):
+        # the words as align_lyrics_to_audio takes them from the text
+        line = [w.replace("\x00", "") for w in text.split() if w.replace("\x00", "")]
+        if line:
+            texts.append(text)
+            lines.append(line)
     if not lines:
-        return []
+        return [], placement
 
-    all_text = " ".join(lines)
+    times, placement.anchored = line_times_from_words(lines, transcription_words or [])
+    placement.lines = len(lines)
+    placement.line_by_line = (times is not None and placement.anchored >= RELIABLE_LINES
+                              and placement.anchored >= ANCHORED_SHARE * len(lines))
     print(
         f"{ULTRASINGER_HEAD} Plain lyrics alignment: "
-        f"{blue_highlighted(str(len(all_text.split())))} words to align"
+        f"{blue_highlighted(str(sum(len(line) for line in lines)))} words in "
+        f"{blue_highlighted(str(len(lines)))} lines to align"
     )
+    print(f"{ULTRASINGER_HEAD} Plain lyrics are placed {placement}")
 
-    # Create a single pseudo-segment spanning the full audio
-    audio_duration = librosa.get_duration(path=audio_path)
-    segments = [{"text": all_text, "start": 0.0, "end": audio_duration}]
-
-    # Use the same alignment function as the synced pipeline
+    # Without line times, the start of the segments is not used
+    segments = [{"text": text, "start": times[i] if placement.line_by_line else 0.0}
+                for i, text in enumerate(texts)]
     words = align_lyrics_to_audio(
         segments, audio_path, language, device, align_model_name,
+        line_time="time from the transcription" if placement.line_by_line else None,
     )
     if not words:
         print(f"{ULTRASINGER_HEAD} Plain lyrics alignment returned no words -- "
               f"falling back to standard pipeline")
-        return []
+        return [], placement
 
-    # Step 3: Assign pitch to each word (same as synced pipeline)
-    midi_segments: list[MidiSegment] = []
-    words_with_pitch = 0
-    melisma_splits_count = 0
-
-    for i, w in enumerate(words):
-        word_text = w["word"]
-        is_last = (i == len(words) - 1)
-        if not word_text.startswith("~") and not is_last:
-            word_text = word_text + " "
-
-        if melisma_split:
-            segs = _split_word_at_pitch_changes(
-                word_text, w["start"], w["end"],
-                pitched_data, allowed_notes,
-                threshold_st, min_note_ms,
-            )
-            if len(segs) > 1:
-                melisma_splits_count += 1
-            midi_segments.extend(segs)
-        else:
-            note = _compute_note_for_word(
-                w["start"], w["end"], pitched_data, allowed_notes,
-            )
-            midi_segments.append(MidiSegment(note, w["start"], w["end"], word_text))
-
-        words_with_pitch += 1
-
-    total_notes = len(midi_segments)
-    print(
-        f"{ULTRASINGER_HEAD} Plain lyrics pipeline: "
-        f"{blue_highlighted(str(total_notes))} notes from "
-        f"{blue_highlighted(str(words_with_pitch))} words"
-        + (f" ({melisma_splits_count} melisma splits)" if melisma_splits_count > 0 else "")
-    )
-
-    return midi_segments
+    # The end of the lyrics is no line break: lyrics in one line (such as the
+    # text of remote speech-to-text) leave the line breaks to the pauses
+    words[-1]["line_end"] = False
+    return _notes_from_words(words, pitched_data, allowed_notes, melisma_split, threshold_st, min_note_ms,
+                             "Plain lyrics pipeline", "lyrics linebreaks"), placement

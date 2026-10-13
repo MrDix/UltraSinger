@@ -10,10 +10,12 @@ from unittest.mock import patch, MagicMock
 from modules.Speech_Recognition.lyrics_alignment import lyrics_tokens
 from modules.Speech_Recognition.reference_lyrics_aligner import (
     parse_lrc_synced_lyrics,
+    parse_plain_lyrics,
     _align_model_log_probs,
     _compute_note_for_word,
     _split_word_at_pitch_changes,
     _trim_word_to_voiced,
+    create_midi_segments_from_plain_lyrics,
     create_midi_segments_from_reference_lyrics,
     align_lyrics_to_audio,
 )
@@ -125,6 +127,42 @@ class TestParseLrcSyncedLyrics:
         segs = parse_lrc_synced_lyrics(lrc)
         assert [s["text"] for s in segs] == [
             "\x00oh \x00yeah text", "\x00la", "\x00oh \x00ooh go"]
+
+    def test_repeat_marks_are_not_sung(self):
+        lrc = "[00:10.00] Hello world (x2)\n[00:12.00] (2x) Again [Repeat Chorus]\n" \
+              "[00:14.00] La {3 times} la (repeat)\n[00:16.00] (x 4)\n[00:18.00] (oh) yeah\n" \
+              "[00:20.00] Say it twice (twice)"
+        segs = parse_lrc_synced_lyrics(lrc)
+        # an echo like "(twice)" is sung
+        assert [s["text"] for s in segs] == ["Hello world", "Again", "La la", "\x00oh yeah",
+                                             "Say it twice \x00twice"]
+
+    def test_section_labels_in_round_brackets_and_with_a_colon_are_not_sung(self):
+        lrc = "[00:10.00] (Chorus)\n[00:12.00] Verse 2:\n[00:14.00] (Bridge) text\n" \
+              "[00:16.00] {Pre-Chorus x2}\n[00:18.00] Chorus: the words go on"
+        segs = parse_lrc_synced_lyrics(lrc)
+        # a colon in the middle of a line is sung text
+        assert [s["text"] for s in segs] == ["text", "Chorus: the words go on"]
+        assert segs[0]["start"] == pytest.approx(14.0)
+
+
+class TestParsePlainLyrics:
+    """parse_plain_lyrics: the lines of plain lyrics, read as LRC lines without times."""
+
+    def test_lines_labels_and_backing_vocals(self):
+        plain = ("[Verse 1]\nHello (oh) world\n\n[Chorus]\nLa la la (x2)\nChorus:\n(Bridge)\n[ar:Artist]\n"
+                 "[Hey] you\nEnd")
+        assert parse_plain_lyrics(plain) == ["Hello \x00oh world", "La la la", "\x00Hey you", "End"]
+
+    def test_line_endings_and_spaces(self):
+        assert parse_plain_lyrics("  Hello   world \r\n\r\nSecond line\r\n") == ["Hello world", "Second line"]
+
+    def test_time_tags_are_left_out(self):
+        assert parse_plain_lyrics("[00:12.00] Hello <00:12.50>world") == ["Hello world"]
+
+    def test_nothing_to_sing(self):
+        assert parse_plain_lyrics("") == []
+        assert parse_plain_lyrics("[Intro]\n(x2)\n\n") == []
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +524,7 @@ class TestAlignLyricsToAudio:
         assert [w["start"] for w in words[::2]] == pytest.approx([s["start"] for s in segments], abs=0.011)
         out = capsys.readouterr().out
         assert "Aligning" in out and "40" in out
-        assert "Lyrics alignment:" in out and "of" in out and "(whole song, free end)" in out
+        assert "Lyrics alignment:" in out and "lines at their LRC time (whole song, free end)" in out
         assert "Reference alignment:" in out
 
     def test_pieces_first_then_the_whole_song(self):
@@ -520,6 +558,27 @@ class TestAlignLyricsToAudio:
         assert [w["start"] for w in words] == pytest.approx([1.0, 1.12, 1.28, 1.40], abs=0.011)
         assert [w["line_end"] for w in words] == [False, False, False, True]
         assert "Lyrics alignment:" not in capsys.readouterr().out
+
+    def test_lines_without_times_on_one_path(self, capsys):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+
+        words, _ = align_with(model, audio, segments, line_time=None)
+
+        # as one segment: the whole song only, no line check; the lines are kept
+        assert model.inputs == [len(audio)]
+        assert [w["start"] for w in words[::2]] == pytest.approx([s["start"] for s in segments], abs=0.011)
+        assert [w["line_end"] for w in words] == [False, True] * 20
+        assert "Lyrics alignment:" not in capsys.readouterr().out
+
+    def test_the_line_time_is_named_in_the_console(self, capsys):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+
+        align_with(model, audio, segments, line_time="time from the transcription")
+
+        assert model.inputs[-1] == len(audio) and len(model.inputs) > 1  # the pieces, then the whole song
+        assert "lines at their time from the transcription (whole song, free end)" in capsys.readouterr().out
 
     def test_whole_song_out_of_memory_uses_the_pieces(self, capsys):
         segments = lrc_segments(20)
@@ -592,6 +651,121 @@ class TestAlignLyricsToAudio:
         with patch("whisperx.load_align_model", return_value=(model, metadata)), \
                 patch("whisperx.load_audio", return_value=audio):
             assert align_lyrics_to_audio(segments, "/fake/audio.wav", "en") == []
+        assert model.inputs == []
+
+
+def heard_words(segments, lines=None):
+    """The words of the segments (of the given lines) as a transcription
+    heard them: at the segment's start, the second one 0.12 s later."""
+    words = []
+    for i, seg in enumerate(segments):
+        if lines is None or i in lines:
+            first, second = seg["text"].split()
+            words += [(first, seg["start"], seg["start"] + 0.1), (second, seg["start"] + 0.12, seg["start"] + 0.3)]
+    return words
+
+
+def align_plain(model, audio, plain, words=None):
+    pitched = _make_pitched_data(duration_s=len(audio) / 16000)
+    with patch("whisperx.load_align_model", return_value=(model, METADATA)), \
+            patch("whisperx.load_audio", return_value=audio):
+        return create_midi_segments_from_plain_lyrics(plain, "/fake/audio.wav", "en", pitched, device="cpu",
+                                                      melisma_split=False, transcription_words=words)
+
+
+class TestCreateMidiSegmentsFromPlainLyrics:
+    """Plain lyrics, line by line with times from the transcription's words or as one block."""
+
+    def song(self, n_lines=20):
+        segments = lrc_segments(n_lines)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+        return segments, "\n".join(s["text"] for s in segments), model, audio
+
+    def test_lines_anchored_by_the_transcription_are_aligned_line_by_line(self, capsys):
+        segments, plain, model, audio = self.song()
+
+        notes, placement = align_plain(model, audio, plain, heard_words(segments))
+
+        assert (placement.lines, placement.anchored, placement.line_by_line) == (20, 20, True)
+        assert str(placement) == "line by line (20 of 20 lines anchored by the transcription's words)"
+        # as synced lyrics: the 30-s pieces too, and the line check
+        assert len(model.inputs) > 1 and model.inputs[-1] == len(audio)
+        out = capsys.readouterr().out
+        assert "lines at their time from the transcription" in out
+        assert "Plain lyrics pipeline:" in out and "19 lyrics linebreaks" in out
+        assert [n.start for n in notes[::2]] == pytest.approx([s["start"] for s in segments], abs=0.011)
+        # a line break after each lyric line, but not after the last note
+        assert [n.line_break_after for n in notes] == [False, True] * 19 + [False, False]
+
+    def test_too_few_anchored_lines_give_one_block(self, capsys):
+        segments, plain, model, audio = self.song()
+
+        # 7 lines: fewer than 8
+        notes, placement = align_plain(model, audio, plain, heard_words(segments, lines=range(7)))
+
+        assert (placement.anchored, placement.line_by_line) == (7, False)
+        assert str(placement) == "as one block (7 of 20 lines anchored by the transcription's words, too few)"
+        # one path over the whole song, as without words, but the lines are kept
+        assert model.inputs == [len(audio)]
+        assert "Lyrics alignment:" not in capsys.readouterr().out
+        assert [n.line_break_after for n in notes] == [False, True] * 19 + [False, False]
+
+    def test_less_than_half_of_the_lines_anchored_give_one_block(self):
+        segments, plain, model, audio = self.song(n_lines=20)
+
+        _, placement = align_plain(model, audio, plain, heard_words(segments, lines=range(9)))
+
+        assert (placement.anchored, placement.line_by_line) == (9, False)
+        assert model.inputs == [len(audio)]
+
+    def test_half_of_the_lines_anchored_are_enough(self):
+        segments, plain, model, audio = self.song(n_lines=20)
+
+        _, placement = align_plain(model, audio, plain, heard_words(segments, lines=range(0, 20, 2)))
+
+        assert (placement.anchored, placement.line_by_line) == (10, True)
+        assert len(model.inputs) > 1
+
+    def test_without_transcription_words(self, capsys):
+        segments, plain, model, audio = self.song()
+
+        notes, placement = align_plain(model, audio, plain)
+
+        assert (placement.lines, placement.anchored, placement.with_words, placement.line_by_line) == (
+            20, 0, False, False)
+        assert str(placement) == "as one block (no transcription words)"
+        assert model.inputs == [len(audio)]
+        assert "Plain lyrics are placed as one block (no transcription words)" in capsys.readouterr().out
+        assert len(notes) == 40
+        assert sum(n.line_break_after for n in notes) == 19
+
+    def test_brackets_read_as_in_lrc_lyrics(self):
+        # what is sung: "aa (aaa)" and "bb bbb"; the label and the repeat mark are not
+        segments = [{"text": "aa \x00aaa", "start": 1.0}, {"text": "bb bbb", "start": 4.0}]
+        model, audio = fake_song(segments, [1.0, 4.0], 10.0)
+
+        notes, _ = align_plain(model, audio, "[Chorus]\naa (aaa)\nbb bbb (x2)")
+
+        assert [n.word for n in notes] == ["aa ", "aaa ", "bb ", "bbb"]
+        assert [n.note_type for n in notes] == [":", "F", ":", ":"]
+        assert [n.line_break_after for n in notes] == [False, True, False, False]
+
+    def test_lyrics_in_one_line_get_no_line_breaks(self):
+        # (as the text of remote speech-to-text): the writer breaks the lines at the pauses
+        segments = [{"text": "aa aaa bb bbb", "start": 0.0}]
+        model, audio = fake_song(segments, [1.0], 10.0)
+
+        notes, _ = align_plain(model, audio, "aa aaa bb bbb")
+
+        assert len(notes) == 4
+        assert not any(n.line_break_after for n in notes)
+
+    def test_nothing_to_align(self):
+        model, audio = fake_song([], [], 5.0)
+        for plain in (None, "", "  \n ", "[Chorus]\n(x2)"):
+            notes, placement = align_plain(model, audio, plain, [("hello", 1.0, 1.2)])
+            assert notes == []
+            assert placement.lines == 0
         assert model.inputs == []
 
 

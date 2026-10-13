@@ -323,8 +323,9 @@ _Not all options working now!_
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain
                             precise word-level timing — dramatically improving lyrics coverage and timing
                             accuracy. Without synced lyrics (or when their alignment fails), plain lyrics
-                            are aligned the same way, then a --remote_stt text. When disabled, or when
-                            none of them can be aligned, the notes come from the transcription.
+                            are aligned the same way, with line times from the transcription's words, then
+                            a --remote_stt text. When disabled, or when none of them can be aligned, the
+                            notes come from the transcription.
                             Enabled by default.
 
     [freestyle detection]
@@ -713,11 +714,11 @@ The pipeline is **enabled by default** and falls back to the standard transcript
 
 **Auto-recovery from wrong language detection:** If the fast language detection (Whisper tiny, ~2-3s) misidentifies the language (e.g. "cy" instead of "en"), the reference pipeline may fail because no alignment model exists for that language. In this case, UltraSinger automatically runs the full transcription, which detects the correct language, then **retries the reference pipeline** with the corrected language — recovering to full synced-lyrics quality without user intervention.
 
-**Reading the lines:** A line with several times (`[00:12.00][01:30.00] ...`, a repeated chorus) is sung at each of them. Word times of enhanced LRC (`<00:12.50>`), ID tags like `[ar:...]` and section labels at the start of a line, like `[Chorus]` or `[Verse 2]`, are not sung and are left out. Other words in brackets, like `(oh yeah)` or `[oh yeah]`, are backing vocals and become freestyle notes.
+**Reading the lines:** A line with several times (`[00:12.00][01:30.00] ...`, a repeated chorus) is sung at each of them. Word times of enhanced LRC (`<00:12.50>`), ID tags like `[ar:...]`, section labels at the start of a line, like `[Chorus]`, `(Verse 2)` or a line `Chorus:`, and repeat marks like `(x2)` are not sung and are left out. Other words in brackets, like `(oh yeah)` or `[oh yeah]`, are backing vocals and become freestyle notes.
 
 **Placing the lines:** The words are placed with wav2vec2 forced alignment over the whole vocal track, and the LRC times of the lines check the result. Four alignments are made: with the model run over the whole song or over 30-s pieces, each with two ways of ending the path after the last word. The one with the most lines at their LRC times is used. A line that lands in a poor place moves to a clearly better place near its LRC time, and lines at the end that the recording does not have (lyrics of a longer version) are left out. On a benchmark of 89 songs, the share of words that start more than 1 s off went from 6.5 % to 4.9 %. When there is not enough memory to run the model over the whole song at once, the 30-s pieces are used alone.
 
-**Plain lyrics** from LRCLIB (without timestamps) are aligned with wav2vec2 in the same way when no synced lyrics were found or the synced ones could not be aligned, and then make the notes. Only when that fails too do the words come from remote speech-to-text (`--remote_stt`) or the transcription. When the transcription runs, the plain lyrics also **post-correct** its words by comparing them against the verified lyrics text, improving recall by ~5 percentage points.
+**Plain lyrics** from LRCLIB (without timestamps) make the notes when no synced lyrics were found or the synced ones could not be aligned. Their lines are read as above, and each one becomes a line of the chart. The words of the transcription give the lines their times: a line starts where the transcription heard the first of its words (counted back by the words before it in the line), and lines without a heard word are spread between the others by their number of words. When at least half of the lines (and at least 8) get a time this way, the lines are placed as synced lyrics are. Otherwise all lines are placed on one path over the whole vocal track; that is also the case when the transcription was skipped (synced lyrics found before it, or remote speech-to-text). On the benchmark, with the LRC lines without their times as plain lyrics, the share of words that start more than 1 s off went from 6.5 % to 4.8 %. The settings info file (`--write_settings_info`) tells which way the lines were placed. Only when the plain lyrics cannot be aligned either do the words come from remote speech-to-text (`--remote_stt`) or the transcription. When the transcription runs, the plain lyrics also **post-correct** its words by comparing them against the verified lyrics text, improving recall by ~5 percentage points.
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used.
 
