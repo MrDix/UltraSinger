@@ -94,6 +94,38 @@ class TestParseLrcSyncedLyrics:
         assert segs[0]["text"] == "Oh-oh-oh-oh-oh"
         assert segs[1]["text"] == "Ooh, ooh, ooh-ooh-ooh"
 
+    def test_line_with_several_times_is_sung_at_each(self):
+        lrc = "[00:10.00][01:30.00] Chorus line\n[00:20.00] Verse line\n[01:40.00] Last line"
+        segs = parse_lrc_synced_lyrics(lrc)
+        assert [(s["start"], s["text"]) for s in segs] == [
+            (10.0, "Chorus line"), (20.0, "Verse line"), (90.0, "Chorus line"), (100.0, "Last line")]
+        assert segs[1]["end"] == pytest.approx(90.0)
+
+    def test_word_times_of_enhanced_lrc_are_left_out(self):
+        segs = parse_lrc_synced_lyrics("[00:12.00] <00:12.00>Hello <00:12.50>world <00:13.10>")
+        assert segs[0]["text"] == "Hello world"
+
+    def test_other_tags_are_not_sung(self):
+        lrc = "[ar:Artist]\n[ti:Song Title]\n[length:03:20]\n[00:10.00][Chorus]\n" \
+              "[00:12.00] [Verse 2] Hello (oh) world\n[Bridge]\n[00:14.00][Pre-Chorus x2] Again\n" \
+              "[00:16.00] [Verse 1: Artist] [offset:+100] Last"
+        segs = parse_lrc_synced_lyrics(lrc)
+        assert [s["text"] for s in segs] == ["Hello \x00oh world", "Again", "Last"]
+        assert segs[0]["start"] == pytest.approx(12.0)
+
+    def test_backing_vocal_at_the_start_of_a_line_is_sung(self):
+        lrc = "[00:12.00] [oh yeah] Hello world\n[00:14.00][Hey] come on\n[00:16.00] [Chorus] [ooh] la"
+        segs = parse_lrc_synced_lyrics(lrc)
+        assert [s["text"] for s in segs] == [
+            "\x00oh \x00yeah Hello world", "\x00Hey come on", "\x00ooh la"]
+
+    def test_labels_after_a_backing_vocal_are_not_sung(self):
+        lrc = "[00:12.00] [oh yeah] [Chorus] text\n[00:14.00] (la) [Intro]\n" \
+              "[00:16.00] [oh] [ar:Artist] [Verse 2] (ooh) go"
+        segs = parse_lrc_synced_lyrics(lrc)
+        assert [s["text"] for s in segs] == [
+            "\x00oh \x00yeah text", "\x00la", "\x00oh \x00ooh go"]
+
 
 # ---------------------------------------------------------------------------
 # Pitch assignment
@@ -609,6 +641,32 @@ class TestAlignLyricsToAudioLanguageModel:
 
         load_model.assert_called_once_with(language_code="de", device="cpu", model_name=None)
         assert [w["word"] for w in words] == ["hallo", "welt"]
+
+    @patch("whisperx.load_audio")
+    def test_only_the_model_load_may_unpickle(self, mock_load_audio, tmp_path):
+        """The alignment model loads as before PyTorch 2.6; afterwards torch.load
+        refuses to unpickle objects again (weights_only)."""
+        import pickle
+        from fractions import Fraction
+
+        path = tmp_path / "model.bin"
+        torch.save({"value": Fraction(1, 3)}, path)  # weights_only=True refuses a Fraction
+        segments = [{"text": "hello", "start": 0.0, "end": 5.0}]
+        model, audio = fake_song(segments, [0.5], 5.0)
+        mock_load_audio.return_value = audio
+        loaded = []
+
+        def load_align_model(*args, **kwargs):
+            loaded.append(torch.load(path))
+            return model, METADATA
+
+        with patch("whisperx.load_align_model", new=load_align_model):
+            align_lyrics_to_audio(segments, "/fake/audio.wav", "en", device="cpu")
+
+        assert loaded == [{"value": Fraction(1, 3)}]
+        assert torch.load is torch.serialization.load
+        with pytest.raises(pickle.UnpicklingError):
+            torch.load(path)
 
     @patch("whisperx.load_audio")
     @patch("whisperx.load_align_model")

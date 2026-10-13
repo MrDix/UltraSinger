@@ -54,13 +54,15 @@ def _source_key(path: str) -> str:
     return hashlib.sha256(f"{os.path.abspath(path)}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8")).hexdigest()[:16]
 
 
-def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOKE_MODEL) -> str:
+def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOKE_MODEL,
+                        force_cpu: bool = False) -> str:
     """Path of the lead-vocal stem of ``vocals_path`` (separated once, then cached).
 
     The cache entry is keyed to the vocal file, so a cache folder shared by
     several songs never hands one song's lead stem to another. Raises
     ``NotEnoughGpuMemory`` instead of separating when the GPU has less than
-    ``MIN_FREE_GPU_BYTES`` free, or its free memory cannot be read.
+    ``MIN_FREE_GPU_BYTES`` free, or its free memory cannot be read. With
+    ``force_cpu`` (--force_cpu) it separates on the CPU.
     """
     out_dir = os.path.join(cache_folder, "lead_vocal", os.path.splitext(model)[0], _source_key(vocals_path))
     lead_path = os.path.join(out_dir, "lead.wav")
@@ -68,7 +70,8 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
         return lead_path
     release_gpu_memory()
     try:
-        free = free_gpu_memory()
+        # On the CPU the separation needs no GPU memory
+        free = None if force_cpu else free_gpu_memory()
     except RuntimeError as e:
         # A GPU whose memory cannot be read may well be short of it
         raise NotEnoughGpuMemory(f"the free GPU memory could not be read ({e})") from e
@@ -78,11 +81,10 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
                                      f"about {MIN_FREE_GPU_BYTES / 2 ** 30:.1f} GB; with less it would run in "
                                      f"shared system memory and take very long")
         print(f"{ULTRASINGER_HEAD} Lead-vocal separation with {free / 2 ** 30:.1f} GB of GPU memory free")
-    from audio_separator.separator import Separator  # type: ignore[import-untyped]
+    from modules.Audio.separation import create_separator
 
     os.makedirs(out_dir, exist_ok=True)
-    separator = Separator(output_dir=out_dir, output_format="WAV", sample_rate=44100,
-                          normalization_threshold=0.9)
+    separator = create_separator(out_dir, force_cpu)
     separator.load_model(model_filename=model)
     separator.separate(vocals_path, custom_output_names={"Vocals": "lead", "Instrumental": "backing"})
     if not os.path.isfile(lead_path):
@@ -90,9 +92,9 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
     return lead_path
 
 
-def lead_vocal_analysis(vocals_path: str, cache_folder: str) -> tuple[str, VocalAnalysis]:
+def lead_vocal_analysis(vocals_path: str, cache_folder: str, force_cpu: bool = False) -> tuple[str, VocalAnalysis]:
     """Path and pitch/feature analysis of the lead-vocal stem."""
     from modules.Segmentation.features import analyse_vocal, load_vocal
 
-    lead_path = separate_lead_vocal(vocals_path, cache_folder)
+    lead_path = separate_lead_vocal(vocals_path, cache_folder, force_cpu=force_cpu)
     return lead_path, analyse_vocal(load_vocal(lead_path))

@@ -37,7 +37,8 @@ class LeadStem(NamedTuple):
     reliable: bool    # kept most of the singing: note pitches come from it, else it only checks them
 
 
-def _lead_pitch(vocal_analysis, vocals_path: str, cache_folder: str | None) -> LeadStem | None:
+def _lead_pitch(vocal_analysis, vocals_path: str, cache_folder: str | None,
+                force_cpu: bool = False) -> LeadStem | None:
     """The lead-vocal stem, or ``None`` when it could not be made."""
     from modules.Segmentation.lead_vocal import (
         MIN_VOICED_RATIO, NotEnoughGpuMemory, choose_pitch_source, lead_vocal_analysis,
@@ -45,7 +46,7 @@ def _lead_pitch(vocal_analysis, vocals_path: str, cache_folder: str | None) -> L
 
     try:
         folder = cache_folder or os.path.dirname(vocals_path)
-        lead_path, lead_analysis = lead_vocal_analysis(vocals_path, folder)
+        lead_path, lead_analysis = lead_vocal_analysis(vocals_path, folder, force_cpu=force_cpu)
         lead, ratio = choose_pitch_source(vocal_analysis, lead_analysis)
     except NotEnoughGpuMemory as e:
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} lead-vocal pitch skipped: {e} "
@@ -85,6 +86,7 @@ def segment_with_model(
     device: str = "cpu",
     lead_vocal_pitch: bool = False,
     cache_folder: str | None = None,
+    force_cpu: bool = False,
 ) -> ModelSegmentation | None:
     """Predict notes on the separated vocal and place the existing lyrics onto them.
 
@@ -93,9 +95,10 @@ def segment_with_model(
     no notes found, any error) so the caller keeps the original segments.
 
     With ``lead_vocal_pitch`` the vocal stem is also split into lead and backing
-    vocals (cached in ``cache_folder``); the lead stem's pitch is used for the
-    notes when it kept most of the singing (see ``lead_vocal``), otherwise it only
-    serves as a second opinion on the vocal stem's pitches. The result names the
+    vocals (cached in ``cache_folder``; on the CPU with ``force_cpu``); the lead
+    stem's pitch is used for the notes when it kept most of the singing (see
+    ``lead_vocal``), otherwise it only serves as a second opinion on the vocal
+    stem's pitches. The result names the
     stem the pitches came from, so later steps that compare the notes with the
     singing can use the same one. Notes that their pitch track covers well keep
     their pitch in the later pitch refinement (see ``lock_pitches``).
@@ -126,7 +129,7 @@ def segment_with_model(
         model, decode_cfg = _get_model(model_path, device)
         analysis = analyse_vocal(vocal)
         probs, onset = predict(model, model_input(analysis), device)
-        lead = _lead_pitch(analysis, vocals_path, cache_folder) if lead_vocal_pitch else None
+        lead = _lead_pitch(analysis, vocals_path, cache_folder, force_cpu) if lead_vocal_pitch else None
         use_lead = lead is not None and lead.reliable
         pitch_audio_path = lead.path if use_lead else vocals_path
         notes = decode_notes(probs, onset, analysis,

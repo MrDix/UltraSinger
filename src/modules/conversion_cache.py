@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+from modules.os_helper import utf16_prefix
+
 # Name ending of the cache folders
 FOLDER_SUFFIX = ".ultrasinger"
 # File in every cache folder made here: only folders with it are ever removed
@@ -27,8 +29,8 @@ MARKER = ".ultrasinger-cache"
 # A conversion that was cancelled or crashed leaves its cache folder behind. It
 # is removed when nothing in it has changed for longer than a conversion takes.
 STALE_AFTER_S = 24 * 3600
-# Characters of the song name in a folder name (short paths stay below the
-# Windows path length limit).
+# Characters of the song name in a folder name, counted as Windows counts them
+# (see os_helper.utf16_len): short paths stay below the Windows path length limit.
 NAME_CHARS = 40
 # Hex characters of a content key (see content_key): 64 bits, so two different
 # inputs never share a key. The longest path in a cache folder stays that of the
@@ -50,7 +52,7 @@ def create(song_name: str, root: str | None = None) -> str:
     base = Path(root) if root else default_root()
     base.mkdir(parents=True, exist_ok=True)
     remove_stale_folders(base)
-    name = song_name[:NAME_CHARS].strip(" .")
+    name = utf16_prefix(song_name, NAME_CHARS).strip(" .")
     prefix = f"{name} " if name else ""
     for _ in range(100):
         folder = base / f"{prefix}{secrets.token_hex(4)}{FOLDER_SUFFIX}"

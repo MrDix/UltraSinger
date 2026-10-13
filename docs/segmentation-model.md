@@ -86,6 +86,9 @@ uv run python src/UltraSinger.py -i "Artist - Title.mp4" --segmentation_model_re
 * The model is cached per user (`%LOCALAPPDATA%\UltraSinger\models` on Windows,
   `~/.cache/ultrasinger/models` elsewhere) and only downloaded again when the
   file in the repository changed. Without network access the cached copy is used.
+  A download is only kept when it arrived complete (its size and SHA match the
+  file in the repository) and loads as a model; a cached copy that no longer
+  matches is downloaded again.
 * A local `--segmentation_model` file takes precedence.
 
 In the GUI: **Model Repository** and **Repository Token** below Segmentation

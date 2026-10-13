@@ -12,7 +12,10 @@ from src.modules.Midi.midi_creator import (
     correct_octave_outliers,
     correct_vocal_center,
     confidence_weighted_median_note,
+    create_midi_segments_from_transcribed_data,
+    find_nearest_index,
 )
+from src.modules.Pitcher.pitched_data import PitchedData
 
 
 class TestCorrectGlobalOctave(unittest.TestCase):
@@ -797,6 +800,55 @@ class TestConfidenceWeightedMedianNote(unittest.TestCase):
         note = confidence_weighted_median_note(freqs, weights)
         # The high-weight A4 (440 Hz) should win
         self.assertEqual(note, "A4")
+
+
+def _searchsorted_nearest(array, value):
+    """The former find_nearest_index (np.searchsorted), to compare results with."""
+    idx = int(np.searchsorted(array, value, side="left"))
+    if idx > 0 and (idx == len(array) or abs(value - array[idx - 1]) < abs(value - array[idx])):
+        return idx - 1
+    return idx
+
+
+class _CountingTimes:
+    """A sequence of frame times that counts how many of them are read."""
+
+    def __init__(self, times):
+        self._times = times
+        self.reads = 0
+
+    def __len__(self):
+        return len(self._times)
+
+    def __getitem__(self, index):
+        self.reads += 1
+        return self._times[index]
+
+
+class TestFindNearestIndex(unittest.TestCase):
+    """find_nearest_index: same results as before, without copying the frame times."""
+
+    def test_same_results_as_searchsorted(self):
+        rng = np.random.default_rng(7)
+        times = [i * 0.016 for i in range(500)]
+        values = [-1.0, 0.0, 0.008, 0.016, 3.0, times[-1], times[-1] + 1.0]
+        values += list(rng.uniform(-0.5, 9.0, 300))
+        for value in values:
+            self.assertEqual(find_nearest_index(times, value), _searchsorted_nearest(times, value), value)
+        self.assertEqual(find_nearest_index([], 1.0), 0)
+
+    def test_reads_only_a_few_frame_times(self):
+        # Copying all frame times on every call made note creation quadratic
+        # (minutes for a long recording)
+        times = _CountingTimes([i * 0.016 for i in range(100_000)])
+        self.assertEqual(find_nearest_index(times, 800.004), 50_000)
+        self.assertLess(times.reads, 100)
+
+
+class TestCreateMidiSegmentsFromTranscribedData(unittest.TestCase):
+    def test_empty_transcription_gives_no_notes(self):
+        pitched = PitchedData([0.0, 0.016], [440.0, 440.0], [0.9, 0.9])
+        self.assertEqual(create_midi_segments_from_transcribed_data([], pitched), [])
 
 
 if __name__ == "__main__":

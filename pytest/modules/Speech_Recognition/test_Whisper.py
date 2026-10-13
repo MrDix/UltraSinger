@@ -79,7 +79,25 @@ class ConvertToTranscribedDataTest(unittest.TestCase):
         self.act_and_assert("1, 2, 3, 4, 5","uno, dos, tres, cuatro, cinco","es")
         self.act_and_assert("Tengo un millón de dólares y 2 centavos","Tengo un millón de dólares y dos centavos","es")
         self.act_and_assert("Hola mundo 1, 2!. 3. 4? Prueba 100#","Hola mundo uno, dos!. tres. cuatro? Prueba cien#","es")
-        
+
+    def test_number_to_words_converts_only_numbers(self):
+        # words are never read as numbers
+        self.act_and_assert("True or False, None of it", "True or False, None of it")
+        # thousands separators, also with decimals after the other separator
+        self.act_and_assert("1,000 times", "one thousand times")
+        self.act_and_assert("1.000.000 Mal", "eine Million Mal", "de")
+        self.act_and_assert("1,000.50 dollars", "one thousand point five dollars")
+        self.act_and_assert("1.000,05 Euro", "eintausend Komma null fünf Euro", "de")
+        # ordinals in English, other words with digits stay as they are
+        self.act_and_assert("the 1st and the 22nd time", "the first and the twenty-second time")
+        self.act_and_assert("back in the 80s with an mp3", "back in the 80s with an mp3")
+        self.act_and_assert("der 1st", "der 1st", "de")
+        # lists without spaces, one number after the other
+        self.act_and_assert("1,2,3", "one,two,three")
+
+    def test_number_to_words_keeps_numbers_of_unknown_languages(self):
+        self.act_and_assert("我有 3 个", "我有 3 个", "zh")
+        self.act_and_assert("1 2 3", "1 2 3", "yue")
 
     def act_and_assert(self, text, expected_output, language="en"):
         # Act
@@ -195,6 +213,133 @@ class DetectLanguageFromAudioTest(unittest.TestCase):
         result = detect_language_from_audio("/fake/audio.wav")
 
         self.assertEqual(result, "en")
+
+    @patch("faster_whisper.WhisperModel")
+    @patch("whisperx.load_audio")
+    def test_uses_the_compute_type_of_the_transcription(self, mock_load_audio, mock_fw_model_cls):
+        import numpy as np
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+        mock_fw_model_cls.return_value.detect_language.return_value = ("de", 0.9, [("de", 0.9)])
+
+        detect_language_from_audio("/fake/audio.wav", device="cuda", compute_type="int8")
+        self.assertEqual(mock_fw_model_cls.call_args.kwargs["compute_type"], "int8")
+        detect_language_from_audio("/fake/audio.wav", device="cuda")
+        self.assertEqual(mock_fw_model_cls.call_args.kwargs["compute_type"], "float16")
+
+    @patch("faster_whisper.WhisperModel")
+    @patch("whisperx.load_audio")
+    def test_gpu_without_float16_falls_back(self, mock_load_audio, mock_fw_model_cls):
+        """On older GPUs without efficient float16 the detection must still
+        work, or the synced-lyrics fast path is lost."""
+        import numpy as np
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+        model = MagicMock()
+        model.detect_language.return_value = ("de", 0.9, [("de", 0.9)])
+
+        def create(name, device, compute_type):
+            if compute_type == "float16":
+                raise ValueError("Requested float16 compute type, but the target device or backend "
+                                 "do not support efficient float16 computation.")
+            return model
+
+        mock_fw_model_cls.side_effect = create
+
+        self.assertEqual(detect_language_from_audio("/fake/audio.wav", device="cuda"), "de")
+        self.assertEqual(mock_fw_model_cls.call_args.kwargs["compute_type"], "auto")
+
+
+class TorchLoadOverrideTest(unittest.TestCase):
+    """torch.load unpickles any object only while WhisperX loads its own models;
+    everything else (such as a downloaded segmentation model) keeps weights_only."""
+
+    def setUp(self):
+        import os
+        import tempfile
+        import torch
+        from fractions import Fraction
+
+        fd, self.path = tempfile.mkstemp(suffix=".pt")
+        os.close(fd)
+        self.addCleanup(os.remove, self.path)
+        # a Fraction is no tensor or plain value: weights_only=True refuses to unpickle it
+        self.value = Fraction(1, 3)
+        torch.save({"value": self.value}, self.path)
+
+    def load(self, **kwargs):
+        import torch
+        return torch.load(self.path, **kwargs)
+
+    def assert_torch_load_is_safe(self):
+        import pickle
+        import torch
+
+        self.assertIs(torch.load, torch.serialization.load)
+        with self.assertRaises(pickle.UnpicklingError):
+            self.load(weights_only=True)
+        with self.assertRaises(pickle.UnpicklingError):
+            self.load()  # the default of PyTorch 2.6+
+
+    def test_import_leaves_torch_load_alone(self):
+        import modules.Speech_Recognition.Whisper  # noqa: F401 - both names the module is imported under
+        import src.modules.Speech_Recognition.Whisper  # noqa: F401
+        self.assert_torch_load_is_safe()
+
+    @patch("whisperx.align")
+    @patch("whisperx.load_align_model")
+    @patch("whisperx.load_audio")
+    @patch("whisperx.load_model")
+    def test_only_whisperx_models_are_unpickled(
+        self, mock_load_model, mock_load_audio, mock_load_align_model, mock_align
+    ):
+        import pickle
+        import numpy as np
+
+        loaded = {}
+
+        def load_model(*args, **kwargs):
+            loaded["vad"] = self.load()  # older pyannote versions do not pass weights_only
+            with self.assertRaises(pickle.UnpicklingError):
+                self.load(weights_only=True)  # an explicit choice is kept
+            model = MagicMock()
+            model.transcribe.return_value = {"segments": [{"text": "la", "start": 0.0, "end": 1.0}],
+                                             "language": "en"}
+            return model
+
+        def load_align_model(*args, **kwargs):
+            loaded["align"] = self.load()
+            return MagicMock(), {}
+
+        mock_load_model.side_effect = load_model
+        mock_load_align_model.side_effect = load_align_model
+        mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
+        mock_align.return_value = {"segments": []}
+
+        transcribe_with_whisper("/fake/audio.wav", WhisperModel.TINY, device="cpu")
+
+        self.assertEqual(loaded, {"vad": {"value": self.value}, "align": {"value": self.value}})
+        self.assert_torch_load_is_safe()
+
+    @patch("whisperx.load_audio")
+    @patch("whisperx.load_model")
+    def test_restored_when_the_model_load_fails(self, mock_load_model, mock_load_audio):
+        mock_load_model.side_effect = RuntimeError("no model")
+        with self.assertRaises(RuntimeError):
+            transcribe_with_whisper("/fake/audio.wav", WhisperModel.TINY, device="cpu")
+        self.assert_torch_load_is_safe()
+
+
+class TranscribeWithWhisperErrorsTest(unittest.TestCase):
+    """Errors reach the caller as they are, also without a message."""
+
+    @patch("whisperx.load_audio")
+    @patch("whisperx.load_model")
+    def test_errors_without_arguments_are_passed_on(self, mock_load_model, mock_load_audio):
+        for error in (RuntimeError(), ValueError()):
+            with self.subTest(error=type(error).__name__):
+                mock_load_model.side_effect = error
+                with self.assertRaises(type(error)) as raised:
+                    transcribe_with_whisper("/fake/audio.wav", WhisperModel.TINY, device="cpu")
+                self.assertIs(raised.exception, error)
 
 
 class TranscribeWithWhisperAlignModelTest(unittest.TestCase):

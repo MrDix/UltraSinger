@@ -30,19 +30,18 @@ def __export_chunks_from_transcribed_data(
         f"{ULTRASINGER_HEAD} Export transcribed data as vocal chunks wav files"
     )
 
-    wave_file = wave.open(audio_filename, "rb")
-    sample_rate, n_channels = wave_file.getparams()[2], wave_file.getparams()[0]
+    with wave.open(audio_filename, "rb") as wave_file:
+        sample_rate = wave_file.getframerate()
 
-    for i, data in enumerate(transcribed_data):
-        start_byte = int(data.start * sample_rate * n_channels)
-        end_byte = int(data.end * sample_rate * n_channels)
+        for i, data in enumerate(transcribed_data):
+            # Positions are frames: one sample of each channel
+            start_frame = int(data.start * sample_rate)
+            end_frame = int(data.end * sample_rate)
 
-        chunk = __get_chunk(end_byte, start_byte, wave_file)
-        __export_chunk_to_wav_file(
-            chunk, output_folder_name, i, data.word, wave_file
-        )
-
-    wave_file.close()
+            chunk = __get_chunk(end_frame, start_frame, wave_file)
+            __export_chunk_to_wav_file(
+                chunk, output_folder_name, i, data.word, wave_file
+            )
 
 
 def __export_chunks_from_ultrastar_data(
@@ -53,20 +52,21 @@ def __export_chunks_from_ultrastar_data(
 
     create_folder(folder_name)
 
-    wave_file = wave.open(audio_filename, "rb")
-    sample_rate, n_channels = wave_file.getparams()[2], wave_file.getparams()[0]
+    with wave.open(audio_filename, "rb") as wave_file:
+        sample_rate = wave_file.getframerate()
 
-    for i, note_line in enumerate(ultrastar_data.UltrastarNoteLines):
-        start_time = get_start_time_from_ultrastar(ultrastar_data, i)
-        end_time = get_end_time_from_ultrastar(ultrastar_data, i)
+        for i, note_line in enumerate(ultrastar_data.UltrastarNoteLines):
+            start_time = get_start_time_from_ultrastar(ultrastar_data, i)
+            end_time = get_end_time_from_ultrastar(ultrastar_data, i)
 
-        start_byte = int(start_time * sample_rate * n_channels)
-        end_byte = int(end_time * sample_rate * n_channels)
+            # Positions are frames: one sample of each channel
+            start_frame = int(start_time * sample_rate)
+            end_frame = int(end_time * sample_rate)
 
-        chunk = __get_chunk(end_byte, start_byte, wave_file)
-        __export_chunk_to_wav_file(
-            chunk, folder_name, i, note_line.word, wave_file
-        )
+            chunk = __get_chunk(end_frame, start_frame, wave_file)
+            __export_chunk_to_wav_file(
+                chunk, folder_name, i, note_line.word, wave_file
+            )
 
 
 def __export_chunk_to_wav_file(chunk, folder_name: str, i: int, word: str, wave_file) -> None:
@@ -82,15 +82,16 @@ def __export_chunk_to_wav_file(chunk, folder_name: str, i: int, word: str, wave_
         chunk_file.writeframes(chunk)
 
 
-def __get_chunk(end_byte: int, start_byte: int, wave_file):
+def __get_chunk(end_frame: int, start_frame: int, wave_file):
     """
     Gets the chunk from wave file.
     Returns chunk as n frames of audio, as a bytes object.
     """
 
-    # todo: get out of position error message
-    wave_file.setpos(start_byte)  # ({:.2f})
-    chunk = wave_file.readframes(end_byte - start_byte)
+    # A note after the end of the audio gets an empty chunk, not an error
+    start_frame = min(max(start_frame, 0), wave_file.getnframes())
+    wave_file.setpos(start_frame)
+    chunk = wave_file.readframes(max(end_frame - start_frame, 0))
     return chunk
 
 
@@ -121,6 +122,7 @@ def create_audio_chunks_from_ultrastar_data(
     """Create audio chunks from Ultrastar data."""
     audio_chunks_path = __get_chunk_path(process_data_paths.cache_folder_path)
 
+    # The vocal wav, as for transcribed data: the song's audio file is mp3, ogg, ...
     __export_chunks_from_ultrastar_data(
-        process_data_paths.audio_output_file_path, ultrastar_class, audio_chunks_path
+        process_data_paths.whisper_audio_path, ultrastar_class, audio_chunks_path
     )
