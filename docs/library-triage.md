@@ -91,6 +91,25 @@ while an editor saves it). Such songs are logged as `error` and stay where they
 are; the next run checks them again. If `ffprobe` is found but does not work at
 all, the run stops before it checks any song.
 
+The `reason` column of an `error` row in the CSV starts with one of these:
+
+| Reason | Meaning |
+| --- | --- |
+| `txt_unreadable` | The chart could not be read when the song was checked (locked, no permission, deleted). |
+| `txt_unchecked` | A `.txt` in the folder could not be read while the library was scanned. |
+| `txt_changed` | The chart changed since the scan, or no longer looks like a chart (e.g. it was being saved). |
+| `parse_failed` | Reading the chart failed for a reason that says nothing about the chart (e.g. not enough memory). |
+| `folder_unreadable` | The song folder could not be listed to look for the audio. |
+| `audio_unreadable` | The audio file could not be opened (locked, no permission). |
+| `ffprobe_failed` | `ffprobe` did not start, timed out, crashed or printed nothing usable. |
+| `contains_song_folders_skipped` | The folder failed a check but holds other song folders, so it is not moved. Check it by hand. |
+| `not_moved` | The folder could not be checked for song folders inside it, so it is not moved. |
+| `target_exists_skipped` | Something with the same name already exists in `<corrupt_dir>`; nothing is overwritten. |
+| `move_failed` | The move itself failed (e.g. a file in use); the song stays. |
+| `stage2_exception` | Stage 2 failed (separation, scoring, unreadable audio); no score, so no move. |
+| `refusing to move source_dir root itself` | `<source_dir>` is itself a song folder; it is never moved. |
+| `unexpected_error` | Anything else went wrong while the song was checked. |
+
 ---
 
 ## Stage 2 — vocal-score check (optional, `--stage2`, uses the GPU)

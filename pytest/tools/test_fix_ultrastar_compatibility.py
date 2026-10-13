@@ -101,6 +101,24 @@ class TestAtomicRewrite:
         assert txt.read_bytes() == b"#TITLE:Title\r\n#MP3:song.mp3\r\n#BPM:300\r\n: 0 4 60 la\r\nE\r\n"
         assert sorted(p.name for p in txt.parent.iterdir()) == ["song.mp3", "song.txt"]
 
+    def test_read_only_chart_leaves_no_temporary_file(self, tmp_path):
+        """On Windows a read-only chart can't be replaced; the copy that got the
+        chart's read-only mode must still be cleaned up."""
+        txt = _song(tmp_path, ["#TITLE:Title", "#COMMENT:x", "#MP3:song.mp3", "#BPM:300", ": 0 4 60 la", "E"])
+        original = txt.read_bytes()
+        txt.chmod(stat.S_IREAD)
+        try:
+            try:
+                fx.remove_non_standard_tags(txt)
+            except PermissionError:
+                assert txt.read_bytes() == original  # Windows: not replaced, untouched
+            else:
+                assert b"#COMMENT" not in txt.read_bytes()  # POSIX: replaced, mode kept
+                assert not stat.S_IMODE(txt.stat().st_mode) & stat.S_IWUSR
+            assert sorted(p.name for p in txt.parent.iterdir()) == ["song.mp3", "song.txt"]
+        finally:
+            txt.chmod(stat.S_IREAD | stat.S_IWRITE)
+
     @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
     def test_file_mode_kept(self, tmp_path):
         txt = _song(tmp_path, ["#TITLE:Title", "#COMMENT:x", "#MP3:song.mp3", "#BPM:300", ": 0 4 60 la", "E"])
@@ -318,6 +336,22 @@ class TestRename:
         assert result.status == "error"
         assert sorted(p.name for p in txt.parent.iterdir()) == ["song.txt", "song.us3"]
         assert "#MP3:song.us3" in txt.read_text(encoding="utf-8")
+
+    def test_failed_mode_restore_leaves_chart_and_file_as_they_were(self, tmp_path, monkeypatch):
+        """The chart's file mode can't be set (e.g. a mount that refuses it):
+        the chart must stay untouched, so undoing the rename keeps them in step."""
+        txt = _song(tmp_path, self.LINES, files=("song.us3",))
+        original = txt.read_bytes()
+
+        def no_mode_change(path, mode, *a, **k):
+            raise PermissionError(1, "Operation not permitted")
+        monkeypatch.setattr(fx.os, "chmod", no_mode_change)
+
+        result = fx.process_song(fx.parse_song_info(txt), None, dry_run=False)
+
+        assert result.status == "error"
+        assert txt.read_bytes() == original  # still #MP3:song.us3
+        assert sorted(p.name for p in txt.parent.iterdir()) == ["song.txt", "song.us3"]
 
     def test_rollback_never_replaces_a_file_that_appeared(self, tmp_path, monkeypatch):
         txt = _song(tmp_path, self.LINES, files=("song.us3",))

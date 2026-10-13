@@ -134,7 +134,8 @@ def _write_txt_atomic(path: Path, lines: list[str], encoding: str) -> None:
     The text goes to a temporary file in the same folder, is flushed to the
     disk and then replaces the chart in one step (``os.replace``): a full
     disk, an encoding error or a killed process leaves either the old or the
-    new chart, never a truncated one. The file mode is kept.
+    new chart, never a truncated one. The file mode is kept; it is set on the
+    temporary file first, so any failure leaves the chart untouched.
     """
     mode = stat.S_IMODE(path.stat().st_mode)
     # A short name: the chart's own path may already be close to the length limit.
@@ -145,9 +146,13 @@ def _write_txt_atomic(path: Path, lines: list[str], encoding: str) -> None:
             f.writelines(lines)
             f.flush()
             os.fsync(f.fileno())
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
-        os.chmod(path, mode)
     except BaseException:
+        try:
+            os.chmod(tmp, stat.S_IREAD | stat.S_IWRITE)  # Windows cannot delete a read-only file
+        except OSError:
+            pass
         try:
             tmp.unlink(missing_ok=True)
         except OSError:
