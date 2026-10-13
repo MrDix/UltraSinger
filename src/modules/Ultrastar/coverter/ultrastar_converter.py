@@ -90,8 +90,9 @@ def get_end_time(gap: str, ultrastar_bpm: str, startBeat: float, duration: float
 
 
 def __convert_gap(gap: str) -> float:
-    gap = float(gap.replace(",", ".")) / 1000
-    return gap
+    # A chart without (or with an empty) #GAP starts at 0
+    gap = (gap or "").strip().replace(",", ".")
+    return float(gap) / 1000 if gap else 0.0
 
 
 def __convert_bpm(ultrastar_bpm: str) -> float:

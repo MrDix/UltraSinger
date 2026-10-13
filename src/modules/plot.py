@@ -297,7 +297,9 @@ def __plot_spectrogram(audio_seperation_path: str,
 
 
 def create_plots(process_data: ProcessData, output_folder_path: str) -> None:
-    __plot_spectrogram(process_data.process_data_paths.vocals_audio_file_path, output_folder_path, "vocals.wav")
+    # The vocals stem only exists when the vocals were separated
+    if os.path.isfile(process_data.process_data_paths.vocals_audio_file_path or ""):
+        __plot_spectrogram(process_data.process_data_paths.vocals_audio_file_path, output_folder_path, "vocals.wav")
     __plot_spectrogram(process_data.process_data_paths.processing_audio_path, output_folder_path,
                      "processing audio")
     plot(process_data.pitched_data, output_folder_path, process_data.midi_segments)

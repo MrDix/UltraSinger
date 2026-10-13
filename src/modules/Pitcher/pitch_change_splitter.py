@@ -5,6 +5,7 @@ this module splits the note into sub-notes at the pitch change
 boundaries instead of averaging to a single flat note.
 """
 
+import copy
 from typing import Optional
 
 import librosa
@@ -14,6 +15,7 @@ from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Pitcher.pitched_data_helper import get_frequencies_with_high_confidence
 from modules.Midi.midi_creator import find_nearest_index, confidence_weighted_median_note
+from modules.Speech_Recognition.TranscribedData import TranscribedData
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 
 
@@ -372,13 +374,20 @@ def _merge_short_fragments(
                 # If current segment had trailing space, transfer it
                 if result[i].word.endswith(" ") and not result[best_neighbor].word.endswith(" "):
                     result[best_neighbor].word += " "
+                # The line break after the note goes with its end
+                if result[i].line_break_after:
+                    result[best_neighbor].line_break_after = True
                 result.pop(i)
             else:
                 # Merge into next: extend next start, keep next's word
                 result[best_neighbor].start = result[i].start
-                # If this was the first segment with actual text, transfer text
+                # If this was the first segment with actual text, transfer text,
+                # keeping the space that ends the word (it went to the last part)
                 if result[i].word != "~":
-                    result[best_neighbor].word = result[i].word
+                    word = result[i].word
+                    if result[best_neighbor].word.endswith(" ") and not word.endswith(" "):
+                        word += " "
+                    result[best_neighbor].word = word
                 result.pop(i)
 
             changed = True
@@ -423,8 +432,64 @@ def split_notes_at_pitch_changes(
     if not midi_segments:
         return midi_segments
 
+    return [
+        sub_segment
+        for sub_segments in _split_each_segment(
+            midi_segments, pitched_data, min_semitone_change,
+            min_note_duration_ms, median_filter_window,
+        )
+        for sub_segment in sub_segments
+    ]
+
+
+def split_notes_and_words_at_pitch_changes(
+    midi_segments: list[MidiSegment],
+    transcribed_data: list[TranscribedData],
+    pitched_data: PitchedData,
+    min_semitone_change: float = 2.0,
+    min_note_duration_ms: float = 80.0,
+    median_filter_window: int = 9,
+) -> tuple[list[MidiSegment], list[TranscribedData]]:
+    """:func:`split_notes_at_pitch_changes` for notes made one per transcribed syllable.
+
+    Each syllable of *transcribed_data* is split along with its note, so the
+    two lists still pair up one to one: the merge of the syllable segments
+    that follows reads them by index.
+
+    Raises:
+        ValueError: If the lists do not have the same length.
+    """
+    if len(midi_segments) != len(transcribed_data):
+        raise ValueError(
+            f"{len(midi_segments)} notes but {len(transcribed_data)} transcribed "
+            "syllables - they must pair up one to one"
+        )
+
+    notes: list[MidiSegment] = []
+    words: list[TranscribedData] = []
+    for data, sub_segments in zip(
+        transcribed_data,
+        _split_each_segment(
+            midi_segments, pitched_data, min_semitone_change,
+            min_note_duration_ms, median_filter_window,
+        ),
+        strict=True,
+    ):
+        notes.extend(sub_segments)
+        words.extend(_split_syllable(data, sub_segments))
+    return notes, words
+
+
+def _split_each_segment(
+    midi_segments: list[MidiSegment],
+    pitched_data: PitchedData,
+    min_semitone_change: float,
+    min_note_duration_ms: float,
+    median_filter_window: int,
+) -> list[list[MidiSegment]]:
+    """The sub-notes each of *midi_segments* is split into, in order."""
     total_splits = 0
-    result: list[MidiSegment] = []
+    result: list[list[MidiSegment]] = []
 
     for segment in midi_segments:
         sub_segments = _split_single_segment(
@@ -438,7 +503,7 @@ def split_notes_at_pitch_changes(
         if len(sub_segments) > 1:
             total_splits += len(sub_segments) - 1
 
-        result.extend(sub_segments)
+        result.append(sub_segments)
 
     if total_splits > 0:
         print(
@@ -448,3 +513,26 @@ def split_notes_at_pitch_changes(
         )
 
     return result
+
+
+def _split_syllable(
+    data: TranscribedData,
+    sub_segments: list[MidiSegment],
+) -> list[TranscribedData]:
+    """The transcribed syllable *data* split like its note into *sub_segments*."""
+    if len(sub_segments) == 1:
+        return [data]
+
+    pieces: list[TranscribedData] = []
+    for k, sub_segment in enumerate(sub_segments):
+        piece = copy.copy(data)
+        piece.word = sub_segment.word
+        piece.start = sub_segment.start
+        piece.end = sub_segment.end
+        piece.is_hyphen = True
+        if k < len(sub_segments) - 1:
+            # The syllable goes on in the next piece
+            piece.is_word_end = False
+            piece.line_break_after = False
+        pieces.append(piece)
+    return pieces

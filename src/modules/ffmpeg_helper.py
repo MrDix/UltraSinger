@@ -39,6 +39,10 @@ def extract_audio(input_video_path: str, output_audio_path: str) -> None:
         ffmpeg_path,
         "-i",
         input_video_path,
+        # The first audio stream, whose codec get_audio_codec_and_extension names:
+        # ffmpeg itself takes the default one, else the one with the most channels
+        "-map",
+        "0:a:0",
         "-vn",  # No video
         "-acodec",
         "copy",  # Copy audio codec without re-encoding

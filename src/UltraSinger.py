@@ -3,6 +3,7 @@
 import copy
 import getopt
 import importlib.util
+import math
 import os
 import sys
 import warnings
@@ -47,6 +48,7 @@ from modules.Audio.silence_processing import remove_silence_from_transcription_d
 from modules.Audio.convert_audio import convert_audio_to_mono_wav, convert_audio_format
 from modules.Audio.video_platform import (
     download_from_video_platform,
+    strip_unmatched_suffixes,
 )
 from modules.Audio.bpm import get_bpm_from_file
 
@@ -76,7 +78,7 @@ from modules.Pitcher.Pitcher import (
     get_pitch_with_file,
 )
 from modules.Pitcher.pitched_data import PitchedData
-from modules.Pitcher.pitch_change_splitter import split_notes_at_pitch_changes
+from modules.Pitcher.pitch_change_splitter import split_notes_and_words_at_pitch_changes
 from modules.Speech_Recognition.TranscriptionResult import TranscriptionResult
 from modules.Speech_Recognition.hyphenation import (
     hyphenate_each_word,
@@ -255,13 +257,28 @@ def run() -> tuple[str, Score, Score]:
     if process_data.media_info.music_key is None:
         process_data.media_info.music_key = f"{detected_key} {detected_mode}"
 
+    # Remote speech-to-text replaces the local transcription: that only runs
+    # (as the fallback below) when neither found lyrics nor the remote text
+    # could be aligned
+    remote_first = (not settings.ignore_audio and settings.remote_stt
+                    and not settings.disable_reference_lyrics)
+
     # Audio transcription
-    # Language priority: --language CLI flag > video platform metadata > Whisper detect
+    # Language: --language, else the one the transcription detects (when it
+    # runs); until then, and when it is skipped, a fast detection with Whisper
+    # tiny, or the video platform metadata for synced lyrics without remote
+    # speech-to-text
     if settings.language is not None:
         process_data.media_info.language = settings.language
         print(
             f"{ULTRASINGER_HEAD} Language set: "
             f"{blue_highlighted(settings.language)} (--language)"
+        )
+    elif process_data.media_info.language and remote_first:
+        print(
+            f"{ULTRASINGER_HEAD} Video platform language metadata "
+            f"{blue_highlighted(process_data.media_info.language)} is not used with remote "
+            f"speech-to-text: the language is detected from the singing"
         )
     elif process_data.media_info.language:
         # Video platform metadata language already set by download_from_video_platform()
@@ -281,6 +298,7 @@ def run() -> tuple[str, Score, Score]:
     _initial_language = None  # tracks pre-correction language
     _reference_recovered = False  # tracks recovery after language correction
     _remote_stt_used = False  # tracks whether remote STT supplied the lyrics text
+    _plain_lyrics_used = False  # tracks whether aligned plain lyrics made the notes
 
     # Early LRCLIB lookup: if synced lyrics are available, we can skip the
     # expensive Whisper transcription entirely (~2 min saved per song).
@@ -296,36 +314,44 @@ def run() -> tuple[str, Score, Score]:
                 process_data.media_info.artist, process_data.media_info.title,
                 duration=audio_length(process_data.process_data_paths.whisper_audio_path),
             )
-            if early_lyrics_info is not None and early_lyrics_info.synced_lyrics:
+            early_synced = early_lyrics_info.synced_lyrics if early_lyrics_info is not None else None
+            # Plain lyrics are kept here when they can make the notes before a
+            # transcription: when the synced ones fail to align, or instead of
+            # the remote text. Otherwise the transcription's own lookup takes them.
+            early_plain = (early_lyrics_info.plain_lyrics
+                           if early_lyrics_info is not None and (early_synced or remote_first) else None)
+            if early_synced or early_plain:
                 # Detect language if not explicitly set and no video platform hint.
                 # Platform metadata is deliberately NOT trusted for rejecting
                 # lyrics: it reflects upload settings and is often a default
-                # (e.g. "en") for songs in other languages.
+                # (e.g. "en") for songs in other languages. With remote
+                # speech-to-text it is not used at all: no transcription replaces
+                # it later, and plain lyrics or the remote text have no line times
+                # that would show a wrong alignment.
                 language_is_confident = settings.language is not None
-                if process_data.media_info.language is None:
+                if (process_data.media_info.language is None
+                        or (remote_first and _lang_source == "video_platform")):
                     from modules.Speech_Recognition.Whisper import detect_language_with_confidence
                     process_data.media_info.language, probability = detect_language_with_confidence(
                         process_data.process_data_paths.whisper_audio_path,
                         device=settings.pytorch_device,
+                        compute_type=settings.whisper_compute_type,
                     )
                     language_is_confident = probability >= CONFIDENT_AUDIO_LANGUAGE
                     _lang_source = "whisper_fast"
+            if early_synced:
                 # Lyrics in another language than the (confidently known) sung
                 # language are another version of the song - aligning them
                 # would put wrong words onto the vocals.
                 use_lyrics, lyrics_language = check_lyrics_language(
-                    early_lyrics_info.synced_lyrics, process_data.media_info.language,
-                    language_is_confident,
+                    early_synced, process_data.media_info.language, language_is_confident,
                 )
                 if not use_lyrics:
-                    if _lang_source == "whisper_fast":
-                        # The full transcription below determines the language again
-                        _lang_source = "pending"
+                    process_data.synced_lyrics_other_language = lyrics_language
                     print(
                         f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the found synced lyrics are in "
                         f"{blue_highlighted(lyrics_language)}, not in the sung language "
-                        f"({blue_highlighted(process_data.media_info.language)}) — ignoring them and "
-                        f"transcribing with Whisper"
+                        f"({blue_highlighted(process_data.media_info.language)}) — ignoring them"
                     )
                 else:
                     if lyrics_language:
@@ -335,18 +361,46 @@ def run() -> tuple[str, Score, Score]:
                             f"{blue_highlighted(process_data.media_info.language)}; if the result is poor, "
                             f"set the language with --language"
                         )
-                    process_data.synced_lyrics = early_lyrics_info.synced_lyrics
+                    process_data.synced_lyrics = early_synced
                     whisper_skipped = True
                     print(
                         f"{ULTRASINGER_HEAD} "
                         f"{cyan_highlighted('Synced lyrics found — skipping the transcription')}"
                     )
+            if early_plain and (whisper_skipped or remote_first):
+                use_lyrics, lyrics_language = check_lyrics_language(
+                    early_plain, process_data.media_info.language, language_is_confident,
+                )
+                if use_lyrics:
+                    if lyrics_language:
+                        print(
+                            f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the plain lyrics look like "
+                            f"{blue_highlighted(lyrics_language)} while the song language was detected as "
+                            f"{blue_highlighted(process_data.media_info.language)}; if the result is poor, "
+                            f"set the language with --language"
+                        )
+                    process_data.plain_lyrics = early_plain
+                else:
+                    print(
+                        f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the found plain lyrics are in "
+                        f"{blue_highlighted(lyrics_language)}, not in the sung language "
+                        f"({blue_highlighted(process_data.media_info.language)}) — ignoring them"
+                    )
         except Exception as e:
             print(f"{ULTRASINGER_HEAD} Early lyrics lookup failed: {e}")
 
+    if remote_first and not whisper_skipped:
+        whisper_skipped = True
+        print(
+            f"{ULTRASINGER_HEAD} "
+            f"{cyan_highlighted('Remote speech-to-text is on — found lyrics or the remote text make the notes; the local transcription only runs when neither can be aligned')}"
+        )
+
     if not settings.ignore_audio and not whisper_skipped:
         lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
-        if _lang_source == "pending":
+        # Without --language, the language the transcription detected replaces
+        # the video platform metadata and the fast detection
+        if settings.language is None:
             _lang_source = "transcription"
 
     # Onset correction — snap note starts to audio onsets for better timing
@@ -456,6 +510,7 @@ def run() -> tuple[str, Score, Score]:
                 if plain_segments:
                     process_data.midi_segments = plain_segments
                     reference_first_used = True
+                    _plain_lyrics_used = True
                     process_data.transcribed_data = [
                         TranscribedData(
                             word=seg.word,
@@ -484,12 +539,14 @@ def run() -> tuple[str, Score, Score]:
                 # Local CTC alignment needs a language code; remote STT
                 # responses aren't guaranteed to include a reliable one,
                 # so fast-detect locally first (mirrors the early-LRCLIB
-                # synced-lyrics path above).
-                if process_data.media_info.language is None:
+                # synced-lyrics path above; video platform metadata is not
+                # trusted for it either)
+                if process_data.media_info.language is None or _lang_source == "video_platform":
                     from modules.Speech_Recognition.Whisper import detect_language_from_audio
                     process_data.media_info.language = detect_language_from_audio(
                         process_data.process_data_paths.whisper_audio_path,
                         device=settings.pytorch_device,
+                        compute_type=settings.whisper_compute_type,
                     )
                     _lang_source = "whisper_fast"
 
@@ -548,14 +605,16 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Falling back to local Whisper")
 
         if not reference_first_used:
-            # If Whisper was skipped but reference-first failed, run Whisper now
+            # If the transcription was skipped (synced lyrics found early, or
+            # remote speech-to-text) but nothing could be aligned, run it now
             if whisper_skipped:
                 print(f"{ULTRASINGER_HEAD} Running Whisper as fallback")
                 initial_language = process_data.media_info.language
                 _initial_language = initial_language
                 lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
                 whisper_skipped = False
-                _lang_source = "transcription"
+                if settings.language is None:
+                    _lang_source = "transcription"
 
                 # If Whisper detected a DIFFERENT language, retry the reference
                 # pipeline with the corrected language.  This recovers from
@@ -572,6 +631,10 @@ def run() -> tuple[str, Score, Score]:
                         f"— retrying reference pipeline"
                     )
                     try:
+                        # (the synced lyrics may only have been found by the transcription's lookup)
+                        from modules.Speech_Recognition.reference_lyrics_aligner import (
+                            create_midi_segments_from_reference_lyrics,
+                        )
                         ref_segments = create_midi_segments_from_reference_lyrics(
                             synced_lyrics=process_data.synced_lyrics,
                             audio_path=process_data.process_data_paths.whisper_audio_path,
@@ -603,30 +666,35 @@ def run() -> tuple[str, Score, Score]:
                     except Exception as e:
                         print(f"{ULTRASINGER_HEAD} Reference retry also failed: {e}")
 
-                # Run the intermediate steps we skipped
-                if settings.onset_correction:
-                    try:
-                        from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
-                        onset_times = detect_vocal_onsets(
-                            process_data.process_data_paths.whisper_audio_path
-                        )
-                        process_data.transcribed_data = snap_to_onsets(
-                            process_data.transcribed_data, onset_times
-                        )
-                    except Exception as e:
-                        print(f"{ULTRASINGER_HEAD} Onset correction skipped: {e}")
-                process_data.transcribed_data = split_syllables_into_segments(
-                    process_data.transcribed_data, process_data.media_info.bpm
-                )
-                if settings.vocal_gap_fill:
-                    try:
-                        from modules.Audio.vocal_gap_fill import fill_vocal_gaps
-                        process_data.transcribed_data = fill_vocal_gaps(
-                            process_data.transcribed_data, process_data.pitched_data
-                        )
-                    except Exception as e:
-                        print(f"{ULTRASINGER_HEAD} Vocal gap fill skipped: {e}")
+                # Run the intermediate steps we skipped (not for the notes of a
+                # recovered reference pipeline: they are final, as in its first try)
+                if not reference_first_used:
+                    if settings.onset_correction:
+                        try:
+                            from modules.Audio.onset_correction import detect_vocal_onsets, snap_to_onsets
+                            onset_times = detect_vocal_onsets(
+                                process_data.process_data_paths.whisper_audio_path
+                            )
+                            process_data.transcribed_data = snap_to_onsets(
+                                process_data.transcribed_data, onset_times
+                            )
+                        except Exception as e:
+                            print(f"{ULTRASINGER_HEAD} Onset correction skipped: {e}")
+                    process_data.transcribed_data = split_syllables_into_segments(
+                        process_data.transcribed_data, process_data.media_info.bpm
+                    )
+                    if settings.vocal_gap_fill:
+                        try:
+                            from modules.Audio.vocal_gap_fill import fill_vocal_gaps
+                            process_data.transcribed_data = fill_vocal_gaps(
+                                process_data.transcribed_data, process_data.pitched_data
+                            )
+                        except Exception as e:
+                            print(f"{ULTRASINGER_HEAD} Vocal gap fill skipped: {e}")
 
+        # Notes from the transcription, unless the retry above recovered the
+        # reference pipeline
+        if not reference_first_used:
             if settings.pitch_notes:
                 from modules.Pitcher.pitch_based_note_generator import (
                     create_midi_segments_from_pitch,
@@ -666,6 +734,14 @@ def run() -> tuple[str, Score, Score]:
         process_data.midi_segments = create_repitched_midi_segments_from_ultrastar_txt(process_data.pitched_data,
                                                                                        process_data.parsed_file)
 
+    # An instrumental, or a transcription that found no words: nothing to write
+    if not process_data.midi_segments:
+        reason = ("the UltraStar txt has no notes" if settings.ignore_audio
+                  else "no sung words were found in the audio")
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} no notes to write - {reason}")
+        finish_cache_folder(process_data.process_data_paths.cache_folder_path)
+        sys.exit(1)
+
     # Create audio chunks after transcribed_data is finalized
     if settings.create_audio_chunks:
         create_audio_chunks(process_data)
@@ -703,6 +779,7 @@ def run() -> tuple[str, Score, Score]:
             device=settings.pytorch_device,
             lead_vocal_pitch=settings.lead_vocal_pitch,
             cache_folder=process_data.process_data_paths.cache_folder_path,
+            force_cpu=settings.force_cpu,
         ) if model_path else None
         if model_result:
             process_data.midi_segments = model_result.segments
@@ -712,10 +789,12 @@ def run() -> tuple[str, Score, Score]:
     # Split notes at pitch change boundaries (melismas, runs)
     # (Skip when reference_first, pitch_notes or the segmentation model is active —
     # they already handle pitch segmentation)
+    # The transcribed syllables are split along: the merge below pairs them
+    # with the notes by index.
     if (not settings.ignore_audio and settings.pitch_change_split and not reference_first_used
             and not settings.pitch_notes and not model_segmentation_used):
-        process_data.midi_segments = split_notes_at_pitch_changes(
-            process_data.midi_segments, process_data.pitched_data
+        process_data.midi_segments, process_data.transcribed_data = split_notes_and_words_at_pitch_changes(
+            process_data.midi_segments, process_data.transcribed_data, process_data.pitched_data
         )
 
     # Correct global octave shift (e.g. sub-harmonic detection)
@@ -901,14 +980,8 @@ def run() -> tuple[str, Score, Score]:
     # actually use. The internal simple/accurate score (fallback only, see
     # CreateUltraStarTxt) measures against SwiftF0 data and can rank charts
     # differently.
-    # Only meaningful against isolated vocals: without separation the
-    # processing audio is the full mix, so the report is skipped then.
     uscore_result = None
-    if (
-        settings.calculate_score
-        and not settings.ignore_audio
-        and settings.use_separated_vocal
-    ):
+    if game_score_wanted(settings):
         from modules.uscore_report import (
             calculate_uscore_report,
             format_uscore_report,
@@ -922,7 +995,8 @@ def run() -> tuple[str, Score, Score]:
                 f"{ULTRASINGER_HEAD} Game score (ptAKF): "
                 f"{blue_highlighted(format_uscore_report(uscore_result))}"
             )
-            if settings.chart_style == "singable" and not settings.ptakf_refit:
+            if (settings.chart_style == "singable" and not settings.ptakf_refit
+                    and not settings.input_file_is_ultrastar_txt):
                 # The scorer rewards charts that trace the vocal exactly, so a
                 # singable chart lands near the level a professional chart
                 # reaches (~77% Medium on isolated vocals) - not a defect.
@@ -959,11 +1033,12 @@ def run() -> tuple[str, Score, Score]:
             reference_first_used=reference_first_used,
             whisper_skipped=whisper_skipped,
             has_synced_lyrics=process_data.synced_lyrics is not None,
-            has_plain_lyrics=bool(process_data.plain_lyrics),
             lang_source=_lang_source,
             initial_language=_initial_language,
             reference_recovered=_reference_recovered,
             remote_stt_used=_remote_stt_used,
+            plain_lyrics_used=_plain_lyrics_used,
+            rejected_synced_language=process_data.synced_lyrics_other_language,
             model_segmentation_used=model_segmentation_used,
         )
 
@@ -1052,6 +1127,20 @@ def timing_pass_wanted(enabled: bool, model_segmentation_used: bool) -> bool:
     return enabled and not model_segmentation_used
 
 
+def game_score_wanted(run_settings: Settings) -> bool:
+    """Whether to score the written chart as the games do (ultrastar-score).
+
+    Only meaningful against isolated vocals: without separation the processing
+    audio is the full mix, so the report is skipped then. A re-pitched chart
+    (UltraStar txt input) is scored as well.
+    """
+    return bool(
+        run_settings.calculate_score
+        and (not run_settings.ignore_audio or run_settings.input_file_is_ultrastar_txt)
+        and run_settings.use_separated_vocal
+    )
+
+
 def octave_consistency_wanted(setting: bool | None, model_segmentation_used: bool) -> bool:
     """Whether to run the octave consistency pass (``enforce_octave_consistency``).
 
@@ -1075,11 +1164,12 @@ def _write_settings_info_file(
         reference_first_used: bool = False,
         whisper_skipped: bool = False,
         has_synced_lyrics: bool = False,
-        has_plain_lyrics: bool = False,
         lang_source: str = "pending",
         initial_language: str | None = None,
         reference_recovered: bool = False,
         remote_stt_used: bool = False,
+        plain_lyrics_used: bool = False,
+        rejected_synced_language: str | None = None,
         model_segmentation_used: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
@@ -1125,35 +1215,55 @@ def _write_settings_info_file(
             f.write(f"  No-speech threshold:      {settings.no_speech_threshold}\n")
             f.write("\n")
 
-            # Pipeline
+            # Pipeline: what made the notes. The transcription is skipped while
+            # synced lyrics found before it, or remote speech-to-text, can make
+            # them (whisper_skipped); it only runs when they fail. A re-pitch of
+            # an UltraStar txt never transcribes.
+            transcription_ran = not whisper_skipped and not settings.ignore_audio
             f.write("[Pipeline]\n")
-            if reference_first_used and reference_recovered:
+            if has_synced_lyrics:
+                synced_line = "  LRCLIB synced lyrics:     found (but alignment failed)\n"
+            elif rejected_synced_language:
+                synced_line = (f"  LRCLIB synced lyrics:     found but rejected (in {rejected_synced_language}, "
+                               "another language than the singing)\n")
+            else:
+                synced_line = "  LRCLIB synced lyrics:     not found\n"
+            if settings.ignore_audio:
+                f.write("  Pipeline:                 Re-pitch (notes and lyrics of the UltraStar txt)\n")
+                f.write("  Transcription:            skipped\n")
+            elif settings.disable_reference_lyrics:
+                f.write("  Pipeline:                 Standard transcription (reference lyrics disabled)\n")
+                f.write("  LRCLIB synced lyrics:     found (not aligned: reference lyrics disabled)\n"
+                        if has_synced_lyrics else synced_line)
+                f.write("  Transcription:            full\n")
+                f.write("  Alignment:                WhisperX wav2vec2\n")
+            elif reference_first_used and reference_recovered:
                 f.write("  Pipeline:                 Reference-Lyrics-First (recovered after language correction)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
                 f.write("  Transcription:            full (for language correction)\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
+            elif reference_first_used and remote_stt_used:
+                f.write("  Pipeline:                 Remote STT (text) + local alignment\n")
+                f.write(synced_line)
+                f.write("  Transcription:            skipped\n")
+                f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
+            elif reference_first_used and plain_lyrics_used:
+                f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
+                f.write(synced_line)
+                f.write("  LRCLIB plain lyrics:      found\n")
+                f.write("  Transcription:            skipped\n" if whisper_skipped
+                        else "  Transcription:            full (its text replaced by the plain lyrics)\n")
+                f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and has_synced_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
-            elif reference_first_used and remote_stt_used:
-                f.write("  Pipeline:                 Remote STT (text) + local alignment\n")
-                f.write("  Transcription:            skipped (remote STT used instead)\n")
-                f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
-            elif reference_first_used and has_plain_lyrics:
-                f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
-                f.write("  LRCLIB plain lyrics:      found (no synced available)\n")
-                f.write("  Transcription:            skipped\n")
-                f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif has_synced_lyrics:
                 f.write("  Pipeline:                 Transcription (reference-first failed, fell back)\n")
-                f.write("  LRCLIB synced lyrics:     found (but alignment failed)\n")
+                f.write(synced_line)
                 f.write("  Transcription:            full\n")
-            elif whisper_skipped:
-                f.write("  Pipeline:                 Transcription skipped (no audio)\n")
-                f.write("  LRCLIB synced lyrics:     not found\n")
             else:
                 f.write("  Pipeline:                 Standard transcription\n")
-                f.write("  LRCLIB synced lyrics:     not found\n")
+                f.write(synced_line)
                 f.write("  Transcription:            full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
             # Language detection method
@@ -1169,8 +1279,9 @@ def _write_settings_info_file(
             f.write(f"  Language used:             {detected_language or '(none)'}\n")
 
             # Language hint: did the transcriber receive an explicit language?
-            whisper_had_hint = settings.language is not None or lang_source in ("video_platform", "whisper_fast")
-            if not whisper_skipped or reference_recovered:
+            # Only --language is passed to it; it detects the language itself otherwise.
+            whisper_had_hint = settings.language is not None
+            if transcription_ran:
                 if whisper_had_hint:
                     hint_lang = settings.language or detected_language or "?"
                     f.write(f"  Transcriber language hint: yes (--language {hint_lang})\n")
@@ -1310,6 +1421,9 @@ def _write_settings_info_file(
                         f.write(f"  Status:                   FAILED (all {llm_result.chunks_total} chunks failed{retry_info})\n")
                     if llm_result.last_error:
                         f.write(f"  Last error:               {llm_result.last_error}\n")
+                elif not transcription_ran:
+                    # It corrects the words of the local transcription
+                    f.write("  Status:                   not run (no local transcription to correct)\n")
             f.write("\n")
 
             # Remote STT
@@ -1456,7 +1570,16 @@ def merge_syllable_segments(midi_segments: list[MidiSegment],
     hyphenated syllables stay as separate notes even when they share
     the same pitch.  After the main merge loop, any surviving ``~``
     markers are absorbed into adjacent real syllables.
+
+    Raises ``ValueError`` when the lists differ in length: they are paired
+    by index, so the words would shift against the notes and the last notes
+    would be lost.
     """
+    if len(midi_segments) != len(transcribed_data):
+        raise ValueError(
+            f"{len(midi_segments)} notes but {len(transcribed_data)} transcribed "
+            "syllables - they must pair up one to one"
+        )
 
     sixteenth_note = get_sixteenth_note_second(real_bpm)
     # Slides are typically very short (1-2 16th notes)
@@ -1657,8 +1780,17 @@ def create_audio_chunks(process_data):
         )
 
 
+def is_url(path: str) -> bool:
+    """Whether the input (-i) is a link to a video, not a local file."""
+    return path.lower().startswith(("http://", "https://"))
+
+
 def InitProcessData():
-    settings.input_file_is_ultrastar_txt = settings.input_file_path.endswith(".txt")
+    if not is_url(settings.input_file_path) and not os.path.isfile(settings.input_file_path):
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} the input file "
+              f"{blue_highlighted(settings.input_file_path)} does not exist")
+        sys.exit(1)
+    settings.input_file_is_ultrastar_txt = settings.input_file_path.lower().endswith(".txt")
     if settings.input_file_is_ultrastar_txt:
         # Parse Ultrastar txt
         (
@@ -1675,7 +1807,15 @@ def InitProcessData():
         # todo: ignore transcribe
         settings.ignore_audio = True
 
-    elif settings.input_file_path.startswith("https:"):
+    elif settings.ignore_audio:
+        # Re-pitching keeps the notes of an UltraStar txt: other inputs have none
+        print(
+            f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --ignore_audio needs an UltraStar .txt as "
+            f"input (-i): it keeps the lyrics and timing of that file and only recomputes the pitch"
+        )
+        sys.exit(1)
+
+    elif is_url(settings.input_file_path):
         # Video URL input
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Full Automatic Mode')}")
         process_data = ProcessData()
@@ -1696,13 +1836,14 @@ def InitProcessData():
 
         # If a video URL was provided (e.g. from browser interceptor),
         # fetch metadata BEFORE deriving the local song identity so that
-        # the output folder and basename use the correct artist/title
-        # instead of the temporary intercepted filename.
-        yt_artist, yt_title, yt_language = None, None, None
+        # the song is looked up, and the output folder and all its files are
+        # named, by the video's artist/title instead of the temporary
+        # intercepted filename.
+        yt_artist, yt_title, yt_video_title, yt_language = None, None, None, None
         if settings.video_url:
             try:
                 from modules.Audio.video_platform import get_video_title
-                yt_artist, yt_title, _video_title, yt_language = get_video_title(
+                yt_artist, yt_title, yt_video_title, yt_language = get_video_title(
                     settings.video_url, settings.cookiefile, settings.yt_po_token
                 )
                 print(
@@ -1720,16 +1861,12 @@ def InitProcessData():
             settings.output_folder_path,
             process_data.process_data_paths.audio_output_file_path,
             process_data.media_info,
-        ) = infos_from_audio_video_input_file()
+        ) = infos_from_audio_video_input_file(yt_artist, yt_title, yt_video_title)
 
-        # Override with video platform metadata if available
-        if yt_artist:
-            process_data.media_info.artist = yt_artist
-            process_data.basename = f"{yt_artist} - {yt_title}" if yt_title else yt_artist
-        if yt_title:
-            process_data.media_info.title = yt_title
         if yt_language and not process_data.media_info.language:
             process_data.media_info.language = yt_language
+        if settings.video_url:
+            process_data.media_info.video_url = settings.video_url
 
     return process_data
 
@@ -1786,10 +1923,15 @@ def TranscribeAudio(process_data):
                         f"{blue_highlighted(lyrics_language)}, not in the sung language "
                         f"({blue_highlighted(process_data.media_info.language)}) — ignoring them"
                     )
+                    # Also the ones the early lookup kept for the language it
+                    # knew then: a retry must not align them
                     if kind == "synced":
                         synced_lyrics = None
+                        process_data.synced_lyrics = None
+                        process_data.synced_lyrics_other_language = lyrics_language
                     else:
                         plain_lyrics = None
+                        process_data.plain_lyrics = None
             # Save synced lyrics for reference-first pipeline (independent of plain lyrics)
             if synced_lyrics:
                 process_data.synced_lyrics = synced_lyrics
@@ -1848,7 +1990,10 @@ def CreateUltraStarTxt(process_data: ProcessData):
         karaoke_output_path = os.path.join(settings.output_folder_path, process_data.basename + " [Karaoke]." + process_data.media_info.audio_extension)
         convert_audio_format(process_data.process_data_paths.instrumental_audio_file_path, karaoke_output_path)
 
-    if version.parse(settings.format_version.value) >= version.parse(FormatVersion.V1_1_0.value):
+    # The stems exist only when the separation ran: it is skipped with
+    # --disable_separation and --disable_karaoke together (the TXT then names none)
+    stems_separated = settings.use_separated_vocal or settings.create_karaoke
+    if stems_separated and version.parse(settings.format_version.value) >= version.parse(FormatVersion.V1_1_0.value):
         instrumental_output_path = os.path.join(settings.output_folder_path,
                                                 process_data.basename + " [Instrumental]." + process_data.media_info.audio_extension)
         convert_audio_format(process_data.process_data_paths.instrumental_audio_file_path, instrumental_output_path)
@@ -1872,9 +2017,13 @@ def CreateUltraStarTxt(process_data: ProcessData):
             linebreak_timing=settings.linebreak_timing,
         )
     else:
+        # The cover in the song folder: the original's, or one found online when it was missing
+        chart = process_data.parsed_file
         ultrastar_file_output = create_ultrastar_txt_from_midi_segments(
-            settings.output_folder_path, settings.input_file_path, process_data.media_info.title,
-            process_data.midi_segments
+            settings.output_folder_path, settings.input_file_path, process_data.basename,
+            process_data.midi_segments,
+            cover=chart.cover if chart else None,
+            cover_url=chart.coverUrl if chart else None,
         )
 
     # Calc Points
@@ -1924,6 +2073,7 @@ def CreateProcessAudio(process_data) -> tuple[str, str]:
         sep_model,
         settings.skip_cache_vocal_separation,
         settings.separator_backend,
+        force_cpu=settings.force_cpu,
     )
     process_data.process_data_paths.vocals_audio_file_path = os.path.join(audio_separation_folder_path, "vocals.wav")
     process_data.process_data_paths.instrumental_audio_file_path = os.path.join(audio_separation_folder_path,
@@ -2042,18 +2192,33 @@ def transcribe_audio(cache_folder_path: str, audio_path: str) -> TranscriptionRe
     return transcription_result
 
 
-def infos_from_audio_video_input_file() -> tuple[str, str, str, MediaInfo]:
-    """Infos from audio/video input file"""
+def infos_from_audio_video_input_file(
+        artist: str | None = None,
+        title: str | None = None,
+        video_title: str | None = None,
+) -> tuple[str, str, str, MediaInfo]:
+    """Infos from audio/video input file
+
+    The song is looked up by ``artist`` and ``title`` when a title is given
+    (the metadata of the --video_url video, whose raw title is
+    ``video_title``), else by the file name. The song folder and its files
+    are named after what the lookup finds.
+    """
     basename = os.path.basename(settings.input_file_path)
     basename_without_ext = os.path.splitext(basename)[0]
 
-    artist, title = None, None
-    if " - " in basename_without_ext:
-        artist, title = basename_without_ext.split(" - ", 1)
-    else:
-        title = basename_without_ext
+    if not title:
+        artist, title = None, None
+        if " - " in basename_without_ext:
+            artist, title = basename_without_ext.split(" - ", 1)
+        else:
+            title = basename_without_ext
 
-    song_info = search_musicbrainz(title, artist)
+    song_info = search_musicbrainz(title, artist or None)
+    if video_title:
+        # As for a video URL input (-i): the song lookup may re-introduce
+        # suffixes that the video title does not have
+        song_info.title = strip_unmatched_suffixes(song_info.title, video_title)
     # Metadata titles may contain characters that are invalid in paths (e.g. "?" or "/")
     basename_without_ext = os_helper.sanitize_filename(f"{song_info.artist} - {song_info.title}")
 
@@ -2079,12 +2244,10 @@ def infos_from_audio_video_input_file() -> tuple[str, str, str, MediaInfo]:
         basename_with_ext = f"{basename_without_ext}{extension}"
         audio_ext = extension.lstrip('.')
         video_ext = None
-        os_helper.copy(settings.input_file_path, song_folder_output_path)
-        os_helper.rename(
-            os.path.join(song_folder_output_path, os.path.basename(settings.input_file_path)),
-            os.path.join(song_folder_output_path, basename_with_ext),
-        )
+        # Copied under its new name at once: in the song folder, the input file's
+        # own name could make the path too long
         ultrastar_audio_input_path = os.path.join(song_folder_output_path, basename_with_ext)
+        os_helper.copy(settings.input_file_path, ultrastar_audio_input_path)
 
         # Convert to UltraStar-compatible format if needed
         ultrastar_audio_input_path, audio_ext = convert_to_ultrastar_format(
@@ -2153,9 +2316,11 @@ def main(argv: list[str]) -> None:
     setup_proxy_environment()
     print_version(settings.APP_VERSION)
     init_settings(argv)
-    check_requirements()
     if settings.interactive_mode:
         init_settings_interactive(settings)
+    # After the interactive mode: its answers (Force CPU, FFmpeg path, batch
+    # size) decide what is checked and set up here
+    check_requirements()
     run()
     sys.exit()
 
@@ -2224,24 +2389,33 @@ def finish_cache_folder(cache_folder_path: str) -> None:
         print(f"{ULTRASINGER_HEAD} Kept the cache folder: {blue_highlighted(kept)}")
 
 
+def _option_number(opt: str, arg: str, kind: type = float):
+    """The number given to an option; a clear error and exit when it is none
+    (also for "inf" and "nan")."""
+    try:
+        value = kind(arg)
+        # (an int is finite; a very long one would not even fit a float)
+        if kind is int or math.isfinite(value):
+            return value
+    except ValueError:
+        pass
+    what = "a whole number" if kind is int else "a number"
+    print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} {opt} needs {what}, got {blue_highlighted(arg)}")
+    sys.exit(1)
+
+
 def init_settings(argv: list[str]) -> Settings:
     """Init settings"""
-    # Reset per-run resolution state (settings is a reused module singleton).
-    settings.ptakf_refit_explicit = False
-    settings.chart_style = "singable"
-    settings.segmentation_model = None
-    settings.segmentation_model_repo = None
-    settings.segmentation_model_token = None
-    settings.lead_vocal_pitch = True
-    settings.refine_gap = True
-    settings.octave_consistency = None
-    settings.cache_folder = None
-    settings.linebreak_timing = ultrastar_writer.DEFAULT_LINEBREAK_TIMING
-    settings.transcriber = "auto"
-    settings.transcriber_used = None
+    # settings is a reused module singleton: every run starts from the class
+    # defaults, so no option of an earlier run in this process carries over
+    vars(settings).clear()
     transcriber_option = None
     long, short = arg_options()
-    opts, args = getopt.getopt(argv, short, long)
+    try:
+        opts, args = getopt.getopt(argv, short, long)
+    except getopt.GetoptError as e:
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} {e} (see -h for the options)")
+        sys.exit(1)
     if len(opts) == 0:
         print_help()
         sys.exit()
@@ -2259,7 +2433,7 @@ def init_settings(argv: list[str]) -> Settings:
             except ValueError:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --bpm must be a positive number, got {arg}")
                 sys.exit(1)
-            if val <= 0:
+            if not math.isfinite(val) or val <= 0:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --bpm must be a positive number, got {val}")
                 sys.exit(1)
             settings.bpm_override = val
@@ -2287,14 +2461,14 @@ def init_settings(argv: list[str]) -> Settings:
                 settings.whisper_model = WhisperModel(arg)
             except ValueError as ve:
                 print(f"{ULTRASINGER_HEAD} The model {arg} is not a valid whisper model selection. Please use one of the following models: {blue_highlighted(', '.join([m.value for m in WhisperModel]))}")
-                sys.exit()
+                sys.exit(1)
         elif opt in ("--whisper_align_model"):
             settings.whisper_align_model = arg
         elif opt in ("--whisper_batch_size"):
             if arg.strip().lower() == "auto":
                 settings.whisper_batch_size = None
             else:
-                val = int(arg)
+                val = _option_number(opt, arg, int)
                 if val < 1:
                     print(
                         f"{ULTRASINGER_HEAD} Error: --whisper_batch_size must "
@@ -2306,19 +2480,19 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--keep_numbers"):
             settings.keep_numbers = True
         elif opt in ("--vad_onset"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if not 0.0 <= val <= 1.0:
                 print(f"{ULTRASINGER_HEAD} Error: --vad_onset must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
             settings.vad_onset = val
         elif opt in ("--vad_offset"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if not 0.0 <= val <= 1.0:
                 print(f"{ULTRASINGER_HEAD} Error: --vad_offset must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
             settings.vad_offset = val
         elif opt in ("--no_speech_threshold"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if not 0.0 <= val <= 1.0:
                 print(f"{ULTRASINGER_HEAD} Error: --no_speech_threshold must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
@@ -2444,31 +2618,31 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--detect_freestyle"):
             settings.detect_growl = True
         elif opt in ("--freestyle_harmonicity"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if not 0.0 <= val <= 1.0:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_harmonicity must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
             settings.growl_harmonicity_threshold = val
         elif opt in ("--freestyle_energy"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if val < 0:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_energy must be non-negative, got {val}")
                 sys.exit(1)
             settings.growl_energy_threshold = val
         elif opt in ("--freestyle_confidence"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if not 0.0 <= val <= 1.0:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_confidence must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
             settings.growl_confidence_threshold = val
         elif opt in ("--freestyle_pitch_stdev"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if val <= 0:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_pitch_stdev must be positive, got {val}")
                 sys.exit(1)
             settings.growl_pitch_stdev_threshold = val
         elif opt in ("--freestyle_spectral_flatness"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if not 0.0 <= val <= 1.0:
                 print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_spectral_flatness must be between 0.0 and 1.0, got {val}")
                 sys.exit(1)
@@ -2478,13 +2652,13 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if not (0.01 <= val <= 97):
                 print(f"Error: --denoise_nr must be between 0.01 and 97, got {val}")
                 sys.exit(1)
             settings.denoise_noise_reduction = val
         elif opt in ("--denoise_nf"):
-            val = float(arg)
+            val = _option_number(opt, arg)
             if not (-80 <= val <= -20):
                 print(f"Error: --denoise_nf must be between -80 and -20, got {val}")
                 sys.exit(1)
@@ -2506,9 +2680,9 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--llm_no_retry"):
             settings.llm_retry_on_rate_limit = False
         elif opt in ("--llm_retry_wait"):
-            settings.llm_retry_wait = int(arg)
+            settings.llm_retry_wait = _option_number(opt, arg, int)
         elif opt in ("--llm_retry_max"):
-            settings.llm_retry_max = int(arg)
+            settings.llm_retry_max = _option_number(opt, arg, int)
         elif opt in ("--remote_stt"):
             settings.remote_stt = True
         elif opt in ("--remote_stt_api_base_url"):
@@ -2518,13 +2692,13 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt in ("--remote_stt_model"):
             settings.remote_stt_model = arg
         elif opt in ("--remote_stt_timeout"):
-            settings.remote_stt_timeout = int(float(arg))
+            settings.remote_stt_timeout = int(_option_number(opt, arg))
         elif opt in ("--remote_stt_no_retry"):
             settings.remote_stt_retry_on_rate_limit = False
         elif opt in ("--remote_stt_retry_wait"):
-            settings.remote_stt_retry_wait = int(arg)
+            settings.remote_stt_retry_wait = _option_number(opt, arg, int)
         elif opt in ("--remote_stt_retry_max"):
-            settings.remote_stt_retry_max = int(arg)
+            settings.remote_stt_retry_max = _option_number(opt, arg, int)
         elif opt in ("--video_url"):
             settings.video_url = arg
         elif opt in ("--youtube_url"):
@@ -2547,20 +2721,20 @@ def init_settings(argv: list[str]) -> Settings:
         elif opt == "--disable_refine_gap":
             settings.refine_gap = False
         elif opt in ("--refine_hit_ratio"):
-            settings.refine_hit_ratio = float(arg)
+            settings.refine_hit_ratio = _option_number(opt, arg)
         elif opt in ("--refine_timing_threshold"):
-            settings.refine_timing_threshold = float(arg)
+            settings.refine_timing_threshold = _option_number(opt, arg)
         elif opt in ("--chart_style"):
             settings.chart_style = arg.strip().lower()
         elif opt in ("--ptakf_refit"):
             settings.ptakf_refit = True
             settings.ptakf_refit_explicit = True
         elif opt in ("--ptakf_refit_min_note_ms"):
-            settings.ptakf_refit_min_note_ms = float(arg)
+            settings.ptakf_refit_min_note_ms = _option_number(opt, arg)
         elif opt in ("--ptakf_refit_fill"):
             settings.ptakf_refit_fill = True
         elif opt in ("--ptakf_refit_fill_min_ms"):
-            settings.ptakf_refit_fill_min_ms = float(arg)
+            settings.ptakf_refit_fill_min_ms = _option_number(opt, arg)
         elif opt in ("--disable_ptakf_refit"):
             settings.ptakf_refit = False
             settings.ptakf_refit_explicit = True
@@ -2586,8 +2760,14 @@ def init_settings(argv: list[str]) -> Settings:
     if not settings.ptakf_refit_explicit:
         settings.ptakf_refit = settings.chart_style == "score"
 
+    # The interactive mode asks for the input itself
+    if not settings.input_file_path and not settings.interactive_mode:
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} no input given: use -i with an audio or "
+              f"video file, an UltraStar .txt or a video link (see -h for the options)")
+        sys.exit(1)
+
     if settings.output_folder_path == "":
-        if settings.input_file_path.startswith("https:"):
+        if is_url(settings.input_file_path):
             dirname = os.getcwd()
         else:
             dirname = os.path.dirname(settings.input_file_path)

@@ -37,7 +37,14 @@ class Points:
     rap = 0
     golden_rap = 0
     line_bonus = 0
-    parts = 0
+    parts = 0  # weighted like the hits: a part of a golden note counts twice
+
+
+def part_weight(note_type: str) -> int:
+    """Weight of a part of a note: golden notes count twice, as in the games."""
+    if note_type in (UltrastarTxtNoteTypeTag.GOLDEN.value, UltrastarTxtNoteTypeTag.RAP_GOLDEN.value):
+        return 2
+    return 1
 
 
 def add_point(note_type: str, points: Points) -> Points:
@@ -70,21 +77,24 @@ def get_score(points: Points) -> Score:
     """Score calculation."""
 
     score = Score()
-    # Max possible note points: 9000 if line bonus is possible, else full 10000
-    # (line bonus takes up to 1000 of the 10000 total when lines exist)
+    # Max possible note points: 9000, as scored notes always make the line
+    # bonus possible (it takes up to 1000 of the 10000 total); whether this
+    # singing earned any of it must not change the scale
     score.max_score = (
         MAX_SONG_SCORE - MAX_SONG_LINE_BONUS
-        if points.line_bonus > 0
+        if points.parts > 0
         else MAX_SONG_SCORE
     )
     if(points.parts == 0):
         print(f"{ULTRASINGER_HEAD} No parts found, returning 0 score")
         return score
-    score.notes = round(
-        score.max_score * (points.notes + points.rap) / points.parts
-    )
-    score.golden = round(points.golden_notes + points.golden_rap)
-    score.score = round(score.notes + points.line_bonus + score.golden)
+    # The note points share max_score by weighted parts (golden parts count
+    # twice), so singing every part right gives max_score plus the line bonus
+    notes = score.max_score * (points.notes + points.rap) / points.parts
+    golden = score.max_score * (points.golden_notes + points.golden_rap) / points.parts
+    score.notes = round(notes)
+    score.golden = round(golden)
+    score.score = round(notes + points.line_bonus + golden)
     score.line_bonus = round(points.line_bonus)
     return score
 
@@ -105,19 +115,17 @@ def calculate_score(pitched_data: PitchedData, ultrastar_class: UltrastarTxtValu
     simple_points = Points()
     accurate_points = Points()
 
-    if(len(ultrastar_class.UltrastarNoteLines) == 0):
+    # Notes without a word and freestyle notes are not scored
+    scored = [i for i, note_line in enumerate(ultrastar_class.UltrastarNoteLines)
+              if note_line.word != "" and note_line.noteType != UltrastarTxtNoteTypeTag.FREESTYLE.value]
+    if(len(scored) == 0):
         print(f"{ULTRASINGER_HEAD} No note lines found in Ultrastar txt, returning 0 points")
         return get_score(simple_points), get_score(accurate_points)
-    reachable_line_bonus_per_word = MAX_SONG_LINE_BONUS / len(ultrastar_class.UltrastarNoteLines)
+    reachable_line_bonus_per_word = MAX_SONG_LINE_BONUS / len(scored)
     step_size = 0.09  # Todo: Whats is the step size of the game? Its not 1/bps -> one beat in seconds s = 60/bpm
 
-    for i, note_line in enumerate(ultrastar_class.UltrastarNoteLines):
-        if note_line.word == "":
-            continue
-
-        if note_line.noteType == UltrastarTxtNoteTypeTag.FREESTYLE:
-            continue
-
+    for i in scored:
+        note_line = ultrastar_class.UltrastarNoteLines[i]
         start_time = get_start_time_from_ultrastar(ultrastar_class, i)
         end_time = get_end_time_from_ultrastar(ultrastar_class, i)
         duration = end_time - start_time
@@ -149,8 +157,8 @@ def calculate_score(pitched_data: PitchedData, ultrastar_class: UltrastarTxtValu
                 accurate_points = add_point(note_line.noteType, accurate_points)
                 accurate_part_line_bonus_points += 1
 
-            accurate_points.parts += 1
-            simple_points.parts += 1
+            accurate_points.parts += part_weight(note_line.noteType)
+            simple_points.parts += part_weight(note_line.noteType)
 
         if accurate_part_line_bonus_points >= parts:
             accurate_points.line_bonus += reachable_line_bonus_per_word

@@ -319,7 +319,8 @@ class QueueItemWidget(QWidget):
                 f"padding: 0px 4px; margin: 0px;"
             )
             lang_name = _lang_display_name(lang)
-            pipeline_name = "Reference" if info.get("pipeline") == "reference" else "Transcription"
+            pipeline_name = {"reference": "Reference", "plain": "Plain lyrics alignment",
+                             "remote": "Remote speech-to-text"}.get(info.get("pipeline"), "Transcription")
             tooltip = f"Language: {lang.upper()} ({lang_name}) — Pipeline: {pipeline_name}"
             initial = info.get("initial_language", "")
             if initial and initial != lang:

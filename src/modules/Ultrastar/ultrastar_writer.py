@@ -10,6 +10,8 @@ from modules.Ultrastar.coverter.ultrastar_converter import (
     real_bpm_to_ultrastar_bpm,
     second_to_beat, )
 from modules.Ultrastar.coverter.ultrastar_midi_converter import convert_midi_note_to_ultrastar_note
+from modules.Ultrastar.ultrastar_parser import header_tag, is_note_line, is_relative_tag, read_chart_lines, \
+    relative_line_break
 from modules.Ultrastar.ultrastar_txt import UltrastarTxtValue, UltrastarTxtTag, UltrastarTxtNoteTypeTag, \
     FILE_ENCODING
 from modules.Ultrastar.ultrastar_score_calculator import Score
@@ -406,34 +408,86 @@ def calculate_silent_beat_length(
 
 
 def create_repitched_txt_from_ultrastar_data(
-        input_file: str, note_numbers: list[int], output_repitched_ultrastar: str
+        input_file: str, note_numbers: list[int], output_repitched_ultrastar: str,
+        cover: str | None = None, cover_url: str | None = None,
 ) -> None:
-    """Creates a repitched ultrastar txt file from the original one"""
-    # todo: just add '_repitched' to input_file
-    print(f"{ULTRASINGER_HEAD} Creating repitched ultrastar txt -> {input_file}_repitch.txt")
+    """Creates a repitched ultrastar txt file from the original one.
 
-    # todo: to reader
-    with open(input_file, "r", encoding=FILE_ENCODING) as file:
-        txt = file.readlines()
+    ``note_numbers`` holds a pitch for every note line of the original, in
+    order. Normal and golden notes get it; freestyle and rap notes, whose pitch
+    the games do not score, keep theirs. The file is written in UTF-8, and a
+    #RELATIVE:YES chart with absolute beats (the beats the parser reads), so
+    that every reader of the new file, like the game score, places the notes
+    right.
+
+    ``cover``, the cover in the new song folder (one found online when the
+    original's was missing), replaces the original's #COVER or is added at the
+    end of the header; ``cover_url`` replaces the original's #COVERURL.
+    """
+    print(f"{ULTRASINGER_HEAD} Creating repitched ultrastar txt -> {output_repitched_ultrastar}")
+
+    txt = read_chart_lines(input_file)
+    add_cover = cover is not None and UltrastarTxtTag.COVER.value not in map(header_tag, txt)
+    cover_at = 0
+    if add_cover:
+        # Right after the last header tag before the song body, so a blank line
+        # inside the header does not put it in the middle of the header
+        body = next((k for k, line in enumerate(txt) if _is_body_line(line)), len(txt))
+        cover_at = 1 + max((k for k in range(body) if txt[k].startswith("#")), default=-1)
 
     i = 0
-    # todo: just add '_repitched' to input_file
+    relative = False
+    line_start_beat = 0.0  # #RELATIVE:YES: the beat the current line's beats count from
     with open(output_repitched_ultrastar, "w", encoding=FILE_ENCODING) as file:
-        for line in txt:
-            if line.startswith(f"{UltrastarTxtNoteTypeTag.NORMAL.value} "):
+        for k, line in enumerate(txt):
+            if add_cover and k == cover_at:
+                file.write(f"#{UltrastarTxtTag.COVER.value}:{cover}\n")
+                add_cover = False
+            tag = header_tag(line)
+            if is_note_line(line):
                 parts = re.findall(r"\S+|\s+", line)
                 # between are whitespaces
-                # [0] :
+                # [0] : * F R G
                 # [2] start beat
                 # [4] duration
                 # [6] pitch
                 # [8] word
-                parts[6] = str(note_numbers[i])
-                delimiter = ""
-                file.write(delimiter.join(parts))
+                if relative:
+                    parts[2] = _beat_text(float(parts[2]) + line_start_beat)
+                if parts[0] in (UltrastarTxtNoteTypeTag.NORMAL.value, UltrastarTxtNoteTypeTag.GOLDEN.value):
+                    parts[6] = str(note_numbers[i])
+                line = "".join(parts)
+                # one pitch per note line, whatever its type
                 i += 1
-            else:
-                file.write(line)
+            elif is_relative_tag(line):
+                relative = True
+                continue  # the beats are written absolute
+            elif relative and line.startswith(UltrastarTxtTag.LINEBREAK.value):
+                numbers = relative_line_break(line)
+                if numbers:
+                    line = f"{UltrastarTxtTag.LINEBREAK.value} {_beat_text(line_start_beat + numbers[0])}\n"
+                    line_start_beat += numbers[1]
+            elif tag == UltrastarTxtTag.ENCODING.value:
+                line = f"#{UltrastarTxtTag.ENCODING.value}:UTF8\n"
+            elif tag == UltrastarTxtTag.COVER.value and cover is not None:
+                line = f"#{UltrastarTxtTag.COVER.value}:{cover}\n"
+            elif tag == UltrastarTxtTag.COVERURL.value and cover_url is not None:
+                line = f"#{UltrastarTxtTag.COVERURL.value}:{cover_url}\n"
+            file.write(line)
+        if add_cover:  # a chart of header lines only
+            if txt and not txt[-1].endswith("\n"):
+                file.write("\n")
+            file.write(f"#{UltrastarTxtTag.COVER.value}:{cover}\n")
+
+
+def _is_body_line(line: str) -> bool:
+    """A line of the song body: a note, a line break ("-"), a duet player ("P") or the end ("E")."""
+    return is_note_line(line) or line.startswith(("E", "-", "P"))
+
+
+def _beat_text(beat: float) -> str:
+    """A beat as written in a chart: a whole number without a decimal point."""
+    return str(int(beat)) if float(beat).is_integer() else str(beat)
 
 
 def _append_creator_header_suffix(ultrastar_file_output: str, suffix: str) -> None:
@@ -451,12 +505,7 @@ def _append_creator_header_suffix(ultrastar_file_output: str, suffix: str) -> No
             text[i] = f"{line}{suffix}"
             break
 
-        if line.startswith((
-                f"{UltrastarTxtNoteTypeTag.FREESTYLE.value} ",
-                f"{UltrastarTxtNoteTypeTag.NORMAL.value} ",
-                f"{UltrastarTxtNoteTypeTag.GOLDEN.value} ",
-                f"{UltrastarTxtNoteTypeTag.RAP.value} ",
-                f"{UltrastarTxtNoteTypeTag.RAP_GOLDEN.value} ")):
+        if is_note_line(line):
             text.insert(
                 i,
                 f"#{UltrastarTxtTag.CREATOR.value}:UltraSinger [GitHub]{suffix}",
