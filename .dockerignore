@@ -1,20 +1,19 @@
-evaluation
-.git
+# Only what the image needs goes into the build context. Everything else stays
+# out, above all local secrets and per-machine state: cookies.txt (a logged-in
+# session), the PO-token provider (.potoken), virtual environments and
+# downloaded Python (.venv, .uv-python), uv.toml, .env, songs (input/, output/).
+*
+!pyproject.toml
+!uv.lock
+!LICENSE
+!README.md
+!src
+!tools
 
-.env
-.vscode/
-# virtual environment
-venv
-.venv
+# never, not even inside the included folders
+**/cookies.txt
+**/.env
 
-# python
-**__pycache__
-
-# test data
-test_input
-test_output
-
-# default output folder
-output
-/UltraSinger*.spec
-/registry_path.txt
+# python caches inside the included folders
+**/__pycache__
+**/*.pyc

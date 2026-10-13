@@ -3,6 +3,8 @@
 # virtual environment
 venv
 .venv
+# the previous one while the install scripts build a new one
+.venv.old
 
 # local uv config (CPU/CUDA PyTorch index override)
 uv.toml

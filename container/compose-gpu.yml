@@ -11,11 +11,27 @@ services:
               count: all
               capabilities: [gpu]
     volumes:
-      - ../input:/app/UltraSinger/input
-      - ../output:/app/UltraSinger/output
-      - ../cookies.txt:/app/UltraSinger/cookies.txt:ro
+      # Create input/ and output/ in the project root before the first run.
+      # A missing folder is an error here instead of being created by the
+      # container engine as root, which the container (user ID 1000) could
+      # not write to. Put cookies.txt into input/ when you need one.
+      - type: bind
+        source: ../input
+        target: /app/UltraSinger/input
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../output
+        target: /app/UltraSinger/output
+        bind:
+          create_host_path: false
+      # Downloaded models, kept between runs
+      - model-cache:/home/ultrasinger/.cache
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     stdin_open: true
     tty: true
+
+volumes:
+  model-cache:

@@ -12,14 +12,11 @@ echo Current directory: %cd%
 :: Update PATH to include uv installation directory
 set "PATH=%USERPROFILE%\.local\bin;!PATH!"
 
-:: Remove old virtual environment to ensure clean state (e.g., switching between CPU/CUDA)
-if exist .venv (
-    echo Removing old virtual environment...
-    rmdir /s /q .venv
-)
-
-:: First, find Python using to get full path
-set "PYTHON_EXE="
+:: Find a system Python 3.13 or 3.12. Only its version is passed on to uv
+:: (uv finds the interpreter by it), never its path: a path read back from
+:: Python's output is garbled for user folders with non-ASCII characters
+:: (Python writes the ANSI code page, cmd reads the OEM one).
+set "PYTHON_VERSION="
 
 for %%V in (3.13 3.12) do (
     py -%%V --version >nul 2>&1
@@ -32,10 +29,7 @@ for %%V in (3.13 3.12) do (
             set "PY_VER=%%W"
         )
         if "!PY_VER!"=="%%V" (
-            REM Get the full path to the Python executable
-            for /f "delims=" %%P in ('py -%%V -c "import sys; print(sys.executable)"') do (
-                set "PYTHON_EXE=%%P"
-            )
+            set "PYTHON_VERSION=%%V"
             goto :found_python
         )
     )
@@ -50,29 +44,29 @@ for %%P in (python3.13 python3.12 python3 python) do (
             set "PY_VER=%%V"
         )
         if "!PY_VER!"=="3.13" (
-            set "PYTHON_EXE=%%P"
+            set "PYTHON_VERSION=3.13"
             goto :found_python
         )
         if "!PY_VER!"=="3.12" (
-            set "PYTHON_EXE=%%P"
+            set "PYTHON_VERSION=3.12"
             goto :found_python
         )
     )
 )
 
 :found_python
-if "!PYTHON_EXE!"=="" (
+if "!PYTHON_VERSION!"=="" (
     echo No system Python 3.12 or 3.13 found ^(e.g. only a newer version is installed^).
     echo A portable Python 3.12 will be downloaded by uv into its per-user
     echo directory instead - fully self-contained, no PATH/registry changes,
     echo your system Python stays untouched.
     set "USE_MANAGED_PYTHON=1"
 ) else (
-    echo Using Python: !PYTHON_EXE!
-    "!PYTHON_EXE!" --version
+    echo Using Python !PYTHON_VERSION! found on this system.
 )
 
-:: Install uv if not already installed
+:: Install uv if not already installed (a fixed, reviewed release of its
+:: installer; uv can update itself later with "uv self update")
 where uv >nul 2>&1
 if !errorlevel! neq 0 (
     echo Installing uv...
@@ -81,7 +75,7 @@ if !errorlevel! neq 0 (
     REM to run under the Windows default "Restricted" policy, and fresh
     REM machines would otherwise abort here with a manual
     REM "Set-ExecutionPolicy" instruction.
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/0.12.24/install.ps1 | iex"
 )
 
 :: Wait a moment for uv to be available
@@ -123,8 +117,22 @@ if defined USE_MANAGED_PYTHON (
             exit /b 1
         )
     )
-    set "PYTHON_EXE=3.12"
+    set "PYTHON_VERSION=3.12"
 )
+
+:: --- Keep the previous installation until the new one works -----------------
+:: pyproject.toml, uv.lock and .venv are only replaced once the new environment
+:: is built: if anything below fails (offline, a build error, files in use),
+:: the previous installation is restored and keeps working.
+set "BACKUP_DIR=%TEMP%\ultrasinger_install_%RANDOM%%RANDOM%"
+mkdir "!BACKUP_DIR!" >nul 2>&1
+copy /y pyproject.toml "!BACKUP_DIR!\" >nul
+copy /y uv.lock "!BACKUP_DIR!\" >nul
+set "WAS_PROTECTED="
+git ls-files -v pyproject.toml 2>nul | findstr /b /c:"S" >nul 2>&1
+if !errorlevel! equ 0 set "WAS_PROTECTED=1"
+set "VENV_MOVED="
+set "NEW_VENV="
 
 :: Set PyTorch index to CUDA in pyproject.toml
 :: (uv.toml cannot override named indexes used by [tool.uv.sources])
@@ -143,18 +151,55 @@ if !errorlevel! neq 0 (
     uv lock
     if !errorlevel! neq 0 (
         echo Error during uv lock
-        pause
-        exit /b 1
+        goto :restore_and_fail
     )
 )
 
+:: Build the environment from scratch (clean state, e.g. when switching between
+:: CPU and CUDA); the previous one waits in .venv.old until the new one is done.
+if exist ".venv.old\" (
+    REM Left over from an interrupted run: keep .venv only if it was completed
+    REM (it has the marker written below), else go back to the previous one
+    if exist ".venv\.ultrasinger-complete" (
+        rmdir /s /q ".venv.old"
+    ) else (
+        if exist ".venv\" rmdir /s /q ".venv"
+        if not exist ".venv\" move ".venv.old" ".venv" >nul
+    )
+)
+if exist ".venv\" (
+    if not exist ".venv.old\" move ".venv" ".venv.old" >nul 2>&1
+    if exist ".venv\" (
+        echo.
+        if exist ".venv.old\" if exist ".venv\.ultrasinger-complete" (
+            echo Error: .venv.old, the backup of an environment left behind by an
+            echo interrupted installation, is in use and cannot be removed. Close
+            echo UltraSinger and any terminal or editor that uses it, then run the
+            echo installer again.
+            goto :restore_and_fail
+        )
+        echo Error: the existing virtual environment ^(.venv^) is in use and cannot
+        echo be replaced. Close UltraSinger and any terminal or editor that uses
+        echo it, then run the installer again.
+        goto :restore_and_fail
+    )
+    set "VENV_MOVED=1"
+) else (
+    REM No environment to put back if this run fails: the incomplete one it
+    REM leaves behind is removed instead
+    set "NEW_VENV=1"
+)
+
 echo Syncing dependencies (core + GUI + scoring + PO-token plugin)...
-uv sync --python "!PYTHON_EXE!" --extra gui --extra scoring --extra potoken
+uv sync --python "!PYTHON_VERSION!" --extra gui --extra scoring --extra potoken
 if !errorlevel! neq 0 (
     echo Error during uv sync
-    pause
-    exit /b 1
+    goto :restore_and_fail
 )
+:: The new environment is complete: mark it, nothing is restored from here on
+type nul > ".venv\.ultrasinger-complete"
+if exist ".venv.old\" rmdir /s /q ".venv.old"
+rmdir /s /q "!BACKUP_DIR!" 2>nul
 
 REM Set up the PO-token provider (Node.js) for full-quality video downloads
 call install\helpers\setup_potoken_provider.bat "install\CUDA\windows_cuda_gpu.bat"
@@ -179,3 +224,33 @@ if "!POT_RC!"=="0" (
 )
 echo.
 pause
+exit /b 0
+
+:restore_and_fail
+echo.
+echo Installation failed - restoring the previous installation...
+if defined VENV_MOVED (
+    if exist ".venv\" rmdir /s /q ".venv"
+    REM only into a free name - move would put it inside a leftover .venv
+    if not exist ".venv\" move ".venv.old" ".venv" >nul 2>&1
+    if exist ".venv.old\" (
+        echo The previous environment could not be put back and is kept in
+        echo .venv.old - rename it to .venv once no program uses the folder.
+    )
+)
+REM A first installation: the launchers would try to use a half-built .venv
+if defined NEW_VENV if exist ".venv\" (
+    rmdir /s /q ".venv"
+    if exist ".venv\" (
+        echo The incomplete environment could not be removed - delete the .venv
+        echo folder once no program uses it.
+    )
+)
+copy /y "!BACKUP_DIR!\pyproject.toml" pyproject.toml >nul 2>&1
+copy /y "!BACKUP_DIR!\uv.lock" uv.lock >nul 2>&1
+if defined WAS_PROTECTED (
+    git update-index --skip-worktree pyproject.toml uv.lock >nul 2>&1
+)
+rmdir /s /q "!BACKUP_DIR!" 2>nul
+pause
+exit /b 1

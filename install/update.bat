@@ -67,12 +67,31 @@ echo Pulling latest changes...
 git pull --ff-only
 if !errorlevel! neq 0 (
     echo Error: git pull failed. Resolve the issue above and re-run.
+    set "PULLED="
+    set "KEEP_BACKUP="
     goto :restore_and_fail
 )
 
+REM ---------------------------------------------------------------------------
+REM Keep everything above, down to and including the "git pull --ff-only" line,
+REM byte for byte as it is. cmd.exe reads a running batch file piece by piece:
+REM when the pull replaces this file, the update.bat that is running (the one
+REM from before the pull) carries on at the same byte offset in the new file -
+REM with the same beginning, that is the line right after the pull. Add new
+REM steps below this point only, and give every variable they use its value
+REM down here: of those, an earlier update.bat only sets IS_CUDA and BACKUP_DIR
+REM before its pull. pytest/test_install_scripts.py checks that the beginning
+REM stays unchanged.
+REM ---------------------------------------------------------------------------
+set "PULLED=1"
+set "KEEP_BACKUP="
+set "CUDA_VARIANT="
+if defined IS_CUDA call :read_previous_pyproject
+if not defined CUDA_VARIANT set "CUDA_VARIANT=cu128"
+
 if defined IS_CUDA (
-    echo Re-applying the CUDA PyTorch index...
-    powershell -NoProfile -Command "$c = [IO.File]::ReadAllText('pyproject.toml'); $c = $c -replace 'whl/cpu','whl/cu128'; [IO.File]::WriteAllText('pyproject.toml', $c)"
+    echo Re-applying the CUDA PyTorch index ^(!CUDA_VARIANT!^)...
+    powershell -NoProfile -Command "$c = [IO.File]::ReadAllText('pyproject.toml'); $c = $c -replace 'whl/cpu','whl/!CUDA_VARIANT!'; [IO.File]::WriteAllText('pyproject.toml', $c)"
 )
 
 echo Resolving dependencies with the newest yt-dlp...
@@ -89,7 +108,10 @@ if !errorlevel! neq 0 (
 )
 
 REM Stop a running instance from this folder so uv can replace locked files.
-powershell -NoProfile -Command "$venv = Join-Path '%CD%' '.venv'; $root = '%CD%'; foreach ($p in (Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains('bgutil') -and $_.CommandLine.ToLower().Contains($root.ToLower())) })) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host ('Closed running UltraSinger process (PID ' + $p.ProcessId + ').') } catch {} }"
+REM The folder is handed over in an environment variable, so quotes in its
+REM name cannot break the command.
+set "US_REPO_ROOT=%CD%"
+powershell -NoProfile -Command "$root = $env:US_REPO_ROOT; $venv = Join-Path $root '.venv'; foreach ($p in (Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains('bgutil') -and $_.CommandLine.ToLower().Contains($root.ToLower())) })) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host ('Closed running UltraSinger process (PID ' + $p.ProcessId + ').') } catch {} }"
 if exist ".venv" timeout /t 2 /nobreak >nul
 
 REM Avoid uv hardlink warnings when the cache and project are on different drives.
@@ -112,7 +134,7 @@ if defined IS_CUDA (
     echo Restoring the CUDA configuration protection...
     git update-index --skip-worktree pyproject.toml
     git update-index --skip-worktree uv.lock
-    rmdir /s /q "!BACKUP_DIR!" 2>nul
+    if not defined KEEP_BACKUP rmdir /s /q "!BACKUP_DIR!" 2>nul
 )
 
 REM Update the PO-token provider too, so a single "update" refreshes
@@ -129,6 +151,41 @@ echo.
 pause
 exit /b 0
 
+:read_previous_pyproject
+REM The pyproject.toml of the installation, as copied before the pull. It gives
+REM the CUDA variant of the PyTorch index to put back - cu128 unless the user
+REM picked another one, e.g. cu126 for an older driver.
+if not defined BACKUP_DIR exit /b 0
+if not exist "!BACKUP_DIR!\pyproject.toml" exit /b 0
+set "US_PREVIOUS_PYPROJECT=!BACKUP_DIR!\pyproject.toml"
+for /f "delims=" %%V in ('powershell -NoProfile -Command "$m = [regex]::Match([IO.File]::ReadAllText($env:US_PREVIOUS_PYPROJECT), 'whl/(cu[0-9]+)'); if ($m.Success) { $m.Groups[1].Value }"') do set "CUDA_VARIANT=%%V"
+REM Only the index line is carried over to the new pyproject.toml: say so, and
+REM keep the copy, when the file had other local changes - that is, when it is
+REM not the file of a recent commit with just the index line changed. Recent
+REM commits are the one before this pull (ORIG_HEAD) and the two HEAD was on
+REM before its latest moves: an update that failed after its pull put back
+REM the file of the commit before that pull.
+set "KEEP_BACKUP=1"
+for %%R in (ORIG_HEAD HEAD@{1} HEAD@{2}) do if defined KEEP_BACKUP call :compare_with_commit %%R
+del "!BACKUP_DIR!\pyproject.base" "!BACKUP_DIR!\numstat.txt" 2>nul
+if defined KEEP_BACKUP (
+    echo Note: pyproject.toml has local changes besides the CUDA index. The
+    echo update replaces them; your previous file is kept as
+    echo   !BACKUP_DIR!\pyproject.toml
+)
+exit /b 0
+
+:compare_with_commit
+REM Clears KEEP_BACKUP when the copy is the pyproject.toml of the given commit
+REM with at most one line changed. git diff exits with 1 for differences and
+REM for a file it cannot read alike, so only an identical file, exit code 0,
+REM or a count of exactly one changed line clears it - anything else keeps it.
+git show "%~1:pyproject.toml" > "!BACKUP_DIR!\pyproject.base" 2>nul || exit /b 0
+git diff --no-index --numstat --ignore-cr-at-eol "!BACKUP_DIR!\pyproject.base" "!BACKUP_DIR!\pyproject.toml" > "!BACKUP_DIR!\numstat.txt" 2>nul
+if !errorlevel! equ 0 set "KEEP_BACKUP="
+for /f "usebackq tokens=1,2" %%A in ("!BACKUP_DIR!\numstat.txt") do if "%%A %%B"=="1 1" set "KEEP_BACKUP="
+exit /b 0
+
 :restore_and_fail
 if defined IS_CUDA (
     echo.
@@ -137,7 +194,16 @@ if defined IS_CUDA (
     copy /y "!BACKUP_DIR!\uv.lock" uv.lock >nul 2>&1
     git update-index --skip-worktree pyproject.toml 2>nul
     git update-index --skip-worktree uv.lock 2>nul
-    rmdir /s /q "!BACKUP_DIR!" 2>nul
+    if not defined KEEP_BACKUP rmdir /s /q "!BACKUP_DIR!" 2>nul
+)
+if defined PULLED (
+    echo.
+    echo The update is incomplete: the code was updated, but the Python
+    echo packages could not be brought up to date with it, so UltraSinger may
+    echo fail to start or to work. Fix the problem shown above ^(e.g. no
+    echo internet connection, proxy settings, files locked by a running
+    echo UltraSinger^) and run install\update.bat again. If it keeps failing,
+    echo install\auto_install.bat builds the environment anew.
 )
 pause
 exit /b 1

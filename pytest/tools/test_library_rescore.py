@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from library_rescore import (  # noqa: E402
     find_song_dirs,
     load_existing_results,
     run,
+    score_medium,
 )
 
 
@@ -248,6 +250,54 @@ class TestErrorPath:
         run(tmp_path, output, score_fn=failing_score, log=lambda *a: None)
         # Resume treats the previously-recorded error as done, not retried.
         assert call_count[0] == 1
+
+
+# ── Missing scoring package ──────────────────────────────────────────────────
+
+class TestMissingScoreLibrary:
+    def test_refuses_before_touching_the_results(self, tmp_path, monkeypatch):
+        """Every song would become an error row (never retried), and --fresh
+        would delete the previous results first."""
+        _make_song_dir(tmp_path, "Song One", with_vocals=True)
+        output = tmp_path / "out.csv"
+        append_result(output, {"pfad": "old", "medium_pct": "50.0", "notes": 1, "status": "ok", "fehler": ""},
+                      write_header=True)
+        before = output.read_bytes()
+        monkeypatch.setitem(sys.modules, "ultrastar_score", None)
+        monkeypatch.setitem(sys.modules, "ultrastar_score.parser", None)
+
+        with pytest.raises(ValueError, match="scoring"):
+            run(tmp_path, output, fresh=True, log=lambda *a: None)
+        assert output.read_bytes() == before
+
+    def test_injected_score_function_needs_no_package(self, tmp_path, monkeypatch):
+        _make_song_dir(tmp_path, "Song One", with_vocals=True)
+        monkeypatch.setitem(sys.modules, "ultrastar_score", None)
+        summary = run(tmp_path, tmp_path / "out.csv", score_fn=lambda t, v: (50.0, 1), log=lambda *a: None)
+        assert summary.scored_this_run == 1
+
+
+# ── #RELATIVE charts ─────────────────────────────────────────────────────────
+
+class TestRelativeChart:
+    """Feature: a #RELATIVE:YES chart is scored with absolute beats, not as
+    if every line started at beat 0 (which made valid charts the worst)."""
+
+    def test_score_medium_gets_absolute_beats(self, tmp_path, monkeypatch):
+        us = pytest.importorskip("ultrastar_score")
+        txt = tmp_path / "song.txt"
+        txt.write_bytes(b"#TITLE:Title\r\n#BPM:300\r\n#GAP:0\r\n#RELATIVE:YES\r\n"
+                        b": 0 4 60 a\r\n: 4 4 60 b\r\n- 8 12\r\n: 0 4 60 c\r\nE\r\n")
+        seen = {}
+
+        def fake_score_song(song, vocals_path, difficulty=None, pitch_frames=None):
+            seen["beats"] = [n.start_beat for n in song.all_notes]
+            return types.SimpleNamespace(percentage=88.0)
+        monkeypatch.setattr(us, "score_song", fake_score_song)
+        monkeypatch.setattr(us, "detect_pitch_frames", lambda path: [], raising=False)
+
+        assert score_medium(txt, tmp_path / "song [Vocals].ogg") == (88.0, 3)
+        assert seen["beats"] == [0, 4, 12]
 
 
 # ── Report formatting sanity (worst-first ordering) ─────────────────────────

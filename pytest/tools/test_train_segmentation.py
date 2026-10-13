@@ -7,6 +7,7 @@ synthetic analyses, and training runs a couple of steps on the CPU.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -202,6 +203,68 @@ class TestExtractSongList:
         kept = json.loads((work / "songs.json").read_text(encoding="utf-8"))
         assert [s["id"] for s in kept] == ["tr_00000"]
         assert (work / "data" / "tr_00000.npz").exists()
+        assert not (work / "data" / "tr_00001.npz").exists()
+
+    @staticmethod
+    def _other_spellings(folder: Path) -> list[str]:
+        """The same folder written differently: with a ".." detour and, on
+        Windows, with another drive letter case and forward slashes."""
+        spellings = [str(folder.parent / "x" / ".." / folder.name)]
+        if os.name == "nt":
+            text = str(folder)
+            spellings.append((text[0].swapcase() + text[1:]).replace("\\", "/"))
+        return spellings
+
+    @pytest.mark.parametrize("variant", [0, 1])
+    def test_exclude_matches_the_folder_however_it_is_written(self, tmp_path, monkeypatch, variant):
+        lib = tmp_path / "lib"
+        for name in ("A", "B"):
+            d = lib / f"Artist - {name}"
+            d.mkdir(parents=True)
+            (d / "song.mp3").write_bytes(b"x")
+            lines = ["#TITLE:T", "#ARTIST:A", "#MP3:song.mp3", "#BPM:300", "#GAP:0"]
+            lines += [f": {i * 4} 2 60 la" for i in range(150)]
+            (d / "song.txt").write_text("\n".join(lines + ["E"]), encoding="utf-8")
+        spellings = self._other_spellings(lib / "Artist - B")
+        if variant >= len(spellings):
+            pytest.skip("drive letters and backslashes only exist on Windows")
+        exclude = tmp_path / "bench.json"
+        exclude.write_text(json.dumps([{"folder": spellings[variant]}]), encoding="utf-8")
+
+        class _Stop(Exception):
+            pass
+
+        import audio_separator.separator as sepmod
+        monkeypatch.setattr(sepmod, "Separator", lambda *a, **k: (_ for _ in ()).throw(_Stop()))
+        work = tmp_path / "work"
+        with pytest.raises(_Stop):
+            ts.main(["extract", str(lib), str(work), "--exclude", str(exclude)])
+        songs = json.loads((work / "songs.json").read_text(encoding="utf-8"))
+        assert [Path(s["folder"]).name for s in songs] == ["Artist - A"]
+
+    def test_exclude_on_resume_matches_another_spelling(self, tmp_path, monkeypatch):
+        lib = tmp_path / "lib"
+        lib.mkdir()
+        work = tmp_path / "work"
+        (work / "data").mkdir(parents=True)
+        folder_b = tmp_path / "F" / "B"
+        songs = [{"id": "tr_00000", "folder": str(tmp_path / "F" / "A"), "txt": "", "media": ""},
+                 {"id": "tr_00001", "folder": str(folder_b), "txt": "", "media": ""}]
+        (work / "songs.json").write_text(json.dumps(songs), encoding="utf-8")
+        for s in songs:
+            (work / "data" / f"{s['id']}.npz").write_bytes(b"x")
+        exclude = tmp_path / "bench.json"
+        exclude.write_text(json.dumps([{"folder": self._other_spellings(folder_b)[0]}]), encoding="utf-8")
+
+        class _Stop(Exception):
+            pass
+
+        import audio_separator.separator as sepmod
+        monkeypatch.setattr(sepmod, "Separator", lambda *a, **k: (_ for _ in ()).throw(_Stop()))
+        with pytest.raises(_Stop):
+            ts.main(["extract", str(lib), str(work), "--exclude", str(exclude)])
+        kept = json.loads((work / "songs.json").read_text(encoding="utf-8"))
+        assert [s["id"] for s in kept] == ["tr_00000"]
         assert not (work / "data" / "tr_00001.npz").exists()
 
     def test_train_uses_only_listed_songs(self, tmp_path):

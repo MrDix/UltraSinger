@@ -45,6 +45,10 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 if sys.stderr and hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from compare_ultrastar import parse_score_song, require_score_library  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -130,7 +134,9 @@ def score_medium(txt_path: Path, vocal_path: Path) -> tuple[float, int]:
     + ``score_song(pitch_frames=...)`` fast path when the installed
     ``ultrastar-score`` version offers it (checked via ``hasattr`` so this
     keeps working across library versions that don't), otherwise falls
-    back to the plain ``score_song`` call.
+    back to the plain ``score_song`` call. A ``#RELATIVE:YES`` chart is
+    scored with absolute beats (see
+    :func:`compare_ultrastar.parse_score_song`).
 
     Raises whatever the underlying parse/score call raises — the caller
     is expected to catch broadly and record a CSV error row per song so
@@ -139,9 +145,8 @@ def score_medium(txt_path: Path, vocal_path: Path) -> tuple[float, int]:
     """
     import ultrastar_score
     from ultrastar_score import Difficulty, score_song
-    from ultrastar_score.parser import parse_ultrastar
 
-    song = parse_ultrastar(str(txt_path))
+    song = parse_score_song(txt_path)
     note_count = len(song.all_notes)
 
     if hasattr(ultrastar_score, "detect_pitch_frames"):
@@ -215,8 +220,13 @@ def run(
     """Discover, (re)score, and CSV-append results for one library scan.
 
     Kept separate from ``main()`` so tests can inject a fake ``score_fn``
-    without touching real audio decoding.
+    without touching real audio decoding. Raises ``ValueError`` before
+    anything is written (or ``--fresh`` deletes the CSV) when the default
+    scoring needs the optional scoring package and it is missing: every
+    song would end up as an error row, and those are not retried.
     """
+    if score_fn is score_medium:
+        require_score_library()
     discovery = find_song_dirs(root)
     entries = discovery.entries
     if limit is not None:
@@ -335,7 +345,11 @@ def main() -> None:
     output_path = Path(args.output)
 
     print(f"Scanne {root} ...")
-    summary = run(root, output_path, limit=args.limit, fresh=args.fresh)
+    try:
+        summary = run(root, output_path, limit=args.limit, fresh=args.fresh)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
     _print_report(summary)
 
 

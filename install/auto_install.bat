@@ -18,6 +18,11 @@ REM
 REM This script does not configure any API keys; it only prints information
 REM and suggested (not applied) command-line flags at the end.
 
+REM Work from the repository root, wherever the script was started from (e.g.
+REM a double-click in Explorer starts it in install\): the steps below look
+REM for this installation's .venv and processes relative to it.
+pushd "%~dp0.."
+
 set "FORCE_BUILD="
 
 for %%A in (%*) do (
@@ -48,10 +53,14 @@ if not defined FORCE_BUILD (
 
 REM --- GPU detection -----------------------------------------------------------
 REM Uses PowerShell to robustly parse the CSV line from nvidia-smi, e.g.
-REM "NVIDIA GeForce RTX 3060, 12288" -> name="NVIDIA GeForce RTX 3060" vram=12288
+REM "NVIDIA Example GPU, 12288" -> name="NVIDIA Example GPU" vram=12288,
+REM plus the GPU's compute capability (8.6 -> 86) and the CUDA major version its
+REM driver supports (e.g. 12); both are 0 when nvidia-smi cannot report them.
 set "GPU_DETECTED=0"
 set "GPU_NAME="
 set "GPU_VRAM="
+set "GPU_CC=0"
+set "GPU_DRIVER_CUDA=0"
 set "NVIDIA_SMI_MISSING=0"
 set "GPU_LINE="
 
@@ -60,13 +69,15 @@ if !errorlevel! neq 0 (
     set "NVIDIA_SMI_MISSING=1"
 ) else (
     for /f "usebackq delims=" %%L in (`powershell -NoProfile -Command ^
-        "$p = (nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>$null | Select-Object -First 1) -split ','; if ($p.Count -ge 2) { Write-Output ($p[0].Trim() + '|' + $p[1].Trim()) }"`) do (
+        "$p = (nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>$null | Select-Object -First 1) -split ','; if ($p.Count -ge 2) { $cc = 0; $c = nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>$null | Select-Object -First 1; if ($c -match '^\s*(\d+)\.(\d+)') { $cc = [int]$matches[1] * 10 + [int]$matches[2] }; $cu = 0; $h = (nvidia-smi 2>$null) -join ' '; if ($h -match 'CUDA Version:\s*(\d+)') { $cu = [int]$matches[1] }; Write-Output ($p[0].Trim() + '|' + $p[1].Trim() + '|' + $cc + '|' + $cu) }"`) do (
         set "GPU_LINE=%%L"
     )
     if defined GPU_LINE (
-        for /f "tokens=1,2 delims=|" %%A in ("!GPU_LINE!") do (
+        for /f "tokens=1-4 delims=|" %%A in ("!GPU_LINE!") do (
             set "GPU_NAME=%%A"
             set "GPU_VRAM=%%B"
+            set "GPU_CC=%%C"
+            set "GPU_DRIVER_CUDA=%%D"
         )
         REM Validate VRAM is a plain integer before trusting it
         set "VRAM_CHECK=!GPU_VRAM!"
@@ -95,22 +106,47 @@ if "!GPU_DETECTED!"=="1" (
 )
 echo.
 
+REM --- Can the GPU run the CUDA build? -----------------------------------------
+REM The Windows CUDA build of PyTorch installed here (CUDA 12.8) only has
+REM kernels for GPUs with compute capability 6.1 or newer (the Linux build
+REM starts at 7.0) and needs a driver that supports CUDA 12. On older GPUs or
+REM drivers it fails at runtime, so they get the CPU build unless --cuda forces
+REM it. A value nvidia-smi could not report (0) is not held against the GPU.
+set "CUDA_UNSUITABLE="
+if "!GPU_DETECTED!"=="1" (
+    set /a "GPU_CC=GPU_CC+0, GPU_DRIVER_CUDA=GPU_DRIVER_CUDA+0" >nul 2>&1
+    if !GPU_DRIVER_CUDA! GTR 0 if !GPU_DRIVER_CUDA! LSS 12 set "CUDA_UNSUITABLE=its driver does not support CUDA 12 - update the NVIDIA driver to use the GPU"
+    if !GPU_CC! GTR 0 if !GPU_CC! LSS 61 set "CUDA_UNSUITABLE=its compute capability is below 6.1"
+)
+
 REM --- Decide which build to install -------------------------------------------
 set "BUILD="
 if defined FORCE_BUILD (
     set "BUILD=!FORCE_BUILD!"
+    if "!BUILD!"=="cuda" if defined CUDA_UNSUITABLE (
+        echo Warning: the CUDA build is forced, but this GPU cannot run it:
+        echo !CUDA_UNSUITABLE!.
+        echo.
+    )
 ) else (
     if "!GPU_DETECTED!"=="1" (
-        set "BUILD=cuda"
-        rem Only prompt when stdin is an interactive console, so an automated
-        rem or wrapped invocation cannot block waiting for input (mirrors the
-        rem [ -t 0 ] guard in auto_install.sh). Non-interactive keeps the CUDA build.
-        set "IS_INTERACTIVE=1"
-        powershell -NoProfile -Command "if ([Console]::IsInputRedirected) { exit 1 } else { exit 0 }" >nul 2>&1
-        if !errorlevel! neq 0 set "IS_INTERACTIVE=0"
-        if "!IS_INTERACTIVE!"=="1" (
-            set /p "REPLY=Detected !GPU_NAME!, using CUDA build. Press C for CPU, Enter to continue: "
-            if /i "!REPLY:~0,1!"=="C" set "BUILD=cpu"
+        if defined CUDA_UNSUITABLE (
+            set "BUILD=cpu"
+            echo This GPU cannot run the CUDA build: !CUDA_UNSUITABLE!.
+            echo Using the CPU build. Force the CUDA build with --cuda.
+            echo.
+        ) else (
+            set "BUILD=cuda"
+            rem Only prompt when stdin is an interactive console, so an automated
+            rem or wrapped invocation cannot block waiting for input (mirrors the
+            rem [ -t 0 ] guard in auto_install.sh). Non-interactive keeps the CUDA build.
+            set "IS_INTERACTIVE=1"
+            powershell -NoProfile -Command "if ([Console]::IsInputRedirected) { exit 1 } else { exit 0 }" >nul 2>&1
+            if !errorlevel! neq 0 set "IS_INTERACTIVE=0"
+            if "!IS_INTERACTIVE!"=="1" (
+                set /p "REPLY=Detected !GPU_NAME!, using CUDA build. Press C for CPU, Enter to continue: "
+                if /i "!REPLY:~0,1!"=="C" set "BUILD=cpu"
+            )
         )
     ) else (
         set "BUILD=cpu"
@@ -162,8 +198,10 @@ REM bgutil Node provider lock files the sub-script needs to delete/replace,
 REM causing "access denied" errors and a half-updated environment. Stop only
 REM processes belonging to THIS repo (executables under .venv, or the bgutil
 REM node), never unrelated python/node processes; the installer's own cmd and
-REM PowerShell run from System32 and are not matched.
-powershell -NoProfile -Command "$venv = Join-Path '%CD%' '.venv'; $root = '%CD%'; $procs = Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains('bgutil') -and $_.CommandLine.ToLower().Contains($root.ToLower())) }; foreach ($p in $procs) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host ('Closed running UltraSinger process (PID ' + $p.ProcessId + ').') } catch {} }"
+REM PowerShell run from System32 and are not matched. The folder is handed over
+REM in an environment variable, so quotes in its name cannot break the command.
+set "US_REPO_ROOT=%CD%"
+powershell -NoProfile -Command "$root = $env:US_REPO_ROOT; $venv = Join-Path $root '.venv'; $procs = Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase)) -or ($_.Name -eq 'node.exe' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains('bgutil') -and $_.CommandLine.ToLower().Contains($root.ToLower())) }; foreach ($p in $procs) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host ('Closed running UltraSinger process (PID ' + $p.ProcessId + ').') } catch {} }"
 REM Give Windows a moment to release the file handles before the venv is wiped.
 if exist ".venv" timeout /t 2 /nobreak >nul
 

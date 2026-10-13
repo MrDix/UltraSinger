@@ -66,6 +66,9 @@ lookup from the input file name.
 Extra UltraSinger arguments are passed with `--args`, e.g.
 `--args --syllable_split` or `--args "--chart_style score"`. To forward a name the
 benchmark uses itself (such as `--keep-audio` or `--timeout`), write `--args=...`.
+On Windows, backslashes in paths are kept as they are
+(`--args "--segmentation_model D:\Seg\model.pt"`); put a path with spaces in
+single quotes inside the argument (`--args "--segmentation_model 'D:\My Models\model.pt'"`).
 
 The quality of your reference charts matters. `evaluate` aligns each reference
 chart to the sung pitch of the separated vocal (it searches a time offset of up

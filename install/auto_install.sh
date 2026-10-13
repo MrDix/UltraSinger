@@ -111,15 +111,52 @@ else
 fi
 echo ""
 
+# --- Can the GPU run the CUDA build? -----------------------------------------
+# The Linux CUDA build of PyTorch installed here (CUDA 12.8) only has kernels
+# for GPUs with compute capability 7.0 or newer (the Windows build also has
+# 6.1) and needs a driver that supports CUDA 12. On older GPUs or drivers it
+# fails at runtime, so they get the CPU build unless --cuda forces it. A value
+# nvidia-smi cannot report (e.g. an old driver without the compute_cap field)
+# is not held against the GPU.
+# Prints the reason, or nothing when the GPU is suitable.
+# $1 = compute capability ("8.6"), $2 = nvidia-smi output with "CUDA Version: X.Y"
+cuda_unsuitable_reason() {
+    local cc_major cc_minor driver_cuda
+    cc_major="$(printf '%s' "$1" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1/p')"
+    cc_minor="$(printf '%s' "$1" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\2/p')"
+    driver_cuda="$(printf '%s\n' "$2" | sed -n 's/.*CUDA Version:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1)"
+    if [ -n "$cc_major" ] && [ $((cc_major * 10 + cc_minor)) -lt 70 ]; then
+        echo "its compute capability is below 7.0"
+    elif [ -n "$driver_cuda" ] && [ "$driver_cuda" -lt 12 ]; then
+        echo "its driver does not support CUDA 12 - update the NVIDIA driver to use the GPU"
+    fi
+}
+
+CUDA_UNSUITABLE=""
+if [ "$GPU_DETECTED" = true ]; then
+    CUDA_UNSUITABLE="$(cuda_unsuitable_reason \
+        "$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1)" \
+        "$(nvidia-smi 2>/dev/null)")"
+fi
+
 # --- Decide which build to install ----------------------------------------
 if [ -n "$FORCE_BUILD" ]; then
     BUILD="$FORCE_BUILD"
     if [ "$BUILD" = "cuda" ] && [ "$IS_MACOS" = true ]; then
         echo "CUDA is not supported on macOS. Falling back to the CPU build."
         BUILD="cpu"
+    elif [ "$BUILD" = "cuda" ] && [ -n "$CUDA_UNSUITABLE" ]; then
+        echo "Warning: the CUDA build is forced, but this GPU cannot run it:"
+        echo "$CUDA_UNSUITABLE."
+        echo ""
     fi
 else
-    if [ "$GPU_DETECTED" = true ]; then
+    if [ "$GPU_DETECTED" = true ] && [ -n "$CUDA_UNSUITABLE" ]; then
+        BUILD="cpu"
+        echo "This GPU cannot run the CUDA build: $CUDA_UNSUITABLE."
+        echo "Using the CPU build. Force the CUDA build with --cuda."
+        echo ""
+    elif [ "$GPU_DETECTED" = true ]; then
         BUILD="cuda"
         if [ -t 0 ]; then
             printf "Detected %s, using CUDA build. Press C for CPU, Enter to continue: " "$GPU_NAME"
