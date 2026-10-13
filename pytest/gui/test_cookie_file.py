@@ -2,6 +2,7 @@
 private to the user, and never written back by a yt-dlp run."""
 
 import os
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -55,18 +56,58 @@ def test_failed_write_keeps_the_old_file(tmp_path):
     assert [p.name for p in tmp_path.iterdir()] == ["cookies.txt"]
 
 
-def test_copy_and_stale_copies(tmp_path):
+def test_copy_carries_the_process_id(tmp_path):
     target = tmp_path / "cookies.txt"
     target.write_text("cookies", encoding="utf-8")
     copy = cookie_file.copy_cookie_file(target)
     assert copy.parent == tmp_path and copy != target
     assert copy.read_text(encoding="utf-8") == "cookies"
-    half_written = tmp_path / ".cookies-abc.tmp"  # a write a crash interrupted
-    half_written.write_text("cook", encoding="utf-8")
-    options = cookie_file.write_private_options(tmp_path, "--extractor-args x")
+    assert copy.name.startswith(f"cookies-copy-{os.getpid()}-")
+
+
+def _leftovers(directory, pid):
+    """The private files a session with this process id leaves after a crash."""
+    names = (f"cookies-copy-{pid}-a1.txt", f"ytdlp-options-{pid}-b2.conf", f".cookies-{pid}-c3.tmp")
+    for name in names:
+        (directory / name).write_text("secret", encoding="utf-8")
+    return [directory / name for name in names]
+
+
+def test_stale_copies_of_ended_processes_are_removed(tmp_path):
+    ended = subprocess.Popen([sys.executable, "-c", "pass"])
+    ended.wait()
+    files = _leftovers(tmp_path, ended.pid)
+    unnamed = tmp_path / "cookies-copy-abc.txt"  # no process id in the name
+    unnamed.write_text("secret", encoding="utf-8")
+    target = tmp_path / "cookies.txt"
+    target.write_text("cookies", encoding="utf-8")
     cookie_file.remove_stale_copies(tmp_path)
-    assert not copy.exists() and not half_written.exists() and not options.exists()
+    assert not any(f.exists() for f in files) and not unnamed.exists()
     assert target.exists()
+
+
+def test_files_of_a_running_process_are_kept(tmp_path):
+    """E.g. a second instance: its live copies must not disappear under its conversion."""
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        files = _leftovers(tmp_path, other.pid) + _leftovers(tmp_path, os.getpid())
+        cookie_file.remove_stale_copies(tmp_path)
+        assert all(f.exists() for f in files)
+    finally:
+        other.kill()
+        other.wait()
+    cookie_file.remove_stale_copies(tmp_path)  # the other process has ended now
+    assert [f for f in files if f.exists()] == files[3:]  # only this process's stay
+
+
+def test_remove_reports_whether_the_file_is_gone(tmp_path):
+    present = tmp_path / "cookies.txt"
+    present.write_text("cookies", encoding="utf-8")
+    assert cookie_file.remove_cookie_file(present) and not present.exists()
+    assert cookie_file.remove_cookie_file(tmp_path / "missing.txt")
+    present.write_text("cookies", encoding="utf-8")
+    with patch.object(Path, "unlink", side_effect=PermissionError("in use")):
+        assert cookie_file.remove_cookie_file(present) is False
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")

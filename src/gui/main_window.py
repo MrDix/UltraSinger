@@ -676,8 +676,7 @@ class MainWindow(QMainWindow):
         # 2. Delete the exported Netscape cookie file. Conversions and format
         # probes use private copies of it, so their yt-dlp cannot write it back.
         cookie_path = self._config.get("cookie_file", "")
-        if cookie_path:
-            remove_cookie_file(cookie_path)
+        if cookie_path and remove_cookie_file(cookie_path):
             logger.info("Deleted cookie file: %s", cookie_path)
 
         # 3. Reload the browser so the user sees a logged-out state

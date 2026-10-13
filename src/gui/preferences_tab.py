@@ -534,6 +534,14 @@ class PreferencesTab(QWidget):
         for name in self._config:
             if name.startswith("llm_api_key_") and name[len("llm_api_key_"):] not in api_keys:
                 result[name] = ""
+        # The key of an older version (kept in config.json without a keyring)
+        # belongs to the provider made from it; once that is removed or points
+        # to another URL, saving deletes the key as well
+        if self._config.get("llm_api_key"):
+            legacy = next((p for p in providers
+                           if p.id == self._config.get("llm_legacy_provider_id")), None)
+            if legacy is None or legacy.api_base_url != self._config.get("llm_api_base_url"):
+                result["llm_api_key"] = ""
 
         return result
 

@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -211,6 +212,28 @@ class TestLegacyPlainTextKey:
         assert again[f"llm_api_key_{pid}"] == "legacy-key"
         assert not again.get("llm_api_key_other")
         assert not again.get("llm_api_key_second")
+
+    @pytest.mark.parametrize("change", ["remove", "move", "keep"])
+    def test_kept_key_goes_with_its_provider(self, config_dir, change):
+        """Once the migrated provider is removed or points elsewhere, saving deletes the plain-text key."""
+        from src.gui.preferences_tab import PreferencesTab
+        from src.gui.widgets.llm_provider_list import LLMProviderRow
+
+        (config_dir / "config.json").write_text(json.dumps({
+            "llm_api_key": "legacy-key", "llm_api_base_url": "https://llm.invalid/v1"}),
+            encoding="utf-8")
+        config = load_config()
+        pid = config["llm_legacy_provider_id"]
+        with patch.object(LLMProviderRow, "fetch_models_if_ready", lambda self: None):
+            tab = PreferencesTab(config)
+        if change == "remove":
+            tab._llm_provider_list._remove_provider(pid)
+        elif change == "move":
+            tab._llm_provider_list._rows[0]._url_edit.setText("https://moved.invalid/v1")
+        config.update(tab.collect_all())
+        save_config(config)
+        stored = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
+        assert ("llm_api_key" in stored) is (change == "keep")
 
     def test_kept_key_is_not_used_by_a_provider_with_another_url(self, config_dir):
         (config_dir / "config.json").write_text(json.dumps({

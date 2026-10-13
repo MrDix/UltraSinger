@@ -43,11 +43,8 @@ class _FormatProbeWorker(QObject):
     metadata (no download) and does NOT trigger bot detection — the API
     calls are identical to what the platform's own player makes.
 
-    **Limitation:** The probe does not pass the user's cookie file, so
-    age-restricted or member-only videos may report different availability
-    than the authenticated download.  This is acceptable because the probe
-    is purely informational (the badge text) and does not affect the actual
-    download path which uses ``--cookiefile`` when configured.
+    It passes the browser session's cookies as a private copy and the PO
+    token in a private yt-dlp option file, and removes both files itself.
     """
 
     finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language

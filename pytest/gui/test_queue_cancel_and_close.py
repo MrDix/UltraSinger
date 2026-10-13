@@ -7,6 +7,8 @@ QThread destroyed while it runs aborts the application).
 
 import functools
 import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -225,6 +227,7 @@ class _FakeBrowserTab(QWidget):
         self.media_interceptor = MagicMock()
         self.probe_cookie_file = ""
         self.shutdown = MagicMock()
+        self._view = MagicMock()
 
 
 @pytest.fixture
@@ -255,13 +258,16 @@ def window(monkeypatch, settings_dir):
 def test_start_removes_stale_private_files(settings_dir, monkeypatch):
     """A crash can leave a cookie copy or a PO-token option file; the next start removes them,
     also without a cookie file setting."""
-    from src.gui import cookie_file
     from src.gui import main_window
     from src.gui.widgets import llm_provider_list
 
     monkeypatch.setattr(llm_provider_list, "_shutting_down", False)
-    options = cookie_file.write_private_options(settings_dir, "--extractor-args x")
-    copy = cookie_file.write_private_copy(settings_dir, "cookies")
+    crashed = subprocess.Popen([sys.executable, "-c", "pass"])  # an earlier, ended session
+    crashed.wait()
+    options = settings_dir / f"ytdlp-options-{crashed.pid}-a1.conf"
+    copy = settings_dir / f"cookies-copy-{crashed.pid}-b2.txt"
+    for leftover in (options, copy):
+        leftover.write_text("secret", encoding="utf-8")
     with patch.object(main_window, "BrowserTab", _FakeBrowserTab), \
             patch.object(main_window.MainWindow, "_start_potoken_provider", lambda self: None), \
             patch.object(main_window.MainWindow, "_start_ytdlp_update_check", lambda self: None):
@@ -307,6 +313,18 @@ class TestCloseWindow:
         event, question, _ = self._close(window)
         question.assert_not_called()
         assert event.isAccepted()
+
+    @pytest.mark.parametrize("deleted", [True, False])
+    def test_bot_reset_logs_only_a_real_deletion(self, window, caplog, deleted):
+        from src.gui import main_window
+
+        window._config["cookie_file"] = "cookies.txt"
+        with patch.object(main_window, "remove_cookie_file", return_value=deleted) as remove, \
+                patch.object(QMessageBox, "information"), \
+                caplog.at_level("INFO", logger=main_window.logger.name):
+            window._check_for_bot_detection("ERROR: Sign in to confirm you're not a bot")
+        remove.assert_called_once_with("cookies.txt")
+        assert ("Deleted cookie file" in caplog.text) is deleted
 
     def test_closing_stops_model_fetches(self, window):
         from src.gui.widgets import llm_provider_list
