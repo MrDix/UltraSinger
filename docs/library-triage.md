@@ -91,7 +91,7 @@ while an editor saves it). Such songs are logged as `error` and stay where they
 are; the next run checks them again. If `ffprobe` is found but does not work at
 all, the run stops before it checks any song.
 
-The `reason` column of an `error` row in the CSV starts with one of these:
+The `reason` column of an `error` row in the CSV contains one of these:
 
 | Reason | Meaning |
 | --- | --- |
@@ -109,6 +109,10 @@ The `reason` column of an `error` row in the CSV starts with one of these:
 | `stage2_exception` | Stage 2 failed (separation, scoring, unreadable audio); no score, so no move. |
 | `refusing to move source_dir root itself` | `<source_dir>` is itself a song folder; it is never moved. |
 | `unexpected_error` | Anything else went wrong while the song was checked. |
+
+The five reasons of a move that did not happen (`contains_song_folders_skipped`, `not_moved`,
+`target_exists_skipped`, `move_failed` and `refusing to move source_dir root itself`) follow the verdict that
+asked for the move, for example `no_notes; move_failed: ...`.
 
 ---
 
