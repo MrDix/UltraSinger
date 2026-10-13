@@ -86,6 +86,14 @@ def test_stale_copies_of_ended_processes_are_removed(tmp_path):
     assert target.exists()
 
 
+def test_leftover_with_a_digit_int_cannot_read_is_removed(tmp_path):
+    """str.isdigit() accepts "²", which int() rejects: such a name must not stop the start."""
+    odd = tmp_path / "cookies-copy-²-abc.txt"
+    odd.write_text("secret", encoding="utf-8")
+    cookie_file.remove_stale_copies(tmp_path)
+    assert not odd.exists()
+
+
 def test_files_of_a_running_process_are_kept(tmp_path):
     """E.g. a second instance: its live copies must not disappear under its conversion."""
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])

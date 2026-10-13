@@ -152,6 +152,7 @@ def remove_stale_copies(directory: str | Path) -> None:
         return
     for prefix, leftover in leftovers:
         pid = leftover.name[len(prefix):].split("-", 1)[0]
-        if pid.isdigit() and 0 < int(pid) < 2**31 and _process_runs(int(pid)):
+        # isascii: str.isdigit() also accepts digits int() rejects (e.g. "²")
+        if pid.isascii() and pid.isdigit() and 0 < int(pid) < 2**31 and _process_runs(int(pid)):
             continue
         remove_cookie_file(leftover)
