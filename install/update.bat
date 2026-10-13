@@ -177,12 +177,13 @@ exit /b 0
 
 :compare_with_commit
 REM Clears KEEP_BACKUP when the copy is the pyproject.toml of the given commit
-REM with at most one line changed
+REM with at most one line changed. git diff exits with 1 for differences and
+REM for a file it cannot read alike, so only an identical file, exit code 0,
+REM or a count of exactly one changed line clears it - anything else keeps it.
 git show "%~1:pyproject.toml" > "!BACKUP_DIR!\pyproject.base" 2>nul || exit /b 0
 git diff --no-index --numstat --ignore-cr-at-eol "!BACKUP_DIR!\pyproject.base" "!BACKUP_DIR!\pyproject.toml" > "!BACKUP_DIR!\numstat.txt" 2>nul
-if !errorlevel! gtr 1 exit /b 0
-for /f "usebackq tokens=1,2" %%A in ("!BACKUP_DIR!\numstat.txt") do if not "%%A %%B"=="1 1" exit /b 0
-set "KEEP_BACKUP="
+if !errorlevel! equ 0 set "KEEP_BACKUP="
+for /f "usebackq tokens=1,2" %%A in ("!BACKUP_DIR!\numstat.txt") do if "%%A %%B"=="1 1" set "KEEP_BACKUP="
 exit /b 0
 
 :restore_and_fail
