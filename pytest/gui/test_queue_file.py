@@ -383,10 +383,11 @@ class TestInvalidEntries:
                      "'Not Web' skipped (the source is not a web address)",
                      "'Relative' skipped (the source is not a full file path)",
                      "'Status' skipped (unknown status)", "'Finished' skipped (the song is finished)",
+                     "entry 9: video ID ignored (not a plain video ID)",
                      "setting 'whisper_batch_size' ignored (wrong type)",
                      "setting 'no_such_setting' ignored", "setting 'output_folder' ignored"):
             assert note in joined
-        assert len(problems) == 10
+        assert len(problems) == 11
         assert "unknown status" in caplog.text
 
     def test_a_file_with_too_many_songs_is_read_up_to_the_limit(self, tmp_path, monkeypatch):
@@ -397,7 +398,12 @@ class TestInvalidEntries:
                           for n in range(5)])
         items, problems = read_queue_file(path)
         assert [item.input_source for item in items] == [f"{_URL}{n}" for n in range(3)]
-        assert problems == ["only the first 3 songs are read, 2 more are left out"]
+        assert problems[0] == "only the first 3 songs are read, 2 more are left out"
+        # Each change to the file has a note, so a restore keeps a copy before saving
+        assert len(problems) == 4
+        for n, problem in enumerate(problems[1:], start=1):
+            assert problem.startswith(f"entry {n} 'xxx")
+            assert problem.endswith(": title cut to 500 characters")
         assert all(len(item.title) == queue_file._MAX_TITLE for item in items)
 
     def test_a_video_id_is_no_path(self, tmp_path):
@@ -407,7 +413,33 @@ class TestInvalidEntries:
                           for video_id in ("abc-_9XyZ01", "../../startup/x", "a\\b", "")])
         items, problems = read_queue_file(path)
         assert [item.video_id for item in items] == ["abc-_9XyZ01", "", "", ""]
+        assert problems == ["entry 2: video ID ignored (not a plain video ID)",
+                            "entry 3: video ID ignored (not a plain video ID)"]
+
+    def test_the_notes_on_one_entry_are_limited(self, tmp_path):
+        """One entry with very many unknown settings flooded the console and froze the GUI."""
+        path = tmp_path / "queue.json"
+        _write_raw(path, [{"input_type": "url", "input_source": _URL,
+                           "settings_overrides": {f"setting_{n}": 0 for n in range(5000)}}])
+        [item], problems = read_queue_file(path)
+        assert item.settings_overrides == {}
+        assert len(problems) == 11
+        assert problems[-1] == "entry 1: 4990 more settings ignored"
+
+    def test_the_notes_on_one_file_are_limited(self, tmp_path):
+        path = tmp_path / "queue.json"
+        _write_raw(path, ["not a song"] * 150)
+        items, problems = read_queue_file(path)
+        assert items == [] and len(problems) == 101
+        assert problems[-1] == "50 more notes left out"
+
+    def test_a_saved_queue_reads_back_without_notes(self, tmp_path):
+        """The writer cuts and checks like the reader: no copy of the file at every start."""
+        path = tmp_path / "queue.json"
+        write_queue_file(path, [_song(title="x" * 2000, video_id="../x")])
+        [item], problems = read_queue_file(path)
         assert problems == []
+        assert (len(item.title), item.video_id) == (queue_file._MAX_TITLE, "")
 
     def test_wrong_values_never_reach_the_settings_dialog(self, tmp_path):
         """The per-song settings dialog shows global settings plus the item's; a value
@@ -445,6 +477,30 @@ class TestImport:
         assert imported.settings_overrides == {"language_mode": "manual", "language": "de",
                                                "remote_stt": True}
         assert len(problems) == 7 and all("not imported" in p for p in problems)
+
+    def test_an_imported_file_sets_only_values_the_dialog_offers(self, tmp_path):
+        """Such a text goes into the command line and into names of cache files: a path
+        in it could send a file of the conversion elsewhere."""
+        good = {"transcriber": "qwen3", "whisper_compute_type": "int8",
+                "language_mode": "manual", "language": "de", "octave_consistency": "all",
+                "format_version": "1.0.0", "linebreak_timing": "usdx", "pitcher": "fcpe",
+                "separator_backend": "demucs", "chart_style": "score",
+                "bpm_override": "120,5", "octave_shift": "-2", "llm_provider_id": "0a1b2c3d"}
+        bad = {"transcriber": "../x", "whisper_compute_type": "/../../x", "language_mode": "x",
+               "language": "../../x", "octave_consistency": "x", "format_version": "9.9",
+               "linebreak_timing": "x", "pitcher": "C:\\x", "separator_backend": "x",
+               "chart_style": "x", "bpm_override": "1e9", "octave_shift": "../1",
+               "llm_provider_id": "../../x"}
+        path = tmp_path / "queue.json"
+        write_queue_file(path, [_song(settings_overrides=good), _song(settings_overrides=bad)])
+        [kept, cleaned], problems = read_queue_file(path, imported=True)
+        assert kept.settings_overrides == good
+        assert cleaned.settings_overrides == {}
+        assert sum("a value the per-song settings do not offer" in p for p in problems) == 10
+        assert problems[-1] == "entry 2 'Artist - Song Title': 3 more settings ignored"
+        # The saved queue keeps what the user set
+        [_, restored], _ = read_queue_file(path)
+        assert restored.settings_overrides == bad
 
     def test_a_failed_song_is_imported_to_be_converted(self, tmp_path):
         path = tmp_path / "queue.json"
@@ -501,6 +557,43 @@ class TestPerSongSettings:
             "octave_shift", "pitcher", "separator_backend", "chart_style", "llm_provider_id",
         }
         assert queue_file._NOT_IMPORTED <= PER_SONG_SETTINGS
+
+    def test_the_values_an_imported_file_may_set_are_those_of_the_dialog(self):
+        """A new text setting, or a new choice in the dialog, must be added to
+        queue_file._IMPORT_VALUES."""
+        form = ConversionSettingsForm(dict(_DEFAULTS))
+
+        def texts(combo):
+            return {combo.itemText(i) for i in range(combo.count())}
+
+        def data(combo):
+            return {combo.itemData(i) for i in range(combo.count())}
+
+        values = queue_file._IMPORT_VALUES
+        text_settings = {key for key in PER_SONG_SETTINGS
+                         if isinstance(_DEFAULTS.get(key, ""), str)}
+        assert set(values) == text_settings - queue_file._NOT_IMPORTED
+        assert set(values["transcriber"]) == data(form._transcriber)
+        assert set(values["octave_consistency"]) == data(form._octave_consistency)
+        assert set(values["linebreak_timing"]) == data(form._linebreak_timing)
+        assert set(values["whisper_compute_type"]) == {
+            "" if text == "auto" else text for text in texts(form._whisper_compute)}
+        for key, combo in (("format_version", form._format_version),
+                           ("pitcher", form._pitcher),
+                           ("separator_backend", form._separator_backend),
+                           ("chart_style", form._chart_style)):
+            assert set(values[key]) == texts(combo), key
+        assert all(values["language"].fullmatch(code) for code in texts(form._language_combo))
+        for text in ("120", "120.5", "120,5", "500"):  # the BPM field takes 1 to 500
+            assert values["bpm_override"].fullmatch(text), text
+        for text in ("-10", "0", "+3", "10"):  # the octave field takes -10 to 10
+            assert values["octave_shift"].fullmatch(text), text
+        from src.gui.models import LLMProvider
+        assert values["llm_provider_id"].fullmatch(LLMProvider().id)
+        # Whatever the dialog gives, an imported file may set
+        for key, value in form.collect_config().items():
+            if key in values:
+                assert queue_file._checked_setting(key, value, imported=True) == (value, None), key
 
 
 # ── The main window: restore at start, saving, export and import ──────────
@@ -746,21 +839,53 @@ class TestMainWindow:
         assert win._queue_mgr.items == [waiting]
         assert _process_events_until(lambda: _saved(settings_dir) == [(_URL, "pending")])
 
-    def test_a_queue_file_that_cannot_be_read_is_kept(self, settings_dir, open_window,
-                                                       monkeypatch):
+    @staticmethod
+    def _open_on_a_locked_queue_file(settings_dir, open_window, monkeypatch):
+        """A window whose saved queue can neither be read nor copied at start."""
         monkeypatch.setattr(queue_file, "time", SimpleNamespace(sleep=lambda _seconds: None))
         path = settings_dir / "queue.json"
         _write_raw(path, [{"input_type": "url", "input_source": _URL}])
-        raw = path.read_bytes()
         with patch.object(queue_file, "read_queue_file", side_effect=PermissionError("locked")), \
-                patch.object(queue_file, "_back_up_file", return_value=None):
+                patch.object(queue_file, "_back_up_file", return_value=None), \
+                patch.object(QMessageBox, "warning") as warning:
             win = open_window()
+        warning.assert_called_once()  # told at start, not only in the console
         assert win._queue_mgr.items == []
-        assert "not saved in this session" in _console(win)
-        win._queue_mgr.add_item("https://video.invalid/watch?v=2", "url", "New")
-        _process_events_until(lambda: False, timeout=0.2)
+        return win, path, path.read_bytes()
+
+    def test_a_locked_queue_file_is_kept_until_it_can_be_copied(self, settings_dir, open_window,
+                                                                monkeypatch):
+        win, path, raw = self._open_on_a_locked_queue_file(settings_dir, open_window, monkeypatch)
+        with patch.object(queue_file, "_back_up_file", return_value=None):  # still locked
+            win._queue_mgr.add_item("https://video.invalid/watch?v=2", "url", "New")
+            _process_events_until(lambda: False, timeout=0.2)
+        assert path.read_bytes() == raw and _backups(settings_dir) == []
+        # The next change copies it aside, then the queue of this session is saved
+        win._queue_mgr.add_item("https://video.invalid/watch?v=3", "url", "Newer")
+        [backup] = _backups(settings_dir)
+        assert backup.read_bytes() == raw
+        assert _process_events_until(lambda: _saved(settings_dir) == [
+            ("https://video.invalid/watch?v=2", "pending"),
+            ("https://video.invalid/watch?v=3", "pending")])
+        assert f"kept in {backup}" in _console(win)
+
+    def test_closing_tries_the_copy_again(self, settings_dir, open_window, monkeypatch):
+        win, _path, raw = self._open_on_a_locked_queue_file(settings_dir, open_window,
+                                                            monkeypatch)
+        with patch.object(queue_file, "_back_up_file", return_value=None):
+            win._queue_mgr.add_item("https://video.invalid/watch?v=2", "url", "New")
         _close(win)
-        assert path.read_bytes() == raw
+        [backup] = _backups(settings_dir)
+        assert backup.read_bytes() == raw
+        assert _saved(settings_dir) == [("https://video.invalid/watch?v=2", "pending")]
+
+    def test_nothing_is_saved_over_a_file_that_stays_locked(self, settings_dir, open_window,
+                                                            monkeypatch):
+        win, path, raw = self._open_on_a_locked_queue_file(settings_dir, open_window, monkeypatch)
+        with patch.object(queue_file, "_back_up_file", return_value=None):
+            win._queue_mgr.add_item("https://video.invalid/watch?v=2", "url", "New")
+            _close(win)
+        assert path.read_bytes() == raw and _backups(settings_dir) == []
 
     def test_a_failing_save_does_not_stop_the_close(self, settings_dir, open_window):
         win = open_window()

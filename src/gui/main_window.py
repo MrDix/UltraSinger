@@ -22,6 +22,7 @@ from .cookie_file import remove_cookie_file, remove_stale_copies
 from .models import LLMProvider
 from .preferences_tab import PreferencesTab
 from .queue_file import (
+    keep_unread_queue,
     load_saved_queue,
     queue_file_path,
     read_queue_file,
@@ -248,6 +249,9 @@ class MainWindow(QMainWindow):
         # the settings directory the window started with.
         self._queue_file = queue_file_path()
         self._queue_saving = True
+        # True while the saved queue did not come back completely and could not
+        # be copied aside: no save may replace it before (_keep_unread_queue)
+        self._queue_unread = False
         self._queue_save_timer = QTimer(self)
         self._queue_save_timer.setSingleShot(True)
         self._queue_save_timer.setInterval(self._QUEUE_SAVE_DELAY_MS)
@@ -643,8 +647,20 @@ class MainWindow(QMainWindow):
         # When the file could neither be read completely nor copied aside, a
         # save would replace what did not come back
         self._queue_saving = may_save
+        self._queue_unread = not may_save
         for problem in problems:
             self._queue_tab.append_log(f"[Queue] Saved queue: {problem}")
+        if not may_save:
+            QMessageBox.warning(
+                self,
+                "UltraSinger",
+                "The queue of the last session could not be restored completely, and its "
+                f"file could not be copied aside:\n{self._queue_file}\n\n"
+                "So that nothing in it is lost, the queue is saved only once that copy "
+                "works (UltraSinger tries again with every change and when it closes). "
+                "The songs that did not come back can then be added from the copy with "
+                "\u2630 \u2192 Import Queue\u2026 (see the Console tab).",
+            )
         if not items:
             return
         self._queue_mgr.add_items(items)
@@ -657,8 +673,20 @@ class MainWindow(QMainWindow):
 
     def _schedule_queue_save(self, *_args):
         """Save the queue shortly (a burst of changes, e.g. Clear, is saved once)."""
+        if self._queue_unread:
+            self._keep_unread_queue()
         if self._queue_saving:
             self._queue_save_timer.start()
+
+    def _keep_unread_queue(self):
+        """Copy aside the saved queue that did not come back completely (it could
+        not be copied at start); then the queue is saved again."""
+        note = keep_unread_queue(self._queue_file)
+        if note is None:
+            return
+        self._queue_unread = False
+        self._queue_saving = True
+        self._queue_tab.append_log(f"[Queue] {note}")
 
     def _save_queue(self):
         save_queue(self._queue_file, self._queue_mgr.items)
@@ -881,9 +909,14 @@ class MainWindow(QMainWindow):
         # Keep the queue for the next start. Saved now, before the shutdown
         # below cancels its songs, and not again: they come back waiting.
         self._queue_save_timer.stop()
-        if self._queue_saving:
-            self._queue_saving = False
+        if self._queue_unread:
+            self._keep_unread_queue()
+        saving = self._queue_saving
+        self._queue_saving = self._queue_unread = False
+        if saving:
             self._save_queue()
+        else:
+            logger.warning("The queue is not saved: %s could not be copied aside", self._queue_file)
 
         # Cancel the conversion queue (runner and pre-download) and join its threads
         self._queue_mgr.shutdown()

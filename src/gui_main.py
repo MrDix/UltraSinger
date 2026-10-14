@@ -35,13 +35,18 @@ def _acquire_instance_lock():
     Both are advisory but sufficient for our purposes.
     """
     try:
-        # Open (or create) the lock file in write mode.  We intentionally
+        # Open (or create) the lock file without emptying it: an instance that
+        # is refused leaves the file of the running one alone.  We intentionally
         # do NOT close it — the OS releases the lock when the process exits
         # (even on crash), which is exactly the behaviour we want.
-        fh = open(_LOCK_FILE, "w", encoding="utf-8")  # noqa: SIM115
-        fh.write(str(os.getpid()))
-        fh.flush()
-
+        fh = open(_LOCK_FILE, "a+", encoding="utf-8")  # noqa: SIM115
+    except OSError:
+        return None
+    try:
+        # Lock first, at a fixed byte: msvcrt locks the bytes from the current
+        # position, so after writing the PID an instance with a shorter PID
+        # would lock another byte and start too.
+        fh.seek(0)
         if sys.platform == "win32":
             import msvcrt
             msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
@@ -49,8 +54,12 @@ def _acquire_instance_lock():
             import fcntl
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
+        fh.truncate(0)
+        fh.write(str(os.getpid()))
+        fh.flush()
         return fh
-    except (OSError, IOError):
+    except OSError:
+        fh.close()
         return None
 
 

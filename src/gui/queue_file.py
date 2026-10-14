@@ -76,6 +76,30 @@ _NOT_IMPORTED = frozenset({
     "remote_stt_model",
 })
 
+# What an imported file may set for the other per-song text settings: the values
+# the per-song settings dialog offers. Such a text goes into the command line,
+# and the conversion puts some of them into the names of its cache files.
+_IMPORT_VALUES = {
+    "transcriber": ("auto", "qwen3", "whisper"),
+    "whisper_compute_type": ("", "float32", "float16", "int8"),  # "" = auto
+    "language_mode": ("auto", "manual"),
+    "language": re.compile(r"[a-z]{2,3}"),
+    "octave_consistency": ("model", "all", "off"),
+    "format_version": ("0.3.0", "1.0.0", "1.1.0", "1.2.0"),
+    "linebreak_timing": ("yass", "usdx", "after_last_note"),
+    "pitcher": ("swiftf0", "fcpe"),
+    "separator_backend": ("audio_separator", "demucs"),
+    "chart_style": ("singable", "score"),
+    "bpm_override": re.compile(r"([1-9][0-9]{0,2}([.,][0-9]{1,2})?)?"),
+    "octave_shift": re.compile(r"([+-]?([0-9]|10))?"),
+    "llm_provider_id": re.compile(r"([0-9a-f]{8})?"),
+}
+
+# Notes on the left-out settings of one entry, and on one file; more are only
+# counted (each note is a line in the console tab)
+_MAX_SETTING_NOTES = 10
+_MAX_NOTES = 100
+
 # Statuses of a song that has not finished; it waits (again) after a restore
 _WAITING = ("pending", "running", "cancelled")
 
@@ -92,42 +116,56 @@ def _shortened(text: str, limit: int = 60) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "\u2026"
 
 
+def _checked_setting(key, value, imported: bool):
+    """``(value, None)`` for a per-song setting a queue file holds, else
+    ``(None, why it is left out)``. The caller leaves out a per-song setting
+    without a value (None) before."""
+    if key not in PER_SONG_SETTINGS:
+        if isinstance(key, str) and _is_secret_key(key):
+            return None, "ignored (API keys and tokens are never kept in a queue file)"
+        return None, "ignored (not a per-song setting)"
+    if imported and key in _NOT_IMPORTED:
+        return None, ("not imported (it names a path, web address or model; "
+                      "your own setting applies)")
+    fitted = _fit_type(value, _DEFAULTS.get(key, ""))
+    if fitted is _INVALID:
+        return None, "ignored (wrong type)"
+    allowed = _IMPORT_VALUES.get(key) if imported else None
+    if allowed is not None and not (allowed.fullmatch(fitted) if isinstance(allowed, re.Pattern)
+                                    else fitted in allowed):
+        return None, ("not imported (a value the per-song settings do not offer; "
+                      "your own setting applies)")
+    return fitted, None
+
+
 def _stored_settings(settings, imported: bool = False, problems: list[str] | None = None,
                      where: str = "") -> dict:
     """The per-song settings of ``settings`` that a queue file holds.
 
-    A note on each setting that is left out goes to ``problems``; it names the
+    A note on each setting that is left out goes to ``problems`` (after
+    ``_MAX_SETTING_NOTES`` of them, they are only counted); it names the
     setting, never its value (that could be a secret). A value of a wrong type
     (e.g. hand-edited) is left out: the per-song settings dialog could not show it.
     """
-    def skip(reason: str):
-        if problems is not None:
-            problems.append(f"{where}: {reason}")
-
     if not isinstance(settings, dict):
-        if settings is not None:
-            skip("per-song settings ignored (not a list of settings)")
+        if settings is not None and problems is not None:
+            problems.append(f"{where}: per-song settings ignored (not a list of settings)")
         return {}
-    stored = {}
+    stored, noted, more = {}, 0, 0
     for key, value in settings.items():
-        if key not in PER_SONG_SETTINGS:
-            if isinstance(key, str) and _is_secret_key(key):
-                skip(f"setting '{_shortened(key)}' ignored "
-                     "(API keys and tokens are never kept in a queue file)")
+        if value is None and key in PER_SONG_SETTINGS:
+            continue  # no value: no override
+        fitted, why = _checked_setting(key, value, imported)
+        if why is None:
+            stored[key] = fitted
+        elif problems is not None:
+            if noted < _MAX_SETTING_NOTES:
+                problems.append(f"{where}: setting '{_shortened(str(key))}' {why}")
+                noted += 1
             else:
-                skip(f"setting '{_shortened(str(key))}' ignored (not a per-song setting)")
-            continue
-        if imported and key in _NOT_IMPORTED:
-            skip(f"setting '{key}' not imported (it names a path, web address or model; "
-                 "your own setting applies)")
-            continue
-        if value is None:
-            continue
-        fitted = _fit_type(value, _DEFAULTS.get(key, ""))
-        if fitted is _INVALID:
-            skip(f"setting '{key}' ignored (wrong type)")
-            continue
-        stored[key] = fitted
+                more += 1
+    if more:
+        problems.append(f"{where}: {more} more settings ignored")
     return stored
 
 
@@ -138,8 +176,9 @@ def _entry(item: QueueItem) -> dict | None:
     return {
         "input_type": item.input_type,
         "input_source": item.input_source,
-        "title": item.title,
-        "video_id": item.video_id,
+        # Cut and checked as on reading, so that reading the file again has nothing to note
+        "title": item.title[:_MAX_TITLE],
+        "video_id": item.video_id if _VIDEO_ID.fullmatch(item.video_id or "") else "",
         # A song that ran when the queue was saved, or was cancelled, waits again
         "status": "failed" if item.status == "failed" else "pending",
         "settings_overrides": _stored_settings(item.settings_overrides),
@@ -152,7 +191,7 @@ def _item(entry, number: int, imported: bool, problems: list[str]) -> QueueItem 
         problems.append(f"entry {number} skipped (not a song)")
         return None
     title = entry.get("title")
-    title = title[:_MAX_TITLE] if isinstance(title, str) and title.strip() else ""
+    title = title if isinstance(title, str) and title.strip() else ""
     where = f"entry {number}" + (f" '{_shortened(title)}'" if title else "")
     input_type = entry.get("input_type")
     source = entry.get("input_source")
@@ -176,9 +215,13 @@ def _item(entry, number: int, imported: bool, problems: list[str]) -> QueueItem 
     if status not in (*_WAITING, "failed"):
         problems.append(f"{where} skipped (unknown status)")
         return None
-    video_id = entry.get("video_id")
-    if not (isinstance(video_id, str) and _VIDEO_ID.fullmatch(video_id)):
+    if len(title) > _MAX_TITLE:
+        problems.append(f"{where}: title cut to {_MAX_TITLE} characters")
+        title = title[:_MAX_TITLE]
+    video_id = entry.get("video_id") or ""
+    if video_id and not (isinstance(video_id, str) and _VIDEO_ID.fullmatch(video_id)):
         # It becomes part of a file name (the download of a browser stream)
+        problems.append(f"{where}: video ID ignored (not a plain video ID)")
         video_id = ""
     return QueueItem(
         input_source=source,
@@ -254,6 +297,8 @@ def read_queue_file(path: Path, imported: bool = False) -> tuple[list[QueueItem]
         item = _item(entry, number, imported, problems)
         if item is not None:
             items.append(item)
+    if len(problems) > _MAX_NOTES:
+        problems = problems[:_MAX_NOTES] + [f"{len(problems) - _MAX_NOTES} more notes left out"]
     for problem in problems:
         logger.warning("Queue file %s: %s", path, problem)
     return items, problems
@@ -288,7 +333,7 @@ def load_saved_queue(path: Path) -> tuple[list[QueueItem], list[str], bool]:
     When something of the file does not come back (it cannot be read, or holds
     entries or settings this version leaves out), the file is copied aside
     first, so nothing in it is lost silently. If that copy fails too, the
-    queue must not be saved over the file in this session.
+    queue must not be saved over the file until ``keep_unread_queue`` copied it.
     """
     path = Path(path)
     try:
@@ -308,6 +353,26 @@ def load_saved_queue(path: Path) -> tuple[list[QueueItem], list[str], bool]:
         note = f"The file as it was is kept in {backup}."
     logger.warning("Queue file %s: %s", path, note)
     return items, notes + [note], backup is not None
+
+
+def keep_unread_queue(path: Path) -> str | None:
+    """Copy aside the saved queue that ``load_saved_queue`` could neither restore
+    completely nor copy, so that the queue may be saved over it.
+
+    Returns a note for the user once the queue may be saved (the file is copied,
+    or gone), or None while it still cannot be copied.
+    """
+    path = Path(path)
+    try:
+        gone = not path.exists()
+    except OSError:
+        gone = False
+    if gone:
+        return "The saved queue of the last session is gone; the queue is saved again."
+    backup = _back_up_file(path)
+    if backup is None:
+        return None
+    return f"The saved queue of the last session is kept in {backup}; the queue is saved again."
 
 
 def without_duplicates(imported: list[QueueItem],
