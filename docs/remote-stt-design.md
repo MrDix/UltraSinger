@@ -74,6 +74,21 @@ plain-text lyrics (no timestamps) and aligns them to audio via
 `:151-271`). Remote STT text should be piped into that exact same function,
 not a new alignment code path.
 
+**Later refinement (line anchors):** the remote times are too coarse for
+the notes, but good enough to tell the local alignment where each *line* is
+sung, which is all the plain-lyrics path needs. The request therefore asks
+for `verbose_json` with word and segment times. Each remote segment becomes
+a line of the remote text, and the remote words give lines their times
+exactly as the words of a local transcription do for LRCLIB plain lyrics
+(`line_times_from_words`); the words themselves are still placed by the
+local CTC alignment. Measured on the 89-song benchmark (share of words that
+start more than 1 s off): remote text 5.5 % -> 3.7 %, LRCLIB plain lyrics
+6.5 % -> 5.0 % (4.8 % with the words of a local transcription). For the
+plain-lyrics anchors the service is now also asked when LRCLIB plain lyrics
+were found; it is asked once per song, and never when synced lyrics made
+the notes. A service that rejects the `verbose_json` request (HTTP 400) is
+asked once more for the text alone.
+
 ## 3. Architecture: Remote STT as a Third Lyrics-Source Fallback
 
 Today the lyrics-source waterfall in `RunUltraSinger()` is:
@@ -125,9 +140,10 @@ fail-open, never a hard error.
 
 Reuse the OpenAI-compatible `/audio/transcriptions` REST endpoint
 (multipart/form-data): `file`, `model`, optional `language`,
-`response_format` (`json` or `verbose_json` — request `json` since segment
-timestamps are discarded anyway per §2), and `temperature=0` for
-determinism. This is the same shape Groq, OpenAI, and most self-hosted
+`response_format` (`json` or `verbose_json` — originally `json`, since
+the timestamps were discarded per §2; now `verbose_json` with
+`timestamp_granularities[]=word` and `segment` for the line anchors, see
+the end of §2), and `temperature=0` for determinism. This is the same shape Groq, OpenAI, and most self-hosted
 Whisper-compatible servers (e.g. faster-whisper-server) already implement,
 so a single client covers multiple providers without provider-specific
 branches beyond `api_base_url` + `model`.
@@ -195,6 +211,9 @@ discovered via API error:
   If the encoded file still exceeds the provider's limit, fail open to
   local Whisper (§3) rather than attempting client-side chunking in v1
   (see Open Questions on chunking).
+  Implemented as a 16 kHz mono FLAC copy (about 1 MB per minute): the
+  44.1 kHz mono WAV of the vocals that was uploaded at first passed 25 MB
+  from about five minutes of song on.
 - Request timeout: set generously (e.g. 120s) since upload + remote
   inference of a multi-minute song is not instant; on timeout, fail open.
 

@@ -397,8 +397,8 @@ _Not all options working now!_
 
     [remote speech-to-text]
     --remote_stt                 Enable remote (cloud) speech-to-text as a Whisper alternative
-                                  for GPU-less machines (disabled by default). Text only --
-                                  timing is always computed locally.
+                                  for GPU-less machines (disabled by default). Its rough word
+                                  times only place the lines -- the notes are timed locally.
     --remote_stt_api_base_url    OpenAI-compatible API base URL >> ((default) is
                                   https://api.groq.com/openai/v1)
     --remote_stt_api_key         API key (or set ULTRASINGER_REMOTE_STT_API_KEY env var)
@@ -723,7 +723,7 @@ The pipeline is **enabled by default** and falls back to the standard transcript
 
 **Placing the lines:** The words are placed with wav2vec2 forced alignment over the whole vocal track, and the LRC times of the lines check the result. Four alignments are made: with the model run over the whole song or over 30-s pieces, each with two ways of ending the path after the last word. The one with the most lines at their LRC times is used. A line that lands in a poor place moves to a clearly better place near its LRC time, and lines at the end that the recording does not have (lyrics of a longer version) are left out. On a benchmark of 89 songs, the share of words that start more than 1 s off went from 6.5 % to 4.9 %. When there is not enough memory to run the model over the whole song at once, the 30-s pieces are used alone.
 
-**Plain lyrics** from LRCLIB (without timestamps) make the notes when no synced lyrics were found or the synced ones could not be aligned. Their lines are read as above, and each one becomes a line of the chart. The words of the transcription give the lines their times: a line starts where the transcription heard the first of its words (counted back by the words before it in the line), and lines without a heard word are spread between the others by their number of words. When at least half of the lines (and at least 8) get a time this way, the lines are placed as synced lyrics are. Otherwise all lines are placed on one path over the whole vocal track; that is also the case when the transcription was skipped (synced lyrics found before it, or remote speech-to-text). On the benchmark, with the LRC lines without their times as plain lyrics, the share of words that start more than 1 s off went from 6.5 % to 4.8 %. The settings info file (`--write_settings_info`) tells which way the lines were placed. Only when the plain lyrics cannot be aligned either do the words come from remote speech-to-text (`--remote_stt`) or the transcription. When the transcription runs, the plain lyrics also **post-correct** its words by comparing them against the verified lyrics text, improving recall by ~5 percentage points.
+**Plain lyrics** from LRCLIB (without timestamps) make the notes when no synced lyrics were found or the synced ones could not be aligned. Their lines are read as above, and each one becomes a line of the chart. The words of the transcription give the lines their times: a line starts where the transcription heard the first of its words (counted back by the words before it in the line), and lines without a heard word are spread between the others by their number of words. When at least half of the lines (and at least 8) get a time this way, the lines are placed as synced lyrics are. Otherwise all lines are placed on one path over the whole vocal track; that is also the case when the transcription was skipped for synced lyrics found before it. With remote speech-to-text (`--remote_stt`), which replaces the transcription, the words the remote service heard give the lines their times in the same way. On the benchmark, with the LRC lines without their times as plain lyrics, the share of words that start more than 1 s off went from 6.5 % to 4.8 % with the words of a local transcription, and to 5.0 % with those of remote speech-to-text. The settings info file (`--write_settings_info`) tells which way the lines were placed. Only when the plain lyrics cannot be aligned either do the words come from remote speech-to-text (`--remote_stt`) or the transcription. When the transcription runs, the plain lyrics also **post-correct** its words by comparing them against the verified lyrics text, improving recall by ~5 percentage points.
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used. It searches as a conversion of the video does: with the artist and title that the conversion takes from the video and looks up in the song database, and with the length of the video.
 
@@ -800,21 +800,21 @@ UltraSinger.py -i song.mp3 --llm_correct --llm_api_base_url https://api.groq.com
 
 Sends the song's audio to an external OpenAI-compatible speech-to-text API (e.g. Groq's Whisper endpoint) instead of running local Whisper transcription. This is meant for machines without a capable GPU, where local Whisper large-v2 can take several minutes per song.
 
-**Text only, never timing.** The remote service only ever supplies the transcript *text*. Timing is always computed afterward by the same local wav2vec2 CTC forced-alignment model the reference-lyrics-first pipeline already uses for LRCLIB plain-text lyrics — remote timestamps are discarded and never trusted. This matters because prior testing (see the Groq API evaluation in project history) showed remote Whisper timestamps are roughly 3x worse than local wav2vec2 alignment.
+**Text and rough times; the notes are timed locally.** The remote service supplies the transcript *text* and, when it returns them, the rough times of its words and segments. The notes never take these times: the words are placed afterward by the same local wav2vec2 CTC forced-alignment model the reference-lyrics-first pipeline already uses for LRCLIB plain-text lyrics. This matters because prior testing (see the Groq API evaluation in project history) showed remote Whisper timestamps are roughly 3x worse than local wav2vec2 alignment. The remote times only tell that alignment where each line is sung: each remote segment becomes a line, and the remote words give the lines their times as the words of a local transcription give them to plain lyrics (see *Plain lyrics* above) — the lines of the remote text, and those of LRCLIB plain lyrics. On the benchmark of 89 songs, the share of words that start more than 1 s off went from 5.5 % to 3.7 % for the remote text, and from 6.5 % to 5.0 % for plain lyrics. A service that does not return times is asked for the text alone, which is then placed on one path over the whole song.
 
 **Where it fits in the lyrics-source order:**
 1. LRCLIB synced lyrics (unchanged, highest priority)
-2. LRCLIB plain lyrics + local alignment (unchanged)
-3. **Remote STT text + local alignment** (new — only if enabled and no LRCLIB lyrics were found or could be aligned)
+2. LRCLIB plain lyrics + local alignment, their lines placed by the remote words
+3. **Remote STT text + local alignment** (only if enabled and no LRCLIB lyrics were found or could be aligned)
 4. Local transcription, Qwen3-ASR or Whisper (default fallback, and still the default when remote STT is disabled)
 
-With remote STT enabled, the local transcription is skipped: it only runs when none of the sources above could be aligned.
+With remote STT enabled, the local transcription is skipped: it only runs when none of the sources above could be aligned. The remote service is asked once per song, when no synced lyrics made the notes; with synced lyrics, no audio is sent.
 
 Any remote STT failure (network error, timeout, auth error, oversized file, empty response) fails open to the local transcription — a conversion never aborts because of it.
 
 **Privacy note:** enabling this sends the song's audio to a third-party service. Only enable it if you accept your audio leaving your machine, and review the provider's data-retention policy.
 
-**Cost/size note:** most OpenAI-compatible providers cap uploads around 25 MB; UltraSinger checks the file size before uploading and falls back to local Whisper if it's too large rather than attempting to chunk it.
+**Cost/size note:** the audio is uploaded as 16 kHz mono FLAC (about 1 MB per minute of song). Most OpenAI-compatible providers cap uploads around 25 MB; UltraSinger checks the file size before uploading and falls back to local Whisper if it's too large rather than attempting to chunk it.
 
 Related flags:
 * `--remote_stt_api_base_url` -- Base URL of the API (default: `https://api.groq.com/openai/v1`)

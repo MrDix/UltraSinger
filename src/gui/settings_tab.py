@@ -1063,9 +1063,11 @@ class ConversionSettingsForm(QWidget):
         card.add_toggle_row("Enable Remote Speech-to-Text", self._remote_stt,
                            "Send audio to an external OpenAI-compatible speech-to-text "
                            "API (e.g. Groq's Whisper endpoint) instead of running local "
-                           "Whisper. Useful on machines without a capable GPU. Timing is "
-                           "always computed locally — only the transcript text comes from "
-                           "the remote service. Your audio leaves this machine when enabled.",
+                           "Whisper. Useful on machines without a capable GPU. The notes are "
+                           "always timed locally — the remote service gives the transcript "
+                           "text, and rough word times that only place its lines and those "
+                           "of plain lyrics. Your audio leaves this machine when enabled "
+                           "(not for songs with synced lyrics).",
                            reset_callback=lambda: self._remote_stt.setChecked(
                                _DEFAULTS["remote_stt"]))
 

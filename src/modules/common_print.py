@@ -229,8 +229,9 @@ def print_help() -> None:
     --remote_stt                 Enable remote (cloud) speech-to-text as a Whisper alternative
                                   for GPU-less machines. Sends audio to an OpenAI-compatible
                                   "/audio/transcriptions" endpoint (requires API key) and gets
-                                  text back; timing is still always computed locally via
-                                  wav2vec2 forced alignment — remote timestamps are never used.
+                                  the text back, with rough word times that only place the
+                                  lines (of the text, and of LRCLIB plain lyrics): the notes
+                                  are still always timed locally via wav2vec2 forced alignment.
                                   Tried as a fallback after LRCLIB lyrics and before local
                                   Whisper. Falls open to local Whisper on any failure.
                                   Privacy note: the song's audio is uploaded to a third-party
