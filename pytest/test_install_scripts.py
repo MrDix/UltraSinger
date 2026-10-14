@@ -145,9 +145,10 @@ UV_INSTALLER = re.compile(r"astral\.sh/uv/(?:([0-9][^/\s]*)/)?install\.(?:sh|ps1
 
 
 def test_the_uv_installer_is_pinned_to_one_version_everywhere():
-    """Install scripts, the container image and the notebook install the same, fixed uv release."""
+    """Install scripts, the container image, the notebook and the CI install the same, fixed uv release."""
     versions = {}
-    for rel in INSTALL_SCRIPTS + ["../colab/UltraSinger.ipynb", "../run_gui_on_linux.sh", "../run_gui_on_mac.command"]:
+    for rel in INSTALL_SCRIPTS + ["../colab/UltraSinger.ipynb", "../run_gui_on_linux.sh", "../run_gui_on_mac.command",
+                                  "../.github/workflows/main.yml"]:
         text = (INSTALL / rel).read_text(encoding="utf-8")
         found = UV_INSTALLER.findall(text)
         assert found, f"{rel} does not install uv"
@@ -156,6 +157,12 @@ def test_the_uv_installer_is_pinned_to_one_version_everywhere():
     image = re.findall(r"COPY --from=ghcr\.io/astral-sh/uv:(\S+) ", (REPO / "Dockerfile").read_text(encoding="utf-8"))
     assert image, "the Dockerfile does not install a pinned uv"
     versions["Dockerfile"] = set(image)
+    # the setup action of the test workflow, which takes the release as "version"
+    tests = (REPO / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+    action = re.findall(r"uses: astral-sh/setup-uv@\S+\s+with:(?:\s+#[^\n]*|\s+\w[\w-]*: [^\n]*)*?\s+version: \"?([^\"\s]+)",
+                        tests)
+    assert action, "the test workflow does not set up a pinned uv"
+    versions["tests.yml"] = set(action)
     assert len(set().union(*versions.values())) == 1, versions
 
 
