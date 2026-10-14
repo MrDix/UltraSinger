@@ -169,6 +169,23 @@ class TestParsePlainLyrics:
         assert parse_plain_lyrics("") == []
         assert parse_plain_lyrics("[Intro]\n(x2)\n\n") == []
 
+    def test_labels_and_repeat_marks_without_brackets(self):
+        plain = ("Chorus\nHello world x2\nx2\nRepeat chorus\nVerse 2\nSay it 2x\nPre-Chorus x2\nSolo\n"
+                 "Chorus (x2)\nRepeat Chorus x3\n3 times\nOutro")
+        assert parse_plain_lyrics(plain) == ["Hello world", "Say it"]
+
+    def test_words_that_only_look_like_labels_are_sung(self):
+        # shouted words, labels among other words, and numbers that are no repeat marks
+        plain = ("Break\nBreakdown\nChorus of voices\nThe bridge is falling\nRepeat after me\n"
+                 "Call me 2 times\nx marks the spot\nFlying at 2x speed")
+        assert parse_plain_lyrics(plain) == ["Break", "Breakdown", "Chorus of voices", "The bridge is falling",
+                                             "Repeat after me", "Call me 2 times", "x marks the spot",
+                                             "Flying at 2x speed"]
+
+    def test_synced_lines_without_brackets(self):
+        segs = parse_lrc_synced_lyrics("[00:10.00] Chorus\n[00:12.00] Hello world x2\n[00:14.00] x2\n[00:16.00] End")
+        assert [(s["text"], s["start"]) for s in segs] == [("Hello world", 12.0), ("End", 16.0)]
+
 
 # ---------------------------------------------------------------------------
 # Pitch assignment

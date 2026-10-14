@@ -78,6 +78,15 @@ _REPEAT = r"(?:[x×]\s*\d+|\d+\s*[x×]|\d+\s*times)"
 _REPEAT_RE = re.compile(rf"{_REPEAT}|repeat(?:\s*chorus)?(?:\s*{_REPEAT})?", re.IGNORECASE)
 # A repeat mark in brackets anywhere in a line: "Hello world (x2)"
 _REPEAT_MARK_RE = re.compile(rf"[\(\[\{{]\s*(?:{_REPEAT_RE.pattern})\s*[\)\]\}}]", re.IGNORECASE)
+# A section label without brackets, alone on its line: "Chorus", "Verse 2",
+# "Pre-Chorus x2" (not "Break" or "Breakdown": these may be shouted)
+_BARE_LABEL_RE = re.compile(
+    r"(?:pre-?|post-?)?(?:chorus|verse|bridge|intro|outro|hook|refrain|interlude|instrumental|solo|coda)"
+    r"(?:\s*\d+)?(?:\s*[x×]\s*\d+)?",
+    re.IGNORECASE,
+)
+# A repeat mark without brackets at the end of a line: "Hello world x2"
+_TRAILING_REPEAT_RE = re.compile(r"\s+(?:[x×]\s*\d+|\d+\s*[x×])$", re.IGNORECASE)
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
@@ -92,10 +101,13 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
     tags (``"[ar:Artist]"``), section labels (``"[Chorus]"``,
     ``"[Verse 2]"``), repeat marks (``"(x2)"``) or backing vocals. Repeat
     marks are not sung wherever they are, and neither is a line that is only
-    a section label in other brackets (``"(Chorus)"``) or with a colon
-    (``"Chorus:"``). Word times of enhanced LRC (``"<00:12.50>"``) are left
-    out. The other brackets are backing vocals: their words are prefixed
-    with ``\\x00`` (see ``_mark_bracketed_words``).
+    a section label in other brackets (``"(Chorus)"``), with a colon
+    (``"Chorus:"``) or alone (``"Chorus"``, ``"Verse 2"``; not ``"Break"``,
+    which may be shouted), or only a repeat mark without brackets (``"x2"``,
+    ``"Repeat chorus"``), nor ``"x2"`` at the end of a line. Word times of
+    enhanced LRC (``"<00:12.50>"``) are left out. The other brackets are
+    backing vocals: their words are prefixed with ``\\x00`` (see
+    ``_mark_bracketed_words``).
     """
     times: list[float] = []
     sung: list[str] = []  # backing vocals among the brackets at the start
@@ -118,6 +130,11 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
     if ((whole and whole.group(1)[0] in "({" and _LRC_SECTION_RE.fullmatch(whole.group(1)[1:-1].strip()))
             or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
         text = ""
+    # Labels and repeat marks without brackets: a line that is only "Chorus",
+    # "Verse 2", "x2" or "Repeat chorus", and "x2" at the end of a line
+    if _BARE_LABEL_RE.fullmatch(text) or _REPEAT_RE.fullmatch(text):
+        text = ""
+    text = _TRAILING_REPEAT_RE.sub("", text)
     return times, _mark_bracketed_words(text)
 
 
