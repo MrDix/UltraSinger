@@ -216,6 +216,9 @@ class QueueItemWidget(QWidget):
         outer.addWidget(self._info_row)
 
         self.update_status(item.status)
+        # An item can arrive with per-song settings (restored, imported or cloned)
+        if item.settings_overrides:
+            self.set_has_overrides(True)
 
     @property
     def item_id(self) -> str:

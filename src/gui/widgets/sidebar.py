@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -36,11 +37,13 @@ class Sidebar(QWidget):
 
     Layout (top to bottom):
       Logo → Drag Files zone → Convert Queue (fills space) →
-      Start/Clear buttons → Navigation buttons → Version
+      Start/Clear buttons and the export/import menu → Navigation buttons → Version
     """
 
     section_changed = Signal(int)
     start_all_requested = Signal()
+    export_queue_requested = Signal()
+    import_queue_requested = Signal()
     file_dropped = Signal(str)  # file path from drop zone
 
     def __init__(self, parent=None):
@@ -100,6 +103,29 @@ class Sidebar(QWidget):
         self._clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._clear_btn.setEnabled(False)
         btn_row.addWidget(self._clear_btn)
+
+        # Export / import of the queue as a file (also while it runs)
+        self._queue_menu_btn = QPushButton("\u2630")
+        self._queue_menu_btn.setObjectName("ghostButton")
+        self._queue_menu_btn.setStyleSheet("font-size: 18px; padding: 0px 10px;")
+        self._queue_menu_btn.setMinimumHeight(34)
+        self._queue_menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._queue_menu_btn.setToolTip("Export the queue to a file, or import songs from one")
+        queue_menu = QMenu(self._queue_menu_btn)
+        queue_menu.setToolTipsVisible(True)
+        self._export_action = queue_menu.addAction("Export Queue\u2026")
+        self._export_action.setToolTip(
+            "Save the songs that are not finished, with their per-song settings, to a file"
+        )
+        self._export_action.triggered.connect(lambda: self.export_queue_requested.emit())
+        self._import_action = queue_menu.addAction("Import Queue\u2026")
+        self._import_action.setToolTip(
+            "Add the songs of a queue file as waiting songs\n"
+            "(songs already waiting with the same settings are skipped)"
+        )
+        self._import_action.triggered.connect(lambda: self.import_queue_requested.emit())
+        self._queue_menu_btn.setMenu(queue_menu)
+        btn_row.addWidget(self._queue_menu_btn)
 
         layout.addLayout(btn_row)
 

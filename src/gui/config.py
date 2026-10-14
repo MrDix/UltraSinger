@@ -331,15 +331,15 @@ def octave_consistency_choice(value) -> str:
     return value if value in ("all", "off") else "model"
 
 
-def _back_up_config_file() -> Path | None:
-    """Copy config.json aside before the next save replaces it, so hand edits are kept."""
-    backup = _CONFIG_FILE.with_name(f"{_CONFIG_FILE.name}.{time.strftime('%Y%m%d-%H%M%S')}.bak")
+def _back_up_file(path: Path) -> Path | None:
+    """Copy a settings file aside before the next save replaces it, so hand edits are kept."""
+    backup = path.with_name(f"{path.name}.{time.strftime('%Y%m%d-%H%M%S')}.bak")
     try:
-        shutil.copyfile(_CONFIG_FILE, backup)
+        shutil.copyfile(path, backup)
         if sys.platform != "win32":
             os.chmod(backup, 0o600)
     except OSError as exc:
-        logger.warning("Could not back up %s: %s", _CONFIG_FILE, exc)
+        logger.warning("Could not back up %s: %s", path, exc)
         return None
     return backup
 
@@ -364,7 +364,7 @@ def _read_stored_config() -> dict:
         return {}
     except ValueError as exc:  # UnicodeDecodeError, json.JSONDecodeError
         problem = str(exc)
-    backup = _back_up_config_file()
+    backup = _back_up_file(_CONFIG_FILE)
     logger.warning(
         "Config file %s cannot be read (%s); using the default settings. %s",
         _CONFIG_FILE, problem,

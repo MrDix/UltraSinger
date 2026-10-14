@@ -100,6 +100,14 @@ class QueueManager(QObject):
         logger.info("Queue: added '%s' (%s)", title, input_type)
         return item
 
+    def add_items(self, items: list[QueueItem]):
+        """Add ready-made items (a restored or imported queue)."""
+        for item in items:
+            self._items.append(item)
+            self.item_added.emit(item)
+        if items:
+            logger.info("Queue: added %d item(s) from a queue file", len(items))
+
     def clone_item(self, item_id: str) -> QueueItem | None:
         """Clone a pending item — duplicate it with the same settings."""
         for item in self._items:

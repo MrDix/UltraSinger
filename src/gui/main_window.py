@@ -4,9 +4,10 @@ import importlib.metadata
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QMainWindow,
@@ -20,6 +21,14 @@ from .config import config_dir, load_config, save_config
 from .cookie_file import remove_cookie_file, remove_stale_copies
 from .models import LLMProvider
 from .preferences_tab import PreferencesTab
+from .queue_file import (
+    load_saved_queue,
+    queue_file_path,
+    read_queue_file,
+    save_queue,
+    without_duplicates,
+    write_queue_file,
+)
 from .queue_manager import QueueManager
 from .queue_tab import QueueTab
 from .settings_dialog import PerSongSettingsDialog, ReadOnlySettingsDialog
@@ -114,6 +123,9 @@ class MainWindow(QMainWindow):
     _TAB_VIDEO = 0
     _TAB_CONSOLE = 1
     _TAB_SETTINGS = 2
+
+    # The queue is saved this long after a change, so a burst of changes is saved once
+    _QUEUE_SAVE_DELAY_MS = 500
 
     def __init__(self, config: dict | None = None):
         super().__init__()
@@ -229,6 +241,25 @@ class MainWindow(QMainWindow):
 
         # Wire console cancel → queue manager
         self._queue_tab.cancel_requested.connect(self._queue_mgr.cancel_all)
+
+        # Keep the queue between sessions: every change is saved shortly after
+        # it happens, and the queue of the last session comes back (it never
+        # starts by itself). The file is fixed now, so a save always goes to
+        # the settings directory the window started with.
+        self._queue_file = queue_file_path()
+        self._queue_saving = True
+        self._queue_save_timer = QTimer(self)
+        self._queue_save_timer.setSingleShot(True)
+        self._queue_save_timer.setInterval(self._QUEUE_SAVE_DELAY_MS)
+        self._queue_save_timer.timeout.connect(self._save_queue)
+        self._queue_mgr.item_added.connect(self._schedule_queue_save)
+        self._queue_mgr.item_removed.connect(self._schedule_queue_save)
+        self._queue_mgr.item_status_changed.connect(self._schedule_queue_save)
+        self._restore_queue()
+
+        # Wire queue export / import
+        self._sidebar.export_queue_requested.connect(self._on_export_queue)
+        self._sidebar.import_queue_requested.connect(self._on_import_queue)
 
         # Initial button state
         self._update_queue_buttons()
@@ -520,6 +551,7 @@ class MainWindow(QMainWindow):
 
         if dialog.exec():
             item.settings_overrides = dialog.get_overrides()
+            self._schedule_queue_save()
             # Visual indicator: mark items with overrides
             has_overrides = bool(item.settings_overrides)
             self._sidebar.queue_list.set_has_overrides(item_id, has_overrides)
@@ -602,6 +634,81 @@ class MainWindow(QMainWindow):
         has_pending = self._queue_mgr.pending_count() > 0
         is_running = self._queue_mgr.is_running
         self._sidebar.update_queue_buttons(has_pending, is_running)
+
+    # ── Queue file (kept between sessions, export / import) ───────────
+
+    def _restore_queue(self):
+        """Bring back the queue of the last session; it waits for Start All."""
+        items, problems = load_saved_queue(self._queue_file)
+        for problem in problems:
+            self._queue_tab.append_log(f"[Queue] Saved queue: {problem}")
+        if not items:
+            return
+        self._queue_mgr.add_items(items)
+        failed = sum(1 for item in items if item.status == "failed")
+        self._queue_tab.append_log(
+            f"[Queue] Restored {len(items)} song(s) from the last session"
+            + (f" ({failed} of them failed)" if failed else "")
+            + ". The queue does not start by itself - press Start All."
+        )
+
+    def _schedule_queue_save(self, *_args):
+        """Save the queue shortly (a burst of changes, e.g. Clear, is saved once)."""
+        if self._queue_saving:
+            self._queue_save_timer.start()
+
+    def _save_queue(self):
+        save_queue(self._queue_file, self._queue_mgr.items)
+
+    def _on_export_queue(self):
+        """Write the queue to a file the user picks."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Queue", str(Path.home() / "ultrasinger-queue.json"),
+            "Queue Files (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        if not Path(path).suffix:
+            path += ".json"
+        try:
+            count = write_queue_file(Path(path), self._queue_mgr.items)
+        except OSError as exc:
+            logger.warning("Failed to export the queue to %s", path, exc_info=True)
+            QMessageBox.warning(
+                self, "UltraSinger", f"The queue could not be exported to {path}:\n\n{exc}"
+            )
+            return
+        self._queue_tab.append_log(f"[Queue] Exported {count} song(s) to {path}")
+
+    def _on_import_queue(self):
+        """Add the songs of a queue file the user picks as waiting songs.
+
+        Songs already waiting in the queue with the same settings are skipped;
+        the queue does not start by itself.
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Queue", str(Path.home()), "Queue Files (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            items, problems = read_queue_file(Path(path), imported=True)
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed to import the queue from %s: %s", path, exc)
+            QMessageBox.warning(
+                self, "UltraSinger", f"{path} could not be imported:\n\n{exc}"
+            )
+            return
+        for problem in problems:
+            self._queue_tab.append_log(f"[Queue] Import: {problem}")
+        added, duplicates = without_duplicates(items, self._queue_mgr.items)
+        self._queue_mgr.add_items(added)
+        self._queue_tab.append_log(
+            f"[Queue] Imported {len(added)} song(s) from {path}"
+            + (f"; skipped {duplicates} already waiting in the queue" if duplicates else "")
+            + (f"; {len(problems)} note(s) above" if problems else "")
+        )
+        self._update_queue_buttons()
 
     # ── Bot detection workaround ──────────────────────────────────────
 
@@ -707,7 +814,7 @@ class MainWindow(QMainWindow):
                 )
 
     def closeEvent(self, event):
-        """Save configuration and shut down the browser cleanly on close.
+        """Save configuration and queue and shut down the browser cleanly on close.
 
         The browser must be shut down explicitly so Chromium's renderer
         subprocess can flush cookies and persistent storage to disk
@@ -764,6 +871,12 @@ class MainWindow(QMainWindow):
             save_config(self._config)
         except (OSError, ValueError, TypeError):
             logger.warning("Failed to save config on close", exc_info=True)
+
+        # Keep the queue for the next start. Saved now, before the shutdown
+        # below cancels its songs, and not again: they come back waiting.
+        self._queue_saving = False
+        self._queue_save_timer.stop()
+        self._save_queue()
 
         # Cancel the conversion queue (runner and pre-download) and join its threads
         self._queue_mgr.shutdown()

@@ -181,6 +181,11 @@ groups onto the pinned icon.
   - **Info button** — view the settings used for this conversion
   - **Folder button** — open the output folder in your system file manager (hover to see the path)
   - **Re-queue button** — re-queue the song with different settings (opens per-song settings dialog; useful for correcting wrong language detection)
+- **Queue kept between sessions** — The queue is saved while you work and comes back the next time you start the GUI, also after an update. It never starts by itself: press **Start All**.
+  - Waiting songs, the song that was running and songs stopped with **Cancel All** come back as waiting songs. Failed songs come back marked as failed. Finished songs are left out.
+  - The menu button (**☰**) next to **Clear** has **Export Queue…**, which saves the queue to a file, and **Import Queue…**, which adds the songs of such a file as waiting songs. A song that already waits in the queue with the same settings is skipped.
+  - Per-song settings are kept, API keys and tokens never. An imported file may come from someone else, so it does not set per-song settings that name a program, folder, web address or model; your own settings apply there.
+  - The queue is stored in `~/.ultrasinger/queue.json`. If the GUI cannot read it, it starts with an empty queue and keeps a copy of the file as `queue.json.<date>-<time>.bak`.
 - **Preferences** — Default output folder, LLM/Groq API configuration, cookie management.
 - **Model training** — **Train...** next to the Segmentation Model setting trains a [segmentation model](#model-based-note-segmentation---segmentation_model) on your own song library: pick the library, a work folder and the model file and follow the progress; the finished model is set for your conversions automatically.
 

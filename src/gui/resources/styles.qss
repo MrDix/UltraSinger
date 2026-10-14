@@ -281,6 +281,12 @@ QPushButton#ghostButton:hover {
     background-color: rgba(240, 223, 192, 0.06);
 }
 
+/* A ghost button with a menu (the queue's menu button) needs no arrow */
+QPushButton#ghostButton::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
 /* --- Checkboxes --- */
 QCheckBox {
     spacing: 8px;
