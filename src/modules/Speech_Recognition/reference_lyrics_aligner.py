@@ -67,26 +67,30 @@ from modules.Speech_Recognition.lyrics_alignment import (
 _LRC_TAG_RE = re.compile(r"\s*(\[[^\]]*\]|\([^)]*\)|\{[^}]*\})")
 _LRC_TIME_RE = re.compile(r"(\d+):(\d+(?:\.\d+)?)")
 _LRC_ID_TAG_RE = re.compile(r"[A-Za-z#]+:")
-_LRC_SECTION_RE = re.compile(
-    r"(?:pre-?|post-?)?(?:chorus|verse|bridge|intro|outro|hook|refrain|interlude|instrumental|solo|break"
-    r"|breakdown|coda)(?:\s*\d+)?(?:\s*x\s*\d+)?(?:\s*:.*)?",
-    re.IGNORECASE,
-)
 # A repeat mark: "x2", "2x", "3 times", "repeat", "repeat chorus x2" (not
 # "twice": "(twice)" may be a sung echo)
 _REPEAT = r"(?:[x×]\s*\d+|\d+\s*[x×]|\d+\s*times)"
 _REPEAT_RE = re.compile(rf"{_REPEAT}|repeat(?:\s*chorus)?(?:\s*{_REPEAT})?", re.IGNORECASE)
 # A repeat mark in brackets anywhere in a line: "Hello world (x2)"
 _REPEAT_MARK_RE = re.compile(rf"[\(\[\{{]\s*(?:{_REPEAT_RE.pattern})\s*[\)\]\}}]", re.IGNORECASE)
-# A section label without brackets, alone on its line: "Chorus", "Verse 2",
-# "Pre-Chorus x2" (not "Break" or "Breakdown": these may be shouted)
-_BARE_LABEL_RE = re.compile(
-    r"(?:pre-?|post-?)?(?:chorus|verse|bridge|intro|outro|hook|refrain|interlude|instrumental|solo|coda)"
-    r"(?:\s*\d+)?(?:\s*[x×]\s*\d+)?",
+# The name of a section: "Chorus", "Pre-Chorus", "Pre Chorus", "1. Strophe"
+# (also the words for verse and chorus in German, Spanish and Italian lyrics)
+_LABEL = (r"(?:\d+\.?\s*)?(?:(?:pre|post)[-\s]?)?(?:chorus|verse|bridge|intro|outro|hook|refrain|interlude"
+          r"|instrumental|solo|coda|strophe|strofa|coro|estribillo|ritornello)")
+# A section label: "Chorus", "Verse 2", "Chorus x2", "Verse 1: Artist"
+_LRC_SECTION_RE = re.compile(
+    rf"(?:{_LABEL}|(?:(?:pre|post)[-\s]?)?break(?:down)?)(?:\s*\d+)?(?:\s*{_REPEAT})?(?:\s*:.*)?",
     re.IGNORECASE,
 )
-# A repeat mark without brackets at the end of a line: "Hello world x2"
-_TRAILING_REPEAT_RE = re.compile(r"\s+(?:[x×]\s*\d+|\d+\s*[x×])$", re.IGNORECASE)
+# A section label without brackets, alone on its line: "Chorus", "Verse 2",
+# "Pre-Chorus x2" (not "Break" or "Breakdown": these may be shouted)
+_BARE_LABEL_RE = re.compile(rf"{_LABEL}(?:\s*\d+)?(?:\s*{_REPEAT})?", re.IGNORECASE)
+# A repeat mark without brackets at the end of a line, before closing
+# punctuation or backing vocals: "Hello world x2", "Come on x2!"
+_TRAILING_REPEAT_RE = re.compile(
+    r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.!?]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
+# A word that is only bracket characters, left over from nested brackets
+_BRACKETS_ONLY_RE = re.compile(r"[\[\]\(\)\{\}]+")
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
@@ -111,6 +115,8 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
     """
     times: list[float] = []
     sung: list[str] = []  # backing vocals among the brackets at the start
+    # Repeat marks in brackets go first, also inside another bracket ("[Refrain (2x)]")
+    raw_line = _REPEAT_MARK_RE.sub(" ", raw_line)
     pos = 0
     while m := _LRC_TAG_RE.match(raw_line, pos):
         bracket = m.group(1)
@@ -119,23 +125,29 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
         if time_tag:
             times.append(int(time_tag.group(1)) * 60 + float(time_tag.group(2)))
         elif not ((bracket.startswith("[")
-                   and (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(content)))
+                   and (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(_label_text(content))))
                   or _REPEAT_RE.fullmatch(content)):
             sung.append(bracket)
         pos = m.end()
-    rest = _REPEAT_MARK_RE.sub(" ", raw_line[pos:])
-    text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [rest])).split())
+    text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [raw_line[pos:]])).split())
+    # A repeat mark without brackets at the end: "Hello world x2", "Chorus 2x"
+    text = _TRAILING_REPEAT_RE.sub("", text)
     # Only a label: "(Chorus)", "{Verse 2}", "Chorus:" (but "(Break) it down" is sung)
     whole = _LRC_TAG_RE.fullmatch(text)
-    if ((whole and whole.group(1)[0] in "({" and _LRC_SECTION_RE.fullmatch(whole.group(1)[1:-1].strip()))
+    if ((whole and whole.group(1)[0] in "({" and _LRC_SECTION_RE.fullmatch(_label_text(whole.group(1)[1:-1])))
             or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
         text = ""
     # Labels and repeat marks without brackets: a line that is only "Chorus",
-    # "Verse 2", "x2" or "Repeat chorus", and "x2" at the end of a line
+    # "Verse 2", "x2" or "Repeat chorus"
     if _BARE_LABEL_RE.fullmatch(text) or _REPEAT_RE.fullmatch(text):
         text = ""
-    text = _TRAILING_REPEAT_RE.sub("", text)
     return times, _mark_bracketed_words(text)
+
+
+def _label_text(content: str) -> str:
+    """The content of a bracket as it is compared with the section labels:
+    without stray brackets of a nested one ("[[Refrain]]" is "Refrain")."""
+    return content.strip(" []{}()")
 
 
 def parse_lrc_synced_lyrics(
@@ -241,7 +253,9 @@ def _mark_bracketed_words(text: str) -> str:
     after = text[last_end:].strip()
     if after:
         result_parts.append(after)
-    return " ".join(result_parts) if result_parts else text
+    marked = " ".join(result_parts) if result_parts else text
+    # Brackets left alone by a nested pair ("[[Refrain]]") are no words
+    return " ".join(w for w in marked.split() if not _BRACKETS_ONLY_RE.fullmatch(w.replace("\x00", "")))
 
 
 # ---------------------------------------------------------------------------

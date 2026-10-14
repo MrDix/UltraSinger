@@ -171,8 +171,21 @@ class TestParsePlainLyrics:
 
     def test_labels_and_repeat_marks_without_brackets(self):
         plain = ("Chorus\nHello world x2\nx2\nRepeat chorus\nVerse 2\nSay it 2x\nPre-Chorus x2\nSolo\n"
-                 "Chorus (x2)\nRepeat Chorus x3\n3 times\nOutro")
+                 "Chorus (x2)\nRepeat Chorus x3\n3 times\nOutro\nChorus 2x\nVerse 2x\nChorus: x2\n(Chorus) x2\n"
+                 "Chorus 2 times\nCHORUS\nHook\nBridge\nRefrain\nPre Chorus\nChorus ×2\nx 2\nx2 x2")
         assert parse_plain_lyrics(plain) == ["Hello world", "Say it"]
+
+    def test_repeat_marks_before_punctuation_and_backing_vocals(self):
+        assert parse_plain_lyrics("Come on x2!\nHello world x2 (oh)\n(oh) x2") == [
+            "Come on!", "Hello world \x00oh", "\x00oh"]
+
+    def test_labels_with_nested_repeat_marks(self):
+        # a repeat mark inside a bracketed label, and a label in double brackets
+        plain = ("[Refrain (2x)]\n[[Refrain (2x)]]\n(Chorus (x2))\n[Chorus 2x]\n[Chorus ×2]\n[Pre Chorus]\n"
+                 "[[1. Strophe:]]\n2. Strophe\nCoro\n(Estribillo)\nSung line")
+        assert parse_plain_lyrics(plain) == ["Sung line"]
+        # backing vocals around stray brackets stay backing vocals
+        assert parse_plain_lyrics("Hello ( oh yeah ) world") == ["Hello \x00oh \x00yeah world"]
 
     def test_words_that_only_look_like_labels_are_sung(self):
         # shouted words, labels among other words, and numbers that are no repeat marks
@@ -185,6 +198,8 @@ class TestParsePlainLyrics:
     def test_synced_lines_without_brackets(self):
         segs = parse_lrc_synced_lyrics("[00:10.00] Chorus\n[00:12.00] Hello world x2\n[00:14.00] x2\n[00:16.00] End")
         assert [(s["text"], s["start"]) for s in segs] == [("Hello world", 12.0), ("End", 16.0)]
+        # the dropped lines leave no hole
+        assert [s["end"] for s in segs] == [16.0, 26.0]
 
 
 # ---------------------------------------------------------------------------
