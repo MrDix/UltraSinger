@@ -53,6 +53,12 @@ class TestStripTitleAdditions(unittest.TestCase):
             "Song Title - Singer Name live one take performance": "Song Title",
             "Song Title (Acoustic Performance)": "Song Title",
             "Song Title - Drum Playthrough": "Song Title",
+            "Song Title - Some Name - Remix": "Song Title",
+            "Song Title - 4K": "Song Title",
+            "Song Title - Remastered 09": "Song Title",
+            # a part of the work stays, also before an addition
+            "Song Title - Part 2 - Live Performance": "Song Title - Part 2",
+            "Song Title - Vol. 3 - Official Video": "Song Title - Vol. 3",
         }
         for title, expected in cases.items():
             with self.subTest(title=title):
@@ -79,17 +85,25 @@ class TestStripTitleAdditions(unittest.TestCase):
 class TestTitleBeforeDash(unittest.TestCase):
     def test_description_after_the_dash(self):
         for title in ("Song Title - Singer Name in the studio", "Song Title – some words about the band",
+                      "Song Title — some words about the band",
                       "Song Title - Singer Name in the studio (Official Video)",
-                      "Song Title - Singer Name live, one take", "Song Title - at home with the band 2020"):
+                      "Song Title - Singer Name live, one take", "Song Title - at home with the band 2020",
+                      "Song Title HD - Singer Name in the studio"):
             with self.subTest(title=title):
                 self.assertEqual(title_before_dash(title), "Song Title")
+        # as the song database search passes it, and with a part in brackets
+        self.assertEqual(title_before_dash("song title - singer name in the studio"), "song title")
+        self.assertEqual(title_before_dash("Song Title (Part 2) - Singer Name in the studio"), "Song Title (Part 2)")
 
     def test_no_description(self):
         for title in ("Song Title", "Song Title - Reprise", "Song Title - Two Words",
                       "Song Title - Part 2 of the Story", "Song Title - Part Two of It",
                       "Song Title - Vol. 3 of the Series", "Song Title - Chapter II of It",
                       "Song Title - the 1 and only", "Song Title - Live at Some Place",
-                      "Hyphen-Word Title with more words", " - Some Words Without Title"):
+                      "Hyphen-Word Title with more words", " - Some Words Without Title",
+                      # a medley, a separator that is no dash, a work in movements
+                      "Song A - Song B - Song C", "Song Title | Singer Name in the studio",
+                      "(Official Video) | Label Name Words", "Song Title - The Second Movement"):
             with self.subTest(title=title):
                 self.assertEqual(title_before_dash(title), "")
 

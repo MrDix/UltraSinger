@@ -170,7 +170,7 @@ def search_musicbrainz(title: str, artist, quick: bool = False) -> SongInfo:
     else:
         recordings = __multi_line_search(artist, title, not quick)
         # "Title - Singer Name live in the studio": the song is "Title"
-        shorter = title_before_dash(title)
+        shorter = title_before_dash(origin_title)
         if not recordings and shorter:
             if not quick:
                 print(f"{ULTRASINGER_HEAD} Searching again with the title before the dash: "

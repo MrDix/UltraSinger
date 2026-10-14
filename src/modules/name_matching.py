@@ -84,10 +84,11 @@ _QUALITY_RE = re.compile(r"(?:\s+(?:hd|hq|4k|8k|\d{3,4}p))+\s*$", re.IGNORECASE)
 # What a video title puts after a dash is a description of the video, not a
 # part of the song title, from this many words on (see title_before_dash)
 DESCRIPTION_WORDS = 3
-# A part of a work ("Part Two", "Vol. 3", "Chapter II") or a part or volume
-# number, not a year
+# A part of a work ("Part Two", "Vol. 3", "Chapter II", "The Second
+# Movement") or a part or volume number standing alone, not a year
 _PART_NUMBER_RE = re.compile(
-    r"(?<!\d)\d{1,3}(?!\d)|\b(?:part|pt|vol|volume|chapter|act|ii|iii|iv|vi|vii|viii|ix)\b", re.IGNORECASE)
+    r"\b(?:\d{1,3}|part|pt|vol|volume|chapter|act|movement|episode|book|ii|iii|iv|vi|vii|viii|ix)\b",
+    re.IGNORECASE)
 
 
 def _clean(s: str) -> str:
@@ -162,9 +163,17 @@ def strip_title_additions(title: str) -> str:
     s = _BRACKETS_RE.sub(lambda m: " " if _is_addition(m.group(0)[1:-1], in_brackets=True) else m.group(0),
                          title or "")
     for separator in _SEPARATOR_RE.finditer(s):
-        if separator.group(1) in ("|", "//") or _is_addition(s[separator.end():]):
-            s = s[:separator.start()]
-            break
+        rest = s[separator.end():]
+        if separator.group(1) not in ("|", "//"):
+            # A dashed part that names a part of the work stays, even when an
+            # addition follows it: "Title - Part 2 - Live Performance"
+            part = _SEPARATOR_RE.split(rest, maxsplit=1)[0]
+            if not _is_addition(part) and _PART_NUMBER_RE.search(part):
+                continue
+            if not _is_addition(rest):
+                continue
+        s = s[:separator.start()]
+        break
     s = _FEATURING_RE.sub("", s)
     s = _OFFICIAL_RE.sub("", s)
     s = _QUALITY_RE.sub("", s)
@@ -177,18 +186,20 @@ def title_before_dash(title: str) -> str:
     nothing was found with the whole title; "" when there is none.
 
     What follows the first dash (after strip_title_additions) is taken for
-    a description when it has at least DESCRIPTION_WORDS words and no part
-    or volume number: "Title - Part Two" or "Title - Reprise" can name
-    another song, "Title - Part 2 of the Story" too.
+    a description when it has at least DESCRIPTION_WORDS words, no part or
+    volume number and no further dash: "Title - Part Two" or "Title -
+    Reprise" can name another song, "Title - Part 2 of the Story" too, and
+    "Song A - Song B - Song C" is a medley.
     """
     s = strip_title_additions(title)
     separator = _SEPARATOR_RE.search(s)
-    if separator is None:
+    if separator is None or separator.group(1) in ("|", "//"):
         return ""
     before, rest = s[:separator.start()].strip(), s[separator.end():]
-    if not before or len(rest.split()) < DESCRIPTION_WORDS or _PART_NUMBER_RE.search(rest):
+    if (not before or len(rest.split()) < DESCRIPTION_WORDS or _PART_NUMBER_RE.search(rest)
+            or _SEPARATOR_RE.search(rest)):
         return ""
-    return before
+    return strip_title_additions(before)
 
 
 def _title_words(title: str) -> str:

@@ -493,16 +493,30 @@ class TestTitleAdditions(unittest.TestCase):
         recording = self._recording('Wanted Title', 'r1', ('Official', '2019', 'Single'))
 
         def search(**kwargs):
-            found = kwargs['recording'] == 'wanted title'
+            found = kwargs['recording'].lower() == 'wanted title'
             return {'recording-count': int(found), 'recording-list': [recording] if found else []}
 
+        out = io.StringIO()
         with patch('musicbrainzngs.search_recordings', side_effect=search) as mock_search, \
                 patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
-                patch('musicbrainzngs.get_image_front', return_value=None):
+                patch('musicbrainzngs.get_image_front', return_value=None), redirect_stdout(out):
             info = search_musicbrainz('Wanted Title - Singer Name live in the studio', 'Wanted Artist')
         self.assertEqual((info.title, info.artist, info.year), ('Wanted Title', 'Wanted Artist', '2019'))
-        self.assertEqual([c.kwargs['recording'] for c in mock_search.call_args_list][::2],
+        self.assertEqual([c.kwargs['recording'].lower() for c in mock_search.call_args_list][::2],
                          ['wanted title - singer name live in the studio', 'wanted title'])
+        # reported as written
+        self.assertIn('Searching again with the title before the dash', out.getvalue())
+        self.assertIn('Wanted Title', out.getvalue())
+
+    def test_description_after_a_dash_quick(self):
+        # the GUI's lyrics badge: the same search, nothing reported
+        out = io.StringIO()
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 0, 'recording-list': []}) as mock_search, redirect_stdout(out):
+            info = search_musicbrainz('Wanted Title - Singer Name live in the studio', 'Wanted Artist', quick=True)
+        self.assertEqual(info.title, 'Wanted Title - Singer Name live in the studio')
+        self.assertEqual(mock_search.call_count, 4)
+        self.assertEqual(out.getvalue(), '')
 
     def test_description_is_not_cut_when_the_title_matches(self):
         recording = self._recording('Wanted Title - Singer Name live in the studio', 'r1',

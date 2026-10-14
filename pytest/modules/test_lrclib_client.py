@@ -209,10 +209,10 @@ class TestFindLyrics(unittest.TestCase):
 
     def test_a_part_after_the_dash_is_kept(self):
         result, requests = self._find(lambda params: [_version(200.0)] if params.get("track_name") == "Song Title"
-                                      else [], title="Song Title - Part Two")
+                                      else [], title="Song Title - Part Two of It")
         self.assertIsNone(result)
         self.assertEqual([p.get("track_name") or p.get("q") for p in requests],
-                         ["Song Title - Part Two", "Some Artist Song Title - Part Two"])
+                         ["Song Title - Part Two of It", "Some Artist Song Title - Part Two of It"])
 
     def test_full_title_is_searched_first(self):
         result, requests = self._find(lambda params: [_version(200.0, track="Song Title (Live)")],
