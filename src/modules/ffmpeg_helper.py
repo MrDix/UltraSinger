@@ -202,6 +202,12 @@ def convert_to_ultrastar_format(audio_file_path: str, basename_without_ext: str,
     return target_path, target_ext
 
 
+def _same_path(first: str, second: str) -> bool:
+    """Whether two paths name the same file, however they are written
+    (separators, letter case on Windows, relative parts)."""
+    return os.path.normcase(os.path.abspath(first)) == os.path.normcase(os.path.abspath(second))
+
+
 def separate_audio_video(video_with_audio_path: str, basename_without_ext: str, output_folder: str, *, keep_audio_in_video: bool = False) -> tuple[str, str, str, str]:
     """
     Separate audio and video from a video file.
@@ -234,8 +240,11 @@ def separate_audio_video(video_with_audio_path: str, basename_without_ext: str, 
 
     if keep_audio_in_video:
         print(f"{ULTRASINGER_HEAD} Keeping audio in video file")
-        # Just rename the original to the final name (it already has audio)
-        if video_with_audio_path != final_video_path:
+        # Just rename the original to the final name (it already has audio).
+        # The downloaded path and the output folder may write the same file
+        # differently ("D:\x" vs "D:/x"): renaming a file onto itself fails
+        # while a sync client or virus scanner holds it.
+        if not _same_path(video_with_audio_path, final_video_path):
             os.rename(video_with_audio_path, final_video_path)
     else:
         print(f"{ULTRASINGER_HEAD} Creating video without audio")
