@@ -14,6 +14,7 @@ import librosa
 
 import src.UltraSinger as us
 from modules.Speech_Recognition.reference_lyrics_aligner import PlainLyricsPlacement
+from modules.Speech_Recognition.remote_stt import RemoteTranscription
 from src.modules.Ultrastar.ultrastar_txt import FormatVersion
 
 
@@ -61,8 +62,9 @@ def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_lang
     """Run run() with fakes. Returns the notes it wrote, its output and the output folder's files.
 
     ``align``/``plain_align``: fake alignment of synced/plain lyrics (the remote text is aligned
-    as plain lyrics), ``remote``: fake remote speech-to-text, ``mocks``: a dict that receives the
-    mocks of TranscribeAudio, the plain-lyrics alignment and the remote speech-to-text."""
+    as plain lyrics), ``remote``: fake remote speech-to-text (returns a RemoteTranscription),
+    ``mocks``: a dict that receives the mocks of TranscribeAudio, the plain-lyrics alignment and
+    the remote speech-to-text."""
     written = {}
     mocks = {} if mocks is None else mocks
 
@@ -255,32 +257,49 @@ def _aligned(**kwargs):
     """A fake alignment of plain lyrics or of the remote text: line by line
     when it gets words of a transcription."""
     words = bool(kwargs.get("transcription_words"))
-    placement = PlainLyricsPlacement(lines=2, anchored=2 if words else 0, with_words=words, line_by_line=words)
+    placement = PlainLyricsPlacement(lines=2, anchored=2 if words else 0, with_words=words, line_by_line=words,
+                                     words_from=kwargs.get("words_from", "transcription"))
     return [us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED], placement
+
+
+_HEARD = RemoteTranscription("other words here", words=[("other", 1.0, 1.2), ("words", 1.3, 1.5), ("here", 1.6, 1.9)],
+                              segments=[" other words", " here"])
 
 
 class TestRemoteSpeechToText(unittest.TestCase):
     """--remote_stt replaces the local transcription; that only runs when nothing could be aligned."""
 
-    def _remote_run(self, remote_text, early_lyrics=None, **settings_values):
+    def _remote_run(self, heard, early_lyrics=None, plain_align=_aligned, **settings_values):
         mocks = {}
         notes, out, files = _run(
             _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5),
             _transcription([("one ", 1.0, 1.24), ("two ", 1.5, 1.74)], "en"),
-            early_lyrics=early_lyrics, plain_align=_aligned, remote=lambda **kwargs: remote_text,
+            early_lyrics=early_lyrics, plain_align=plain_align, remote=lambda **kwargs: heard,
             mocks=mocks, remote_stt=True, write_settings_info=True, bpm_override=60.0, **settings_values,
         )
         return notes, files["ultrasinger_parameter.info"], mocks
 
     def test_remote_text_without_local_transcription(self):
-        notes, info, mocks = self._remote_run("hello world", llm_correct_lyrics=True)
+        notes, info, mocks = self._remote_run(RemoteTranscription("hello world"), llm_correct_lyrics=True)
         mocks["TranscribeAudio"].assert_not_called()
         mocks["remote"].assert_called_once()
-        self.assertEqual(mocks["plain_align"].call_args.kwargs["plain_lyrics"], "hello world")
+        call = mocks["plain_align"].call_args.kwargs
+        self.assertEqual((call["plain_lyrics"], call["transcription_words"]), ("hello world", []))
         self.assertEqual(notes, _ALIGNED_NOTES)
         self.assertIn("Pipeline:                 Remote STT (text) + local alignment", info)
         self.assertIn("Transcription:            skipped", info)
         self.assertIn("Status:                   not run (no local transcription to correct)", info)
+        self.assertIn("Used this run:            yes (its text made the notes)", info)
+
+    def test_remote_segments_are_lines_placed_by_its_words(self):
+        notes, info, mocks = self._remote_run(_HEARD)
+        call = mocks["plain_align"].call_args.kwargs
+        self.assertEqual(call["plain_lyrics"], "other words\nhere")
+        self.assertEqual(call["transcription_words"], _HEARD.words)
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("Pipeline:                 Remote STT (text) + local alignment", info)
+        # not the plain lyrics' placement
+        self.assertNotIn("Plain lyrics placed", info)
 
     def test_remote_failure_falls_back_to_the_local_transcription(self):
         notes, info, mocks = self._remote_run(None)
@@ -289,16 +308,74 @@ class TestRemoteSpeechToText(unittest.TestCase):
         self.assertEqual([n[0] for n in notes], ["one ", "two "])
         self.assertIn("Pipeline:                 Standard transcription", info)
         self.assertIn("Transcription:            full", info)
+        self.assertIn("Used this run:            asked, no usable answer (see the console)", info)
 
-    def test_plain_lyrics_are_preferred_over_the_remote_text(self):
+    def test_remote_words_place_the_plain_lyrics(self):
         lyrics = SimpleNamespace(synced_lyrics=None, plain_lyrics="hello world")
-        notes, info, mocks = self._remote_run("other words", early_lyrics=lyrics)
-        mocks["remote"].assert_not_called()  # no audio leaves the machine when found lyrics align
+        notes, info, mocks = self._remote_run(_HEARD, early_lyrics=lyrics)
+        mocks["remote"].assert_called_once()
         mocks["TranscribeAudio"].assert_not_called()
-        self.assertEqual(mocks["plain_align"].call_args.kwargs["plain_lyrics"], "hello world")
+        # the plain lyrics make the notes, the remote words give their lines times
+        mocks["plain_align"].assert_called_once()
+        call = mocks["plain_align"].call_args.kwargs
+        self.assertEqual((call["plain_lyrics"], call["transcription_words"]), ("hello world", _HEARD.words))
         self.assertEqual(notes, _ALIGNED_NOTES)
         self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
+        self.assertIn("Plain lyrics placed:      line by line (2 of 2 lines anchored by the remote transcription's "
+                      "words)", info)
         self.assertIn("Transcription:            skipped", info)
+        self.assertIn("Used this run:            yes (its words placed the lines of the plain lyrics)", info)
+
+    def test_plain_lyrics_without_remote_words(self):
+        # a service that returned no times: the plain lyrics are placed as one block
+        lyrics = SimpleNamespace(synced_lyrics=None, plain_lyrics="hello world")
+        _, info, mocks = self._remote_run(RemoteTranscription("other words"), early_lyrics=lyrics)
+        self.assertEqual(mocks["plain_align"].call_args.kwargs["transcription_words"], [])
+        self.assertIn("Plain lyrics placed:      as one block (no remote transcription words)", info)
+        self.assertIn("Used this run:            asked, its answer not used", info)
+
+    def test_synced_lyrics_that_fail_to_align(self):
+        # the remote service is asked then, and its words place the lines of the plain lyrics
+        lyrics = SimpleNamespace(synced_lyrics="[00:01.00] hello world", plain_lyrics="hello world")
+        notes, info, mocks = self._remote_run(_HEARD, early_lyrics=lyrics, align=lambda **kwargs: [])
+        mocks["remote"].assert_called_once()
+        mocks["TranscribeAudio"].assert_not_called()
+        call = mocks["plain_align"].call_args.kwargs
+        self.assertEqual((call["plain_lyrics"], call["transcription_words"], call["words_from"]),
+                         ("hello world", _HEARD.words, "remote transcription"))
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("LRCLIB synced lyrics:     found (but alignment failed)", info)
+        self.assertIn("Used this run:            yes (its words placed the lines of the plain lyrics)", info)
+
+    def test_remote_is_asked_once(self):
+        # the plain lyrics fail to align: the remote text makes the notes, from the same answer
+        lyrics = SimpleNamespace(synced_lyrics=None, plain_lyrics="hello world")
+        calls = []
+
+        def plain_align(**kwargs):
+            calls.append(kwargs)
+            return ([], PlainLyricsPlacement()) if len(calls) == 1 else _aligned(**kwargs)
+
+        notes, info, mocks = self._remote_run(_HEARD, early_lyrics=lyrics, plain_align=plain_align)
+        mocks["remote"].assert_called_once()
+        mocks["TranscribeAudio"].assert_not_called()
+        self.assertEqual([(c["plain_lyrics"], c["transcription_words"]) for c in calls],
+                         [("hello world", _HEARD.words), ("other words\nhere", _HEARD.words)])
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("Pipeline:                 Remote STT (text) + local alignment", info)
+
+    def test_synced_lyrics_send_no_audio(self):
+        lyrics = SimpleNamespace(synced_lyrics="[00:01.00] hello world", plain_lyrics="hello world")
+        mocks = {}
+        notes, _, _ = _run(
+            _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5),
+            _transcription([("one ", 1.0, 1.24)], "en"), early_lyrics=lyrics,
+            align=lambda **kwargs: [us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED],
+            remote=lambda **kwargs: _HEARD, mocks=mocks, remote_stt=True,
+        )
+        mocks["remote"].assert_not_called()
+        mocks["plain_align"].assert_not_called()
+        self.assertEqual(notes, _ALIGNED_NOTES)
 
     def test_platform_language_is_not_trusted(self):
         # The metadata is often a default ("en"); no transcription replaces it now
@@ -309,7 +386,8 @@ class TestRemoteSpeechToText(unittest.TestCase):
                 _, out, files = _run(
                     _process_data(language="en"), _pitch_track([(1.0, 1.4, "C4")], length=2.5),
                     _transcription([("eins ", 1.0, 1.24)], "de"), early_lyrics=early_lyrics,
-                    fast_language=("de", 0.95), plain_align=_aligned, remote=lambda **kwargs: "hallo welt",
+                    fast_language=("de", 0.95), plain_align=_aligned,
+                    remote=lambda **kwargs: RemoteTranscription("hallo welt"),
                     mocks=mocks, remote_stt=True, write_settings_info=True,
                 )
                 self.assertEqual(mocks[aligner].call_args.kwargs["language"], "de")

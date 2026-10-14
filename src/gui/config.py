@@ -91,7 +91,7 @@ _DEFAULTS = {
     "llm_retry_on_rate_limit": True,
     "llm_retry_wait": 60,
     "llm_retry_max": 3,
-    # Remote speech-to-text (text-only Whisper alternative; timing stays local)
+    # Remote speech-to-text (Whisper alternative; the notes are timed locally)
     "remote_stt": False,
     "remote_stt_api_base_url": "https://api.groq.com/openai/v1",
     "remote_stt_api_key": "",  # stored in system keyring, never written to config.json

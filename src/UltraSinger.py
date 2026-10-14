@@ -298,6 +298,8 @@ def run() -> tuple[str, Score, Score]:
     _initial_language = None  # tracks pre-correction language
     _reference_recovered = False  # tracks recovery after language correction
     _remote_stt_used = False  # tracks whether remote STT supplied the lyrics text
+    _remote_stt_words_used = False  # whether its words placed the lines of the plain lyrics
+    _remote_stt_answer = None  # when it was asked: "answered" or "failed"
     _plain_lyrics_used = False  # tracks whether aligned plain lyrics made the notes
     _plain_lyrics_placement = None  # how their lines were placed (PlainLyricsPlacement)
 
@@ -485,10 +487,19 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Reference-first pipeline failed: {e}")
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
 
+        # Remote speech-to-text replaces the local transcription. It is asked
+        # once, when no synced lyrics made the notes: its words give plain
+        # lyrics their line times, and its text makes the notes when no
+        # lyrics could be aligned (below)
+        remote_transcription = None
+        if not reference_first_used and remote_first:
+            remote_transcription, _lang_source = _transcribe_remote(process_data, _lang_source)
+            _remote_stt_answer = "answered" if remote_transcription is not None else "failed"
+
         # Fallback: Plain lyrics alignment when no synced lyrics available.
-        # The transcription's words give their lines times; there are none
-        # when it was skipped (synced lyrics found before it failed to align,
-        # or remote speech-to-text runs first)
+        # The words of the transcription, or of remote speech-to-text, give
+        # their lines times; there are none when the transcription was skipped
+        # for synced lyrics found before it that failed to align
         if not reference_first_used and process_data.plain_lyrics and not settings.disable_reference_lyrics:
             try:
                 from modules.Speech_Recognition.reference_lyrics_aligner import (
@@ -501,6 +512,9 @@ def run() -> tuple[str, Score, Score]:
                         f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
                         f"Language unknown — falling back to English alignment model"
                     )
+                heard_words, remote_words = process_data.transcription_words, False
+                if not heard_words and remote_transcription is not None:
+                    heard_words, remote_words = remote_transcription.words, True
                 plain_segments, plain_placement = create_midi_segments_from_plain_lyrics(
                     plain_lyrics=process_data.plain_lyrics,
                     audio_path=process_data.process_data_paths.whisper_audio_path,
@@ -510,13 +524,15 @@ def run() -> tuple[str, Score, Score]:
                     allowed_notes=allowed_notes_for_key,
                     melisma_split=settings.pitch_change_split,
                     align_model_name=settings.whisper_align_model,
-                    transcription_words=process_data.transcription_words,
+                    transcription_words=heard_words,
+                    words_from="remote transcription" if remote_words else "transcription",
                 )
                 if plain_segments:
                     process_data.midi_segments = plain_segments
                     reference_first_used = True
                     _plain_lyrics_used = True
                     _plain_lyrics_placement = plain_placement
+                    _remote_stt_words_used = remote_words and plain_placement.line_by_line
                     process_data.transcribed_data = [
                         TranscribedData(
                             word=seg.word,
@@ -532,50 +548,20 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
 
         # Remote STT fallback: an external OpenAI-compatible speech-to-text
-        # API supplies TEXT ONLY (never trusted timestamps, see
-        # docs/remote-stt-design.md §2) which is then aligned locally via
-        # the exact same wav2vec2 CTC path used for LRCLIB plain lyrics.
+        # API supplies the text, which is then aligned locally via the exact
+        # same wav2vec2 CTC path used for LRCLIB plain lyrics: each segment it
+        # heard is a line, and its words give the lines their times. Its times
+        # never make the notes themselves (see docs/remote-stt-design.md §2).
         # This lets GPU-less users skip local Whisper entirely.
-        if not reference_first_used and settings.remote_stt and not settings.disable_reference_lyrics:
+        if not reference_first_used and remote_first:
             try:
-                remote_api_key = settings.remote_stt_api_key or os.environ.get(
-                    "ULTRASINGER_REMOTE_STT_API_KEY", ""
-                )
-
-                # Local CTC alignment needs a language code; remote STT
-                # responses aren't guaranteed to include a reliable one,
-                # so fast-detect locally first (mirrors the early-LRCLIB
-                # synced-lyrics path above; video platform metadata is not
-                # trusted for it either)
-                if process_data.media_info.language is None or _lang_source == "video_platform":
-                    from modules.Speech_Recognition.Whisper import detect_language_from_audio
-                    process_data.media_info.language = detect_language_from_audio(
-                        process_data.process_data_paths.whisper_audio_path,
-                        device=settings.pytorch_device,
-                        compute_type=settings.whisper_compute_type,
-                    )
-                    _lang_source = "whisper_fast"
-
-                from modules.Speech_Recognition.remote_stt import transcribe_remote
-                remote_text = transcribe_remote(
-                    audio_path=process_data.process_data_paths.whisper_audio_path,
-                    api_base_url=settings.remote_stt_api_base_url,
-                    api_key=remote_api_key,
-                    model=settings.remote_stt_model,
-                    language=process_data.media_info.language,
-                    timeout=settings.remote_stt_timeout,
-                    retry_on_rate_limit=settings.remote_stt_retry_on_rate_limit,
-                    retry_wait=settings.remote_stt_retry_wait,
-                    retry_max=settings.remote_stt_retry_max,
-                )
-
-                if remote_text:
+                if remote_transcription is not None:
                     from modules.Speech_Recognition.reference_lyrics_aligner import (
                         create_midi_segments_from_plain_lyrics,
                     )
                     ref_language = process_data.media_info.language or "en"
                     remote_segments, _ = create_midi_segments_from_plain_lyrics(
-                        plain_lyrics=remote_text,
+                        plain_lyrics=remote_transcription.lines(),
                         audio_path=process_data.process_data_paths.whisper_audio_path,
                         language=ref_language,
                         pitched_data=process_data.pitched_data,
@@ -583,6 +569,8 @@ def run() -> tuple[str, Score, Score]:
                         allowed_notes=allowed_notes_for_key,
                         melisma_split=settings.pitch_change_split,
                         align_model_name=settings.whisper_align_model,
+                        transcription_words=remote_transcription.words,
+                        words_from="remote transcription",
                     )
                     if remote_segments:
                         process_data.midi_segments = remote_segments
@@ -1043,6 +1031,8 @@ def run() -> tuple[str, Score, Score]:
             initial_language=_initial_language,
             reference_recovered=_reference_recovered,
             remote_stt_used=_remote_stt_used,
+            remote_stt_words_used=_remote_stt_words_used,
+            remote_stt_answer=_remote_stt_answer,
             plain_lyrics_used=_plain_lyrics_used,
             plain_lyrics_placement=_plain_lyrics_placement,
             rejected_synced_language=process_data.synced_lyrics_other_language,
@@ -1175,6 +1165,8 @@ def _write_settings_info_file(
         initial_language: str | None = None,
         reference_recovered: bool = False,
         remote_stt_used: bool = False,
+        remote_stt_words_used: bool = False,
+        remote_stt_answer: str | None = None,
         plain_lyrics_used: bool = False,
         plain_lyrics_placement: "PlainLyricsPlacement | None" = None,
         rejected_synced_language: str | None = None,
@@ -1448,7 +1440,17 @@ def _write_settings_info_file(
                     if settings.remote_stt_retry_on_rate_limit else "no"
                 )
                 f.write(f"  Retry on rate limit:      {remote_retry_str}\n")
-                f.write(f"  Used this run:            {remote_stt_used}\n")
+                if remote_stt_used:
+                    remote_use = "yes (its text made the notes)"
+                elif remote_stt_words_used:
+                    remote_use = "yes (its words placed the lines of the plain lyrics)"
+                elif remote_stt_answer == "answered":
+                    remote_use = "asked, its answer not used"
+                elif remote_stt_answer == "failed":
+                    remote_use = "asked, no usable answer (see the console)"
+                else:
+                    remote_use = "no"
+                f.write(f"  Used this run:            {remote_use}\n")
             f.write("\n")
 
             # Score results
@@ -1879,6 +1881,46 @@ def InitProcessData():
             process_data.media_info.video_url = settings.video_url
 
     return process_data
+
+
+def _transcribe_remote(process_data, lang_source: str) -> tuple["RemoteTranscription | None", str]:
+    """The song as remote speech-to-text heard it (None when that failed), and
+    where the song's language came from: it is detected first when only the
+    video platform metadata, or nothing, set it."""
+    try:
+        remote_api_key = settings.remote_stt_api_key or os.environ.get(
+            "ULTRASINGER_REMOTE_STT_API_KEY", ""
+        )
+
+        # Local CTC alignment needs a language code; remote STT
+        # responses aren't guaranteed to include a reliable one,
+        # so fast-detect locally first (mirrors the early-LRCLIB
+        # synced-lyrics path; video platform metadata is not
+        # trusted for it either)
+        if process_data.media_info.language is None or lang_source == "video_platform":
+            from modules.Speech_Recognition.Whisper import detect_language_from_audio
+            process_data.media_info.language = detect_language_from_audio(
+                process_data.process_data_paths.whisper_audio_path,
+                device=settings.pytorch_device,
+                compute_type=settings.whisper_compute_type,
+            )
+            lang_source = "whisper_fast"
+
+        from modules.Speech_Recognition.remote_stt import transcribe_remote
+        return transcribe_remote(
+            audio_path=process_data.process_data_paths.whisper_audio_path,
+            api_base_url=settings.remote_stt_api_base_url,
+            api_key=remote_api_key,
+            model=settings.remote_stt_model,
+            language=process_data.media_info.language,
+            timeout=settings.remote_stt_timeout,
+            retry_on_rate_limit=settings.remote_stt_retry_on_rate_limit,
+            retry_wait=settings.remote_stt_retry_wait,
+            retry_max=settings.remote_stt_retry_max,
+        ), lang_source
+    except Exception as e:
+        print(f"{ULTRASINGER_HEAD} Remote STT failed: {e}")
+        return None, lang_source
 
 
 def TranscribeAudio(process_data):

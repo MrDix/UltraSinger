@@ -133,10 +133,10 @@ class Settings:
     llm_retry_wait: int = 60  # Seconds to wait between retries
     llm_retry_max: int = 3  # Maximum retries per chunk
 
-    # Remote (cloud) speech-to-text — text-only Whisper alternative for
-    # GPU-less users. Timing always comes from the local wav2vec2 CTC
-    # forced-alignment model (never from remote timestamps); see
-    # docs/remote-stt-design.md.
+    # Remote (cloud) speech-to-text — Whisper alternative for GPU-less
+    # users. The notes are always timed by the local wav2vec2 CTC
+    # forced-alignment model; the remote times only place the lines (see
+    # docs/remote-stt-design.md).
     remote_stt = False  # Enable remote STT as a lyrics-source fallback
     remote_stt_api_base_url: str = "https://api.groq.com/openai/v1"
     remote_stt_api_key: str | None = None  # or set ULTRASINGER_REMOTE_STT_API_KEY env var

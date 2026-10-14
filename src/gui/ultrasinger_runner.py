@@ -600,7 +600,7 @@ class UltraSingerRunner(QObject):
                 if retry_max != 3:
                     args.extend(["--llm_retry_max", str(retry_max)])
 
-        # Remote speech-to-text (text-only Whisper alternative)
+        # Remote speech-to-text (Whisper alternative)
         if config.get("remote_stt"):
             args.append("--remote_stt")
             if config.get("remote_stt_api_base_url"):
