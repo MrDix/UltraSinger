@@ -209,8 +209,8 @@ def _response(status_code, body=None, text="ok"):
     return response
 
 
-class TestWordAndSegmentTimes(unittest.TestCase):
-    """The words and segments come back with the times the service gave them."""
+class TestWordsAndSegments(unittest.TestCase):
+    """The words come back with the times the service gave them, the text in its segments."""
 
     def setUp(self):
         self.audio_path = _make_audio_file()
@@ -241,7 +241,7 @@ class TestWordAndSegmentTimes(unittest.TestCase):
         result, _ = self._transcribe(_response(200, body))
         self.assertEqual(result.text, "Hello world. Again")
         self.assertEqual(result.words, [("Hello", 1.0, 1.4), ("world.", 1.5, 2.0), ("Again", 3.0, 3.5)])
-        self.assertEqual(result.segments, [(" Hello world.", 0.9, 2.1), (" Again", 2.9, 3.6)])
+        self.assertEqual(result.segments, [" Hello world.", " Again"])
         self.assertEqual(result.lines(), "Hello world.\nAgain")
 
     def test_words_without_usable_times_are_left_out(self):
@@ -249,7 +249,8 @@ class TestWordAndSegmentTimes(unittest.TestCase):
             "text": "a b c d e f",
             "words": [{"word": "a", "start": 1.0, "end": 1.2}, {"word": "b", "start": None, "end": 1.4},
                       {"word": "c", "start": True, "end": 1.6}, {"word": "d", "start": float("nan"), "end": 1.8},
-                      {"word": 5, "start": 2.0, "end": 2.2}, "e", {"word": "f", "start": "3", "end": 3.2}],
+                      {"word": 5, "start": 2.0, "end": 2.2}, "e", {"word": "f", "start": "3", "end": 3.2},
+                      {"word": "g", "start": -1.0, "end": 0.5}, {"word": "h", "start": 4.0, "end": 3.9}],
             "segments": {"not": "a list"},
         }
         result, _ = self._transcribe(_response(200, body))
@@ -258,14 +259,34 @@ class TestWordAndSegmentTimes(unittest.TestCase):
         self.assertEqual(result.lines(), "a b c d e f")
 
     def test_a_service_without_times_gives_the_text(self):
-        # it answers the request for times with HTTP 400, the text alone with 200
-        result, mock_post = self._transcribe(_response(400, text="response_format not supported"),
+        # it turns the request for times down (HTTP 400, or 422 as many self-hosted servers do),
+        # the text alone it gives
+        for status in (400, 422):
+            with self.subTest(status=status):
+                result, mock_post = self._transcribe(_response(status, text="response_format not supported"),
+                                                     _response(200, {"text": "hello world"}))
+                self.assertEqual(mock_post.call_count, 2)
+                data = mock_post.call_args.kwargs["data"]
+                self.assertEqual(data["response_format"], "json")
+                self.assertNotIn("timestamp_granularities[]", data)
+                self.assertEqual((data["model"], data["language"]), ("whisper-large-v3", "en"))
+                self.assertEqual((result.text, result.words, result.segments), ("hello world", [], []))
+
+    @patch("src.modules.Speech_Recognition.remote_stt.time.sleep")
+    def test_the_request_for_the_text_is_retried_when_rate_limited(self, mock_sleep):
+        limited = _response(429)
+        limited.headers = {"Retry-After": "2"}
+        result, mock_post = self._transcribe(_response(400, text="no times"), limited,
                                              _response(200, {"text": "hello world"}))
-        self.assertEqual(mock_post.call_count, 2)
-        data = mock_post.call_args.kwargs["data"]
-        self.assertEqual(data["response_format"], "json")
-        self.assertNotIn("timestamp_granularities[]", data)
-        self.assertEqual((result.text, result.words, result.segments), ("hello world", [], []))
+        self.assertEqual(result.text, "hello world")
+        self.assertEqual(mock_post.call_count, 3)
+        mock_sleep.assert_called_once_with(2.0)
+
+    def test_segments_without_a_text_give_no_lines(self):
+        # the lines would leave the words of that segment out: the text as it came
+        body = {"text": "a b c", "segments": [{"text": " a"}, {"start": 1.0, "end": 2.0}, {"text": " c"}]}
+        result, _ = self._transcribe(_response(200, body))
+        self.assertEqual((result.segments, result.lines()), ([], "a b c"))
 
     def test_a_service_that_ignores_the_times_gives_the_text(self):
         result, _ = self._transcribe(_response(200, {"text": "hello world"}))
@@ -340,6 +361,18 @@ class TestUploadedAudio(unittest.TestCase):
         self.assertEqual(len(made), 1)
         self.assertFalse(os.path.exists(made[0]))
 
+    def test_stereo_is_mixed_down_and_loud_samples_are_clipped(self):
+        t = np.arange(44100) / 44100
+        left = 1.5 * np.sin(2 * np.pi * 220 * t)
+        sf.write(self.audio_path, np.stack([left, left], axis=1).astype(np.float32), 44100, subtype="FLOAT")
+        _, uploaded, _ = self._transcribe()
+        self.assertEqual(uploaded["audio"].ndim, 1)
+        # full scale, never wrapped around to the other sign
+        peak = int(np.argmax(np.abs(uploaded["audio"])))
+        self.assertGreater(np.abs(uploaded["audio"]).max(), 0.99)
+        self.assertEqual(np.sign(uploaded["audio"][peak]),
+                         np.sign(np.sin(2 * np.pi * 220 * peak / UPLOAD_SAMPLE_RATE)))
+
     def test_audio_that_cannot_be_read_is_sent_as_it_is(self):
         fake = _make_audio_file(b"not audio")
         self.addCleanup(os.remove, fake)
@@ -352,8 +385,7 @@ class TestUploadedAudio(unittest.TestCase):
 
 class TestRemoteTranscriptionLines(unittest.TestCase):
     def test_segments_are_lines(self):
-        result = RemoteTranscription("one two three", segments=[(" one two", 0.0, 1.0), ("  ", 1.0, 1.5),
-                                                                (" three ", 2.0, 3.0)])
+        result = RemoteTranscription("one two three", segments=[" one two", "  ", " three "])
         self.assertEqual(result.lines(), "one two\nthree")
 
     def test_text_without_segments(self):

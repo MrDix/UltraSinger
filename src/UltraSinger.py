@@ -298,7 +298,8 @@ def run() -> tuple[str, Score, Score]:
     _initial_language = None  # tracks pre-correction language
     _reference_recovered = False  # tracks recovery after language correction
     _remote_stt_used = False  # tracks whether remote STT supplied the lyrics text
-    _remote_stt_words_used = False  # whether its words gave the plain lyrics their line times
+    _remote_stt_words_used = False  # whether its words placed the lines of the plain lyrics
+    _remote_stt_answered = False  # whether it was asked and answered
     _plain_lyrics_used = False  # tracks whether aligned plain lyrics made the notes
     _plain_lyrics_placement = None  # how their lines were placed (PlainLyricsPlacement)
 
@@ -493,6 +494,7 @@ def run() -> tuple[str, Score, Score]:
         remote_transcription = None
         if not reference_first_used and remote_first:
             remote_transcription, _lang_source = _transcribe_remote(process_data, _lang_source)
+            _remote_stt_answered = remote_transcription is not None
 
         # Fallback: Plain lyrics alignment when no synced lyrics available.
         # The words of the transcription, or of remote speech-to-text, give
@@ -510,9 +512,9 @@ def run() -> tuple[str, Score, Score]:
                         f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
                         f"Language unknown — falling back to English alignment model"
                     )
-                heard_words, remote_words = process_data.transcription_words, False
-                if not heard_words and remote_transcription is not None and remote_transcription.words:
-                    heard_words, remote_words = remote_transcription.words, True
+                heard_words, words_from = process_data.transcription_words, "transcription"
+                if not heard_words and remote_transcription is not None:
+                    heard_words, words_from = remote_transcription.words, "remote transcription"
                 plain_segments, plain_placement = create_midi_segments_from_plain_lyrics(
                     plain_lyrics=process_data.plain_lyrics,
                     audio_path=process_data.process_data_paths.whisper_audio_path,
@@ -523,13 +525,14 @@ def run() -> tuple[str, Score, Score]:
                     melisma_split=settings.pitch_change_split,
                     align_model_name=settings.whisper_align_model,
                     transcription_words=heard_words,
+                    words_from=words_from,
                 )
                 if plain_segments:
                     process_data.midi_segments = plain_segments
                     reference_first_used = True
                     _plain_lyrics_used = True
                     _plain_lyrics_placement = plain_placement
-                    _remote_stt_words_used = remote_words
+                    _remote_stt_words_used = words_from != "transcription" and plain_placement.line_by_line
                     process_data.transcribed_data = [
                         TranscribedData(
                             word=seg.word,
@@ -567,6 +570,7 @@ def run() -> tuple[str, Score, Score]:
                         melisma_split=settings.pitch_change_split,
                         align_model_name=settings.whisper_align_model,
                         transcription_words=remote_transcription.words,
+                        words_from="remote transcription",
                     )
                     if remote_segments:
                         process_data.midi_segments = remote_segments
@@ -1028,6 +1032,7 @@ def run() -> tuple[str, Score, Score]:
             reference_recovered=_reference_recovered,
             remote_stt_used=_remote_stt_used,
             remote_stt_words_used=_remote_stt_words_used,
+            remote_stt_answered=_remote_stt_answered,
             plain_lyrics_used=_plain_lyrics_used,
             plain_lyrics_placement=_plain_lyrics_placement,
             rejected_synced_language=process_data.synced_lyrics_other_language,
@@ -1161,6 +1166,7 @@ def _write_settings_info_file(
         reference_recovered: bool = False,
         remote_stt_used: bool = False,
         remote_stt_words_used: bool = False,
+        remote_stt_answered: bool = False,
         plain_lyrics_used: bool = False,
         plain_lyrics_placement: "PlainLyricsPlacement | None" = None,
         rejected_synced_language: str | None = None,
@@ -1437,7 +1443,9 @@ def _write_settings_info_file(
                 if remote_stt_used:
                     remote_use = "yes (its text made the notes)"
                 elif remote_stt_words_used:
-                    remote_use = "yes (its words, for the line times of the plain lyrics)"
+                    remote_use = "yes (its words placed the lines of the plain lyrics)"
+                elif remote_stt_answered:
+                    remote_use = "asked, its answer not used"
                 else:
                     remote_use = "no"
                 f.write(f"  Used this run:            {remote_use}\n")

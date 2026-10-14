@@ -2,8 +2,8 @@
 
 Sends audio to an OpenAI-compatible ``/audio/transcriptions`` endpoint
 (e.g. Groq's Whisper endpoint) and returns what it heard: the text and,
-when the service returns them (``verbose_json``), its words and segments
-with their times. The notes never take these times: the words are placed
+when the service returns them (``verbose_json``), its words with their
+times and its segments. The notes never take these times: the words are placed
 afterwards by the local wav2vec2 CTC forced-alignment model, exactly like
 the Reference-Lyrics-First pipeline places LRCLIB plain-text lyrics (see
 ``create_midi_segments_from_plain_lyrics``). The remote times only tell the
@@ -53,20 +53,25 @@ DEFAULT_TIMEOUT_S = 120
 # provider sends an absurd ``Retry-After`` value.
 MAX_RETRY_WAIT_S = 300
 
+# How a service turns down a request it does not support (here: the one for
+# word times); 422 is the validation error of many self-hosted servers
+_REJECTED = (400, 422)
+
 
 @dataclass
 class RemoteTranscription:
     """What remote speech-to-text heard."""
     text: str
-    # (text, start s, end s), as the service placed them; empty when it
-    # returned no times
+    # (text, start s, end s) of the words, as the service placed them; empty
+    # when it returned no times
     words: list[tuple[str, float, float]] = field(default_factory=list)
-    segments: list[tuple[str, float, float]] = field(default_factory=list)
+    # the text of each segment (a stretch the service heard at once), in order
+    segments: list[str] = field(default_factory=list)
 
     def lines(self) -> str:
         """The text with each segment on a line of its own; without
         segments, the text as it came."""
-        texts = [text.strip() for text, _, _ in self.segments if text.strip()]
+        texts = [text.strip() for text in self.segments if text.strip()]
         return "\n".join(texts) if texts else self.text
 
 
@@ -90,6 +95,7 @@ def _resolve_retry_wait(response: requests.Response, fallback_wait: float) -> fl
 def _upload_copy(audio_path: str) -> Optional[str]:
     """A temporary mono FLAC copy of the audio at ``UPLOAD_SAMPLE_RATE``, or
     None when the audio cannot be read that way (it is then sent as it is)."""
+    path = None
     try:
         import librosa
         import numpy as np
@@ -99,34 +105,53 @@ def _upload_copy(audio_path: str) -> Optional[str]:
         samples = samples.mean(axis=1)
         if sample_rate != UPLOAD_SAMPLE_RATE:
             samples = librosa.resample(samples, orig_sr=sample_rate, target_sr=UPLOAD_SAMPLE_RATE)
+        # (an integer format would wrap values past full scale around)
         samples = np.clip(samples, -1.0, 1.0)
-    except Exception:  # noqa: BLE001 - any audio the copy cannot be made of is sent as it is
-        return None
-    handle, path = tempfile.mkstemp(prefix="ultrasinger_stt_", suffix=".flac")
-    os.close(handle)
-    try:
+        handle, path = tempfile.mkstemp(prefix="ultrasinger_stt_", suffix=".flac")
+        os.close(handle)
         sf.write(path, samples, UPLOAD_SAMPLE_RATE, format="FLAC", subtype="PCM_16")
-    except Exception:  # noqa: BLE001
-        os.remove(path)
+        return path
+    except Exception:  # noqa: BLE001 - any audio the copy cannot be made of is sent as it is
+        _remove(path)
         return None
-    return path
+
+
+def _remove(path: Optional[str]) -> None:
+    """Remove a temporary copy; one that is held open (e.g. by a virus
+    scanner) stays, with a note."""
+    if path is None or not os.path.exists(path):
+        return
+    try:
+        os.remove(path)
+    except OSError as e:
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the temporary audio copy {path} "
+              f"could not be removed ({e})")
 
 
 def _is_time(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _timed(items, text_key: str) -> list[tuple[str, float, float]]:
-    """(text, start s, end s) of the words or segments of a response, those
-    with a text and both times."""
+def _timed_words(items) -> list[tuple[str, float, float]]:
+    """(text, start s, end s) of the words of a response, those with a text
+    and times that can be (0 <= start <= end)."""
     out = []
     for item in items if isinstance(items, list) else []:
         if not isinstance(item, dict):
             continue
-        text, start, end = item.get(text_key), item.get("start"), item.get("end")
-        if isinstance(text, str) and _is_time(start) and _is_time(end):
+        text, start, end = item.get("word"), item.get("start"), item.get("end")
+        if isinstance(text, str) and _is_time(start) and _is_time(end) and 0 <= start <= end:
             out.append((text, float(start), float(end)))
     return out
+
+
+def _segment_texts(items) -> list[str]:
+    """The text of each segment of a response; none when one of them has
+    no text (the lines would leave its words out)."""
+    if not isinstance(items, list):
+        return []
+    texts = [item.get("text") if isinstance(item, dict) else None for item in items]
+    return texts if all(isinstance(text, str) for text in texts) else []
 
 
 def _post(url: str, headers: dict, data: dict, upload_path: str, timeout: int,
@@ -188,9 +213,10 @@ def transcribe_remote(
     function never raises for expected failure modes, so callers can treat
     it as a fail-open text source.
 
-    The words and segments come with their times (``verbose_json``); a
-    service that answers that request with HTTP 400 is asked once more for
-    the text alone, and the transcript then has no words and segments. The
+    The words come with their times, and the text in segments
+    (``verbose_json``); a service that turns that request down (HTTP 400 or
+    422) is asked once more for the text alone, and the transcript then has
+    no words and segments. The
     audio is sent as a mono FLAC copy at ``UPLOAD_SAMPLE_RATE``, or as it is
     when no such copy can be made of it.
 
@@ -222,11 +248,7 @@ def transcribe_remote(
         return _transcribe(copy_path or audio_path, url, api_key, model, language, timeout,
                            retry_on_rate_limit, retry_wait, retry_max)
     finally:
-        if copy_path is not None:
-            try:
-                os.remove(copy_path)
-            except OSError:
-                pass
+        _remove(copy_path)
 
 
 def _transcribe(upload_path: str, url: str, api_key: str, model: str, language: str | None, timeout: int,
@@ -264,10 +286,10 @@ def _transcribe(upload_path: str, url: str, api_key: str, model: str, language: 
     # at least one attempt always runs so failure stays fail-open.
     max_attempts = max(1, 1 + (retry_max if retry_on_rate_limit else 0))
     response = _post(url, headers, timed, upload_path, timeout, max_attempts, retry_wait)
-    if response is not None and response.status_code == 400:
+    if response is not None and response.status_code in _REJECTED:
         # Not every OpenAI-compatible service returns times
-        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Remote STT gave no word times')} "
-              f"(HTTP 400: {response.text[:200]}) - asking for the text only")
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Remote STT rejected the request for word times')} "
+              f"(HTTP {response.status_code}: {response.text[:200]}) - asking for the text only")
         response = _post(url, headers, text_only, upload_path, timeout, max_attempts, retry_wait)
     if response is None:
         return None
@@ -289,4 +311,4 @@ def _transcribe(upload_path: str, url: str, api_key: str, model: str, language: 
         print(f"{ULTRASINGER_HEAD} {red_highlighted('Remote STT returned empty transcript')}")
         return None
 
-    return RemoteTranscription(text.strip(), _timed(body.get("words"), "word"), _timed(body.get("segments"), "text"))
+    return RemoteTranscription(text.strip(), _timed_words(body.get("words")), _segment_texts(body.get("segments")))

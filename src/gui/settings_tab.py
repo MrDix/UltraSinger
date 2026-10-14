@@ -1067,7 +1067,7 @@ class ConversionSettingsForm(QWidget):
                            "always timed locally — the remote service gives the transcript "
                            "text, and rough word times that only place its lines and those "
                            "of plain lyrics. Your audio leaves this machine when enabled "
-                           "(not for songs with synced lyrics).",
+                           "(not when synced lyrics make the notes).",
                            reset_callback=lambda: self._remote_stt.setChecked(
                                _DEFAULTS["remote_stt"]))
 

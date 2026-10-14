@@ -1113,13 +1113,15 @@ class PlainLyricsPlacement:
     anchored: int = 0           # of these, the lines a transcribed word gave a time
     with_words: bool = False    # whether there were words of a transcription
     line_by_line: bool = False  # aligned with these line times, as synced lyrics are
+    words_from: str = "transcription"  # what transcribed the words
 
     def __str__(self) -> str:
         if self.line_by_line:
-            return f"line by line ({self.anchored} of {self.lines} lines anchored by the transcription's words)"
+            return (f"line by line ({self.anchored} of {self.lines} lines anchored by the "
+                    f"{self.words_from}'s words)")
         if not self.with_words:
-            return "as one block (no transcription words)"
-        return (f"as one block ({self.anchored} of {self.lines} lines anchored by the transcription's words, "
+            return f"as one block (no {self.words_from} words)"
+        return (f"as one block ({self.anchored} of {self.lines} lines anchored by the {self.words_from}'s words, "
                 f"too few)")
 
 
@@ -1135,6 +1137,7 @@ def create_midi_segments_from_plain_lyrics(
     min_note_ms: float = 80.0,
     align_model_name: Optional[str] = None,
     transcription_words: Optional[list[tuple[str, float, float]]] = None,
+    words_from: str = "transcription",
 ) -> tuple[list[MidiSegment], PlainLyricsPlacement]:
     """Create MidiSegments from plain lyrics (no timestamps) + forced alignment.
 
@@ -1159,12 +1162,14 @@ def create_midi_segments_from_plain_lyrics(
         align_model_name: Optional custom alignment model name.
         transcription_words: The words of a transcription of the song as
             ``(text, start s, end s)``, where the transcriber placed them.
+        words_from: What transcribed them, as the report names it
+            (``"remote transcription"`` for remote speech-to-text).
 
     Returns:
         The MidiSegments with lyrics and pitch (none when the lyrics could
         not be aligned), and how the lines were placed.
     """
-    placement = PlainLyricsPlacement(with_words=bool(transcription_words))
+    placement = PlainLyricsPlacement(with_words=bool(transcription_words), words_from=words_from)
     texts, lines = [], []
     for text in parse_plain_lyrics(plain_lyrics or ""):
         # the words as align_lyrics_to_audio takes them from the text

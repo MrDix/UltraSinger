@@ -808,7 +808,7 @@ Sends the song's audio to an external OpenAI-compatible speech-to-text API (e.g.
 3. **Remote STT text + local alignment** (only if enabled and no LRCLIB lyrics were found or could be aligned)
 4. Local transcription, Qwen3-ASR or Whisper (default fallback, and still the default when remote STT is disabled)
 
-With remote STT enabled, the local transcription is skipped: it only runs when none of the sources above could be aligned. The remote service is asked once per song, when no synced lyrics made the notes; with synced lyrics, no audio is sent.
+With remote STT enabled, the local transcription is skipped: it only runs when none of the sources above could be aligned. The remote service is asked once per song, when no synced lyrics made the notes (also when synced lyrics were found but could not be aligned); when synced lyrics make the notes, no audio is sent.
 
 Any remote STT failure (network error, timeout, auth error, oversized file, empty response) fails open to the local transcription — a conversion never aborts because of it.
 

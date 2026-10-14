@@ -86,8 +86,9 @@ start more than 1 s off): remote text 5.5 % -> 3.7 %, LRCLIB plain lyrics
 6.5 % -> 5.0 % (4.8 % with the words of a local transcription). For the
 plain-lyrics anchors the service is now also asked when LRCLIB plain lyrics
 were found; it is asked once per song, and never when synced lyrics made
-the notes. A service that rejects the `verbose_json` request (HTTP 400) is
-asked once more for the text alone.
+the notes. A service that rejects the `verbose_json` request (HTTP 400, or
+422 as many self-hosted servers answer) is asked once more for the text
+alone.
 
 ## 3. Architecture: Remote STT as a Third Lyrics-Source Fallback
 
