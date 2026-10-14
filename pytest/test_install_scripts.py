@@ -159,8 +159,8 @@ def test_the_uv_installer_is_pinned_to_one_version_everywhere():
     versions["Dockerfile"] = set(image)
     # the setup action of the test workflow, which takes the release as "version"
     tests = (REPO / ".github/workflows/tests.yml").read_text(encoding="utf-8")
-    action = re.findall(r"uses: astral-sh/setup-uv@\S+\s+with:(?:\s+#[^\n]*|\s+\w[\w-]*: [^\n]*)*?\s+version: \"?([^\"\s]+)",
-                        tests)
+    action = re.findall(r"uses: astral-sh/setup-uv@\S+(?:\s+\w[\w-]*: [^\n]*)*?\s+with:"
+                        r"(?:\s+#[^\n]*|\s+\w[\w-]*: [^\n]*)*?\s+version: ['\"]?([^'\"\s]+)", tests)
     assert action, "the test workflow does not set up a pinned uv"
     versions["tests.yml"] = set(action)
     assert len(set().union(*versions.values())) == 1, versions
