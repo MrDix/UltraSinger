@@ -84,11 +84,14 @@ _QUALITY_RE = re.compile(r"(?:\s+(?:hd|hq|4k|8k|\d{3,4}p))+\s*$", re.IGNORECASE)
 # What a video title puts after a dash is a description of the video, not a
 # part of the song title, from this many words on (see title_before_dash)
 DESCRIPTION_WORDS = 3
-# A part of a work ("Part Two", "Vol. 3", "Chapter II", "The Second
-# Movement") or a part or volume number standing alone, not a year
-_PART_NUMBER_RE = re.compile(
-    r"\b(?:\d{1,3}|part|pt|vol|volume|chapter|act|movement|episode|book|ii|iii|iv|vi|vii|viii|ix)\b",
+# A word that names a part of a work ("Part Two", "Vol. 3", "Chapter II",
+# "The Second Movement", "Part2")
+_PART_WORD_RE = re.compile(
+    r"\b(?:part|pt|vol|volume|chapter|act|movement|episode|book)\b|\b(?:part|pt|vol|no)\.?\s*\d{1,3}\b",
     re.IGNORECASE)
+# A part or volume number standing alone ("3", "II"), not a year
+_PART_NUMBER_RE = re.compile(r"\b(?:\d{1,3}|ii|iii|iv|vi|vii|viii|ix)\b|" + _PART_WORD_RE.pattern, re.IGNORECASE)
+_BARE_PART_NUMBER_RE = re.compile(r"\s*(?:\d{1,3}|ii|iii|iv|vi|vii|viii|ix)\s*", re.IGNORECASE)
 
 
 def _clean(s: str) -> str:
@@ -168,9 +171,10 @@ def strip_title_additions(title: str) -> str:
             # A dashed part that names a part of the work stays, even when an
             # addition follows it: "Title - Part 2 - Live Performance"
             part = _SEPARATOR_RE.split(rest, maxsplit=1)[0]
-            if not _is_addition(part) and _PART_NUMBER_RE.search(part):
+            if not _is_addition(part) and (_PART_WORD_RE.search(part) or _BARE_PART_NUMBER_RE.fullmatch(part)):
                 continue
-            if not _is_addition(rest):
+            # An addition, alone ("- Live - Some Festival") or with what follows
+            if not (_is_addition(part) or _is_addition(rest)):
                 continue
         s = s[:separator.start()]
         break

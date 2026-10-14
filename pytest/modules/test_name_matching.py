@@ -59,6 +59,15 @@ class TestStripTitleAdditions(unittest.TestCase):
             # a part of the work stays, also before an addition
             "Song Title - Part 2 - Live Performance": "Song Title - Part 2",
             "Song Title - Vol. 3 - Official Video": "Song Title - Vol. 3",
+            "Song Title - No. 5 - Official Audio": "Song Title - No. 5",
+            "Song Title - II - Lyric Video": "Song Title - II",
+            # a numbered description does not
+            "Song Title - Take 2 - Official Video": "Song Title",
+            "Song Title - Week 3 - Official Video": "Song Title",
+            "Song Title - No Edits - Official Video": "Song Title",
+            "Song Title - Part 2 - Take 3 - Official Video": "Song Title - Part 2",
+            # an addition before a description
+            "Song Title - Live - Some Festival 2020": "Song Title",
         }
         for title, expected in cases.items():
             with self.subTest(title=title):
@@ -103,7 +112,8 @@ class TestTitleBeforeDash(unittest.TestCase):
                       "Hyphen-Word Title with more words", " - Some Words Without Title",
                       # a medley, a separator that is no dash, a work in movements
                       "Song A - Song B - Song C", "Song Title | Singer Name in the studio",
-                      "(Official Video) | Label Name Words", "Song Title - The Second Movement"):
+                      "(Official Video) | Label Name Words", "Song Title - The Second Movement",
+                      "Song Title - Part2 of the Story", "Song Title - Vol3 of the Series"):
             with self.subTest(title=title):
                 self.assertEqual(title_before_dash(title), "")
 
