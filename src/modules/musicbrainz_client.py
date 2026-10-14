@@ -2,6 +2,7 @@ import musicbrainzngs
 import re
 import socket
 import string
+import threading
 import time
 from contextlib import contextmanager
 from urllib.error import URLError
@@ -62,8 +63,15 @@ def __clean_string(s: str) -> str:
     return s.translate(str.maketrans('', '', string.punctuation)).lower().strip()
 
 
-# Seconds that the failed requests of the current lookup took
-_failed_seconds = 0.0
+# Lookups can run in several threads at a time (the GUI's lyrics badge looks
+# songs up in the background). Per thread: failed_seconds, the seconds that
+# the failed requests of its current lookup took.
+_lookup = threading.local()
+# The requests running with the socket timeout, and the default timeout
+# before the first of them
+_timeout_lock = threading.Lock()
+_timeout_users = 0
+_timeout_before = None
 
 
 @contextmanager
@@ -72,13 +80,22 @@ def _socket_timeout(seconds: float):
 
     musicbrainzngs opens its connections without a timeout; the default
     timeout of new sockets, set only while its request runs, gives them one.
+    Requests of several threads share it: the default timeout before the
+    first one comes back when the last one has ended.
     """
-    previous = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(seconds)
+    global _timeout_users, _timeout_before
+    with _timeout_lock:
+        if not _timeout_users:
+            _timeout_before = socket.getdefaulttimeout()
+        _timeout_users += 1
+        socket.setdefaulttimeout(seconds)
     try:
         yield
     finally:
-        socket.setdefaulttimeout(previous)
+        with _timeout_lock:
+            _timeout_users -= 1
+            if not _timeout_users:
+                socket.setdefaulttimeout(_timeout_before)
 
 
 def _http_status(error) -> Optional[int]:
@@ -90,12 +107,13 @@ def _http_status(error) -> Optional[int]:
     return status
 
 
-def __musicbrainz_request(func):
-    """The answer of a MusicBrainz request, or None when there is none: nothing
-    found, or MusicBrainz does not answer (see FAILED_REQUESTS_SECONDS)."""
-    global _failed_seconds
+def __musicbrainz_request(func, verbose: bool = True):
+    """The answer of a request to the song database, or None when there is
+    none: nothing found, or the database does not answer (see
+    FAILED_REQUESTS_SECONDS). ``verbose`` reports a failed request."""
     for attempt in range(MAX_RETRIES):
-        if _failed_seconds >= FAILED_REQUESTS_SECONDS:
+        failed_seconds = getattr(_lookup, "failed_seconds", 0.0)
+        if failed_seconds >= FAILED_REQUESTS_SECONDS:
             return None
         started = time.monotonic()
         if attempt:
@@ -105,8 +123,8 @@ def __musicbrainz_request(func):
                 return func()
         except musicbrainzngs.musicbrainz.NetworkError as e:
             # Unreachable, overloaded or silent
-            _failed_seconds += time.monotonic() - started
-            if _failed_seconds >= FAILED_REQUESTS_SECONDS:
+            _lookup.failed_seconds = failed_seconds + time.monotonic() - started
+            if _lookup.failed_seconds >= FAILED_REQUESTS_SECONDS and verbose:
                 print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} MusicBrainz does not answer ({e}) "
                       f"- going on without it")
         except musicbrainzngs.musicbrainz.AuthenticationError:
@@ -116,18 +134,22 @@ def __musicbrainz_request(func):
             # Not found or a bad request, e.g. a release group that was merged
             # into another, or a release without a cover: no answer, as when
             # nothing matches
-            if _http_status(e) != 404:
+            if _http_status(e) != 404 and verbose:
                 print(f"{ULTRASINGER_HEAD} MusicBrainz request failed: {e}")
             return None
     return None
 
 
-def search_musicbrainz(title: str, artist) -> SongInfo:
+def search_musicbrainz(title: str, artist, quick: bool = False) -> SongInfo:
+    """The song in the song database: its artist, title, year, genres and cover.
+
+    ``quick`` only looks up the artist and the title, and reports nothing
+    (for the GUI's lyrics badge, which names the song as a conversion does).
+    """
     # Musicbrainz API documentation
     # https://python-musicbrainzngs.readthedocs.io/en/latest/api/
 
-    global _failed_seconds
-    _failed_seconds = 0.0
+    _lookup.failed_seconds = 0.0
     musicbrainzngs.set_useragent("UltraSinger", Settings.APP_VERSION, "https://github.com/rakuri255/UltraSinger")
 
     # remove from search_string "official video"
@@ -140,12 +162,13 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
             artist = artist.lower().replace(filter.lower(), "").strip()
 
     if artist is None:
-        recordings = [r for r in [__single_line_search(title)] if r is not None]
+        recordings = [r for r in [__single_line_search(title, not quick)] if r is not None]
     else:
-        recordings = __multi_line_search(artist, title)
+        recordings = __multi_line_search(artist, title, not quick)
 
     if not recordings:
-        print(f"{ULTRASINGER_HEAD} {red_highlighted('No match found')}")
+        if not quick:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted('No match found')}")
         # Keep what we were given: a known artist is better than "Unknown Artist"
         # (the lyrics lookup and the output name depend on it).
         if origin_artist:
@@ -155,6 +178,8 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
     recording = recordings[0]
     artist = recording['artist-credit-phrase']
     title = recording['title']
+    if quick:
+        return SongInfo(title=title, artist=artist)
     print(
         f"{ULTRASINGER_HEAD} Found data on Musicbrainz: Artist={blue_highlighted(artist)} Title={blue_highlighted(title)}")
 
@@ -181,12 +206,14 @@ def _releases_of(recordings) -> list:
     return releases
 
 
-def __single_line_search(search_string):
+def __single_line_search(search_string, verbose: bool = True):
     search_string = __clean_string(search_string)
     search_string = __filter_words(search_string)
 
-    artists = __musicbrainz_request(lambda: musicbrainzngs.search_artists(search_string, limit=10, artist=search_string))
-    recordings = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(search_string, limit=100, artistname=search_string))
+    artists = __musicbrainz_request(
+        lambda: musicbrainzngs.search_artists(search_string, limit=10, artist=search_string), verbose)
+    recordings = __musicbrainz_request(
+        lambda: musicbrainzngs.search_recordings(search_string, limit=100, artistname=search_string), verbose)
 
     if artists is None or recordings is None:
         return None
@@ -230,7 +257,7 @@ def __filter_words(search_string):
     return search_string
 
 
-def __multi_line_search(artist: str, title: str) -> list:
+def __multi_line_search(artist: str, title: str, verbose: bool = True) -> list:
     """The recordings that match the artist and the title, the best first.
 
     The title is searched without its additions (see strip_title_additions):
@@ -247,9 +274,9 @@ def __multi_line_search(artist: str, title: str) -> list:
     # recordings, mostly live bootlegs, and without it the hundred listed can
     # miss the original recording entirely
     result1 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(
-        recording=title1, limit=RECORDINGS_PER_SEARCH, artist=artist1, artistname=artist1, status="official"))
+        recording=title1, limit=RECORDINGS_PER_SEARCH, artist=artist1, artistname=artist1, status="official"), verbose)
     result2 = __musicbrainz_request(lambda: musicbrainzngs.search_recordings(
-        recording=title2, limit=RECORDINGS_PER_SEARCH, artist=artist2, artistname=artist2, status="official"))
+        recording=title2, limit=RECORDINGS_PER_SEARCH, artist=artist2, artistname=artist2, status="official"), verbose)
 
     if result1 is None:
         result1 = {'recording-count': 0, 'recording-list': []}

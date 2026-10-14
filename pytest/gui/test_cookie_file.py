@@ -244,6 +244,47 @@ def test_shutdown_stops_running_probes(tmp_path):
     assert host._probes == []
 
 
+class _Clock:
+    """Stand-in for the time module of browser_tab: a clock that only the test moves."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+
+def test_shutdown_waits_two_seconds_for_all_probes_together(tmp_path):
+    """A probe in its song or lyrics lookup cannot be stopped at once: the window
+    must still close quickly, also with several such probes."""
+    host = _ProbeHost(tmp_path)
+    host._page = MagicMock()
+    clock = _Clock()
+    waits = []
+
+    def join(timeout=None):  # a probe that is still in its lookup
+        waits.append(timeout)
+        clock.now += timeout
+
+    host._probes = [(MagicMock(join=MagicMock(side_effect=join)), MagicMock()) for _ in range(3)]
+    with patch("src.gui.browser_tab.time", clock):
+        BrowserTab.shutdown(host)
+    assert len(waits) == 3
+    assert sum(waits) <= 2
+
+
+def test_a_new_probe_stops_the_previous_one(tmp_path):
+    """Its result would be discarded, and its song lookup would hold up the new one's."""
+    host = _ProbeHost(tmp_path)
+    previous = MagicMock()
+    host._probes = [(MagicMock(is_alive=MagicMock(return_value=True)), previous)]
+    with patch.object(_FormatProbeWorker, "_dump_json", return_value=None):
+        BrowserTab._probe_formats(host, "other")
+        for thread, _worker in host._probes[1:]:
+            thread.join(5)
+    previous.cancel.assert_called_once()
+
+
 def test_probe_cancelled_after_yt_dlp_skips_the_lyrics_lookup():
     worker = _FormatProbeWorker("vid")
     results = []
@@ -258,6 +299,15 @@ def test_probe_cancelled_after_yt_dlp_skips_the_lyrics_lookup():
         worker.run()
     lookup.assert_not_called()
     assert results == []
+
+
+def test_probe_cancelled_before_it_began_starts_no_yt_dlp():
+    worker = _FormatProbeWorker("vid")
+    worker.cancel()  # another video was opened before the probe's thread got going
+    with patch("src.gui.browser_tab.shutil.which", return_value="yt-dlp"), \
+            patch("src.gui.browser_tab.subprocess.Popen") as popen:
+        assert worker._dump_json() is None
+    popen.assert_not_called()
 
 
 def test_probe_cancel_kills_yt_dlp():

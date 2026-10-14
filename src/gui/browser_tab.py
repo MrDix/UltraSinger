@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import shutil
 import threading
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -34,6 +35,10 @@ from .cookie_manager import CookieManager
 from .media_interceptor import MediaInterceptor
 
 logger = logging.getLogger(__name__)
+# The lyrics badge looks songs up in the song database. Its client library
+# logs each retry and each part of an answer it does not read at INFO level,
+# which the GUI's log would show.
+logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
 
 
 class _FormatProbeWorker(QObject):
@@ -62,7 +67,8 @@ class _FormatProbeWorker(QObject):
         self._cancelled = False
 
     def cancel(self):
-        """Stop the probe (the window is closing): its yt-dlp process is killed."""
+        """Stop the probe (the window is closing, or another video is probed):
+        its yt-dlp process is killed, and no further lookup starts."""
         self._cancelled = True
         process = self._process
         if process is not None:
@@ -73,6 +79,8 @@ class _FormatProbeWorker(QObject):
 
     def _dump_json(self) -> str | None:
         """yt-dlp's JSON output for the video, or None."""
+        if self._cancelled:  # stopped before it began
+            return None
         yt_dlp = shutil.which("yt-dlp")
         if not yt_dlp:
             return None
@@ -152,29 +160,9 @@ class _FormatProbeWorker(QObject):
             duration = info.get("duration", 0)
             dur_str = f"{duration // 60}:{duration % 60:02d}" if duration else ""
 
-            # LRCLIB lyrics check — yt-dlp only has artist/track for
-            # the music service; regular videos need title parsing.
-            artist = info.get("artist") or info.get("creator") or ""
-            track = info.get("track") or ""
-            if not artist or not track:
-                # Parse "Artist - Title (extra)" from video title
-                video_title = info.get("title") or ""
-                if " - " in video_title:
-                    parts_split = video_title.split(" - ", 1)
-                    artist = artist or parts_split[0].strip()
-                    track = track or parts_split[1].strip()
-                    # Remove common suffixes like "(Official Video)", "(Live)"
-                    track = re.sub(
-                        r"\s*[\(\[](official|lyric|music|live|audio|hd|hq|video|visuali|4k|summerbreeze|wacken).*$",
-                        "", track, flags=re.IGNORECASE,
-                    ).strip()
-                elif not artist:
-                    from modules.name_matching import artist_from_channel
-                    artist = artist_from_channel(info.get("uploader") or info.get("channel") or "")
-                    track = track or video_title
-            if self._cancelled:  # the window is closing
+            if self._cancelled:  # the window is closing, or another video is probed
                 return
-            lyrics_status = self._check_lrclib(artist, track, duration or None)
+            lyrics_status = self._check_lrclib(info)
             if self._cancelled:
                 return
 
@@ -206,14 +194,24 @@ class _FormatProbeWorker(QObject):
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
             self.finished.emit(self._video_id, "", "")
 
-    @staticmethod
-    def _check_lrclib(artist: str, title: str, duration: float | None = None) -> str:
-        """Query LRCLIB for lyrics availability (silent, no console output)."""
-        if not artist or not title:
-            return "\U0001f4dd No metadata"
+    def _check_lrclib(self, info: dict) -> str:
+        """Which lyrics a conversion of the video finds.
+
+        The conversion's lookup from the video's yt-dlp ``info``: artist and
+        title from the video title, named as the song database names them,
+        searched with the video's length. Silent (no console output), and
+        without the song's year, genres and cover.
+        """
         try:
+            from modules.Audio.video_platform import find_song, video_title_from_info
             from modules.lrclib_client import find_lyrics
-            result = find_lyrics(artist, title, duration)
+            artist, title, video_title, _language = video_title_from_info(info, verbose=False)
+            song = find_song(artist, title, video_title, quick=True)
+            if self._cancelled:  # no lyrics lookup any more
+                return ""
+            if not song.artist or not song.title:
+                return "\U0001f4dd No metadata"
+            result = find_lyrics(song.artist, song.title, info.get("duration") or None)
             if result is None:
                 return "\U0001f4dd No lyrics"
             if result.synced_lyrics:
@@ -654,8 +652,14 @@ class BrowserTab(QWidget):
 
     def _probe_formats(self, video_id: str):
         """Query available download formats in the background."""
-        # Let any previous probe finish on its own; stale results are
-        # discarded by the video_id check in _on_format_probed.
+        # This probe replaces the previous ones (results for another video are
+        # discarded by the video_id check in _on_format_probed). They are
+        # stopped, so that they start no further lookup: the song database is
+        # asked one request at a time, at most one a second, and their lookups
+        # would hold up this one's (one already in its song lookup still
+        # finishes it).
+        for _thread, worker in self._probes:
+            worker.cancel()
         self._probe_video_id = video_id
 
         # Hide badge while loading
@@ -794,12 +798,14 @@ class BrowserTab(QWidget):
         which flushes cookies and persistent storage to disk and
         terminates the renderer subprocess.
         """
-        # Stop running format probes; the short wait lets them remove their
-        # private cookie copy (a probe in its lyrics lookup is left behind)
+        # Stop running format probes; the short wait (2 s for all of them)
+        # lets them remove their private cookie copy (a probe in its song or
+        # lyrics lookup is left behind)
         for _thread, worker in self._probes:
             worker.cancel()
+        deadline = time.monotonic() + 2
         for thread, _worker in self._probes:
-            thread.join(timeout=2)
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
         self._probes.clear()
 
         self._view.setPage(None)
