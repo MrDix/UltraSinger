@@ -12,7 +12,7 @@ from modules.ProcessData import MediaInfo
 from modules.Audio.bpm import get_bpm_from_file
 from modules.console_colors import ULTRASINGER_HEAD, gold_highlighted, red_highlighted
 from modules.Image.image_helper import save_image
-from modules.musicbrainz_client import search_musicbrainz
+from modules.musicbrainz_client import SongInfo, search_musicbrainz
 from modules.name_matching import artist_from_channel
 from modules.ffmpeg_helper import separate_audio_video
 
@@ -35,7 +35,7 @@ _STRIPPABLE_SUFFIXES = re.compile(
 )
 
 
-def strip_unmatched_suffixes(track: str, video_title: str) -> str:
+def strip_unmatched_suffixes(track: str, video_title: str, verbose: bool = True) -> str:
     """Remove trailing parenthetical suffixes from the music service track name
     that do not appear in the actual video title.
 
@@ -46,7 +46,8 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
 
     Only *trailing* parenthesised groups whose content matches a known
     set of media qualifiers are considered, so arbitrary metadata like
-    '(feat. Guest)' or '(Part 2)' is never touched.
+    '(feat. Guest)' or '(Part 2)' is never touched. ``verbose`` reports
+    each stripped suffix.
     """
     # Iteratively strip trailing (...) groups that are absent from the title
     while True:
@@ -63,9 +64,10 @@ def strip_unmatched_suffixes(track: str, video_title: str) -> str:
             re.IGNORECASE,
         ):
             break  # suffix is present in video title - keep it
-        print(
-            f"{ULTRASINGER_HEAD} {red_highlighted(f'Stripped music service suffix \"({suffix_content})\" - not in video title')}"
-        )
+        if verbose:
+            print(
+                f"{ULTRASINGER_HEAD} {red_highlighted(f'Stripped music service suffix \"({suffix_content})\" - not in video title')}"
+            )
         track = track[: m.start()].strip()
     return track
 
@@ -103,11 +105,8 @@ def get_video_title(url: str, cookiefile: str | None = None,
     """Get the title and language of the video.
 
     Returns:
-        A 4-tuple of (artist, track, video_title, language).
-        *video_title* is the raw title string from the video's page,
-        useful for cross-checking metadata from other sources.
-        *language* is the ISO 639-1 code from yt-dlp metadata (e.g. "en"),
-        or empty string if unavailable.
+        A 4-tuple of (artist, track, video_title, language), see
+        ``video_title_from_info``.
     """
 
     ydl_opts = _apply_po_token({
@@ -120,19 +119,46 @@ def get_video_title(url: str, cookiefile: str | None = None,
         result = ydl.extract_info(
             url, download=False  # We just want to extract the info
         )
+    return video_title_from_info(result)
 
-    video_title = (result.get("title") or "").strip()
-    artist = (result.get("artist") or "").strip()
-    track = (result.get("track") or "").strip()
-    language = (result.get("language") or "").strip()
+
+def video_title_from_info(info: dict, verbose: bool = True) -> tuple[str, str, str, str]:
+    """The title and language of a video from its yt-dlp info (the GUI's
+    lyrics badge has that info already).
+
+    Returns:
+        A 4-tuple of (artist, track, video_title, language).
+        *video_title* is the raw title string from the video's page,
+        useful for cross-checking metadata from other sources.
+        *language* is the ISO 639-1 code from yt-dlp metadata (e.g. "en"),
+        or empty string if unavailable.
+    ``verbose`` reports a suffix stripped from the track.
+    """
+    video_title = (info.get("title") or "").strip()
+    artist = (info.get("artist") or "").strip()
+    track = (info.get("track") or "").strip()
+    language = (info.get("language") or "").strip()
     if artist and track:
-        return artist, strip_unmatched_suffixes(track, video_title), video_title, language
-    channel = (result.get("channel") or "").strip()
+        return artist, strip_unmatched_suffixes(track, video_title, verbose), video_title, language
+    channel = (info.get("channel") or "").strip()
     if "-" in video_title:
         parts = video_title.split("-", 1)
         return parts[0].strip(), parts[1].strip(), video_title, language
     # "ArtistVEVO" or "Artist - Topic" is no artist name the lookups would find
     return artist_from_channel(channel), video_title, video_title, language
+
+
+def find_song(artist: str, title: str, video_title: str, quick: bool = False) -> SongInfo:
+    """The song of a video, from the ``artist`` and ``title`` of
+    ``get_video_title`` as the song database names them (``quick``: see
+    ``search_musicbrainz``)."""
+    song_info = search_musicbrainz(title, artist, quick=quick)
+
+    # The song database may re-introduce suffixes that were already stripped
+    # from the yt-dlp metadata (e.g. "(live)" when the video is not actually
+    # live). Cross-check its title against the video title as well.
+    song_info.title = strip_unmatched_suffixes(song_info.title, video_title, verbose=not quick)
+    return song_info
 
 
 def _output_template(output_path: str, clear_filename: str) -> str:
@@ -257,12 +283,7 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
     (artist, title, video_title, yt_language) = get_video_title(input_url, cookiefile, po_token)
 
     # Get additional data for song
-    song_info = search_musicbrainz(title, artist)
-
-    # MusicBrainz may re-introduce suffixes that were already stripped from
-    # the yt-dlp metadata (e.g. "(live)" when the video is not actually live).
-    # Cross-check the MusicBrainz title against the video title as well.
-    song_info.title = strip_unmatched_suffixes(song_info.title, video_title)
+    song_info = find_song(artist, title, video_title)
 
     basename_without_ext = sanitize_filename(f"{song_info.artist} - {song_info.title}")
     song_output = os.path.join(output_folder_path, basename_without_ext)

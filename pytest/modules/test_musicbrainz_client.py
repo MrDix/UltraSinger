@@ -2,6 +2,7 @@
 
 import io
 import socket
+import threading
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -631,8 +632,8 @@ class TestRequestLimits(unittest.TestCase):
         patcher = patch.object(musicbrainz_client, "time", self.clock)
         patcher.start()
         self.addCleanup(patcher.stop)
-        musicbrainz_client._failed_seconds = 0.0
-        self.addCleanup(setattr, musicbrainz_client, "_failed_seconds", 0.0)
+        musicbrainz_client._lookup.failed_seconds = 0.0
+        self.addCleanup(setattr, musicbrainz_client._lookup, "failed_seconds", 0.0)
 
     def _overloaded(self, *args, **kwargs):
         # musicbrainzngs gives up on a request to an overloaded server after about a minute
@@ -674,3 +675,83 @@ class TestRequestLimits(unittest.TestCase):
             self.assertEqual(search.call_count, 1)  # the second search of the lookup is not made
             search_musicbrainz('Wanted Title', 'Wanted Artist')
         self.assertEqual(search.call_count, 2)
+
+    def test_overlapping_requests_keep_the_timeout(self):
+        """Requests of lookups in several threads (the GUI's lyrics badge) overlap: the timeout
+        stays set until the last one has ended, then the default timeout before comes back."""
+        before = socket.getdefaulttimeout()
+        first = musicbrainz_client._socket_timeout(musicbrainz_client.REQUEST_TIMEOUT_SECONDS)
+        second = musicbrainz_client._socket_timeout(musicbrainz_client.REQUEST_TIMEOUT_SECONDS)
+        first.__enter__()
+        second.__enter__()
+        first.__exit__(None, None, None)
+        self.assertEqual(socket.getdefaulttimeout(), musicbrainz_client.REQUEST_TIMEOUT_SECONDS)
+        second.__exit__(None, None, None)
+        self.assertEqual(socket.getdefaulttimeout(), before)
+
+    def test_a_lookup_in_another_thread_does_not_use_up_the_time_of_this_one(self):
+        """The GUI's lyrics badge looks songs up in several threads at a time."""
+        this_thread = threading.current_thread()
+        searches = []
+
+        def search(*args, **kwargs):
+            searches.append(threading.current_thread())
+            if threading.current_thread() is not this_thread:
+                self._overloaded()
+            if len(searches) == 1:
+                # Meanwhile a lookup in another thread finds the song database overloaded
+                other = threading.Thread(target=search_musicbrainz, args=('Other Title', 'Other Artist'))
+                other.start()
+                other.join()
+            return {'recording-count': 0, 'recording-list': []}
+        with patch('musicbrainzngs.search_recordings', side_effect=search), redirect_stdout(io.StringIO()):
+            search_musicbrainz('Wanted Title', 'Wanted Artist')
+        # Both searches of this lookup are made; the other lookup gave up after its first
+        self.assertEqual(searches.count(this_thread), 2)
+        self.assertEqual(len(searches), 3)
+
+
+class TestQuickLookup(unittest.TestCase):
+    """The GUI's lyrics badge names the song as a conversion does, without the year, genres
+    and cover, and without reporting anything."""
+
+    def setUp(self):
+        self.clock = _Clock()
+        patcher = patch.object(musicbrainz_client, "time", self.clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _overloaded(self, *args, **kwargs):
+        self.clock.now += 56
+        raise musicbrainzngs.NetworkError("retried 8 times")
+
+    def _search(self, quick, failure=None):
+        recording = TestYear._recording(('Album', '1989-03-21'))
+        recording['tag-list'] = [{'name': 'Genre'}]
+        out = io.StringIO()
+        with patch('musicbrainzngs.search_recordings',
+                   return_value={'recording-count': 1, 'recording-list': [recording]},
+                   side_effect=failure) as search, \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None) as group, \
+                patch('musicbrainzngs.get_image_front', return_value=None) as front, redirect_stdout(out):
+            info = search_musicbrainz('Wanted Title (Official Video)', 'WANTED ARTIST', quick=quick)
+        return info, search, group.call_count + front.call_count, out.getvalue()
+
+    def test_same_song_name_as_the_full_lookup(self):
+        full, full_search, _, _ = self._search(quick=False)
+        quick, quick_search, details, out = self._search(quick=True)
+        self.assertEqual((quick.artist, quick.title), (full.artist, full.title))
+        self.assertEqual((quick.artist, quick.title), ('Wanted Artist', 'Wanted Title'))
+        self.assertEqual(quick_search.call_args_list, full_search.call_args_list)
+        self.assertEqual((quick.year, quick.genres, quick.cover_image_data), (None, None, None))
+        self.assertEqual(details, 0)
+        self.assertEqual(out, "")
+
+    def test_failures_are_not_reported(self):
+        for failure in (_response_error(400), self._overloaded):
+            with self.subTest(failure=failure):
+                _, _, _, full_out = self._search(quick=False, failure=failure)
+                self.assertNotEqual(full_out, "")  # what a conversion reports
+                info, _, _, out = self._search(quick=True, failure=failure)
+                self.assertEqual((info.artist, info.title), ('WANTED ARTIST', 'Wanted Title (Official Video)'))
+                self.assertEqual(out, "")
