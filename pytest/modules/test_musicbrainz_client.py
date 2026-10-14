@@ -487,6 +487,36 @@ class TestTitleAdditions(unittest.TestCase):
             info = search_musicbrainz('Wanted Artist', 'Some Song (Part 2)')
         self.assertIsNone(info.year)
 
+    def test_description_after_a_dash(self):
+        # "Wanted Title - Singer Name live in the studio": nothing has that title, the song is found by
+        # the title before the dash
+        recording = self._recording('Wanted Title', 'r1', ('Official', '2019', 'Single'))
+
+        def search(**kwargs):
+            found = kwargs['recording'] == 'wanted title'
+            return {'recording-count': int(found), 'recording-list': [recording] if found else []}
+
+        with patch('musicbrainzngs.search_recordings', side_effect=search) as mock_search, \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
+                patch('musicbrainzngs.get_image_front', return_value=None):
+            info = search_musicbrainz('Wanted Title - Singer Name live in the studio', 'Wanted Artist')
+        self.assertEqual((info.title, info.artist, info.year), ('Wanted Title', 'Wanted Artist', '2019'))
+        self.assertEqual([c.kwargs['recording'] for c in mock_search.call_args_list][::2],
+                         ['wanted title - singer name live in the studio', 'wanted title'])
+
+    def test_description_is_not_cut_when_the_title_matches(self):
+        recording = self._recording('Wanted Title - Singer Name live in the studio', 'r1',
+                                    ('Official', '2019', 'Single'))
+        info, search = self._search('Wanted Title - Singer Name live in the studio', recording)
+        self.assertEqual(info.title, 'Wanted Title - Singer Name live in the studio')
+        self.assertEqual(search.call_count, 2)  # artist + title, and swapped
+
+    def test_part_after_a_dash_is_not_cut(self):
+        recording = self._recording('Wanted Title', 'r1', ('Official', '2019', 'Single'))
+        info, search = self._search('Wanted Title - Part 2 of the Story', recording)
+        self.assertEqual((info.title, info.year), ('Wanted Title - Part 2 of the Story', None))
+        self.assertEqual(search.call_count, 2)
+
     def test_each_release_group_asked_once(self):
         with patch('musicbrainzngs.search_recordings',
                    return_value={'recording-count': 1, 'recording-list': [

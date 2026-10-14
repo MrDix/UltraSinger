@@ -193,6 +193,27 @@ class TestFindLyrics(unittest.TestCase):
             "Some Artist Song Title",
         ])
 
+    def test_searches_last_with_the_title_before_a_description(self):
+        def answer(params):
+            return [_version(237.0)] if params.get("track_name") == "Song Title" else []
+        result, requests = self._find(answer, title="Song Title - Singer Name in the studio (Official Video)")
+        self.assertEqual(result.track_name, "Song Title")
+        self.assertEqual([p.get("track_name") or p.get("q") for p in requests], [
+            "Song Title - Singer Name in the studio (Official Video)",
+            "Some Artist Song Title - Singer Name in the studio (Official Video)",
+            "Song Title - Singer Name in the studio",
+            "Some Artist Song Title - Singer Name in the studio",
+            "Song Title",
+            "Some Artist Song Title",
+        ])
+
+    def test_a_part_after_the_dash_is_kept(self):
+        result, requests = self._find(lambda params: [_version(200.0)] if params.get("track_name") == "Song Title"
+                                      else [], title="Song Title - Part Two")
+        self.assertIsNone(result)
+        self.assertEqual([p.get("track_name") or p.get("q") for p in requests],
+                         ["Song Title - Part Two", "Some Artist Song Title - Part Two"])
+
     def test_full_title_is_searched_first(self):
         result, requests = self._find(lambda params: [_version(200.0, track="Song Title (Live)")],
                                       title="Song Title (Live)")

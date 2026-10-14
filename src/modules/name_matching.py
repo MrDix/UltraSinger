@@ -53,7 +53,7 @@ _AMBIGUOUS_FOLLOW = (
 )
 _ADDITION_END = (
     r"version|edit|mix|remix|remaster(?:ed)?|cut|vid[eé]o|audio|lyrics?|visuali[sz]er|hd|4k"
-    r"|edition|demo|karaoke|instrumental|sessions?|soundtrack|recording|acoustic"
+    r"|edition|demo|karaoke|instrumental|sessions?|soundtrack|recording|acoustic|performance|playthrough"
 )
 
 
@@ -81,6 +81,13 @@ _OFFICIAL_RE = re.compile(
 )
 # A trailing quality mark: "HD", "HQ", "4K", "1080p"
 _QUALITY_RE = re.compile(r"(?:\s+(?:hd|hq|4k|8k|\d{3,4}p))+\s*$", re.IGNORECASE)
+# What a video title puts after a dash is a description of the video, not a
+# part of the song title, from this many words on (see title_before_dash)
+DESCRIPTION_WORDS = 3
+# A part of a work ("Part Two", "Vol. 3", "Chapter II") or a part or volume
+# number, not a year
+_PART_NUMBER_RE = re.compile(
+    r"(?<!\d)\d{1,3}(?!\d)|\b(?:part|pt|vol|volume|chapter|act|ii|iii|iv|vi|vii|viii|ix)\b", re.IGNORECASE)
 
 
 def _clean(s: str) -> str:
@@ -162,6 +169,26 @@ def strip_title_additions(title: str) -> str:
     s = _OFFICIAL_RE.sub("", s)
     s = _QUALITY_RE.sub("", s)
     return " ".join(s.split()) or (title or "").strip()
+
+
+def title_before_dash(title: str) -> str:
+    """The title before the dash that a video title puts a description
+    after ("Title - Singer Name live in the studio"), to search with when
+    nothing was found with the whole title; "" when there is none.
+
+    What follows the first dash (after strip_title_additions) is taken for
+    a description when it has at least DESCRIPTION_WORDS words and no part
+    or volume number: "Title - Part Two" or "Title - Reprise" can name
+    another song, "Title - Part 2 of the Story" too.
+    """
+    s = strip_title_additions(title)
+    separator = _SEPARATOR_RE.search(s)
+    if separator is None:
+        return ""
+    before, rest = s[:separator.start()].strip(), s[separator.end():]
+    if not before or len(rest.split()) < DESCRIPTION_WORDS or _PART_NUMBER_RE.search(rest):
+        return ""
+    return before
 
 
 def _title_words(title: str) -> str:

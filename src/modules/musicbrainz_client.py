@@ -16,6 +16,7 @@ from modules.name_matching import (
     bracketed_parts,
     similarity,
     strip_title_additions,
+    title_before_dash,
     title_key,
     titles_match,
     without_brackets,
@@ -143,8 +144,11 @@ def __musicbrainz_request(func, verbose: bool = True):
 def search_musicbrainz(title: str, artist, quick: bool = False) -> SongInfo:
     """The song in the song database: its artist, title, year, genres and cover.
 
-    ``quick`` only looks up the artist and the title, and reports nothing
-    (for the GUI's lyrics badge, which names the song as a conversion does).
+    When nothing matches a title with a description after a dash ("Title -
+    Singer Name live in the studio"), the title before the dash is searched
+    (see ``title_before_dash``). ``quick`` only looks up the artist and the
+    title, and reports nothing (for the GUI's lyrics badge, which names the
+    song as a conversion does).
     """
     # Musicbrainz API documentation
     # https://python-musicbrainzngs.readthedocs.io/en/latest/api/
@@ -165,6 +169,13 @@ def search_musicbrainz(title: str, artist, quick: bool = False) -> SongInfo:
         recordings = [r for r in [__single_line_search(title, not quick)] if r is not None]
     else:
         recordings = __multi_line_search(artist, title, not quick)
+        # "Title - Singer Name live in the studio": the song is "Title"
+        shorter = title_before_dash(title)
+        if not recordings and shorter:
+            if not quick:
+                print(f"{ULTRASINGER_HEAD} Searching again with the title before the dash: "
+                      f"{blue_highlighted(shorter)}")
+            recordings = __multi_line_search(artist, shorter, not quick)
 
     if not recordings:
         if not quick:

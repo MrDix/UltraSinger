@@ -2,7 +2,7 @@
 
 import unittest
 
-from src.modules.name_matching import similarity, strip_title_additions, titles_match
+from src.modules.name_matching import similarity, strip_title_additions, title_before_dash, titles_match
 
 
 class TestStripTitleAdditions(unittest.TestCase):
@@ -50,6 +50,9 @@ class TestStripTitleAdditions(unittest.TestCase):
             "Song Title (Clip Vidéo)": "Song Title",
             "Song Title (Video Official)": "Song Title",
             "Song Title (Letra Oficial)": "Song Title",
+            "Song Title - Singer Name live one take performance": "Song Title",
+            "Song Title (Acoustic Performance)": "Song Title",
+            "Song Title - Drum Playthrough": "Song Title",
         }
         for title, expected in cases.items():
             with self.subTest(title=title):
@@ -71,6 +74,24 @@ class TestStripTitleAdditions(unittest.TestCase):
     def test_nothing_left(self):
         self.assertEqual(strip_title_additions("(Official Video)"), "(Official Video)")
         self.assertEqual(strip_title_additions(""), "")
+
+
+class TestTitleBeforeDash(unittest.TestCase):
+    def test_description_after_the_dash(self):
+        for title in ("Song Title - Singer Name in the studio", "Song Title – some words about the band",
+                      "Song Title - Singer Name in the studio (Official Video)",
+                      "Song Title - Singer Name live, one take", "Song Title - at home with the band 2020"):
+            with self.subTest(title=title):
+                self.assertEqual(title_before_dash(title), "Song Title")
+
+    def test_no_description(self):
+        for title in ("Song Title", "Song Title - Reprise", "Song Title - Two Words",
+                      "Song Title - Part 2 of the Story", "Song Title - Part Two of It",
+                      "Song Title - Vol. 3 of the Series", "Song Title - Chapter II of It",
+                      "Song Title - the 1 and only", "Song Title - Live at Some Place",
+                      "Hyphen-Word Title with more words", " - Some Words Without Title"):
+            with self.subTest(title=title):
+                self.assertEqual(title_before_dash(title), "")
 
 
 class TestTitlesMatch(unittest.TestCase):
