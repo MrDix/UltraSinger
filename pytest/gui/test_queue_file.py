@@ -131,6 +131,22 @@ class TestRoundTrip:
             queue_file.save_queue(tmp_path / "missing" / "queue.json", [_song()])
         assert "Failed to save the queue" in caplog.text
 
+    def test_saving_never_raises(self, tmp_path, caplog):
+        """A save runs from a timer and on close, where an error would skip the shutdown."""
+        with patch.object(queue_file, "write_queue_file", side_effect=TypeError("odd value")), \
+                caplog.at_level(logging.WARNING):
+            queue_file.save_queue(tmp_path / "queue.json", [_song()])
+        assert "Failed to save the queue" in caplog.text
+
+    def test_a_lone_surrogate_in_a_name_is_written_and_read_back(self, tmp_path):
+        """A Windows file name can hold one; it has no UTF-8 form."""
+        title = "Song " + chr(0xD800) + " Title"
+        local = str(tmp_path / ("song" + chr(0xDC80) + ".mp3"))
+        path = tmp_path / "queue.json"
+        write_queue_file(path, [_song(local, "file", title)])
+        [item], problems = read_queue_file(path)
+        assert (item.title, item.input_source, problems) == (title, local, [])
+
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
     def test_file_is_private(self, tmp_path):
         path = tmp_path / "queue.json"
@@ -263,30 +279,72 @@ class TestUnreadableFile:
         path = tmp_path / "queue.json"
         path.write_bytes(raw)
         with caplog.at_level(logging.WARNING):
-            items, problems = load_saved_queue(path)
-        assert items == []
+            items, notes, may_save = load_saved_queue(path)
+        assert items == [] and may_save
         backups = _backups(tmp_path)
         assert len(backups) == 1 and backups[0].read_bytes() == raw
         assert "cannot be read" in caplog.text
-        assert len(problems) == 1 and str(backups[0]) in problems[0]
+        assert notes[0].startswith("cannot be read") and str(backups[0]) in notes[-1]
 
     def test_a_newer_version_is_kept_aside(self, tmp_path):
         path = tmp_path / "queue.json"
         _write_raw(path, [{"input_type": "url", "input_source": _URL}], version=2)
-        items, problems = load_saved_queue(path)
-        assert items == [] and "version 2" in problems[0]
+        items, notes, _ = load_saved_queue(path)
+        assert items == [] and "version 2 " in notes[0]
         assert len(_backups(tmp_path)) == 1
 
+    def test_a_version_as_text_is_named_as_such(self, tmp_path):
+        path = tmp_path / "queue.json"
+        _write_raw(path, [], version="1")
+        _, notes, _ = load_saved_queue(path)
+        assert "version '1' (this version of UltraSinger reads version 1)" in notes[0]
+
+    def test_entries_left_out_are_kept_in_a_copy(self, tmp_path):
+        """A newer version may write entries this one cannot read: the save after
+        the restore would drop them."""
+        path = tmp_path / "queue.json"
+        _write_raw(path, [{"input_type": "url", "input_source": _URL},
+                          {"input_type": "stream", "input_source": _URL, "title": "Newer"}])
+        raw = path.read_bytes()
+        items, notes, may_save = load_saved_queue(path)
+        assert [item.input_source for item in items] == [_URL] and may_save
+        [backup] = _backups(tmp_path)
+        assert backup.read_bytes() == raw
+        assert "'Newer' skipped" in notes[0] and str(backup) in notes[-1]
+
+    def test_a_short_lock_is_waited_out(self, tmp_path):
+        """On Windows a virus scanner can hold the file open for a moment."""
+        path = tmp_path / "queue.json"
+        _write_raw(path, [{"input_type": "url", "input_source": _URL}])
+        result = read_queue_file(path)
+        with patch.object(queue_file, "read_queue_file",
+                          side_effect=[PermissionError("locked"), PermissionError("locked"), result]):
+            items, notes, may_save = load_saved_queue(path)
+        assert [item.input_source for item in items] == [_URL] and notes == [] and may_save
+        assert _backups(tmp_path) == []
+
+    def test_a_file_that_cannot_be_read_or_copied_is_not_saved_over(self, tmp_path):
+        path = tmp_path / "queue.json"
+        _write_raw(path, [{"input_type": "url", "input_source": _URL}])
+        with patch.object(queue_file, "read_queue_file",
+                          side_effect=PermissionError("locked")) as read, \
+                patch.object(queue_file, "_back_up_file", return_value=None):
+            items, notes, may_save = load_saved_queue(path)
+        assert read.call_count == 20  # retried for a moment
+        assert items == [] and not may_save
+        assert notes[-1] == ("The file could not be copied, so the queue is not saved "
+                             "in this session.")
+
     def test_no_file_is_an_empty_queue(self, tmp_path):
-        assert load_saved_queue(tmp_path / "queue.json") == ([], [])
+        assert load_saved_queue(tmp_path / "queue.json") == ([], [], True)
         assert list(tmp_path.iterdir()) == []
 
     def test_byte_order_mark_is_accepted(self, tmp_path):
         path = tmp_path / "queue.json"
         path.write_bytes(b"\xef\xbb\xbf" + json.dumps(
             {"version": 1, "items": [{"input_type": "url", "input_source": _URL}]}).encode())
-        items, problems = load_saved_queue(path)
-        assert [it.input_source for it in items] == [_URL] and problems == []
+        items, notes, _ = load_saved_queue(path)
+        assert [it.input_source for it in items] == [_URL] and notes == []
         assert _backups(tmp_path) == []
 
 
@@ -329,6 +387,17 @@ class TestInvalidEntries:
             assert note in joined
         assert len(problems) == 10
         assert "unknown status" in caplog.text
+
+    def test_a_file_with_too_many_songs_is_read_up_to_the_limit(self, tmp_path, monkeypatch):
+        """Each song becomes a row in the queue list; tens of thousands froze the GUI."""
+        monkeypatch.setattr(queue_file, "_MAX_SONGS", 3)
+        path = tmp_path / "queue.json"
+        _write_raw(path, [{"input_type": "url", "input_source": f"{_URL}{n}", "title": "x" * 2000}
+                          for n in range(5)])
+        items, problems = read_queue_file(path)
+        assert [item.input_source for item in items] == [f"{_URL}{n}" for n in range(3)]
+        assert problems == ["only the first 3 songs are read, 2 more are left out"]
+        assert all(len(item.title) == queue_file._MAX_TITLE for item in items)
 
     def test_a_video_id_is_no_path(self, tmp_path):
         """The video ID becomes part of the file name a browser stream is downloaded to."""
@@ -402,6 +471,15 @@ class TestImport:
         added, skipped = without_duplicates(imported, queue)
         assert skipped == 2
         assert added == [imported[1], imported[2], imported[3], imported[5], imported[6]]
+
+    def test_reimporting_an_export_adds_nothing_twice(self, tmp_path):
+        """Also for a song with a setting an imported file does not set."""
+        queue = [_song(settings_overrides={"whisper_model": "medium", "language": "de"})]
+        path = tmp_path / "exported.json"
+        write_queue_file(path, queue)
+        imported, _ = read_queue_file(path, imported=True)
+        assert imported[0].settings_overrides == {"language": "de"}
+        assert without_duplicates(imported, queue) == ([], 1)
 
 
 class TestPerSongSettings:
@@ -492,12 +570,23 @@ def _saved(settings_dir):
     path = settings_dir / "queue.json"
     if not path.exists():
         return None
-    return [(entry["input_source"], entry["status"])
+    return [(entry["input_source"], entry.get("status", "pending"))
             for entry in json.loads(path.read_text(encoding="utf-8"))["items"]]
 
 
 def _console(win):
     return win._queue_tab._log.toPlainText()
+
+
+def _export_dialog(target, seen=None):
+    """The export dialog picks ``target`` (None: the user cancels); ``seen`` gets its setup."""
+    def exec_(dialog):
+        if seen is not None:
+            seen.append((dialog.acceptMode(), dialog.defaultSuffix()))
+        return 0 if target is None else 1
+
+    return patch.multiple(QFileDialog, exec=exec_,
+                          selectedFiles=lambda dialog: [] if target is None else [str(target)])
 
 
 class TestMainWindow:
@@ -585,11 +674,13 @@ class TestMainWindow:
         manager = win._queue_mgr
         manager.add_item(_URL, "url", "First")
         manager.add_item("https://video.invalid/watch?v=2", "url", "Second")
-        export = tmp_path / "exported"  # the extension is added
-
-        with patch.object(QFileDialog, "getSaveFileName", return_value=(str(export), "")):
-            win._sidebar._export_action.trigger()
         exported = tmp_path / "exported.json"
+        seen = []
+
+        with _export_dialog(exported, seen):
+            win._sidebar._export_action.trigger()
+        # A name typed without .json gets it from the dialog, which then asks before replacing
+        assert seen == [(QFileDialog.AcceptMode.AcceptSave, "json")]
         assert len(json.loads(exported.read_text(encoding="utf-8"))["items"]) == 2
         assert f"Exported 2 song(s) to {exported}" in _console(win)
 
@@ -624,18 +715,75 @@ class TestMainWindow:
         win = open_window()
         win._queue_mgr.add_item(_URL, "url", "First")
         target = tmp_path / "missing" / "queue.json"
-        with patch.object(QFileDialog, "getSaveFileName", return_value=(str(target), "")), \
-                patch.object(QMessageBox, "warning") as warning:
+        with _export_dialog(target), patch.object(QMessageBox, "warning") as warning:
             win._sidebar._export_action.trigger()
         warning.assert_called_once()
         assert not target.exists()
 
     def test_cancelled_dialogs_do_nothing(self, settings_dir, open_window):
         win = open_window()
-        with patch.object(QFileDialog, "getSaveFileName", return_value=("", "")), \
+        with _export_dialog(None), \
                 patch.object(QFileDialog, "getOpenFileName", return_value=("", "")), \
                 patch.object(QMessageBox, "warning") as warning:
             win._sidebar._export_action.trigger()
             win._sidebar._import_action.trigger()
         warning.assert_not_called()
         assert win._queue_mgr.items == []
+
+    def test_a_failed_song_can_be_removed(self, settings_dir, open_window):
+        """Failed songs are kept between sessions, so each can be removed, not only with Clear."""
+        _write_raw(settings_dir / "queue.json", [
+            {"input_type": "url", "input_source": _URL, "title": "Waiting"},
+            {"input_type": "url", "input_source": "https://video.invalid/watch?v=3",
+             "title": "Failed", "status": "failed"},
+        ])
+        win = open_window()
+        waiting, failed = win._queue_mgr.items
+        widget = win._sidebar.queue_list._item_widgets[failed.id]
+        assert not widget._remove_btn.isHidden()
+        widget._remove_btn.click()
+        assert win._queue_mgr.items == [waiting]
+        assert _process_events_until(lambda: _saved(settings_dir) == [(_URL, "pending")])
+
+    def test_a_queue_file_that_cannot_be_read_is_kept(self, settings_dir, open_window):
+        path = settings_dir / "queue.json"
+        _write_raw(path, [{"input_type": "url", "input_source": _URL}])
+        raw = path.read_bytes()
+        with patch.object(queue_file, "read_queue_file", side_effect=PermissionError("locked")), \
+                patch.object(queue_file, "_back_up_file", return_value=None):
+            win = open_window()
+        assert win._queue_mgr.items == []
+        assert "not saved in this session" in _console(win)
+        win._queue_mgr.add_item("https://video.invalid/watch?v=2", "url", "New")
+        _process_events_until(lambda: False, timeout=0.2)
+        _close(win)
+        assert path.read_bytes() == raw
+
+    def test_a_failing_save_does_not_stop_the_close(self, settings_dir, open_window):
+        win = open_window()
+        win._queue_mgr.add_item(_URL, "url", "First")
+        with patch.object(queue_file, "write_queue_file", side_effect=ValueError("odd value")):
+            _close(win)
+        win._browser_tab.shutdown.assert_called_once()
+
+
+def test_running_and_finished_songs_are_not_removed_one_by_one():
+    manager = QueueManager()
+    running, done, cancelled = (manager.add_item(f"{_URL}{n}", "url", "Song Title")
+                                for n in range(3))
+    running.status, done.status, cancelled.status = "running", "done", "cancelled"
+    for item in (running, done, cancelled):
+        manager.remove_item(item.id)
+    assert manager.items == [running, done]
+
+
+def test_the_queue_menu_keeps_the_menu_style():
+    """The bigger font of the menu button must not reach its menu, a child of the button."""
+    from src.gui.widgets.sidebar import Sidebar
+
+    sidebar = Sidebar()
+    button = sidebar._queue_menu_btn
+    button.ensurePolished()
+    button.menu().ensurePolished()
+    assert button.font().pixelSize() == 18
+    assert button.menu().font().pixelSize() != 18

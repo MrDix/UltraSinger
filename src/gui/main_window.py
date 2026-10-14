@@ -499,7 +499,7 @@ class MainWindow(QMainWindow):
         self._update_queue_buttons()
 
     def _on_remove_from_queue(self, item_id: str):
-        """Remove a pending item from the queue."""
+        """Remove a pending, failed or cancelled item from the queue."""
         self._queue_mgr.remove_item(item_id)
         self._update_queue_buttons()
 
@@ -639,7 +639,10 @@ class MainWindow(QMainWindow):
 
     def _restore_queue(self):
         """Bring back the queue of the last session; it waits for Start All."""
-        items, problems = load_saved_queue(self._queue_file)
+        items, problems, may_save = load_saved_queue(self._queue_file)
+        # When the file could neither be read completely nor copied aside, a
+        # save would replace what did not come back
+        self._queue_saving = may_save
         for problem in problems:
             self._queue_tab.append_log(f"[Queue] Saved queue: {problem}")
         if not items:
@@ -661,18 +664,21 @@ class MainWindow(QMainWindow):
         save_queue(self._queue_file, self._queue_mgr.items)
 
     def _on_export_queue(self):
-        """Write the queue to a file the user picks."""
-        path, _ = QFileDialog.getSaveFileName(
+        """Write the songs of the queue that are not finished to a file the user picks."""
+        dialog = QFileDialog(
             self, "Export Queue", str(Path.home() / "ultrasinger-queue.json"),
             "Queue Files (*.json);;All Files (*)",
         )
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        # A name typed without it gets it, and the dialog asks before replacing that file
+        dialog.setDefaultSuffix("json")
+        path = dialog.selectedFiles()[0] if dialog.exec() and dialog.selectedFiles() else ""
+        dialog.deleteLater()
         if not path:
             return
-        if not Path(path).suffix:
-            path += ".json"
         try:
             count = write_queue_file(Path(path), self._queue_mgr.items)
-        except OSError as exc:
+        except (OSError, ValueError, TypeError) as exc:
             logger.warning("Failed to export the queue to %s", path, exc_info=True)
             QMessageBox.warning(
                 self, "UltraSinger", f"The queue could not be exported to {path}:\n\n{exc}"
@@ -874,9 +880,10 @@ class MainWindow(QMainWindow):
 
         # Keep the queue for the next start. Saved now, before the shutdown
         # below cancels its songs, and not again: they come back waiting.
-        self._queue_saving = False
         self._queue_save_timer.stop()
-        self._save_queue()
+        if self._queue_saving:
+            self._queue_saving = False
+            self._save_queue()
 
         # Cancel the conversion queue (runner and pre-download) and join its threads
         self._queue_mgr.shutdown()

@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 from .config import _DEFAULTS, _INVALID, _back_up_file, _fit_type, _is_secret_key, config_dir
@@ -38,6 +39,16 @@ FORMAT_VERSION = 1
 
 # A queue of thousands of songs is far smaller; a bigger file is no queue file
 _MAX_FILE_SIZE = 10 * 1024 * 1024
+
+# Songs read from one file: the queue list builds a row for each, and many
+# thousands of rows would freeze the GUI (at every start, for the saved queue)
+_MAX_SONGS = 1000
+
+# Longer titles are cut (the queue list draws the title of each row)
+_MAX_TITLE = 500
+
+# Longer sources are no song (a command line on Windows holds at most this many characters)
+_MAX_SOURCE = 32_767
 
 # Settings that apply to all songs: the per-song settings dialog does not show them
 _GLOBAL_ONLY = frozenset({
@@ -141,14 +152,15 @@ def _item(entry, number: int, imported: bool, problems: list[str]) -> QueueItem 
         problems.append(f"entry {number} skipped (not a song)")
         return None
     title = entry.get("title")
-    title = title if isinstance(title, str) and title.strip() else ""
+    title = title[:_MAX_TITLE] if isinstance(title, str) and title.strip() else ""
     where = f"entry {number}" + (f" '{_shortened(title)}'" if title else "")
     input_type = entry.get("input_type")
     source = entry.get("input_source")
     if input_type not in ("url", "file"):
         problems.append(f"{where} skipped (unknown source type)")
         return None
-    if not isinstance(source, str) or not source.strip() or "\x00" in source:
+    if (not isinstance(source, str) or not source.strip() or "\x00" in source
+            or len(source) > _MAX_SOURCE):
         problems.append(f"{where} skipped (no valid source)")
         return None
     if input_type == "url" and not source.lower().startswith(("https://", "http://")):
@@ -191,7 +203,9 @@ def write_queue_file(path: Path, items: list[QueueItem]) -> int:
     # mkstemp creates it readable only by the owner.
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix="queue_", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # backslashreplace: a lone surrogate (possible in a Windows file name)
+        # has no UTF-8 form; written as \udXXX it is a JSON escape that reads back
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
             f.write(text)
         _replace(Path(tmp), path)
     except BaseException:
@@ -226,12 +240,17 @@ def read_queue_file(path: Path, imported: bool = False) -> tuple[list[QueueItem]
         raise ValueError("not a queue file")
     version = data["version"]
     if version != FORMAT_VERSION or isinstance(version, bool):
-        raise ValueError(f"unsupported queue file version {_shortened(str(version), 20)} "
+        raise ValueError(f"unsupported queue file version {_shortened(repr(version), 20)} "
                          f"(this version of UltraSinger reads version {FORMAT_VERSION})")
-    if not isinstance(data.get("items"), list):
+    entries = data.get("items")
+    if not isinstance(entries, list):
         raise ValueError("not a queue file (no list of songs)")
     items, problems = [], []
-    for number, entry in enumerate(data["items"], start=1):
+    if len(entries) > _MAX_SONGS:
+        problems.append(f"only the first {_MAX_SONGS} songs are read, "
+                        f"{len(entries) - _MAX_SONGS} more are left out")
+        entries = entries[:_MAX_SONGS]
+    for number, entry in enumerate(entries, start=1):
         item = _item(entry, number, imported, problems)
         if item is not None:
             items.append(item)
@@ -244,32 +263,51 @@ def save_queue(path: Path, items: list[QueueItem]) -> None:
     """Save the queue for the next start; a failure is logged and the GUI goes on."""
     try:
         write_queue_file(path, items)
-    except OSError:
+    except (OSError, ValueError, TypeError):
         logger.warning("Failed to save the queue to %s", path, exc_info=True)
 
 
-def load_saved_queue(path: Path) -> tuple[list[QueueItem], list[str]]:
-    """The queue the last session saved, and a note on everything that did not come back.
+def _read_saved_queue(path: Path) -> tuple[list[QueueItem], list[str]]:
+    """``read_queue_file``, retried for a moment: on Windows a reader that has
+    the file open (e.g. a virus scanner) makes it fail."""
+    attempts = 0
+    while True:
+        try:
+            return read_queue_file(path)
+        except PermissionError:
+            attempts += 1
+            if attempts == 20:
+                raise
+            time.sleep(0.05)
 
-    A file that is no readable queue file (e.g. damaged) is copied aside and
-    the queue starts empty, so nothing in it is lost silently.
+
+def load_saved_queue(path: Path) -> tuple[list[QueueItem], list[str], bool]:
+    """The queue the last session saved, a note on everything that did not come
+    back, and whether the queue may be saved over the file.
+
+    When something of the file does not come back (it cannot be read, or holds
+    entries or settings this version leaves out), the file is copied aside
+    first, so nothing in it is lost silently. If that copy fails too, the
+    queue must not be saved over the file in this session.
     """
     path = Path(path)
     try:
-        return read_queue_file(path)
+        items, notes = _read_saved_queue(path)
     except FileNotFoundError:
-        return [], []
-    except OSError as exc:
-        logger.warning("Failed to load the queue from %s: %s", path, exc)
-        return [], [f"could not be loaded ({exc}); the queue starts empty."]
-    except ValueError as exc:
-        backup = _back_up_file(path)
-        logger.warning(
-            "Queue file %s cannot be read (%s); starting with an empty queue. %s",
-            path, exc, f"Its content is kept in {backup}." if backup else "",
-        )
-        return [], [f"cannot be read ({exc}); the queue starts empty."
-                    + (f" Its content is kept in {backup}." if backup else "")]
+        return [], [], True
+    except (OSError, ValueError) as exc:  # ValueError: damaged, or another format
+        logger.warning("Queue file %s cannot be read (%s); starting with an empty queue",
+                       path, exc)
+        items, notes = [], [f"cannot be read ({exc}); the queue starts empty."]
+    if not notes:
+        return items, [], True
+    backup = _back_up_file(path)
+    if backup is None:
+        note = "The file could not be copied, so the queue is not saved in this session."
+    else:
+        note = f"The file as it was is kept in {backup}."
+    logger.warning("Queue file %s: %s", path, note)
+    return items, notes + [note], backup is not None
 
 
 def without_duplicates(imported: list[QueueItem],
@@ -277,12 +315,13 @@ def without_duplicates(imported: list[QueueItem],
     """The imported songs that do not wait in the queue already, and how many were left out.
 
     A song waits already when an item that has not finished (pending or
-    running) has the same source and the same per-song settings. A song the
-    queue has finished, or that failed or was cancelled, is added again.
+    running) has the same source and the same per-song settings, as far as an
+    imported file can set them: re-importing an export adds nothing twice. A
+    song the queue has finished, or that failed or was cancelled, is added again.
     """
     def key(item: QueueItem):
-        return (item.input_type, item.input_source,
-                json.dumps(_stored_settings(item.settings_overrides), sort_keys=True))
+        settings = _stored_settings(item.settings_overrides, imported=True)
+        return (item.input_type, item.input_source, json.dumps(settings, sort_keys=True))
 
     waiting = {key(item) for item in queue if item.status in ("pending", "running")}
     added = [item for item in imported if key(item) not in waiting]

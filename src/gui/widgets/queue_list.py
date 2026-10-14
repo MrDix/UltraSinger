@@ -238,9 +238,10 @@ class QueueItemWidget(QWidget):
             f"font-size: 8px; color: {color}; background: transparent;"
         )
 
-        # Remove button and gear only for pending items.
-        # Completed items show the ℹ button in the info row instead.
-        self._remove_btn.setVisible(status == "pending")
+        # Gear only for pending items; completed items show the ℹ button in
+        # the info row instead. Remove also for failed and cancelled items:
+        # they are kept when the GUI closes (finished ones are not).
+        self._remove_btn.setVisible(status in ("pending", "failed", "cancelled"))
         self._gear_btn.setVisible(status == "pending")
         self._clone_btn.setVisible(status == "pending")
 

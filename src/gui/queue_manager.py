@@ -126,9 +126,9 @@ class QueueManager(QObject):
         return None
 
     def remove_item(self, item_id: str):
-        """Remove a pending item from the queue."""
+        """Remove a pending, failed or cancelled item from the queue."""
         for i, item in enumerate(self._items):
-            if item.id == item_id and item.status == "pending":
+            if item.id == item_id and item.status in ("pending", "failed", "cancelled"):
                 self._items.pop(i)
                 self.item_removed.emit(item_id)
                 logger.info("Queue: removed '%s'", item.title)
