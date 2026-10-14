@@ -61,6 +61,9 @@ class TestStripTitleAdditions(unittest.TestCase):
             "Song Title - Vol. 3 - Official Video": "Song Title - Vol. 3",
             "Song Title - No. 5 - Official Audio": "Song Title - No. 5",
             "Song Title - II - Lyric Video": "Song Title - II",
+            "Song Title - I - Live Performance": "Song Title - I",
+            "Song Title - V - Official Video": "Song Title - V",
+            "Song Title - X - Lyric Video": "Song Title - X",
             # a numbered description does not
             "Song Title - Take 2 - Official Video": "Song Title",
             "Song Title - Week 3 - Official Video": "Song Title",
@@ -97,7 +100,9 @@ class TestTitleBeforeDash(unittest.TestCase):
                       "Song Title — some words about the band",
                       "Song Title - Singer Name in the studio (Official Video)",
                       "Song Title - Singer Name live, one take", "Song Title - at home with the band 2020",
-                      "Song Title HD - Singer Name in the studio"):
+                      "Song Title HD - Singer Name in the studio",
+                      # "x" and "I" inside the description are words, not part numbers
+                      "Song Title - Singer x Rapper live at home", "Song Title - live as I sing it"):
             with self.subTest(title=title):
                 self.assertEqual(title_before_dash(title), "Song Title")
         # as the song database search passes it, and with a part in brackets
@@ -113,7 +118,10 @@ class TestTitleBeforeDash(unittest.TestCase):
                       # a medley, a separator that is no dash, a work in movements
                       "Song A - Song B - Song C", "Song Title | Singer Name in the studio",
                       "(Official Video) | Label Name Words", "Song Title - The Second Movement",
-                      "Song Title - Part2 of the Story", "Song Title - Vol3 of the Series"):
+                      "Song Title - Part2 of the Story", "Song Title - Vol3 of the Series",
+                      # a Roman part number at the start of the rest, or after "No."
+                      "Song Title - V live in the studio", "Song Title - I and the band live",
+                      "Song Title - No. V of the Cycle"):
             with self.subTest(title=title):
                 self.assertEqual(title_before_dash(title), "")
 

@@ -84,14 +84,20 @@ _QUALITY_RE = re.compile(r"(?:\s+(?:hd|hq|4k|8k|\d{3,4}p))+\s*$", re.IGNORECASE)
 # What a video title puts after a dash is a description of the video, not a
 # part of the song title, from this many words on (see title_before_dash)
 DESCRIPTION_WORDS = 3
+# A Roman number up to ten ("I" to "X")
+_ROMAN = r"(?:i{1,3}|iv|vi{0,3}|ix|x)"
 # A word that names a part of a work ("Part Two", "Vol. 3", "Chapter II",
-# "The Second Movement", "Part2")
+# "The Second Movement", "Part2", "No. V")
 _PART_WORD_RE = re.compile(
-    r"\b(?:part|pt|vol|volume|chapter|act|movement|episode|book)\b|\b(?:part|pt|vol|no)\.?\s*\d{1,3}\b",
+    rf"\b(?:part|pt|vol|volume|chapter|act|movement|episode|book)\b|\b(?:part|pt|vol|no)\.?\s*(?:\d{{1,3}}|{_ROMAN})\b",
     re.IGNORECASE)
-# A part or volume number standing alone ("3", "II"), not a year
-_PART_NUMBER_RE = re.compile(r"\b(?:\d{1,3}|ii|iii|iv|vi|vii|viii|ix)\b|" + _PART_WORD_RE.pattern, re.IGNORECASE)
-_BARE_PART_NUMBER_RE = re.compile(r"\s*(?:\d{1,3}|ii|iii|iv|vi|vii|viii|ix)\s*", re.IGNORECASE)
+# A part or volume number standing alone ("3", "II"), not a year. Of the
+# Roman numbers, "I", "V" and "X" only count at the start: elsewhere they are
+# words ("I"), or join names ("Singer x Rapper").
+_PART_NUMBER_RE = re.compile(rf"^\s*{_ROMAN}\b|\b(?:\d{{1,3}}|ii|iii|iv|vi|vii|viii|ix)\b|" + _PART_WORD_RE.pattern,
+                             re.IGNORECASE)
+# A dashed part that is only a part number ("3", "I", "IV")
+_BARE_PART_NUMBER_RE = re.compile(rf"\s*(?:\d{{1,3}}|{_ROMAN})\s*", re.IGNORECASE)
 
 
 def _clean(s: str) -> str:
