@@ -100,6 +100,14 @@ class QueueManager(QObject):
         logger.info("Queue: added '%s' (%s)", title, input_type)
         return item
 
+    def add_items(self, items: list[QueueItem]):
+        """Add ready-made items (a restored or imported queue)."""
+        for item in items:
+            self._items.append(item)
+            self.item_added.emit(item)
+        if items:
+            logger.info("Queue: added %d item(s) from a queue file", len(items))
+
     def clone_item(self, item_id: str) -> QueueItem | None:
         """Clone a pending item — duplicate it with the same settings."""
         for item in self._items:
@@ -118,9 +126,9 @@ class QueueManager(QObject):
         return None
 
     def remove_item(self, item_id: str):
-        """Remove a pending item from the queue."""
+        """Remove a pending, failed or cancelled item from the queue."""
         for i, item in enumerate(self._items):
-            if item.id == item_id and item.status == "pending":
+            if item.id == item_id and item.status in ("pending", "failed", "cancelled"):
                 self._items.pop(i)
                 self.item_removed.emit(item_id)
                 logger.info("Queue: removed '%s'", item.title)

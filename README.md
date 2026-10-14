@@ -181,6 +181,11 @@ groups onto the pinned icon.
   - **Info button** — view the settings used for this conversion
   - **Folder button** — open the output folder in your system file manager (hover to see the path)
   - **Re-queue button** — re-queue the song with different settings (opens per-song settings dialog; useful for correcting wrong language detection)
+- **Queue kept between sessions** — The queue is saved while you work and comes back the next time you start the GUI, also after an update. It never starts by itself: press **Start All**.
+  - Waiting songs, the song that was running and songs stopped with **Cancel All** come back as waiting songs. Failed songs come back marked as failed; **×** removes one from the list. Finished songs are left out.
+  - The menu button (**☰**) next to **Clear** has **Export Queue…**, which saves the songs that are not finished to a file, and **Import Queue…**, which adds the songs of such a file as waiting songs. A song that already waits in the queue with the same settings is skipped.
+  - Per-song settings are kept, API keys and tokens never. An imported file may come from someone else, so it does not set per-song settings that name a program, folder, web address or model, and takes the other settings only with values the per-song settings dialog offers; your own settings apply there.
+  - The queue is stored in `~/.ultrasinger/queue.json`. A queue file is read up to its 1000th song. If the GUI cannot read the file, or has to leave songs or settings in it out, it first keeps a copy as `queue.json.<date>-<time>.bak`; a file it cannot read starts an empty queue. If even the copy fails, the GUI tells you and saves the queue only once the copy works: it tries again with every change and when it closes.
 - **Preferences** — Default output folder, LLM/Groq API configuration, cookie management.
 - **Model training** — **Train...** next to the Segmentation Model setting trains a [segmentation model](#model-based-note-segmentation---segmentation_model) on your own song library: pick the library, a work folder and the model file and follow the progress; the finished model is set for your conversions automatically.
 
