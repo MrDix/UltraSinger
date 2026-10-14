@@ -323,7 +323,8 @@ class TestUnreadableFile:
         assert [item.input_source for item in items] == [_URL] and notes == [] and may_save
         assert _backups(tmp_path) == []
 
-    def test_a_file_that_cannot_be_read_or_copied_is_not_saved_over(self, tmp_path):
+    def test_a_file_that_cannot_be_read_or_copied_is_not_saved_over(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(queue_file, "time", SimpleNamespace(sleep=lambda _seconds: None))
         path = tmp_path / "queue.json"
         _write_raw(path, [{"input_type": "url", "input_source": _URL}])
         with patch.object(queue_file, "read_queue_file",
@@ -745,7 +746,9 @@ class TestMainWindow:
         assert win._queue_mgr.items == [waiting]
         assert _process_events_until(lambda: _saved(settings_dir) == [(_URL, "pending")])
 
-    def test_a_queue_file_that_cannot_be_read_is_kept(self, settings_dir, open_window):
+    def test_a_queue_file_that_cannot_be_read_is_kept(self, settings_dir, open_window,
+                                                       monkeypatch):
+        monkeypatch.setattr(queue_file, "time", SimpleNamespace(sleep=lambda _seconds: None))
         path = settings_dir / "queue.json"
         _write_raw(path, [{"input_type": "url", "input_source": _URL}])
         raw = path.read_bytes()
