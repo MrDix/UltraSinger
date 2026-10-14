@@ -108,9 +108,9 @@ def _http_status(error) -> Optional[int]:
 
 
 def __musicbrainz_request(func, verbose: bool = True):
-    """The answer of a MusicBrainz request, or None when there is none: nothing
-    found, or MusicBrainz does not answer (see FAILED_REQUESTS_SECONDS).
-    ``verbose`` reports a failed request."""
+    """The answer of a request to the song database, or None when there is
+    none: nothing found, or the database does not answer (see
+    FAILED_REQUESTS_SECONDS). ``verbose`` reports a failed request."""
     for attempt in range(MAX_RETRIES):
         failed_seconds = getattr(_lookup, "failed_seconds", 0.0)
         if failed_seconds >= FAILED_REQUESTS_SECONDS:

@@ -680,13 +680,14 @@ class TestRequestLimits(unittest.TestCase):
         """Requests of lookups in several threads (the GUI's lyrics badge) overlap: the timeout
         stays set until the last one has ended, then the default timeout before comes back."""
         before = socket.getdefaulttimeout()
-        first = musicbrainz_client._socket_timeout(musicbrainz_client.REQUEST_TIMEOUT_SECONDS)
         second = musicbrainz_client._socket_timeout(musicbrainz_client.REQUEST_TIMEOUT_SECONDS)
-        first.__enter__()
-        second.__enter__()
-        first.__exit__(None, None, None)
-        self.assertEqual(socket.getdefaulttimeout(), musicbrainz_client.REQUEST_TIMEOUT_SECONDS)
-        second.__exit__(None, None, None)
+        with musicbrainz_client._socket_timeout(musicbrainz_client.REQUEST_TIMEOUT_SECONDS):
+            second.__enter__()
+        try:
+            # The first request has ended, the second one still runs
+            self.assertEqual(socket.getdefaulttimeout(), musicbrainz_client.REQUEST_TIMEOUT_SECONDS)
+        finally:
+            second.__exit__(None, None, None)
         self.assertEqual(socket.getdefaulttimeout(), before)
 
     def test_a_lookup_in_another_thread_does_not_use_up_the_time_of_this_one(self):

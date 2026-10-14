@@ -301,6 +301,15 @@ def test_probe_cancelled_after_yt_dlp_skips_the_lyrics_lookup():
     assert results == []
 
 
+def test_probe_cancelled_before_it_began_starts_no_yt_dlp():
+    worker = _FormatProbeWorker("vid")
+    worker.cancel()  # another video was opened before the probe's thread got going
+    with patch("src.gui.browser_tab.shutil.which", return_value="yt-dlp"), \
+            patch("src.gui.browser_tab.subprocess.Popen") as popen:
+        assert worker._dump_json() is None
+    popen.assert_not_called()
+
+
 def test_probe_cancel_kills_yt_dlp():
     worker = _FormatProbeWorker("vid")
     process = MagicMock(returncode=-9)

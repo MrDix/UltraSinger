@@ -79,6 +79,8 @@ class _FormatProbeWorker(QObject):
 
     def _dump_json(self) -> str | None:
         """yt-dlp's JSON output for the video, or None."""
+        if self._cancelled:  # stopped before it began
+            return None
         yt_dlp = shutil.which("yt-dlp")
         if not yt_dlp:
             return None
@@ -652,8 +654,10 @@ class BrowserTab(QWidget):
         """Query available download formats in the background."""
         # This probe replaces the previous ones (results for another video are
         # discarded by the video_id check in _on_format_probed). They are
-        # stopped: their song lookups would hold up this one's, as the song
-        # database is asked one request at a time, at most one a second.
+        # stopped, so that they start no further lookup: the song database is
+        # asked one request at a time, at most one a second, and their lookups
+        # would hold up this one's (one already in its song lookup still
+        # finishes it).
         for _thread, worker in self._probes:
             worker.cancel()
         self._probe_video_id = video_id
