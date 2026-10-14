@@ -308,7 +308,7 @@ class TestRemoteSpeechToText(unittest.TestCase):
         self.assertEqual([n[0] for n in notes], ["one ", "two "])
         self.assertIn("Pipeline:                 Standard transcription", info)
         self.assertIn("Transcription:            full", info)
-        self.assertIn("Used this run:            no", info)
+        self.assertIn("Used this run:            asked, no usable answer (see the console)", info)
 
     def test_remote_words_place_the_plain_lyrics(self):
         lyrics = SimpleNamespace(synced_lyrics=None, plain_lyrics="hello world")

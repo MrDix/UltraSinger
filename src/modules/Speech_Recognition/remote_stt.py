@@ -216,9 +216,8 @@ def transcribe_remote(
     The words come with their times, and the text in segments
     (``verbose_json``); a service that turns that request down (HTTP 400 or
     422) is asked once more for the text alone, and the transcript then has
-    no words and segments. The
-    audio is sent as a mono FLAC copy at ``UPLOAD_SAMPLE_RATE``, or as it is
-    when no such copy can be made of it.
+    no words and segments. The audio is sent as a mono FLAC copy at
+    ``UPLOAD_SAMPLE_RATE``, or as it is when no such copy can be made of it.
 
     On an HTTP 429 (rate limited) response, and if *retry_on_rate_limit*
     is enabled, waits and retries up to *retry_max* times before falling
