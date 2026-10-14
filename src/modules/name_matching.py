@@ -89,7 +89,9 @@ _ROMAN = r"(?:i{1,3}|iv|vi{0,3}|ix|x)"
 # A word that names a part of a work ("Part Two", "Vol. 3", "Chapter II",
 # "The Second Movement", "Part2", "No. V")
 _PART_WORD_RE = re.compile(
-    rf"\b(?:part|pt|vol|volume|chapter|act|movement|episode|book)\b|\b(?:part|pt|vol|no)\.?\s*(?:\d{{1,3}}|{_ROMAN})\b",
+    rf"\b(?:part|pt|vol|volume|chapter|act|movement|episode|book)\b|\b(?:part|pt|vol|no)\.?\s*\d{{1,3}}\b"
+    # a Roman number after "No" only with the period: "No I won't" is a sentence
+    rf"|\b(?:part|pt|vol)\.?\s*{_ROMAN}\b|\bno\.\s*{_ROMAN}\b",
     re.IGNORECASE)
 # A part or volume number standing alone ("3", "II"), not a year. Of the
 # Roman numbers, "I", "V" and "X" only count at the start: elsewhere they are

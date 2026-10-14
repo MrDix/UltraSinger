@@ -64,6 +64,7 @@ class TestStripTitleAdditions(unittest.TestCase):
             "Song Title - I - Live Performance": "Song Title - I",
             "Song Title - V - Official Video": "Song Title - V",
             "Song Title - X - Lyric Video": "Song Title - X",
+            "Song Title - No I Won't - Official Video": "Song Title",
             # a numbered description does not
             "Song Title - Take 2 - Official Video": "Song Title",
             "Song Title - Week 3 - Official Video": "Song Title",
