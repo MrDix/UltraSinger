@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import time
 
 
 def __add_ffmpeg_to_path(ffmpeg_path) -> None:
@@ -202,6 +203,24 @@ def convert_to_ultrastar_format(audio_file_path: str, basename_without_ext: str,
     return target_path, target_ext
 
 
+# A sync client or virus scanner may hold a file that was just written for a
+# moment; renaming or removing it then fails with "file in use" on Windows.
+_IN_USE_RETRIES = 10
+_IN_USE_WAIT_S = 0.5
+
+
+def _when_not_in_use(action, *args):
+    """Run a file operation, retried for a few seconds while another process
+    holds the file."""
+    for attempt in range(_IN_USE_RETRIES):
+        try:
+            return action(*args)
+        except PermissionError:
+            if attempt == _IN_USE_RETRIES - 1:
+                raise
+            time.sleep(_IN_USE_WAIT_S)
+
+
 def _same_path(first: str, second: str) -> bool:
     """Whether two paths name the same file, however they are written
     (separators, letter case on Windows, relative parts)."""
@@ -245,17 +264,17 @@ def separate_audio_video(video_with_audio_path: str, basename_without_ext: str, 
         # differently ("D:\x" vs "D:/x"): renaming a file onto itself fails
         # while a sync client or virus scanner holds it.
         if not _same_path(video_with_audio_path, final_video_path):
-            os.rename(video_with_audio_path, final_video_path)
+            _when_not_in_use(os.rename, video_with_audio_path, final_video_path)
     else:
         print(f"{ULTRASINGER_HEAD} Creating video without audio")
         video_only_path = os.path.join(output_folder, f"{basename_without_ext}_video.{video_ext}")
         remove_audio_from_video(video_with_audio_path, video_only_path)
 
         # Remove original video with audio
-        os.remove(video_with_audio_path)
+        _when_not_in_use(os.remove, video_with_audio_path)
 
         # Rename video without audio to final name
-        os.rename(video_only_path, final_video_path)
+        _when_not_in_use(os.rename, video_only_path, final_video_path)
 
     return audio_file_path, final_video_path, audio_ext, video_ext
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -132,8 +132,13 @@ class TestKeepAudioInVideo:
     """With --keep_audio_in_video the downloaded video only gets its final name."""
 
     def _separate(self, video_path, folder, basename):
-        with patch.object(ffmpeg_helper, "get_audio_codec_and_extension", return_value="opus"),                 patch.object(ffmpeg_helper, "extract_audio"),                 patch.object(ffmpeg_helper, "convert_to_ultrastar_format",
-                             side_effect=lambda path, base, out, ext: (path, ext)),                 patch.object(ffmpeg_helper.os, "rename") as rename:
+        with (
+            patch.object(ffmpeg_helper, "get_audio_codec_and_extension", return_value="opus"),
+            patch.object(ffmpeg_helper, "extract_audio"),
+            patch.object(ffmpeg_helper, "convert_to_ultrastar_format",
+                         side_effect=lambda path, base, out, ext: (path, ext)),
+            patch.object(ffmpeg_helper.os, "rename") as rename,
+        ):
             result = ffmpeg_helper.separate_audio_video(video_path, basename, folder,
                                                         keep_audio_in_video=True)
         return rename, result
@@ -160,3 +165,28 @@ class TestKeepAudioInVideo:
         rename, (_, final_video, _, _) = self._separate(str(video), str(tmp_path), "Artist - Title")
         rename.assert_called_once_with(str(video), final_video)
         assert final_video == os.path.join(str(tmp_path), "Artist - Title.mp4")
+
+
+class TestFileInUse:
+    """A sync client or virus scanner may hold a file that was just written."""
+
+    def test_waits_until_the_file_is_free(self):
+        action = Mock(side_effect=[PermissionError("in use"), PermissionError("in use"), "done"])
+        with patch.object(ffmpeg_helper.time, "sleep") as sleep:
+            assert ffmpeg_helper._when_not_in_use(action, "a", "b") == "done"
+        assert action.call_count == 3
+        assert sleep.call_count == 2
+        action.assert_called_with("a", "b")
+
+    def test_gives_up_after_a_few_seconds(self):
+        action = Mock(side_effect=PermissionError("in use"))
+        with patch.object(ffmpeg_helper.time, "sleep"), pytest.raises(PermissionError):
+            ffmpeg_helper._when_not_in_use(action, "a")
+        assert action.call_count == ffmpeg_helper._IN_USE_RETRIES
+
+    def test_other_errors_are_not_retried(self):
+        action = Mock(side_effect=FileNotFoundError("gone"))
+        with patch.object(ffmpeg_helper.time, "sleep") as sleep, pytest.raises(FileNotFoundError):
+            ffmpeg_helper._when_not_in_use(action, "a")
+        assert action.call_count == 1
+        sleep.assert_not_called()
