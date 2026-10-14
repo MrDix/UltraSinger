@@ -182,10 +182,16 @@ class TestParsePlainLyrics:
     def test_labels_with_nested_repeat_marks(self):
         # a repeat mark inside a bracketed label, and a label in double brackets
         plain = ("[Refrain (2x)]\n[[Refrain (2x)]]\n(Chorus (x2))\n[Chorus 2x]\n[Chorus ×2]\n[Pre Chorus]\n"
-                 "[[1. Strophe:]]\n2. Strophe\nCoro\n(Estribillo)\nSung line")
+                 "[[1. Strophe:]]\n2. Strophe\nCoro\n(Estribillo)\n2x Refrain\n[2x Refrain]\n((Chorus))\n{{Chorus}}\n"
+                 "[Guitar Solo]\nGuitar Solo\nSung line")
         assert parse_plain_lyrics(plain) == ["Sung line"]
-        # backing vocals around stray brackets stay backing vocals
-        assert parse_plain_lyrics("Hello ( oh yeah ) world") == ["Hello \x00oh \x00yeah world"]
+        # backing vocals around stray brackets stay backing vocals, in double brackets too
+        assert parse_plain_lyrics("Hello ( oh yeah ) world\n[[oh yeah]] go\n((oh)) yeah") == [
+            "Hello \x00oh \x00yeah world", "\x00oh \x00yeah go", "\x00oh yeah"]
+
+    def test_lines_that_only_start_and_end_with_brackets_are_sung(self):
+        assert parse_plain_lyrics("(Chorus) and (Verse)\n(Bridge) over (water)") == [
+            "\x00Chorus and \x00Verse", "\x00Bridge over \x00water"]
 
     def test_words_that_only_look_like_labels_are_sung(self):
         # shouted words, labels among other words, and numbers that are no repeat marks
