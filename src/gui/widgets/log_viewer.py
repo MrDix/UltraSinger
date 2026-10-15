@@ -1,6 +1,8 @@
 """Color-coded log viewer widget for conversion output."""
 
 import re
+from collections import deque
+from itertools import groupby, islice
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
@@ -10,26 +12,86 @@ from PySide6.QtWidgets import QPlainTextEdit
 # Strip ANSI escape sequences (SGR codes, cursor movement, etc.)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
-# Log level patterns and their colors (matched AFTER ANSI stripping)
-_PATTERNS = [
-    (re.compile(r"\[error\]|error:|traceback|exception", re.IGNORECASE), QColor("#ef5350")),
-    (re.compile(r"\[warn(?:ing)?\]|warn(?:ing)?:", re.IGNORECASE), QColor("#ffa726")),
-    (re.compile(r"\[success\]|completed|done|finished", re.IGNORECASE), QColor("#4caf50")),
-    (re.compile(r"\[UltraSinger\]", re.IGNORECASE), QColor("#00d4d4")),
+# The lines the viewer keeps: the last lines, and apart from them the last
+# warnings and errors
+_MAX_LINES = 5000
+
+# Log levels (matched AFTER ANSI stripping)
+_ERROR, _WARNING, _SUCCESS, _HEAD, _PLAIN = "error", "warning", "success", "head", "plain"
+_ISSUES = (_ERROR, _WARNING)
+# Warnings and errors: the first of their keywords in a line gives its level
+# ("WARNING: [download] Got error: ..." is a warning)
+_ISSUE_PATTERNS = [
+    (re.compile(r"\[error\]|error:|\berror\b|traceback|exception", re.IGNORECASE), _ERROR),
+    (re.compile(r"\[warn(?:ing)?\]|warn(?:ing)?:", re.IGNORECASE), _WARNING),
+    # A step that failed ("Remote STT failed: ...", "<song>: failed (exit code 1)")
+    (re.compile(r"\bfailed\s*[:(]", re.IGNORECASE), _ERROR),
 ]
-_DEFAULT_COLOR = QColor("#a09888")
+# The other lines: the first pattern that matches gives the level
+_OTHER_PATTERNS = [
+    (re.compile(r"\[success\]|completed|done|finished", re.IGNORECASE), _SUCCESS),
+    (re.compile(r"\[UltraSinger\]", re.IGNORECASE), _HEAD),
+]
+_COLORS = {
+    _ERROR: QColor("#ef5350"),
+    _WARNING: QColor("#ffa726"),
+    _SUCCESS: QColor("#4caf50"),
+    _HEAD: QColor("#00d4d4"),
+    _PLAIN: QColor("#a09888"),
+}
+# The first line of a Python traceback. Its frames are indented, and it ends
+# with the exception and its message (but an exception group, whose lines
+# are all indented, with its frames).
+_TRACEBACK_RE = re.compile(r"Traceback \(most recent call last\):")
+# A warning of Python's warnings module ("<file>:<line>: UserWarning: ..."),
+# followed by its indented source line
+_PYTHON_WARNING_RE = re.compile(r":\d+: \w*Warning: ")
+# A progress bar (" 50%|#####     | 5/10", "Transcribing: 50%|#####     | 5/10"):
+# never part of a warning or an error
+_PROGRESS_RE = re.compile(r"\s*(?:[^|%]*:\s*)?\d+%\|")
+# The line before the traceback of an exception the program goes on after
+# (also after an unfinished progress bar): its exception has no further lines
+_GOES_ON_RE = re.compile(r"Exception (?:ignored in|in thread)\b")
+# The line between two tracebacks of a chain of exceptions
+_CHAIN_RE = re.compile(r"During handling of the above exception|The above exception was the direct cause")
 
 
 class LogViewer(QPlainTextEdit):
-    """A read-only, color-coded log output widget."""
+    """A read-only, color-coded log output widget.
+
+    It keeps the lines it was given, so that it can show only the warnings
+    and errors among them (``set_issues_only``) and all lines again.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("logOutput")
         self.setReadOnly(True)
-        self.setMaximumBlockCount(5000)
+        # The lines and the empty block after the last one
+        self.setMaximumBlockCount(_MAX_LINES + 1)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # The lines as (text, level); the warnings and errors are kept apart
+        # as well, so that the filter still shows those older than the last
+        # lines (a song prints thousands of progress lines)
+        self._lines: deque[tuple[str, str]] = deque(maxlen=_MAX_LINES)
+        self._issues: deque[tuple[str, str]] = deque(maxlen=_MAX_LINES)
+        self._issues_only = False
+        self._formats = {level: _char_format(color) for level, color in _COLORS.items()}
+        # A traceback is kept together (its frames, the exception and its
+        # message), a Python warning with its source line
+        self._previous_line = ""
+        self._in_traceback = False
+        self._exception_due = False
+        # Whether the exception of the traceback has further lines: unless the
+        # program goes on after it (decided at the first traceback of a chain)
+        self._message_due = True
+        self._in_exception = False
+        self._chained = False
+        self._warning_source_due = False
+        # The line at the top before the last switch and after it
+        self._last_switch = None
 
         # Auto-scroll control
         self._auto_scroll = True
@@ -39,33 +101,167 @@ class LogViewer(QPlainTextEdit):
         """Append a colored log line.
 
         ANSI escape codes from the CLI subprocess are stripped before
-        display.  Color is determined by keyword matching instead.
+        display.  Color is determined by keyword matching instead.  While
+        only the warnings and errors are shown, another line is kept but
+        not shown.
         """
         text = _ANSI_RE.sub("", text)
+        entry = (text, self._level(text))
+        self._previous_line = text
+        self._lines.append(entry)
+        if entry[1] in _ISSUES:
+            self._issues.append(entry)
+        elif self._issues_only:
+            return
 
-        color = _DEFAULT_COLOR
-        for pattern, c in _PATTERNS:
-            if pattern.search(text):
-                color = c
-                break
-
-        fmt = QTextCharFormat()
-        fmt.setForeground(color)
-
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text + "\n", fmt)
+        self._insert([entry])
 
         if self._auto_scroll:
-            self.verticalScrollBar().setValue(
-                self.verticalScrollBar().maximum()
-            )
+            self._scroll_to_end()
+
+    def set_issues_only(self, issues_only: bool):
+        """Show only the warnings and errors, also those appended before, or all lines again.
+
+        A view that follows the newest lines goes on following them. In a
+        view scrolled up, the line at its top stays at the top: a warning,
+        when all lines are shown again, among the lines around it; another
+        line, when only the warnings and errors are shown, as the first
+        warning or error after it. Switched back without scrolling, the
+        view is where it was.
+        """
+        if issues_only == self._issues_only:
+            return
+        current = self._top_entry()
+        top = None if self._auto_scroll else current
+        anchor = top
+        if self._last_switch is not None and current is self._last_switch[1]:
+            anchor = self._last_switch[0]
+        self._issues_only = issues_only
+        self.setPlaceholderText("No warnings or errors." if issues_only else "")
+        self.clear()
+        self._insert(self._issues if issues_only else self._lines)
+        row = None if anchor is None else self._row_for(anchor)
+        if row is None:
+            self._scroll_to_end()
+        else:
+            self._scroll_to_row(row)
+        self._last_switch = (top, self._top_entry())
+
+    def issues_only(self) -> bool:
+        """Whether only the warnings and errors are shown."""
+        return self._issues_only
 
     def clear_log(self):
         """Clear all log content."""
         self.clear()
+        self._lines.clear()
+        self._issues.clear()
+        self._previous_line = ""
+        self._in_traceback = self._exception_due = self._in_exception = False
+        self._message_due = True
+        self._chained = self._warning_source_due = False
+        self._last_switch = None
+
+    def _level(self, text: str) -> str:
+        """The level of a line; the lines of a traceback are an error together."""
+        stripped = text.strip()
+        indented = text[:1].isspace() and bool(stripped)
+        if indented and self._in_traceback:
+            return _ERROR
+        if indented and self._warning_source_due and not _PROGRESS_RE.match(text):
+            self._warning_source_due = False
+            return _WARNING
+        # The exception that ends a traceback, also one without "Error" in its
+        # name ("KeyboardInterrupt"), and the further lines of its message, up
+        # to an empty line, a line of UltraSinger or the GUI ("[Queue] ...")
+        # or a progress bar
+        exception = bool(stripped) and (self._exception_due or (
+            self._in_exception and not text.startswith("[") and not _PROGRESS_RE.match(text)))
+        self._in_traceback = self._exception_due = self._warning_source_due = False
+        self._in_exception = exception and self._message_due
+        if exception:
+            return _ERROR
+
+        level = _keyword_level(text)
+        if _TRACEBACK_RE.search(text):
+            self._in_traceback = True
+            # Not after the header of an exception group ("+ Exception Group
+            # Traceback ...") or one in it ("| Traceback ...")
+            self._exception_due = not text.lstrip().startswith(("+", "|"))
+            # The output goes on after an exception ignored or in a thread, also
+            # after the last traceback of its chain
+            if not self._chained:
+                self._message_due = not _GOES_ON_RE.search(self._previous_line)
+        else:
+            self._warning_source_due = _PYTHON_WARNING_RE.search(text) is not None
+        # A chain goes on over the empty line after its line
+        self._chained = bool(_CHAIN_RE.match(text)) or (self._chained and not stripped)
+        return level
+
+    def _insert(self, lines):
+        """Append lines of (text, level), each in the color of its level."""
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.beginEditBlock()
+        for level, same_level in groupby(lines, key=lambda line: line[1]):
+            cursor.insertText("".join(text + "\n" for text, _ in same_level), self._formats[level])
+        cursor.endEditBlock()
+
+    def _top_entry(self):
+        """The kept line at the top of the view (None in an empty view)."""
+        shown = self._issues if self._issues_only else self._lines
+        row = self.firstVisibleBlock().blockNumber()
+        return shown[row] if 0 <= row < len(shown) else None
+
+    def _row_for(self, top) -> int | None:
+        """The row of the shown lines to show at the top for a kept line.
+
+        All lines: the line, else (older than the last lines) the first
+        line. The warnings and errors: the line if it is one of them (also
+        one older than the last lines), else the first from the line on,
+        else None (the newest are shown).
+        """
+        if not self._issues_only:
+            return next((row for row, entry in enumerate(self._lines) if entry is top), 0)
+        row = next((row for row, entry in enumerate(self._issues) if entry is top), None)
+        if row is not None:
+            return row
+        start = next((row for row, entry in enumerate(self._lines) if entry is top), len(self._lines))
+        issue = next((entry for entry in islice(self._lines, start, None) if entry[1] in _ISSUES), None)
+        return next((row for row, entry in enumerate(self._issues) if entry is issue), None)
+
+    def _scroll_to_row(self, row: int):
+        """Show the line of the row at the top (or the last lines, if it is among them)."""
+        self._scroll_to_end()
+        # Scrolling up to a line puts it at the top
+        self.setTextCursor(QTextCursor(self.document().findBlockByNumber(row)))
+        self.ensureCursorVisible()
+        sb = self.verticalScrollBar()
+        self._auto_scroll = sb.value() >= sb.maximum() - 10
+
+    def _scroll_to_end(self):
+        """Show the newest lines, and follow them."""
+        self.verticalScrollBar().setValue(
+            self.verticalScrollBar().maximum()
+        )
+        # After a clear, the layout reports an old position on the way
+        self._auto_scroll = True
 
     def _on_scroll(self, value):
         """Track whether the user has scrolled away from the bottom."""
         sb = self.verticalScrollBar()
         self._auto_scroll = value >= sb.maximum() - 10
+
+
+def _keyword_level(text: str) -> str:
+    issues = [(match.start(), level) for pattern, level in _ISSUE_PATTERNS
+              if (match := pattern.search(text))]
+    if issues:
+        return min(issues)[1]
+    return next((level for pattern, level in _OTHER_PATTERNS if pattern.search(text)), _PLAIN)
+
+
+def _char_format(color: QColor) -> QTextCharFormat:
+    fmt = QTextCharFormat()
+    fmt.setForeground(color)
+    return fmt

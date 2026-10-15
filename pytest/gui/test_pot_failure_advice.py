@@ -28,12 +28,14 @@ def test_version_mismatch_gets_its_own_advice():
     assert len(advice) == 1  # once per queue run
     assert "different major versions" in advice[0]
     assert "update" in advice[0] and "Node.js 22 or newer" in advice[0]
+    assert advice[0].startswith("[PO-Token] WARNING: ")  # kept by the console's warnings filter
 
 
 def test_failing_token_generation_keeps_the_network_advice():
     advice = _advice(_window(), TOKEN_ERROR)
     assert len(advice) == 1
     assert "network filter" in advice[0]
+    assert advice[0].startswith("[PO-Token] WARNING: ")
 
 
 def test_other_lines_are_ignored():

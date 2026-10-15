@@ -3,6 +3,7 @@ settings reset, and the interactive mode."""
 
 import contextlib
 import io
+import logging
 import os
 import unittest
 from unittest.mock import patch
@@ -187,6 +188,25 @@ class TestInteractiveMode(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             us.check_requirements()
             self.assertEqual(us.settings.pytorch_device, "cpu")
+
+
+class TestLogLevels(unittest.TestCase):
+    """What the modules log is printed with its level, by which the GUI's console finds it."""
+
+    def test_warnings_and_errors_say_their_level(self):
+        modules_logger = logging.getLogger("modules")
+        handlers, propagate = list(modules_logger.handlers), modules_logger.propagate
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                us.mark_log_levels()
+                logger = logging.getLogger("modules.Audio.metadata_writer")
+                logger.warning("Failed to write metadata to %s", "song.ogg")
+                logger.error("No cover")
+        finally:
+            modules_logger.handlers[:] = handlers
+            modules_logger.propagate = propagate
+        self.assertEqual(err.getvalue(), "WARNING: Failed to write metadata to song.ogg\nERROR: No cover\n")
 
 
 if __name__ == "__main__":

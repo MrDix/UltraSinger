@@ -768,7 +768,7 @@ class MainWindow(QMainWindow):
                 return
             self._pot_failure_handled = True
             self._queue_tab.append_log(
-                "[PO-Token] The PO-token provider and the yt-dlp plugin have "
+                "[PO-Token] WARNING: The PO-token provider and the yt-dlp plugin have "
                 "different major versions, so the plugin does not use the "
                 "provider and downloads fall back to reduced quality. Run "
                 "install\\update.bat (Windows) or install/update.sh "
@@ -783,7 +783,7 @@ class MainWindow(QMainWindow):
             return
         self._pot_failure_handled = True
         self._queue_tab.append_log(
-            "[PO-Token] Token generation is failing even though the provider "
+            "[PO-Token] WARNING: Token generation is failing even though the provider "
             "server is running. This is usually a network filter blocking "
             "one of the required Google endpoints (jnn-pa.googleapis.com, "
             "www.youtube.com, www.google.com) - common behind corporate "
