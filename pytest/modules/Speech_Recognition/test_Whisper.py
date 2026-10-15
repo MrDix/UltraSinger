@@ -354,6 +354,10 @@ class TranscribeWithWhisperAlignModelTest(unittest.TestCase):
         mock_model = MagicMock()
         mock_model.detect_language.return_value = detected_language
         mock_model.model.detect_language.return_value = (detected_language, 0.9, [])
+        # a language outside the core ones is detected again in the singing: none is found here
+        vad = patch("faster_whisper.vad.get_speech_timestamps", return_value=[])
+        vad.start()
+        self.addCleanup(vad.stop)
         mock_model.transcribe.return_value = {
             "segments": [{"text": "hallo welt"}],
             "language": detected_language,
