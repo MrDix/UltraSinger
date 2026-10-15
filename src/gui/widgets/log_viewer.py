@@ -84,7 +84,9 @@ class LogViewer(QPlainTextEdit):
         self._previous_line = ""
         self._in_traceback = False
         self._exception_due = False
-        self._message_due = False
+        # Whether the exception of the traceback has further lines: unless the
+        # program goes on after it (decided at the first traceback of a chain)
+        self._message_due = True
         self._in_exception = False
         self._chained = False
         self._warning_source_due = False
@@ -155,7 +157,8 @@ class LogViewer(QPlainTextEdit):
         self._lines.clear()
         self._issues.clear()
         self._previous_line = ""
-        self._in_traceback = self._exception_due = self._message_due = self._in_exception = False
+        self._in_traceback = self._exception_due = self._in_exception = False
+        self._message_due = True
         self._chained = self._warning_source_due = False
         self._last_switch = None
 
@@ -191,9 +194,6 @@ class LogViewer(QPlainTextEdit):
                 self._message_due = not _GOES_ON_RE.search(self._previous_line)
         else:
             self._warning_source_due = _PYTHON_WARNING_RE.search(text) is not None
-            if level == _ERROR and not _CHAIN_RE.match(text):
-                # An exception without a traceback (a cause never raised) decides for its chain
-                self._message_due = not _GOES_ON_RE.search(self._previous_line)
         # A chain goes on over the empty line after its line
         self._chained = bool(_CHAIN_RE.match(text)) or (self._chained and not stripped)
         return level

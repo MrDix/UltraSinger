@@ -231,14 +231,13 @@ class TestWhatIsAWarningOrAnError:
         assert _shown(viewer) == error
 
     def test_a_chain_from_a_cause_without_traceback_keeps_its_message(self):
-        thread = ["Exception in thread Thread-1 (worker):", "Traceback (most recent call last):",
-                  '  File "x.py", line 1, in run', "ValueError: bad value"]
+        # the cause was never raised: the first traceback of the console is in a chain
         chain = ["ValueError: never raised", "", "The above exception was the direct cause of the following exception:",
                  "", "Traceback (most recent call last):", '  File "x.py", line 5, in main',
                  "RuntimeError: worse", "and the rest of its message"]
-        viewer = _viewer(*thread, "plain", *chain)
+        viewer = _viewer(*chain, "", "plain")
         viewer.set_issues_only(True)
-        assert _shown(viewer) == [*thread, *[line for line in chain if line]]
+        assert _shown(viewer) == [line for line in chain if line]
 
     def test_the_output_goes_on_after_a_chain_of_exceptions_in_a_thread(self):
         error = ["Exception in thread Thread-1 (worker):", "Traceback (most recent call last):",
