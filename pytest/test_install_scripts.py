@@ -157,19 +157,30 @@ def test_the_uv_installer_is_pinned_to_one_version_everywhere():
     image = re.findall(r"COPY --from=ghcr\.io/astral-sh/uv:(\S+) ", (REPO / "Dockerfile").read_text(encoding="utf-8"))
     assert image, "the Dockerfile does not install a pinned uv"
     versions["Dockerfile"] = set(image)
-    # the setup action, which takes the release as "version": every use of it in
-    # every workflow (the test workflow has one), commented-out lines aside
-    workflows = REPO / ".github/workflows"
-    for workflow in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
-        text = re.sub(r"(?m)^\s*#.*$", "", workflow.read_text(encoding="utf-8"))
-        uses = re.findall(r"uses:\s+['\"]?astral-sh/setup-uv@", text)
-        pinned = re.findall(r"uses:\s+['\"]?astral-sh/setup-uv@\S+(?:\s+#[^\n]*|\s+\w[\w-]*: [^\n]*)*?\s+with:"
-                            r"(?:\s+#[^\n]*|\s+\w[\w-]*: [^\n]*)*?\s+version: ['\"]?([^'\"\s]+)", text)
-        assert len(pinned) == len(uses), f"{workflow.name} sets up uv without a pinned version"
-        if uses:
-            versions[workflow.name] = set(pinned)
-    assert "tests.yml" in versions, "the test workflow does not set up uv"
     assert len(set().union(*versions.values())) == 1, versions
+
+
+def test_every_uv_setup_action_in_ci_is_pinned_to_that_release():
+    """Every step of every workflow that uses the uv setup action pins the
+    release of the install scripts as its "version" (read as YAML, so the
+    spelling of a step does not matter)."""
+    yaml = pytest.importorskip("yaml")
+    release = re.findall(r"COPY --from=ghcr\.io/astral-sh/uv:(\S+) ",
+                         (REPO / "Dockerfile").read_text(encoding="utf-8"))[0]
+    workflows = REPO / ".github/workflows"
+    found = {}
+    for workflow in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
+        jobs = (yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}).get("jobs") or {}
+        for job_name, job in jobs.items():
+            for step in (job or {}).get("steps") or []:
+                uses = str((step or {}).get("uses") or "")
+                if not uses.startswith("astral-sh/setup-uv@"):
+                    continue
+                version = ((step.get("with") or {}).get("version"))
+                assert version is not None, f"{workflow.name} ({job_name}) sets up uv without a pinned version"
+                found.setdefault(workflow.name, set()).add(str(version))
+    assert "tests.yml" in found, "the test workflow does not set up uv"
+    assert set().union(*found.values()) == {release}, (found, release)
 
 
 def _assignment(text: str, name: str) -> str:
