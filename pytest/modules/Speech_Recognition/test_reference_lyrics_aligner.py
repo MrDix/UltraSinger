@@ -191,6 +191,11 @@ class TestParsePlainLyrics:
         segs = parse_lrc_synced_lyrics("[00:10.00] Hello , world -\n[00:12.00] ♪")
         assert [(s["text"], s["start"]) for s in segs] == [("Hello, world", 10.0)]
 
+    def test_full_width_punctuation_joins_the_word_before_it(self):
+        assert parse_plain_lyrics("こんにちは 、 世界 。\nこんにちは、世界。\n」") == ["こんにちは、 世界。", "こんにちは、世界。"]
+        segs = parse_lrc_synced_lyrics("[00:10.00] 世界 ！\n[00:12.00] 。")
+        assert [(s["text"], s["start"]) for s in segs] == [("世界！", 10.0)]
+
     def test_labels_with_a_repeat_mark_and_punctuation(self):
         # the repeat mark makes the line a label; a label alone with punctuation may be sung
         plain = ("Chorus x2,\nVerse 2x!\n2x Refrain.\nPre-Chorus x2;\nChorus 2 times…\nChorus (x2).\n(x2) Solo!\n"
