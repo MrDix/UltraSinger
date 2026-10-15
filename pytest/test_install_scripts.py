@@ -161,24 +161,31 @@ def test_the_uv_installer_is_pinned_to_one_version_everywhere():
 
 
 def test_every_uv_setup_action_in_ci_is_pinned_to_that_release():
-    """Every step of every workflow that uses the uv setup action pins the
-    release of the install scripts as its "version" (read as YAML, so the
-    spelling of a step does not matter)."""
-    yaml = pytest.importorskip("yaml")
+    """Every step of every workflow (and local composite action) that uses the
+    uv setup action pins the release of the install scripts as its "version"
+    (read as YAML, so the spelling of a step does not matter)."""
+    import yaml  # a dependency of the project (no skip: the check must not vanish)
+
     release = re.findall(r"COPY --from=ghcr\.io/astral-sh/uv:(\S+) ",
                          (REPO / "Dockerfile").read_text(encoding="utf-8"))[0]
-    workflows = REPO / ".github/workflows"
+    github = REPO / ".github"
+    files = [*github.glob("workflows/*.yml"), *github.glob("workflows/*.yaml"),
+             *github.glob("actions/**/action.yml"), *github.glob("actions/**/action.yaml")]
     found = {}
-    for workflow in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
-        jobs = (yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}).get("jobs") or {}
-        for job_name, job in jobs.items():
-            for step in (job or {}).get("steps") or []:
-                uses = str((step or {}).get("uses") or "")
-                if not uses.startswith("astral-sh/setup-uv@"):
+    for path in sorted(files):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        # the steps of each job of a workflow, or the steps a composite action runs
+        step_lists = [(name, (job or {}).get("steps")) for name, job in (document.get("jobs") or {}).items()]
+        step_lists.append(("runs", (document.get("runs") or {}).get("steps")))
+        for where, steps in step_lists:
+            for step in steps or []:
+                # owner and repository names are not case-sensitive
+                if not re.match(r"astral-sh/setup-uv(?:[/@]|$)", str((step or {}).get("uses") or "").strip(),
+                                re.IGNORECASE):
                     continue
-                version = ((step.get("with") or {}).get("version"))
-                assert version is not None, f"{workflow.name} ({job_name}) sets up uv without a pinned version"
-                found.setdefault(workflow.name, set()).add(str(version))
+                version = (step.get("with") or {}).get("version")
+                assert version is not None, f"{path.name} ({where}) sets up uv without a pinned version"
+                found.setdefault(path.name, set()).add(str(version))
     assert "tests.yml" in found, "the test workflow does not set up uv"
     assert set().union(*found.values()) == {release}, (found, release)
 
