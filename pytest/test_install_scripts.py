@@ -145,9 +145,10 @@ UV_INSTALLER = re.compile(r"astral\.sh/uv/(?:([0-9][^/\s]*)/)?install\.(?:sh|ps1
 
 
 def test_the_uv_installer_is_pinned_to_one_version_everywhere():
-    """Install scripts, the container image and the notebook install the same, fixed uv release."""
+    """Install scripts, the container image, the notebook and the CI install the same, fixed uv release."""
     versions = {}
-    for rel in INSTALL_SCRIPTS + ["../colab/UltraSinger.ipynb", "../run_gui_on_linux.sh", "../run_gui_on_mac.command"]:
+    for rel in INSTALL_SCRIPTS + ["../colab/UltraSinger.ipynb", "../run_gui_on_linux.sh", "../run_gui_on_mac.command",
+                                  "../.github/workflows/main.yml"]:
         text = (INSTALL / rel).read_text(encoding="utf-8")
         found = UV_INSTALLER.findall(text)
         assert found, f"{rel} does not install uv"
@@ -157,6 +158,36 @@ def test_the_uv_installer_is_pinned_to_one_version_everywhere():
     assert image, "the Dockerfile does not install a pinned uv"
     versions["Dockerfile"] = set(image)
     assert len(set().union(*versions.values())) == 1, versions
+
+
+def test_every_uv_setup_action_in_ci_is_pinned_to_that_release():
+    """Every step of every workflow (and local composite action) that uses the
+    uv setup action pins the release of the install scripts as its "version"
+    (read as YAML, so the spelling of a step does not matter)."""
+    import yaml  # a dependency of the project (no skip: the check must not vanish)
+
+    release = re.findall(r"COPY --from=ghcr\.io/astral-sh/uv:(\S+) ",
+                         (REPO / "Dockerfile").read_text(encoding="utf-8"))[0]
+    github = REPO / ".github"
+    files = [*github.glob("workflows/*.yml"), *github.glob("workflows/*.yaml"),
+             *github.glob("actions/**/action.yml"), *github.glob("actions/**/action.yaml")]
+    found = {}
+    for path in sorted(files):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        # the steps of each job of a workflow, or the steps a composite action runs
+        step_lists = [(name, (job or {}).get("steps")) for name, job in (document.get("jobs") or {}).items()]
+        step_lists.append(("runs", (document.get("runs") or {}).get("steps")))
+        for where, steps in step_lists:
+            for step in steps or []:
+                # owner and repository names are not case-sensitive
+                if not re.match(r"astral-sh/setup-uv(?:[/@]|$)", str((step or {}).get("uses") or "").strip(),
+                                re.IGNORECASE):
+                    continue
+                version = (step.get("with") or {}).get("version")
+                assert version is not None, f"{path.name} ({where}) sets up uv without a pinned version"
+                found.setdefault(path.name, set()).add(str(version))
+    assert "tests.yml" in found, "the test workflow does not set up uv"
+    assert set().union(*found.values()) == {release}, (found, release)
 
 
 def _assignment(text: str, name: str) -> str:
