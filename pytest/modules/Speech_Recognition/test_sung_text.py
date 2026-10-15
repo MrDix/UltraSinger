@@ -16,7 +16,7 @@ def test_words_with_nothing_to_sing(word):
     assert not is_sung(word)
 
 
-@pytest.mark.parametrize("word", ["?", "!", ",", "...", "…", "'", "\"", "»", "?! ", " ."])
+@pytest.mark.parametrize("word", ["?", "!", ",", "...", "…", "'", "\"", "»", "?! ", " .", "。", "、", "？", "」"])
 def test_closing_punctuation(word):
     assert is_closing_punctuation(word)
 
@@ -46,6 +46,13 @@ def test_closing_punctuation_joins_the_word_before_its_space():
     assert [w.word for w in kept] == ["Pourquoi? ", "rockin' ", "Allez!"]
     assert [(w.start, w.end) for w in kept] == [(1.0, 1.5), (2.0, 2.4), (3.0, 3.3)]
     assert all(w.confidence == 0.9 for w in kept)
+
+
+def test_full_width_punctuation_joins_the_character_before_it():
+    """Chinese and Japanese are transcribed character by character: their marks are words of their own."""
+    words = [_word("你 ", 1.0, 1.2), _word("好 ", 1.2, 1.4), _word("， ", 1.4, 1.5), _word("世 ", 1.6, 1.8),
+             _word("界 ", 1.8, 2.0), _word("。 ", 2.0, 2.1)]
+    assert [w.word for w in sung_words(words)] == ["你 ", "好， ", "世 ", "界。 "]
 
 
 def test_punctuation_before_the_first_word_is_left_out():

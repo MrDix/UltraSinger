@@ -15,8 +15,9 @@ from dataclasses import replace
 from modules.Speech_Recognition.TranscribedData import TranscribedData
 
 _WORD_CHAR_RE = re.compile(r"\w")
-# Punctuation that closes the word before it: "Hello .", "hey \"", "oh ..."
-_CLOSING_PUNCTUATION_RE = re.compile(r"[.,;:!?…\"'”’»]+")
+# Punctuation that closes the word before it: "Hello .", "hey \"", "oh ...",
+# also the full-width marks of Chinese and Japanese ("。", "、", "？", "」")
+_CLOSING_PUNCTUATION_RE = re.compile(r"[.,;:!?…\"'”’»。、，！？；：」』]+")
 # Symbols that are sung as words: "you & me" ("and"), "1 + 1", "100 %", "I ♥ you"
 _SUNG_SYMBOL_RE = re.compile(r"[&+%$€£¥#@=°♥❤♡]")
 

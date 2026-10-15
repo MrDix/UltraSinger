@@ -89,6 +89,31 @@ class ConvertToTranscribedDataTest(unittest.TestCase):
         self.assertEqual(printed.call_count, 1)
         self.assertIn('"1990"', printed.call_args.args[0])
 
+    def test_punctuation_joins_a_word_without_timestamp(self):
+        """The joined word keeps waiting for its place, which it gets after the word before it."""
+        result_aligned = {"segments": [{"words": [
+            {"word": "Hello", "start": 1.0, "end": 1.5, "score": 0.9}, {"word": "1990"}, {"word": "?"}]}]}
+
+        with patch("builtins.print") as printed:
+            transcribed_data = convert_to_transcribed_data(result_aligned)
+
+        self.assertEqual([d.word for d in transcribed_data], ["Hello ", "1990? "])
+        self.assertAlmostEqual(transcribed_data[1].start, 1.6)
+        self.assertAlmostEqual(transcribed_data[1].end, 1.7)
+        self.assertIn('"1990?"', printed.call_args.args[0])
+
+    def test_first_sung_word_without_timestamp_after_a_music_note(self):
+        """A music note left out before it does not count: the word is placed at the beginning."""
+        result_aligned = {"segments": [{"words": [
+            {"word": "♪"}, {"word": "1990"}, {"word": "la", "start": 2.0, "end": 2.5, "score": 0.9}]}]}
+
+        with patch("builtins.print") as printed:
+            transcribed_data = convert_to_transcribed_data(result_aligned)
+
+        self.assertEqual([(d.word, d.start, d.end) for d in transcribed_data],
+                         [("1990 ", 0.0, 0.1), ("la ", 2.0, 2.5)])
+        self.assertIn("placing it at beginning", printed.call_args.args[0])
+
     def test_number_to_words_converts(self):
         #Original, test with no language passed
         self.act_and_assert("I have 1 million dollars and 2 cents.", "I have one million dollars and two cents.")

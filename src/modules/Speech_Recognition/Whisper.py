@@ -444,7 +444,7 @@ def convert_to_transcribed_data(result_aligned):
                 msg = f'Error: There is no timestamp for word: "{vtd.word.strip()}". ' \
                     f'Fixing it by placing it at beginning. At start: {vtd.start} end: {vtd.end}. Fix it manually!'
             else:
-                previous = transcribed_data[-1] if len(transcribed_data) != 0 else TranscribedData()
+                previous = transcribed_data[-1]
                 vtd.start = previous.end + 0.1
                 vtd.end = previous.end + 0.2
                 msg = f'Error: There is no timestamp for word: "{vtd.word.strip()}". ' \
