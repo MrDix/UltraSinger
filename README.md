@@ -4,7 +4,6 @@
 
 ![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/MrDix/UltraSinger/main.yml)
 [![GitHub](https://img.shields.io/github/license/MrDix/UltraSinger)](https://github.com/MrDix/UltraSinger/blob/main/LICENSE)
-[![CodeFactor](https://www.codefactor.io/repository/github/rakuri255/ultrasinger/badge)](https://www.codefactor.io/repository/github/rakuri255/ultrasinger)
 [![Check Requirements](https://github.com/MrDix/UltraSinger/actions/workflows/main.yml/badge.svg)](https://github.com/MrDix/UltraSinger/actions/workflows/main.yml)
 [![Tests (fork)](https://github.com/MrDix/UltraSinger/actions/workflows/tests.yml/badge.svg)](https://github.com/MrDix/UltraSinger/actions/workflows/tests.yml)
 
