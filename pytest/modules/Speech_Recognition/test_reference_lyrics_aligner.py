@@ -169,6 +169,67 @@ class TestParsePlainLyrics:
         assert parse_plain_lyrics("") == []
         assert parse_plain_lyrics("[Intro]\n(x2)\n\n") == []
 
+    def test_labels_and_repeat_marks_without_brackets(self):
+        plain = ("Chorus\nHello world x2\nx2\nRepeat chorus\nVerse 2\nSay it 2x\nPre-Chorus x2\nSolo\n"
+                 "Chorus (x2)\nRepeat Chorus x3\n3 times\nOutro\nChorus 2x\nVerse 2x\nChorus: x2\n(Chorus) x2\n"
+                 "Chorus 2 times\nCHORUS\nHook\nBridge\nRefrain\nPre Chorus\nChorus ×2\nx 2\nx2 x2")
+        assert parse_plain_lyrics(plain) == ["Hello world", "Say it"]
+
+    def test_repeat_marks_before_punctuation_and_backing_vocals(self):
+        assert parse_plain_lyrics("Come on x2!\nHello world x2 (oh)\n(oh) x2\nGo x2,\nStay 2x;\nWait x2…\n"
+                                  "Say \"hey x2\"\nHello x2, oh") == [
+            "Come on!", "Hello world \x00oh", "\x00oh", "Go,", "Stay;", "Wait…", "Say \"hey\"",
+            "Hello x2, oh"]
+
+    def test_punctuation_and_symbols_are_no_words(self):
+        # a word of punctuation or symbols alone would become a note of its own
+        plain = ("Hello world (x2).\nSay \"hey (x2)\"\nHello - world\n♪ La la ♪\n(oh) .\nrockin '\n"
+                 "Hello , world\nHello ... world\n[[oh]] ]\nyou & me\n1 + 1 is 100 %\nI ♥ you")
+        assert parse_plain_lyrics(plain) == [
+            "Hello world.", "Say \"hey\"", "Hello world", "La la", "\x00oh.", "rockin'", "Hello, world",
+            "Hello... world", "\x00oh", "you & me", "1 + 1 is 100 %", "I ♥ you"]
+        segs = parse_lrc_synced_lyrics("[00:10.00] Hello , world -\n[00:12.00] ♪")
+        assert [(s["text"], s["start"]) for s in segs] == [("Hello, world", 10.0)]
+
+    def test_labels_with_a_repeat_mark_and_punctuation(self):
+        # the repeat mark makes the line a label; a label alone with punctuation may be sung
+        plain = ("Chorus x2,\nVerse 2x!\n2x Refrain.\nPre-Chorus x2;\nChorus 2 times…\nChorus (x2).\n(x2) Solo!\n"
+                 "Chorus,\nSolo!\nHello world (x2).\nHello (x2) Chorus.")
+        assert parse_plain_lyrics(plain) == ["Chorus,", "Solo!", "Hello world.", "Hello Chorus."]
+        segs = parse_lrc_synced_lyrics("[00:10.00] Chorus x2,\n[00:12.00] Hello")
+        assert [(s["text"], s["start"]) for s in segs] == [("Hello", 12.0)]
+
+    def test_lines_that_are_only_a_repeat_mark_with_punctuation_or_only_punctuation(self):
+        assert parse_plain_lyrics("x2,\n2x!\n(x2),\n(x2).\n...\n♪\nLa la la!\n2x Hey") == ["La la la!", "2x Hey"]
+
+    def test_labels_with_nested_repeat_marks(self):
+        # a repeat mark inside a bracketed label, and a label in double brackets
+        plain = ("[Refrain (2x)]\n[[Refrain (2x)]]\n(Chorus (x2))\n[Chorus 2x]\n[Chorus ×2]\n[Pre Chorus]\n"
+                 "[[1. Strophe:]]\n2. Strophe\nCoro\n(Estribillo)\n2x Refrain\n[2x Refrain]\n((Chorus))\n{{Chorus}}\n"
+                 "[Guitar Solo]\nGuitar Solo\nSung line")
+        assert parse_plain_lyrics(plain) == ["Sung line"]
+        # backing vocals around stray brackets stay backing vocals, in double brackets too
+        assert parse_plain_lyrics("Hello ( oh yeah ) world\n[[oh yeah]] go\n((oh)) yeah") == [
+            "Hello \x00oh \x00yeah world", "\x00oh \x00yeah go", "\x00oh yeah"]
+
+    def test_lines_that_only_start_and_end_with_brackets_are_sung(self):
+        assert parse_plain_lyrics("(Chorus) and (Verse)\n(Bridge) over (water)") == [
+            "\x00Chorus and \x00Verse", "\x00Bridge over \x00water"]
+
+    def test_words_that_only_look_like_labels_are_sung(self):
+        # shouted words, labels among other words, and numbers that are no repeat marks
+        plain = ("Break\nBreakdown\nChorus of voices\nThe bridge is falling\nRepeat after me\n"
+                 "Call me 2 times\nx marks the spot\nFlying at 2x speed")
+        assert parse_plain_lyrics(plain) == ["Break", "Breakdown", "Chorus of voices", "The bridge is falling",
+                                             "Repeat after me", "Call me 2 times", "x marks the spot",
+                                             "Flying at 2x speed"]
+
+    def test_synced_lines_without_brackets(self):
+        segs = parse_lrc_synced_lyrics("[00:10.00] Chorus\n[00:12.00] Hello world x2\n[00:14.00] x2\n[00:16.00] End")
+        assert [(s["text"], s["start"]) for s in segs] == [("Hello world", 12.0), ("End", 16.0)]
+        # the dropped lines leave no hole
+        assert [s["end"] for s in segs] == [16.0, 26.0]
+
 
 # ---------------------------------------------------------------------------
 # Pitch assignment

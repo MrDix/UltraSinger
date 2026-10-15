@@ -67,17 +67,37 @@ from modules.Speech_Recognition.lyrics_alignment import (
 _LRC_TAG_RE = re.compile(r"\s*(\[[^\]]*\]|\([^)]*\)|\{[^}]*\})")
 _LRC_TIME_RE = re.compile(r"(\d+):(\d+(?:\.\d+)?)")
 _LRC_ID_TAG_RE = re.compile(r"[A-Za-z#]+:")
-_LRC_SECTION_RE = re.compile(
-    r"(?:pre-?|post-?)?(?:chorus|verse|bridge|intro|outro|hook|refrain|interlude|instrumental|solo|break"
-    r"|breakdown|coda)(?:\s*\d+)?(?:\s*x\s*\d+)?(?:\s*:.*)?",
-    re.IGNORECASE,
-)
 # A repeat mark: "x2", "2x", "3 times", "repeat", "repeat chorus x2" (not
 # "twice": "(twice)" may be a sung echo)
 _REPEAT = r"(?:[x×]\s*\d+|\d+\s*[x×]|\d+\s*times)"
 _REPEAT_RE = re.compile(rf"{_REPEAT}|repeat(?:\s*chorus)?(?:\s*{_REPEAT})?", re.IGNORECASE)
 # A repeat mark in brackets anywhere in a line: "Hello world (x2)"
 _REPEAT_MARK_RE = re.compile(rf"[\(\[\{{]\s*(?:{_REPEAT_RE.pattern})\s*[\)\]\}}]", re.IGNORECASE)
+# The name of a section: "Chorus", "Pre-Chorus", "Pre Chorus", "1. Strophe",
+# "2x Refrain", "Guitar Solo" (also the words for verse and chorus in German,
+# Spanish and Italian lyrics)
+_LABEL = (rf"(?:{_REPEAT}\s*:?\s*)?(?:\d+\.?\s*)?(?:(?:pre|post)[-\s]?)?"
+          r"(?:chorus|verse|bridge|intro|outro|hook|refrain|interlude|instrumental|coda|strophe|strofa|coro"
+          r"|estribillo|ritornello|(?:(?:guitar|drum|drums|bass|piano|keyboard|sax|synth)\s+)?solo)")
+# A section label: "Chorus", "Verse 2", "Chorus x2", "Verse 1: Artist"
+_LRC_SECTION_RE = re.compile(
+    rf"(?:{_LABEL}|(?:(?:pre|post)[-\s]?)?break(?:down)?)(?:\s*\d+)?(?:\s*{_REPEAT})?(?:\s*:.*)?",
+    re.IGNORECASE,
+)
+# A section label without brackets, alone on its line: "Chorus", "Verse 2",
+# "Pre-Chorus x2" (not "Break" or "Breakdown": these may be shouted)
+_BARE_LABEL_RE = re.compile(rf"{_LABEL}(?:\s*\d+)?(?:\s*{_REPEAT})?", re.IGNORECASE)
+# A repeat mark without brackets at the end of a line, before closing
+# punctuation or backing vocals: "Hello world x2", "Come on x2!", "Go x2,"
+_TRAILING_REPEAT_RE = re.compile(
+    r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.,;:!?…\"'”’]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
+_BRACKET_CHAR_RE = re.compile(r"[\[\]\(\)\{\}]")
+_WORD_CHAR_RE = re.compile(r"\w")
+_REPEAT_IN_TEXT_RE = re.compile(_REPEAT, re.IGNORECASE)
+# Punctuation that closes the word before it: "Hello .", "hey \"", "oh ..."
+_CLOSING_PUNCTUATION_RE = re.compile(r"[.,;:!?…\"'”’»]+")
+# Symbols that are sung as words: "you & me" ("and"), "1 + 1", "100 %", "I ♥ you"
+_SUNG_SYMBOL_RE = re.compile(r"[&+%$€£¥#@=°♥❤♡]")
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
@@ -90,15 +110,22 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
 
     Brackets at the start of the line are time tags (``"[01:23.45]"``), ID
     tags (``"[ar:Artist]"``), section labels (``"[Chorus]"``,
-    ``"[Verse 2]"``), repeat marks (``"(x2)"``) or backing vocals. Repeat
-    marks are not sung wherever they are, and neither is a line that is only
-    a section label in other brackets (``"(Chorus)"``) or with a colon
-    (``"Chorus:"``). Word times of enhanced LRC (``"<00:12.50>"``) are left
-    out. The other brackets are backing vocals: their words are prefixed
-    with ``\\x00`` (see ``_mark_bracketed_words``).
+    ``"[Verse 2]"``, also nested: ``"[[Refrain (2x)]]"``), repeat marks
+    (``"(x2)"``) or backing vocals. Repeat marks are not sung wherever they
+    are, and neither is a line that is only a section label in other
+    brackets (``"(Chorus)"``), with a colon (``"Chorus:"``) or alone
+    (``"Chorus"``, ``"Verse 2"``, ``"2x Refrain"``, ``"1. Strophe"``; not
+    ``"Break"``, which may be shouted), or only a repeat mark without
+    brackets (``"x2"``, ``"Repeat chorus"``), nor ``"x2"`` at the end of a
+    line. Word times of enhanced LRC (``"<00:12.50>"``) are left out. The
+    other brackets are backing vocals: their words are prefixed with
+    ``\\x00`` (see ``_mark_bracketed_words``).
     """
     times: list[float] = []
     sung: list[str] = []  # backing vocals among the brackets at the start
+    # Repeat marks in brackets go first, also inside another bracket ("[Refrain (2x)]")
+    bracketed_mark = _REPEAT_MARK_RE.search(raw_line) is not None
+    raw_line = _REPEAT_MARK_RE.sub(" ", raw_line)
     pos = 0
     while m := _LRC_TAG_RE.match(raw_line, pos):
         bracket = m.group(1)
@@ -107,18 +134,38 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
         if time_tag:
             times.append(int(time_tag.group(1)) * 60 + float(time_tag.group(2)))
         elif not ((bracket.startswith("[")
-                   and (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(content)))
+                   and (_LRC_ID_TAG_RE.match(content) or _LRC_SECTION_RE.fullmatch(_label_text(content))))
                   or _REPEAT_RE.fullmatch(content)):
             sung.append(bracket)
         pos = m.end()
-    rest = _REPEAT_MARK_RE.sub(" ", raw_line[pos:])
-    text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [rest])).split())
-    # Only a label: "(Chorus)", "{Verse 2}", "Chorus:" (but "(Break) it down" is sung)
-    whole = _LRC_TAG_RE.fullmatch(text)
-    if ((whole and whole.group(1)[0] in "({" and _LRC_SECTION_RE.fullmatch(whole.group(1)[1:-1].strip()))
+    text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [raw_line[pos:]])).split())
+    # A label with a repeat mark before closing punctuation: "Chorus x2,", "2x Refrain!",
+    # "Chorus (x2)." (a label alone with punctuation, "Chorus.", may be sung and stays)
+    bare = text.rstrip(".,;:!?…")
+    if (bare != text and (bracketed_mark or _REPEAT_IN_TEXT_RE.search(bare))
+            and _BARE_LABEL_RE.fullmatch(bare.strip())):
+        text = ""
+    # A repeat mark without brackets at the end: "Hello world x2", "Chorus 2x"
+    text = _TRAILING_REPEAT_RE.sub("", text)
+    # Only a label: "(Chorus)", "{Verse 2}", "((Chorus))", "Chorus:" (but "(Break) it down" is sung)
+    inner = text.strip(" ({})")
+    in_brackets = text[:1] in ("(", "{") and text[-1:] in (")", "}") and not _BRACKET_CHAR_RE.search(inner)
+    if ((in_brackets and _LRC_SECTION_RE.fullmatch(inner))
             or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
         text = ""
+    # Labels and repeat marks without brackets: a line that is only "Chorus",
+    # "Verse 2", "x2" or "Repeat chorus" (also "x2,"); and a line that is
+    # only punctuation (the "," left of "(x2),")
+    if (_BARE_LABEL_RE.fullmatch(text) or _REPEAT_RE.fullmatch(text.rstrip(".,;:!?…"))
+            or not _WORD_CHAR_RE.search(text)):
+        text = ""
     return times, _mark_bracketed_words(text)
+
+
+def _label_text(content: str) -> str:
+    """The content of a bracket as it is compared with the section labels:
+    without stray brackets of a nested one ("[[Refrain]]" is "Refrain")."""
+    return content.strip(" []{}()")
 
 
 def parse_lrc_synced_lyrics(
@@ -224,7 +271,23 @@ def _mark_bracketed_words(text: str) -> str:
     after = text[last_end:].strip()
     if after:
         result_parts.append(after)
-    return " ".join(result_parts) if result_parts else text
+    marked = " ".join(result_parts) if result_parts else text
+    # Bracket characters left over by a nested pair ("[[oh yeah]]") are not sung,
+    # nor is a word of punctuation or symbols alone: it would be aligned as a
+    # note of its own. Closing punctuation goes to the word before it ("Hello
+    # (oh) ." -> "Hello \x00oh."), dashes and music notes ("-", "♪") are left
+    # out; symbols that are sung as words ("&", "+", "%") stay.
+    words = []
+    for w in marked.split():
+        word = w.replace("\x00", "").strip("[](){}")
+        if not word:
+            continue
+        if not _WORD_CHAR_RE.search(word) and not _SUNG_SYMBOL_RE.search(word):
+            if words and _CLOSING_PUNCTUATION_RE.fullmatch(word):
+                words[-1] += word
+            continue
+        words.append(("\x00" if w.startswith("\x00") else "") + word)
+    return " ".join(words)
 
 
 # ---------------------------------------------------------------------------
