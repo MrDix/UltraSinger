@@ -22,6 +22,7 @@ from modules.name_matching import (
     normalize_name,
     similarity,
     strip_title_additions,
+    title_before_dash,
     titles_match,
 )
 
@@ -103,7 +104,9 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     can list different versions of the song. When the title carries
     additions from a video title ("(Official Video)", "- US Version",
     "[HD]", "feat. Guest") and nothing is found with them, both searches are
-    repeated without (``verbose`` reports that).
+    repeated without, and then with the title before a dash that a
+    description follows ("Title - Singer Name live in the studio", see
+    ``title_before_dash``); ``verbose`` reports that.
 
     Only results whose artist and title match are taken. Of several
     versions of the song, the one closest in length to the audio
@@ -112,14 +115,17 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     """
     if not (artist or "").strip() or not (title or "").strip():
         return None
-    stripped = strip_title_additions(title)
-    same = " ".join(stripped.split()).casefold() == " ".join(title.split()).casefold()
-    titles = [title] if same else [title, stripped]
+    titles, seen = [], set()  # (title, how it was shortened)
+    for wanted, how in ((title, ""), (strip_title_additions(title), "without the additions to the title"),
+                        (title_before_dash(title), "with the title before the dash")):
+        key = " ".join(wanted.split()).casefold()
+        if key and key not in seen:
+            seen.add(key)
+            titles.append((wanted, how))
     found = None
-    for i, wanted in enumerate(titles):
-        if i and verbose:
-            print(f"{ULTRASINGER_HEAD} Searching LRCLIB again without the additions to the title: "
-                  f"{blue_highlighted(wanted)}")
+    for wanted, how in titles:
+        if how and verbose:
+            print(f"{ULTRASINGER_HEAD} Searching LRCLIB again {how}: {blue_highlighted(wanted)}")
         results = [result for result in (_search_by_fields(artist, wanted, duration),
                                          _search_by_query(f"{artist} {wanted}", artist, wanted, duration))
                    if result is not None]

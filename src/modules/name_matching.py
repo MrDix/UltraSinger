@@ -53,7 +53,7 @@ _AMBIGUOUS_FOLLOW = (
 )
 _ADDITION_END = (
     r"version|edit|mix|remix|remaster(?:ed)?|cut|vid[eé]o|audio|lyrics?|visuali[sz]er|hd|4k"
-    r"|edition|demo|karaoke|instrumental|sessions?|soundtrack|recording|acoustic"
+    r"|edition|demo|karaoke|instrumental|sessions?|soundtrack|recording|acoustic|performance|playthrough"
 )
 
 
@@ -81,6 +81,25 @@ _OFFICIAL_RE = re.compile(
 )
 # A trailing quality mark: "HD", "HQ", "4K", "1080p"
 _QUALITY_RE = re.compile(r"(?:\s+(?:hd|hq|4k|8k|\d{3,4}p))+\s*$", re.IGNORECASE)
+# What a video title puts after a dash is a description of the video, not a
+# part of the song title, from this many words on (see title_before_dash)
+DESCRIPTION_WORDS = 3
+# A Roman number up to ten ("I" to "X")
+_ROMAN = r"(?:i{1,3}|iv|vi{0,3}|ix|x)"
+# A word that names a part of a work ("Part Two", "Vol. 3", "Chapter II",
+# "The Second Movement", "Part2", "No. V")
+_PART_WORD_RE = re.compile(
+    rf"\b(?:part|pt|vol|volume|chapter|act|movement|episode|book)\b|\b(?:part|pt|vol|no)\.?\s*\d{{1,3}}\b"
+    # a Roman number after "No" only with the period: "No I won't" is a sentence
+    rf"|\b(?:part|pt|vol)\.?\s*{_ROMAN}\b|\bno\.\s*{_ROMAN}\b",
+    re.IGNORECASE)
+# A part or volume number standing alone ("3", "II"), not a year. Of the
+# Roman numbers, "I", "V" and "X" only count at the start: elsewhere they are
+# words ("I"), or join names ("Singer x Rapper").
+_PART_NUMBER_RE = re.compile(rf"^\s*{_ROMAN}\b|\b(?:\d{{1,3}}|ii|iii|iv|vi|vii|viii|ix)\b|" + _PART_WORD_RE.pattern,
+                             re.IGNORECASE)
+# A dashed part that is only a part number ("3", "I", "IV")
+_BARE_PART_NUMBER_RE = re.compile(rf"\s*(?:\d{{1,3}}|{_ROMAN})\s*", re.IGNORECASE)
 
 
 def _clean(s: str) -> str:
@@ -155,13 +174,44 @@ def strip_title_additions(title: str) -> str:
     s = _BRACKETS_RE.sub(lambda m: " " if _is_addition(m.group(0)[1:-1], in_brackets=True) else m.group(0),
                          title or "")
     for separator in _SEPARATOR_RE.finditer(s):
-        if separator.group(1) in ("|", "//") or _is_addition(s[separator.end():]):
-            s = s[:separator.start()]
-            break
+        rest = s[separator.end():]
+        if separator.group(1) not in ("|", "//"):
+            # A dashed part that names a part of the work stays, even when an
+            # addition follows it: "Title - Part 2 - Live Performance"
+            part = _SEPARATOR_RE.split(rest, maxsplit=1)[0]
+            if not _is_addition(part) and (_PART_WORD_RE.search(part) or _BARE_PART_NUMBER_RE.fullmatch(part)):
+                continue
+            # An addition, alone ("- Live - Some Festival") or with what follows
+            if not (_is_addition(part) or _is_addition(rest)):
+                continue
+        s = s[:separator.start()]
+        break
     s = _FEATURING_RE.sub("", s)
     s = _OFFICIAL_RE.sub("", s)
     s = _QUALITY_RE.sub("", s)
     return " ".join(s.split()) or (title or "").strip()
+
+
+def title_before_dash(title: str) -> str:
+    """The title before the dash that a video title puts a description
+    after ("Title - Singer Name live in the studio"), to search with when
+    nothing was found with the whole title; "" when there is none.
+
+    What follows the first dash (after strip_title_additions) is taken for
+    a description when it has at least DESCRIPTION_WORDS words, no part or
+    volume number and no further dash: "Title - Part Two" or "Title -
+    Reprise" can name another song, "Title - Part 2 of the Story" too, and
+    "Song A - Song B - Song C" is a medley.
+    """
+    s = strip_title_additions(title)
+    separator = _SEPARATOR_RE.search(s)
+    if separator is None or separator.group(1) in ("|", "//"):
+        return ""
+    before, rest = s[:separator.start()].strip(), s[separator.end():]
+    if (not before or len(rest.split()) < DESCRIPTION_WORDS or _PART_NUMBER_RE.search(rest)
+            or _SEPARATOR_RE.search(rest)):
+        return ""
+    return strip_title_additions(before)
 
 
 def _title_words(title: str) -> str:

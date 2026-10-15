@@ -2,7 +2,7 @@
 
 import unittest
 
-from src.modules.name_matching import similarity, strip_title_additions, titles_match
+from src.modules.name_matching import similarity, strip_title_additions, title_before_dash, titles_match
 
 
 class TestStripTitleAdditions(unittest.TestCase):
@@ -50,6 +50,28 @@ class TestStripTitleAdditions(unittest.TestCase):
             "Song Title (Clip Vidéo)": "Song Title",
             "Song Title (Video Official)": "Song Title",
             "Song Title (Letra Oficial)": "Song Title",
+            "Song Title - Singer Name live one take performance": "Song Title",
+            "Song Title (Acoustic Performance)": "Song Title",
+            "Song Title - Drum Playthrough": "Song Title",
+            "Song Title - Some Name - Remix": "Song Title",
+            "Song Title - 4K": "Song Title",
+            "Song Title - Remastered 09": "Song Title",
+            # a part of the work stays, also before an addition
+            "Song Title - Part 2 - Live Performance": "Song Title - Part 2",
+            "Song Title - Vol. 3 - Official Video": "Song Title - Vol. 3",
+            "Song Title - No. 5 - Official Audio": "Song Title - No. 5",
+            "Song Title - II - Lyric Video": "Song Title - II",
+            "Song Title - I - Live Performance": "Song Title - I",
+            "Song Title - V - Official Video": "Song Title - V",
+            "Song Title - X - Lyric Video": "Song Title - X",
+            "Song Title - No I Won't - Official Video": "Song Title",
+            # a numbered description does not
+            "Song Title - Take 2 - Official Video": "Song Title",
+            "Song Title - Week 3 - Official Video": "Song Title",
+            "Song Title - No Edits - Official Video": "Song Title",
+            "Song Title - Part 2 - Take 3 - Official Video": "Song Title - Part 2",
+            # an addition before a description
+            "Song Title - Live - Some Festival 2020": "Song Title",
         }
         for title, expected in cases.items():
             with self.subTest(title=title):
@@ -71,6 +93,38 @@ class TestStripTitleAdditions(unittest.TestCase):
     def test_nothing_left(self):
         self.assertEqual(strip_title_additions("(Official Video)"), "(Official Video)")
         self.assertEqual(strip_title_additions(""), "")
+
+
+class TestTitleBeforeDash(unittest.TestCase):
+    def test_description_after_the_dash(self):
+        for title in ("Song Title - Singer Name in the studio", "Song Title – some words about the band",
+                      "Song Title — some words about the band",
+                      "Song Title - Singer Name in the studio (Official Video)",
+                      "Song Title - Singer Name live, one take", "Song Title - at home with the band 2020",
+                      "Song Title HD - Singer Name in the studio",
+                      # "x" and "I" inside the description are words, not part numbers
+                      "Song Title - Singer x Rapper live at home", "Song Title - live as I sing it"):
+            with self.subTest(title=title):
+                self.assertEqual(title_before_dash(title), "Song Title")
+        # as the song database search passes it, and with a part in brackets
+        self.assertEqual(title_before_dash("song title - singer name in the studio"), "song title")
+        self.assertEqual(title_before_dash("Song Title (Part 2) - Singer Name in the studio"), "Song Title (Part 2)")
+
+    def test_no_description(self):
+        for title in ("Song Title", "Song Title - Reprise", "Song Title - Two Words",
+                      "Song Title - Part 2 of the Story", "Song Title - Part Two of It",
+                      "Song Title - Vol. 3 of the Series", "Song Title - Chapter II of It",
+                      "Song Title - the 1 and only", "Song Title - Live at Some Place",
+                      "Hyphen-Word Title with more words", " - Some Words Without Title",
+                      # a medley, a separator that is no dash, a work in movements
+                      "Song A - Song B - Song C", "Song Title | Singer Name in the studio",
+                      "(Official Video) | Label Name Words", "Song Title - The Second Movement",
+                      "Song Title - Part2 of the Story", "Song Title - Vol3 of the Series",
+                      # a Roman part number at the start of the rest, or after "No."
+                      "Song Title - V live in the studio", "Song Title - I and the band live",
+                      "Song Title - No. V of the Cycle"):
+            with self.subTest(title=title):
+                self.assertEqual(title_before_dash(title), "")
 
 
 class TestTitlesMatch(unittest.TestCase):
