@@ -158,11 +158,12 @@ def test_the_uv_installer_is_pinned_to_one_version_everywhere():
     assert image, "the Dockerfile does not install a pinned uv"
     versions["Dockerfile"] = set(image)
     # the setup action, which takes the release as "version": every use of it in
-    # every workflow (the test workflow has one)
-    for workflow in sorted((REPO / ".github/workflows").glob("*.yml")):
-        text = workflow.read_text(encoding="utf-8")
-        uses = re.findall(r"uses: astral-sh/setup-uv@", text)
-        pinned = re.findall(r"uses: astral-sh/setup-uv@\S+(?:\s+\w[\w-]*: [^\n]*)*?\s+with:"
+    # every workflow (the test workflow has one), commented-out lines aside
+    workflows = REPO / ".github/workflows"
+    for workflow in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
+        text = re.sub(r"(?m)^\s*#.*$", "", workflow.read_text(encoding="utf-8"))
+        uses = re.findall(r"uses:\s+['\"]?astral-sh/setup-uv@", text)
+        pinned = re.findall(r"uses:\s+['\"]?astral-sh/setup-uv@\S+(?:\s+#[^\n]*|\s+\w[\w-]*: [^\n]*)*?\s+with:"
                             r"(?:\s+#[^\n]*|\s+\w[\w-]*: [^\n]*)*?\s+version: ['\"]?([^'\"\s]+)", text)
         assert len(pinned) == len(uses), f"{workflow.name} sets up uv without a pinned version"
         if uses:
