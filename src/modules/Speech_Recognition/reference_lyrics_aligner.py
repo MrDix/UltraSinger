@@ -96,8 +96,8 @@ _WORD_CHAR_RE = re.compile(r"\w")
 _REPEAT_IN_TEXT_RE = re.compile(_REPEAT, re.IGNORECASE)
 # Punctuation that closes the word before it: "Hello .", "hey \"", "oh ..."
 _CLOSING_PUNCTUATION_RE = re.compile(r"[.,;:!?…\"'”’»]+")
-# Symbols that are sung as words: "you & me" ("and"), "1 + 1", "100 %"
-_SUNG_SYMBOL_RE = re.compile(r"[&+%$€£¥#@=°]")
+# Symbols that are sung as words: "you & me" ("and"), "1 + 1", "100 %", "I ♥ you"
+_SUNG_SYMBOL_RE = re.compile(r"[&+%$€£¥#@=°♥❤♡]")
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 

@@ -184,10 +184,10 @@ class TestParsePlainLyrics:
     def test_punctuation_and_symbols_are_no_words(self):
         # a word of punctuation or symbols alone would become a note of its own
         plain = ("Hello world (x2).\nSay \"hey (x2)\"\nHello - world\n♪ La la ♪\n(oh) .\nrockin '\n"
-                 "Hello , world\nHello ... world\n[[oh]] ]\nyou & me\n1 + 1 is 100 %")
+                 "Hello , world\nHello ... world\n[[oh]] ]\nyou & me\n1 + 1 is 100 %\nI ♥ you")
         assert parse_plain_lyrics(plain) == [
             "Hello world.", "Say \"hey\"", "Hello world", "La la", "\x00oh.", "rockin'", "Hello, world",
-            "Hello... world", "\x00oh", "you & me", "1 + 1 is 100 %"]
+            "Hello... world", "\x00oh", "you & me", "1 + 1 is 100 %", "I ♥ you"]
         segs = parse_lrc_synced_lyrics("[00:10.00] Hello , world -\n[00:12.00] ♪")
         assert [(s["text"], s["start"]) for s in segs] == [("Hello, world", 10.0)]
 
