@@ -11,7 +11,7 @@ def test_words_with_something_to_sing(word):
     assert is_sung(word)
 
 
-@pytest.mark.parametrize("word", ["♪", "♪♪", "-", "--", "...", "'", "?", "!", "¿", "«", "", " "])
+@pytest.mark.parametrize("word", ["♪", "♪♪", "-", "--", "...", "'", "?", "!", "¿", "«", "", " ", "_", "___"])
 def test_words_with_nothing_to_sing(word):
     assert not is_sung(word)
 

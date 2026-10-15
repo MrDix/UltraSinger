@@ -191,6 +191,10 @@ class TestParsePlainLyrics:
         segs = parse_lrc_synced_lyrics("[00:10.00] Hello , world -\n[00:12.00] ♪")
         assert [(s["text"], s["start"]) for s in segs] == [("Hello, world", 10.0)]
 
+    def test_underscores_are_not_sung(self):
+        # a blank to fill in, or a line of them as a separator
+        assert parse_plain_lyrics("Hello ___ world\n______\nla_la") == ["Hello world", "la_la"]
+
     def test_full_width_punctuation_joins_the_word_before_it(self):
         assert parse_plain_lyrics("こんにちは 、 世界 。\nこんにちは、世界。\n」") == ["こんにちは、 世界。", "こんにちは、世界。"]
         segs = parse_lrc_synced_lyrics("[00:10.00] 世界 ！\n[00:12.00] 。")

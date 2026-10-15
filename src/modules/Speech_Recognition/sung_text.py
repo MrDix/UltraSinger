@@ -14,7 +14,8 @@ from dataclasses import replace
 
 from modules.Speech_Recognition.TranscribedData import TranscribedData
 
-_WORD_CHAR_RE = re.compile(r"\w")
+# A letter or a digit (a word character, but not the underscore of a blank "___")
+_WORD_CHAR_RE = re.compile(r"[^\W_]")
 # Punctuation that closes the word before it: "Hello .", "hey \"", "oh ...",
 # also the full-width marks of Chinese and Japanese ("。", "、", "？", "」")
 _CLOSING_PUNCTUATION_RE = re.compile(r"[.,;:!?…\"'”’»。、，！？；：」』]+")

@@ -93,7 +93,8 @@ _BARE_LABEL_RE = re.compile(rf"{_LABEL}(?:\s*\d+)?(?:\s*{_REPEAT})?", re.IGNOREC
 _TRAILING_REPEAT_RE = re.compile(
     r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.,;:!?…\"'”’]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
 _BRACKET_CHAR_RE = re.compile(r"[\[\]\(\)\{\}]")
-_WORD_CHAR_RE = re.compile(r"\w")
+# A letter or a digit, as in sung_text
+_WORD_CHAR_RE = re.compile(r"[^\W_]")
 _REPEAT_IN_TEXT_RE = re.compile(_REPEAT, re.IGNORECASE)
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
