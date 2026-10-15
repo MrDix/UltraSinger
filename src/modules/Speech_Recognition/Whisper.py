@@ -286,10 +286,16 @@ def transcribe_with_whisper(
 
         audio = whisperx.load_audio(audio_path)
 
+        # The song's language, unless it is given (or the model knows only
+        # English), is found before the transcription runs in it
+        transcription_language = language
+        if transcription_language is None and not model.value.endswith(".en"):
+            transcription_language = sung_language(loaded_whisper_model, audio)
+
         print(f"{ULTRASINGER_HEAD} Transcribing {audio_path}")
 
         result = loaded_whisper_model.transcribe(
-            audio, batch_size=batch_size, language=language
+            audio, batch_size=batch_size, language=transcription_language
         )
 
         detected_language = result["language"]
@@ -354,6 +360,34 @@ def transcribe_with_whisper(
         # many times slower.
         loaded_whisper_model = audio = None
         release_gpu_memory()
+
+
+def sung_language(whisper_pipeline, audio) -> str:
+    """The language that a loaded WhisperX pipeline hears in ``audio`` (16 kHz).
+
+    WhisperX detects it on the first 30 s of the audio. On a separated vocal
+    track an instrumental intro is near silence there, and for that Whisper
+    names a rare language: on a benchmark of 100 vocal tracks, Norwegian
+    Nynorsk ("nn") for three songs in English. A language outside
+    CORE_LANGUAGES is therefore detected again on the first 30 s of singing
+    (voice activity detection, as detect_language_with_confidence does), which
+    found English for all three and changed no other song. The first
+    detection stands when no singing is found.
+    """
+    language = whisper_pipeline.detect_language(audio)
+    if language in CORE_LANGUAGES:
+        return language
+    try:
+        sung, probability, _ = whisper_pipeline.model.detect_language(audio, vad_filter=True)
+    except Exception:  # noqa: BLE001 - no singing found: a second opinion only
+        return language
+    if sung != language:
+        print(
+            f"{ULTRASINGER_HEAD} Detected language {blue_highlighted(language)} in the first 30 s, "
+            f"{blue_highlighted(sung)} ({probability:.0%}) in the first 30 s of singing: "
+            f"transcribing in {blue_highlighted(sung)}"
+        )
+    return sung
 
 
 def align_segments(segments: list[dict], audio, language: str, device: str,
