@@ -195,6 +195,13 @@ class TestParsePlainLyrics:
         # a blank to fill in, or a line of them as a separator
         assert parse_plain_lyrics("Hello ___ world\n______\nla_la") == ["Hello world", "la_la"]
 
+    def test_a_line_of_symbols_is_a_separator(self):
+        # a symbol is sung among words; a line of symbols alone is not sung
+        plain = "You & me\n=====\n+++\n♥ ♥ ♥\n& % #\n100 %"
+        assert parse_plain_lyrics(plain) == ["You & me", "100 %"]
+        segs = parse_lrc_synced_lyrics("[00:10.00] You & me\n[00:12.00] =====")
+        assert [(s["text"], s["start"]) for s in segs] == [("You & me", 10.0)]
+
     def test_full_width_punctuation_joins_the_word_before_it(self):
         assert parse_plain_lyrics("こんにちは 、 世界 。\nこんにちは、世界。\n」") == ["こんにちは、 世界。", "こんにちは、世界。"]
         segs = parse_lrc_synced_lyrics("[00:10.00] 世界 ！\n[00:12.00] 。")

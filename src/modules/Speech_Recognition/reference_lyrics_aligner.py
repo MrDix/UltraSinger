@@ -152,8 +152,9 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
             or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
         text = ""
     # Labels and repeat marks without brackets: a line that is only "Chorus",
-    # "Verse 2", "x2" or "Repeat chorus" (also "x2,"); and a line that is
-    # only punctuation (the "," left of "(x2),")
+    # "Verse 2", "x2" or "Repeat chorus" (also "x2,"); and a line without a
+    # letter or a digit: punctuation (the "," left of "(x2),") or a separator
+    # ("=====", "+++", "♥ ♥ ♥"). A symbol is sung only among words (is_sung).
     if (_BARE_LABEL_RE.fullmatch(text) or _REPEAT_RE.fullmatch(text.rstrip(".,;:!?…"))
             or not _WORD_CHAR_RE.search(text)):
         text = ""
