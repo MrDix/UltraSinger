@@ -191,6 +191,9 @@ class LogViewer(QPlainTextEdit):
                 self._message_due = not _GOES_ON_RE.search(self._previous_line)
         else:
             self._warning_source_due = _PYTHON_WARNING_RE.search(text) is not None
+            if level == _ERROR and not _CHAIN_RE.match(text):
+                # An exception without a traceback (a cause never raised) decides for its chain
+                self._message_due = not _GOES_ON_RE.search(self._previous_line)
         # A chain goes on over the empty line after its line
         self._chained = bool(_CHAIN_RE.match(text)) or (self._chained and not stripped)
         return level
