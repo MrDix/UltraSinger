@@ -92,6 +92,7 @@ _BARE_LABEL_RE = re.compile(rf"{_LABEL}(?:\s*\d+)?(?:\s*{_REPEAT})?", re.IGNOREC
 _TRAILING_REPEAT_RE = re.compile(
     r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.,;:!?…\"'”’]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
 _BRACKET_CHAR_RE = re.compile(r"[\[\]\(\)\{\}]")
+_WORD_CHAR_RE = re.compile(r"\w")
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
@@ -141,8 +142,10 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
             or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
         text = ""
     # Labels and repeat marks without brackets: a line that is only "Chorus",
-    # "Verse 2", "x2" or "Repeat chorus"
-    if _BARE_LABEL_RE.fullmatch(text) or _REPEAT_RE.fullmatch(text):
+    # "Verse 2", "x2" or "Repeat chorus" (also "x2,"); and a line that is
+    # only punctuation (the "," left of "(x2),")
+    if (_BARE_LABEL_RE.fullmatch(text) or _REPEAT_RE.fullmatch(text.rstrip(".,;:!?…"))
+            or not _WORD_CHAR_RE.search(text)):
         text = ""
     return times, _mark_bracketed_words(text)
 

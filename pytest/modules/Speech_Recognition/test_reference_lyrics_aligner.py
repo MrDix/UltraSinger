@@ -181,6 +181,9 @@ class TestParsePlainLyrics:
             "Come on!", "Hello world \x00oh", "\x00oh", "Go,", "Stay;", "Wait…", "Say \"hey\"",
             "Hello x2, oh"]
 
+    def test_lines_that_are_only_a_repeat_mark_with_punctuation_or_only_punctuation(self):
+        assert parse_plain_lyrics("x2,\n2x!\n(x2),\n(x2).\n...\n♪\nLa la la!\n2x Hey") == ["La la la!", "2x Hey"]
+
     def test_labels_with_nested_repeat_marks(self):
         # a repeat mark inside a bracketed label, and a label in double brackets
         plain = ("[Refrain (2x)]\n[[Refrain (2x)]]\n(Chorus (x2))\n[Chorus 2x]\n[Chorus ×2]\n[Pre Chorus]\n"
