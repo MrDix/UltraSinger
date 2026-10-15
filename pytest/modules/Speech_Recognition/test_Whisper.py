@@ -7,6 +7,7 @@ from src.modules.Speech_Recognition.Whisper import (
     convert_to_transcribed_data,
     number_to_words,
     detect_language_from_audio,
+    sung_language,
     transcribe_with_whisper,
     WhisperModel,
 )
@@ -301,6 +302,7 @@ class TorchLoadOverrideTest(unittest.TestCase):
             with self.assertRaises(pickle.UnpicklingError):
                 self.load(weights_only=True)  # an explicit choice is kept
             model = MagicMock()
+            model.detect_language.return_value = "en"
             model.transcribe.return_value = {"segments": [{"text": "la", "start": 0.0, "end": 1.0}],
                                              "language": "en"}
             return model
@@ -350,6 +352,12 @@ class TranscribeWithWhisperAlignModelTest(unittest.TestCase):
         import numpy as np
         mock_load_audio.return_value = np.zeros(16000, dtype=np.float32)
         mock_model = MagicMock()
+        mock_model.detect_language.return_value = detected_language
+        mock_model.model.detect_language.return_value = (detected_language, 0.9, [])
+        # a language outside the core ones is detected again in the singing: none is found here
+        vad = patch("faster_whisper.vad.get_speech_timestamps", return_value=[])
+        vad.start()
+        self.addCleanup(vad.stop)
         mock_model.transcribe.return_value = {
             "segments": [{"text": "hallo welt"}],
             "language": detected_language,
@@ -456,6 +464,96 @@ class TranscribeWithWhisperAlignModelTest(unittest.TestCase):
         )
 
 
+class SungLanguageTest(unittest.TestCase):
+    """The language of the song: a language outside the core languages, found in the first
+    30 s of a vocal track (an instrumental intro is near silence there), is detected again
+    on the first 30 s of singing."""
+
+    @staticmethod
+    def _detect(first, sung="en", singing=((2, 4), (6, 9)), vad_error=None):
+        """sung_language on ten samples, with the voice activity detection finding ``singing``."""
+        import numpy as np
+
+        pipeline = MagicMock()
+        pipeline.detect_language.return_value = first
+        pipeline.model.detect_language.return_value = (sung, 0.95, [(sung, 0.95)])
+        speech = [{"start": start, "end": end} for start, end in singing]
+        with patch("faster_whisper.vad.get_speech_timestamps", side_effect=vad_error, return_value=speech) as vad, \
+                patch("builtins.print") as printed:
+            language = sung_language(pipeline, np.arange(10, dtype=np.float32))
+        return language, pipeline, vad, printed
+
+    def test_core_language_of_the_first_30_s_is_kept(self):
+        language, pipeline, vad, _ = self._detect("de")
+        self.assertEqual(language, "de")
+        vad.assert_not_called()
+        pipeline.model.detect_language.assert_not_called()
+
+    def test_other_language_is_detected_again_on_the_singing(self):
+        language, pipeline, _, printed = self._detect("nn", "en")
+        self.assertEqual(language, "en")
+        (singing,), kwargs = pipeline.model.detect_language.call_args
+        self.assertEqual(singing.tolist(), [2, 3, 6, 7, 8])
+        self.assertEqual(kwargs, {})
+        self.assertIn("first 30 s of singing", printed.call_args.args[0])
+
+    def test_other_language_confirmed_by_the_singing(self):
+        language, _, _, printed = self._detect("sv", "sv")
+        self.assertEqual(language, "sv")
+        printed.assert_not_called()
+
+    def test_first_detection_stands_without_singing(self):
+        language, pipeline, _, printed = self._detect("nn", singing=())
+        self.assertEqual(language, "nn")
+        pipeline.model.detect_language.assert_not_called()
+        printed.assert_not_called()
+
+    def test_first_detection_stands_when_the_second_fails(self):
+        error = RuntimeError("Applying the VAD filter requires the onnxruntime package")
+        language, _, _, printed = self._detect("nn", vad_error=error)
+        self.assertEqual(language, "nn")
+        self.assertIn("could not be detected in the singing", printed.call_args.args[0])
+        self.assertIn("onnxruntime", printed.call_args.args[0])
+
+
+class TranscribeWithWhisperLanguageTest(unittest.TestCase):
+    """The transcription runs in the language found before it."""
+
+    @staticmethod
+    def _run(model, language):
+        import numpy as np
+
+        pipeline = MagicMock()
+        pipeline.detect_language.return_value = "nn"
+        pipeline.model.detect_language.return_value = ("en", 0.95, [("en", 0.95)])
+        pipeline.transcribe.side_effect = lambda audio, batch_size, language: {
+            "segments": [], "language": language or "en"}
+        with patch("whisperx.load_model", return_value=pipeline), \
+                patch("whisperx.load_audio", return_value=np.zeros(16000, dtype=np.float32)), \
+                patch("faster_whisper.vad.get_speech_timestamps", return_value=[{"start": 0, "end": 16000}]), \
+                patch("whisperx.load_align_model", return_value=(MagicMock(), {})), \
+                patch("whisperx.align", return_value={"segments": []}), \
+                patch("builtins.print"):
+            result = transcribe_with_whisper("/fake/audio.wav", model, device="cpu", language=language)
+        return pipeline, result
+
+    def test_detected_language_is_transcribed_in(self):
+        pipeline, result = self._run(WhisperModel.LARGE_V2, None)
+        self.assertEqual(pipeline.transcribe.call_args.kwargs["language"], "en")
+        self.assertEqual(result.detected_language, "en")
+
+    def test_given_language_is_not_detected(self):
+        pipeline, result = self._run(WhisperModel.LARGE_V2, "de")
+        pipeline.detect_language.assert_not_called()
+        self.assertEqual(pipeline.transcribe.call_args.kwargs["language"], "de")
+
+    def test_english_only_model_is_not_asked(self):
+        pipeline, result = self._run(WhisperModel.TINY_EN, None)
+        pipeline.detect_language.assert_not_called()
+        self.assertIsNone(pipeline.transcribe.call_args.kwargs["language"])
+        self.assertEqual(result.detected_language, "en")
+
+
 class TranscribeWithWhisperReleasesModelsTest(unittest.TestCase):
     """The models are dropped when the transcription is done, also when a
     library keeps the call's frame alive (as a stored traceback of a failed
@@ -475,6 +573,9 @@ class TranscribeWithWhisperReleasesModelsTest(unittest.TestCase):
         kept_frames, models = [], []
 
         class Model:
+            def detect_language(self, audio):
+                return "en"
+
             def transcribe(self, audio, batch_size, language):
                 return {"segments": [], "language": "en"}
 

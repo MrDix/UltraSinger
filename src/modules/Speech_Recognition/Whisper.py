@@ -8,6 +8,7 @@ from contextlib import contextmanager
 # CUDA_MODULE_LOADING=LAZY allows PyTorch to continue even if some cuDNN modules are not found
 #os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
 
+import numpy as np
 import torch
 import whisperx
 from enum import Enum
@@ -286,10 +287,16 @@ def transcribe_with_whisper(
 
         audio = whisperx.load_audio(audio_path)
 
+        # The song's language, unless it is given (or the model knows only
+        # English), is found before the transcription runs in it
+        transcription_language = language
+        if transcription_language is None and not model.value.endswith(".en"):
+            transcription_language = sung_language(loaded_whisper_model, audio)
+
         print(f"{ULTRASINGER_HEAD} Transcribing {audio_path}")
 
         result = loaded_whisper_model.transcribe(
-            audio, batch_size=batch_size, language=language
+            audio, batch_size=batch_size, language=transcription_language
         )
 
         detected_language = result["language"]
@@ -354,6 +361,47 @@ def transcribe_with_whisper(
         # many times slower.
         loaded_whisper_model = audio = None
         release_gpu_memory()
+
+
+def sung_language(whisper_pipeline, audio) -> str:
+    """The language that a loaded WhisperX pipeline hears in ``audio`` (16 kHz).
+
+    WhisperX detects it on the first 30 s of the audio. On a separated vocal
+    track an instrumental intro is near silence there, and for that Whisper
+    names a rare language: on a benchmark of 100 vocal tracks, Norwegian
+    Nynorsk ("nn") for three songs in English. A language outside
+    CORE_LANGUAGES is therefore detected again on the first 30 s of singing
+    (voice activity detection, as detect_language_with_confidence does), which
+    found English for all three and changed no other song. The first
+    detection stands when no singing is found, or when the second detection
+    fails (with a note).
+    """
+    language = whisper_pipeline.detect_language(audio)
+    if language in CORE_LANGUAGES:
+        return language
+    try:
+        from faster_whisper.vad import get_speech_timestamps
+
+        # The singing, as faster-whisper's detect_language(vad_filter=True) cuts
+        # it out, but without singing there is nothing to detect the language on
+        chunks = get_speech_timestamps(audio)
+        if not chunks:
+            return language
+        singing = np.concatenate([audio[chunk["start"]:chunk["end"]] for chunk in chunks])
+        sung, probability, _ = whisper_pipeline.model.detect_language(singing)
+    except Exception as error:  # noqa: BLE001 - a second opinion only
+        print(
+            f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the language could not be detected in the "
+            f"singing ({error}); transcribing in {blue_highlighted(language)}"
+        )
+        return language
+    if sung != language:
+        print(
+            f"{ULTRASINGER_HEAD} Detected language {blue_highlighted(language)} in the first 30 s, "
+            f"{blue_highlighted(sung)} ({probability:.0%}) in the first 30 s of singing: "
+            f"transcribing in {blue_highlighted(sung)}"
+        )
+    return sung
 
 
 def align_segments(segments: list[dict], audio, language: str, device: str,

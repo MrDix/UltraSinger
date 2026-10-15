@@ -344,6 +344,22 @@ class TestTranscribeAudioDispatch(unittest.TestCase):
         cached_run = self._run(whisper, "whisper", cached=names[0], keep_numbers=True)
         cached_run["whisper"].assert_called_once()
 
+    def test_whisper_cache_names_how_the_language_was_found(self):
+        # Without --language, Whisper's transcription runs in the language found in the singing (sung_language);
+        # transcriptions cached before, maybe in a rare language found in a silent intro, are not reused
+        from unittest.mock import patch
+
+        import src.UltraSinger as us
+        from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
+        whisper = TranscriberChoice("whisper", reason="selected")
+        with patch.object(us.settings, "language", "de"):
+            self.assertIn("_de_vad", self._run(whisper, "whisper")["files"][0])
+        with patch.object(us.settings, "language", None):
+            name = self._run(whisper, "whisper")["files"][0]
+            self.assertIn("_sung_vad", name)
+            self._run(whisper, "whisper", cached=name.replace("_sung_", "_None_"))["whisper"].assert_called_once()
+            self._run(whisper, "whisper", cached=name)["whisper"].assert_not_called()
+
     def test_cache_depends_on_the_audio(self):
         # A cache folder used again may hold the transcription of another song, separation or denoising
         from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice

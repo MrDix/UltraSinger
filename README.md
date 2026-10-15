@@ -552,6 +552,8 @@ Example for romanian:
 -i XYZ --whisper_align_model "gigant/romanian-wav2vec2"
 ```
 
+Without `--language`, Whisper finds the language of the song before it transcribes, in the first 30 s of the vocal track. An instrumental intro is near silence there, and for that Whisper may name a rare language (Norwegian Nynorsk for three songs in English, on a benchmark of 100 vocal tracks). So when the language found is not one of the languages listed above, it is detected again in the first 30 s of singing, and the song is transcribed in the language found there; on the benchmark, this gave English for the three songs and changed no other song.
+
 #### ✍️ Hyphenation
 
 Is on by default. Can also be deactivated if hyphenation does not produce
