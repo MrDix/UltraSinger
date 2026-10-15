@@ -176,8 +176,10 @@ class TestParsePlainLyrics:
         assert parse_plain_lyrics(plain) == ["Hello world", "Say it"]
 
     def test_repeat_marks_before_punctuation_and_backing_vocals(self):
-        assert parse_plain_lyrics("Come on x2!\nHello world x2 (oh)\n(oh) x2") == [
-            "Come on!", "Hello world \x00oh", "\x00oh"]
+        assert parse_plain_lyrics("Come on x2!\nHello world x2 (oh)\n(oh) x2\nGo x2,\nStay 2x;\nWait x2…\n"
+                                  "Say \"hey x2\"\nHello x2, oh") == [
+            "Come on!", "Hello world \x00oh", "\x00oh", "Go,", "Stay;", "Wait…", "Say \"hey\"",
+            "Hello x2, oh"]
 
     def test_labels_with_nested_repeat_marks(self):
         # a repeat mark inside a bracketed label, and a label in double brackets

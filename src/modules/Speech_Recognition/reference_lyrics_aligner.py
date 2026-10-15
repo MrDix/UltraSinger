@@ -88,9 +88,9 @@ _LRC_SECTION_RE = re.compile(
 # "Pre-Chorus x2" (not "Break" or "Breakdown": these may be shouted)
 _BARE_LABEL_RE = re.compile(rf"{_LABEL}(?:\s*\d+)?(?:\s*{_REPEAT})?", re.IGNORECASE)
 # A repeat mark without brackets at the end of a line, before closing
-# punctuation or backing vocals: "Hello world x2", "Come on x2!"
+# punctuation or backing vocals: "Hello world x2", "Come on x2!", "Go x2,"
 _TRAILING_REPEAT_RE = re.compile(
-    r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.!?]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
+    r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.,;:!?…\"'”’]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
 _BRACKET_CHAR_RE = re.compile(r"[\[\]\(\)\{\}]")
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
