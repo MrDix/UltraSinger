@@ -17,6 +17,7 @@ from modules.DeviceDetection.device_detection import release_gpu_memory
 from modules.Speech_Recognition.TranscriptionResult import TranscriptionResult
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted, red_highlighted
 from modules.Speech_Recognition.TranscribedData import TranscribedData, from_whisper
+from modules.Speech_Recognition.sung_text import sung_words
 
 #Addition for numbers to words
 import re
@@ -423,24 +424,31 @@ def align_segments(segments: list[dict], audio, language: str, device: str,
 
 
 def convert_to_transcribed_data(result_aligned):
-    transcribed_data = []
+    words = []
     for segment in result_aligned["segments"]:
         for obj in segment["words"]:
             vtd = from_whisper(obj)  # create custom Word object
             vtd.word = vtd.word + " "  # add space to end of word
             if len(obj) < 4:
-                #Addition for numbers to words (Using previous code from louispan in PR#135)
-                if len(transcribed_data) == 0: # if the first word doesn't have any timing data
-                    vtd.start = 0.0
-                    vtd.end = 0.1
-                    msg = f'Error: There is no timestamp for word: "{obj["word"]}". ' \
-                        f'Fixing it by placing it at beginning. At start: {vtd.start} end: {vtd.end}. Fix it manually!'
-                else:
-                    previous = transcribed_data[-1] if len(transcribed_data) != 0 else TranscribedData()
-                    vtd.start = previous.end + 0.1
-                    vtd.end = previous.end + 0.2
-                    msg = f'Error: There is no timestamp for word: "{obj["word"]}". ' \
-                          f'Fixing it by placing it after the previous word: "{previous.word}". At start: {vtd.start} end: {vtd.end}. Fix it manually!'
-                print(f"{red_highlighted(msg)}")
-            transcribed_data.append(vtd)  # and add it to list
+                vtd.start = vtd.end = None  # no timestamp: placed below
+            words.append(vtd)
+    transcribed_data = []
+    # Punctuation or a symbol alone, like the music note Whisper writes for an
+    # instrumental part ("♪"), is no note and needs no place (see sung_words)
+    for vtd in sung_words(words):
+        if vtd.start is None or vtd.end is None:
+            #Addition for numbers to words (Using previous code from louispan in PR#135)
+            if len(transcribed_data) == 0: # if the first word doesn't have any timing data
+                vtd.start = 0.0
+                vtd.end = 0.1
+                msg = f'Error: There is no timestamp for word: "{vtd.word.strip()}". ' \
+                    f'Fixing it by placing it at beginning. At start: {vtd.start} end: {vtd.end}. Fix it manually!'
+            else:
+                previous = transcribed_data[-1] if len(transcribed_data) != 0 else TranscribedData()
+                vtd.start = previous.end + 0.1
+                vtd.end = previous.end + 0.2
+                msg = f'Error: There is no timestamp for word: "{vtd.word.strip()}". ' \
+                      f'Fixing it by placing it after the previous word: "{previous.word}". At start: {vtd.start} end: {vtd.end}. Fix it manually!'
+            print(f"{red_highlighted(msg)}")
+        transcribed_data.append(vtd)  # and add it to list
     return transcribed_data

@@ -56,6 +56,39 @@ class ConvertToTranscribedDataTest(unittest.TestCase):
             self.assertEqual(transcribed_data[i].start, expected_output[i].start)
             self.assertEqual(transcribed_data[i].is_hyphen, expected_output[i].is_hyphen)
 
+    def test_words_with_nothing_to_sing_are_no_notes(self):
+        """The music note Whisper writes for an instrumental part and a dash are left out,
+        closing punctuation standing alone joins the word before it. None of them has a
+        timestamp, and none is reported as a word that needs one."""
+        result_aligned = {"segments": [
+            {"words": [{"word": "♪"}, {"word": "Pourquoi", "start": 1.0, "end": 1.5, "score": 0.9},
+                       {"word": "?"}, {"word": "-"}]},
+            {"words": [{"word": "♪"}, {"word": "Allez", "start": 3.0, "end": 3.4, "score": 0.9},
+                       {"word": "&", "start": 3.5, "end": 3.6, "score": 0.5}, {"word": "♪"}]},
+        ]}
+
+        with patch("builtins.print") as printed:
+            transcribed_data = convert_to_transcribed_data(result_aligned)
+
+        self.assertEqual([d.word for d in transcribed_data], ["Pourquoi? ", "Allez ", "& "])
+        self.assertEqual([(d.start, d.end) for d in transcribed_data], [(1.0, 1.5), (3.0, 3.4), (3.5, 3.6)])
+        printed.assert_not_called()
+
+    def test_a_word_without_timestamp_follows_the_sung_word_before(self):
+        """A word without timestamp is placed after the word before it that is sung, not after
+        a music note that is left out."""
+        result_aligned = {"segments": [{"words": [
+            {"word": "Hello", "start": 1.0, "end": 1.5, "score": 0.9}, {"word": "♪"}, {"word": "1990"}]}]}
+
+        with patch("builtins.print") as printed:
+            transcribed_data = convert_to_transcribed_data(result_aligned)
+
+        self.assertEqual([d.word for d in transcribed_data], ["Hello ", "1990 "])
+        self.assertAlmostEqual(transcribed_data[1].start, 1.6)
+        self.assertAlmostEqual(transcribed_data[1].end, 1.7)
+        self.assertEqual(printed.call_count, 1)
+        self.assertIn('"1990"', printed.call_args.args[0])
+
     def test_number_to_words_converts(self):
         #Original, test with no language passed
         self.act_and_assert("I have 1 million dollars and 2 cents.", "I have one million dollars and two cents.")

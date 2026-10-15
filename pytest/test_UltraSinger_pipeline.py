@@ -494,6 +494,29 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
         self.assertEqual(heard[0].word, "hello ")
         self.assertEqual(process_data.transcription_words, [("helo, ", 1.0, 1.3), ("world ", 1.5, 1.8)])
 
+    def test_words_with_nothing_to_sing_are_left_out(self):
+        """A transcription cached by an earlier version may hold the music notes Whisper writes for an
+        instrumental part, and punctuation standing alone: they are no notes and no anchors."""
+        process_data = SimpleNamespace(
+            process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
+            media_info=SimpleNamespace(artist="Artist", title="Song Title", language="fr"),
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
+        )
+        cached = [_syllable("♪ ", 0.0, 0.1), _syllable("Pourquoi ", 1.0, 1.5), _syllable("? ", 1.6, 1.7),
+                  _syllable("- ", 1.8, 1.9), _syllable("toi ", 2.0, 2.4), _syllable("♪ ", 2.5, 2.6)]
+        transcription = SimpleNamespace(detected_language="fr", transcribed_data=cached)
+        with patch.object(us, "transcribe_audio", return_value=transcription), \
+                patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data), \
+                patch.object(us.settings, "lyrics_lookup", False), \
+                patch.object(us.settings, "llm_correct_lyrics", False), \
+                patch.object(us.settings, "hyphenation", False), \
+                patch.object(us.settings, "language", None), \
+                contextlib.redirect_stdout(io.StringIO()):
+            us.TranscribeAudio(process_data)
+
+        self.assertEqual([w.word for w in process_data.transcribed_data], ["Pourquoi? ", "toi "])
+        self.assertEqual(process_data.transcription_words, [("Pourquoi? ", 1.0, 1.5), ("toi ", 2.0, 2.4)])
+
 
 class TestRejectedSyncedLyricsInRun(unittest.TestCase):
     def test_info_file_says_found_but_rejected(self):
