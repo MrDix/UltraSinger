@@ -49,9 +49,11 @@ _PYTHON_WARNING_RE = re.compile(r":\d+: \w*Warning: ")
 # A progress bar (" 50%|#####     | 5/10", "Transcribing: 50%|#####     | 5/10"):
 # never part of a warning or an error
 _PROGRESS_RE = re.compile(r"\s*(?:[^|%]*:\s*)?\d+%\|")
-# The line before the traceback of an exception the program goes on after:
-# its exception has no further lines
+# The line before the traceback of an exception the program goes on after
+# (also after an unfinished progress bar): its exception has no further lines
 _GOES_ON_RE = re.compile(r"Exception (?:ignored in|in thread)\b")
+# The line between two tracebacks of a chain of exceptions
+_CHAIN_RE = re.compile(r"During handling of the above exception|The above exception was the direct cause")
 
 
 class LogViewer(QPlainTextEdit):
@@ -84,6 +86,7 @@ class LogViewer(QPlainTextEdit):
         self._exception_due = False
         self._message_due = False
         self._in_exception = False
+        self._chained = False
         self._warning_source_due = False
         # The line at the top before the last switch and after it
         self._last_switch = None
@@ -153,7 +156,7 @@ class LogViewer(QPlainTextEdit):
         self._issues.clear()
         self._previous_line = ""
         self._in_traceback = self._exception_due = self._message_due = self._in_exception = False
-        self._warning_source_due = False
+        self._chained = self._warning_source_due = False
         self._last_switch = None
 
     def _level(self, text: str) -> str:
@@ -182,10 +185,14 @@ class LogViewer(QPlainTextEdit):
             # Not after the header of an exception group ("+ Exception Group
             # Traceback ...") or one in it ("| Traceback ...")
             self._exception_due = not text.lstrip().startswith(("+", "|"))
-            # The output goes on after an exception ignored or in a thread
-            self._message_due = not _GOES_ON_RE.match(self._previous_line)
+            # The output goes on after an exception ignored or in a thread, also
+            # after the last traceback of its chain
+            if not self._chained:
+                self._message_due = not _GOES_ON_RE.search(self._previous_line)
         else:
             self._warning_source_due = _PYTHON_WARNING_RE.search(text) is not None
+        # A chain goes on over the empty line after its line
+        self._chained = bool(_CHAIN_RE.match(text)) or (self._chained and not stripped)
         return level
 
     def _insert(self, lines):
@@ -207,11 +214,15 @@ class LogViewer(QPlainTextEdit):
         """The row of the shown lines to show at the top for a kept line.
 
         All lines: the line, else (older than the last lines) the first
-        line. The warnings and errors: the first from the line on, else
-        None (the newest are shown).
+        line. The warnings and errors: the line if it is one of them (also
+        one older than the last lines), else the first from the line on,
+        else None (the newest are shown).
         """
         if not self._issues_only:
             return next((row for row, entry in enumerate(self._lines) if entry is top), 0)
+        row = next((row for row, entry in enumerate(self._issues) if entry is top), None)
+        if row is not None:
+            return row
         start = next((row for row, entry in enumerate(self._lines) if entry is top), len(self._lines))
         issue = next((entry for entry in islice(self._lines, start, None) if entry[1] in _ISSUES), None)
         return next((row for row, entry in enumerate(self._issues) if entry is issue), None)

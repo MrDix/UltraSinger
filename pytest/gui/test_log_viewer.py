@@ -170,8 +170,9 @@ class TestWhatIsAWarningOrAnError:
             "Traceback (most recent call last):",
             '  File "b.py", line 2, in g',
             "RuntimeError: worse",
+            "and the rest of its message",
         ]
-        viewer = _viewer(*chained)
+        viewer = _viewer(*chained, "", "plain")
         viewer.set_issues_only(True)
         assert _shown(viewer) == [line for line in chained if line]
 
@@ -217,14 +218,26 @@ class TestWhatIsAWarningOrAnError:
         viewer.set_issues_only(True)
         assert _shown(viewer) == [*error, "[Queue] Song Title: failed (exit code 1)"]
 
-    @pytest.mark.parametrize("before", ["Exception ignored in: <function Pipe.__del__ at 0x01>",
-                                        "Exception in thread Thread-1 (worker):"])
+    @pytest.mark.parametrize("before", [
+        "Exception ignored in: <function Pipe.__del__ at 0x01>",
+        "Exception in thread Thread-1 (worker):",
+        " 50%|#####     | 5/10 [00:01<00:01,  4.9it/s]Exception ignored in: <function Pipe.__del__ at 0x01>",
+    ])
     def test_the_output_goes_on_after_an_exception_ignored_or_in_a_thread(self, before):
         error = [before, "Traceback (most recent call last):", '  File "x.py", line 1, in close',
                  "RuntimeError: Event loop is closed"]
         viewer = _viewer(*error, "Detected language: en (0.98)", "Transcribing: 100%|##########| 12/12")
         viewer.set_issues_only(True)
         assert _shown(viewer) == error
+
+    def test_the_output_goes_on_after_a_chain_of_exceptions_in_a_thread(self):
+        error = ["Exception in thread Thread-1 (worker):", "Traceback (most recent call last):",
+                 '  File "x.py", line 1, in run', "ValueError: bad value", "",
+                 "During handling of the above exception, another exception occurred:", "",
+                 "Traceback (most recent call last):", '  File "x.py", line 3, in run', "RuntimeError: worse"]
+        viewer = _viewer(*error, "Detected language: en (0.98)", "Loading the alignment model")
+        viewer.set_issues_only(True)
+        assert _shown(viewer) == [line for line in error if line]
 
     @pytest.mark.parametrize("after", ["[UltraSinger] Retrying on the CPU", "100%|##########| 10/10",
                                        "model.bin: 45%|####      | 1.2G/2.6G"])
@@ -281,6 +294,29 @@ class TestScrolling:
         viewer.verticalScrollBar().setValue(10)
         viewer.set_issues_only(False)  # scrolled: the warning at the top
         assert _top(viewer) == "Warning: w100"
+
+    def test_lines_while_switched_on_do_not_change_the_way_back(self):
+        viewer = _viewer(*self._LINES, shown=True)
+        viewer.verticalScrollBar().setValue(55)
+        viewer.set_issues_only(True)
+        for i in range(5):
+            viewer.append_line(f"line more {i}")
+        viewer.append_line("Warning: more")
+        assert _top(viewer) == "Warning: w60"
+        viewer.set_issues_only(False)
+        assert _top(viewer) == "line 55"
+
+    def test_switching_back_to_a_warning_older_than_the_last_lines(self, monkeypatch):
+        monkeypatch.setattr(log_viewer, "_MAX_LINES", 50)
+        lines = [f"Warning: w{i}" if i % 10 == 0 else f"line {i}" for i in range(400)]
+        viewer = _viewer(*lines, shown=True)
+        viewer.set_issues_only(True)  # the last 40 warnings, the full view keeps the last 50 lines
+        viewer.verticalScrollBar().setValue(0)
+        assert _top(viewer) == "Warning: w0"
+        viewer.set_issues_only(False)
+        assert _top(viewer) == "Warning: w350"  # the first of the last lines
+        viewer.set_issues_only(True)
+        assert _top(viewer) == "Warning: w0"
 
     def test_switching_back_without_scrolling_also_without_a_warning_after_the_line(self):
         lines = [f"Warning: w{i}" if i < 100 and i % 10 == 0 else f"line {i}" for i in range(600)]
