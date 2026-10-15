@@ -183,8 +183,9 @@ class TestParsePlainLyrics:
 
     def test_labels_with_a_repeat_mark_and_punctuation(self):
         # the repeat mark makes the line a label; a label alone with punctuation may be sung
-        plain = "Chorus x2,\nVerse 2x!\n2x Refrain.\nPre-Chorus x2;\nChorus 2 times…\nChorus,\nSolo!"
-        assert parse_plain_lyrics(plain) == ["Chorus,", "Solo!"]
+        plain = ("Chorus x2,\nVerse 2x!\n2x Refrain.\nPre-Chorus x2;\nChorus 2 times…\nChorus (x2).\n(x2) Solo!\n"
+                 "Chorus,\nSolo!\nHello world (x2).\nHello (x2) Chorus.")
+        assert parse_plain_lyrics(plain) == ["Chorus,", "Solo!", "Hello world.", "Hello Chorus."]
         segs = parse_lrc_synced_lyrics("[00:10.00] Chorus x2,\n[00:12.00] Hello")
         assert [(s["text"], s["start"]) for s in segs] == [("Hello", 12.0)]
 
