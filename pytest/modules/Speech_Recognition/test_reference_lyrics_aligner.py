@@ -181,6 +181,13 @@ class TestParsePlainLyrics:
             "Come on!", "Hello world \x00oh", "\x00oh", "Go,", "Stay;", "Wait…", "Say \"hey\"",
             "Hello x2, oh"]
 
+    def test_labels_with_a_repeat_mark_and_punctuation(self):
+        # the repeat mark makes the line a label; a label alone with punctuation may be sung
+        plain = "Chorus x2,\nVerse 2x!\n2x Refrain.\nPre-Chorus x2;\nChorus 2 times…\nChorus,\nSolo!"
+        assert parse_plain_lyrics(plain) == ["Chorus,", "Solo!"]
+        segs = parse_lrc_synced_lyrics("[00:10.00] Chorus x2,\n[00:12.00] Hello")
+        assert [(s["text"], s["start"]) for s in segs] == [("Hello", 12.0)]
+
     def test_lines_that_are_only_a_repeat_mark_with_punctuation_or_only_punctuation(self):
         assert parse_plain_lyrics("x2,\n2x!\n(x2),\n(x2).\n...\n♪\nLa la la!\n2x Hey") == ["La la la!", "2x Hey"]
 

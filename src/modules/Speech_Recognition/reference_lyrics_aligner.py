@@ -93,6 +93,7 @@ _TRAILING_REPEAT_RE = re.compile(
     r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.,;:!?…\"'”’]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
 _BRACKET_CHAR_RE = re.compile(r"[\[\]\(\)\{\}]")
 _WORD_CHAR_RE = re.compile(r"\w")
+_REPEAT_IN_TEXT_RE = re.compile(_REPEAT, re.IGNORECASE)
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
@@ -133,6 +134,11 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
             sung.append(bracket)
         pos = m.end()
     text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [raw_line[pos:]])).split())
+    # A label with a repeat mark before closing punctuation: "Chorus x2,", "2x Refrain!"
+    # (a label alone with punctuation, "Chorus.", may be sung and stays)
+    bare = text.rstrip(".,;:!?…")
+    if bare != text and _REPEAT_IN_TEXT_RE.search(bare) and _BARE_LABEL_RE.fullmatch(bare):
+        text = ""
     # A repeat mark without brackets at the end: "Hello world x2", "Chorus 2x"
     text = _TRAILING_REPEAT_RE.sub("", text)
     # Only a label: "(Chorus)", "{Verse 2}", "((Chorus))", "Chorus:" (but "(Break) it down" is sung)
