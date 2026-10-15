@@ -180,7 +180,10 @@ groups onto the pinned icon.
   - **Info button** — view the settings used for this conversion
   - **Folder button** — open the output folder in your system file manager (hover to see the path)
   - **Re-queue button** — re-queue the song with different settings (opens per-song settings dialog; useful for correcting wrong language detection)
-- **Warnings & errors only** — The switch below the log shows only its warnings and errors (the red and orange lines), also those printed before it was switched on, and each Python traceback whole, with the message of its exception. Switched off, the log shows all lines again, also those printed in the meantime. A log that follows the newest lines goes on following them; in a log scrolled up, the line at the top stays at the top, so that a warning you scrolled to is shown among the lines around it when you switch off.
+- **Warnings & errors only** — The switch below the log shows only its warnings and errors (the red and orange lines), also those printed before it was switched on, and each Python traceback whole, with the message of its exception. Switched off, the log shows all lines again, also those printed in the meantime.
+  - A log that follows the newest lines goes on following them.
+  - In a log scrolled up, the line at the top stays at the top (switched on: the first warning or error after it), so that a warning you scrolled to is shown among the lines around it when you switch off.
+  - Switched back without scrolling, the log is where it was.
 - **Queue kept between sessions** — The queue is saved while you work and comes back the next time you start the GUI, also after an update. It never starts by itself: press **Start All**.
   - Waiting songs, the song that was running and songs stopped with **Cancel All** come back as waiting songs. Failed songs come back marked as failed; **×** removes one from the list. Finished songs are left out.
   - The menu button (**☰**) next to **Clear** has **Export Queue…**, which saves the songs that are not finished to a file, and **Import Queue…**, which adds the songs of such a file as waiting songs. A song that already waits in the queue with the same settings is skipped.

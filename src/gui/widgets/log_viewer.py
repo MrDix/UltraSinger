@@ -46,8 +46,12 @@ _TRACEBACK_RE = re.compile(r"Traceback \(most recent call last\):")
 # A warning of Python's warnings module ("<file>:<line>: UserWarning: ..."),
 # followed by its indented source line
 _PYTHON_WARNING_RE = re.compile(r":\d+: \w*Warning: ")
-# A progress bar (" 50%|#####     | 5/10"): never part of a warning or an error
-_PROGRESS_RE = re.compile(r"\s*\d+%\|")
+# A progress bar (" 50%|#####     | 5/10", "Transcribing: 50%|#####     | 5/10"):
+# never part of a warning or an error
+_PROGRESS_RE = re.compile(r"\s*(?:[^|%]*:\s*)?\d+%\|")
+# The line before the traceback of an exception the program goes on after:
+# its exception has no further lines
+_GOES_ON_RE = re.compile(r"Exception (?:ignored in|in thread)\b")
 
 
 class LogViewer(QPlainTextEdit):
@@ -75,10 +79,14 @@ class LogViewer(QPlainTextEdit):
         self._formats = {level: _char_format(color) for level, color in _COLORS.items()}
         # A traceback is kept together (its frames, the exception and its
         # message), a Python warning with its source line
+        self._previous_line = ""
         self._in_traceback = False
         self._exception_due = False
+        self._message_due = False
         self._in_exception = False
         self._warning_source_due = False
+        # The line at the top before the last switch and after it
+        self._last_switch = None
 
         # Auto-scroll control
         self._auto_scroll = True
@@ -94,6 +102,7 @@ class LogViewer(QPlainTextEdit):
         """
         text = _ANSI_RE.sub("", text)
         entry = (text, self._level(text))
+        self._previous_line = text
         self._lines.append(entry)
         if entry[1] in _ISSUES:
             self._issues.append(entry)
@@ -112,20 +121,26 @@ class LogViewer(QPlainTextEdit):
         view scrolled up, the line at its top stays at the top: a warning,
         when all lines are shown again, among the lines around it; another
         line, when only the warnings and errors are shown, as the first
-        warning or error after it.
+        warning or error after it. Switched back without scrolling, the
+        view is where it was.
         """
         if issues_only == self._issues_only:
             return
-        top = None if self._auto_scroll else self._top_entry()
+        current = self._top_entry()
+        top = None if self._auto_scroll else current
+        anchor = top
+        if self._last_switch is not None and current is self._last_switch[1]:
+            anchor = self._last_switch[0]
         self._issues_only = issues_only
         self.setPlaceholderText("No warnings or errors." if issues_only else "")
         self.clear()
         self._insert(self._issues if issues_only else self._lines)
-        row = None if top is None else self._row_for(top)
+        row = None if anchor is None else self._row_for(anchor)
         if row is None:
             self._scroll_to_end()
         else:
             self._scroll_to_row(row)
+        self._last_switch = (top, self._top_entry())
 
     def issues_only(self) -> bool:
         """Whether only the warnings and errors are shown."""
@@ -136,8 +151,10 @@ class LogViewer(QPlainTextEdit):
         self.clear()
         self._lines.clear()
         self._issues.clear()
-        self._in_traceback = self._exception_due = self._in_exception = False
+        self._previous_line = ""
+        self._in_traceback = self._exception_due = self._message_due = self._in_exception = False
         self._warning_source_due = False
+        self._last_switch = None
 
     def _level(self, text: str) -> str:
         """The level of a line; the lines of a traceback are an error together."""
@@ -150,11 +167,12 @@ class LogViewer(QPlainTextEdit):
             return _WARNING
         # The exception that ends a traceback, also one without "Error" in its
         # name ("KeyboardInterrupt"), and the further lines of its message, up
-        # to an empty line or a line of UltraSinger or the GUI ("[Queue] ...")
+        # to an empty line, a line of UltraSinger or the GUI ("[Queue] ...")
+        # or a progress bar
         exception = bool(stripped) and (self._exception_due or (
             self._in_exception and not text.startswith("[") and not _PROGRESS_RE.match(text)))
         self._in_traceback = self._exception_due = self._warning_source_due = False
-        self._in_exception = exception
+        self._in_exception = exception and self._message_due
         if exception:
             return _ERROR
 
@@ -164,6 +182,8 @@ class LogViewer(QPlainTextEdit):
             # Not after the header of an exception group ("+ Exception Group
             # Traceback ...") or one in it ("| Traceback ...")
             self._exception_due = not text.lstrip().startswith(("+", "|"))
+            # The output goes on after an exception ignored or in a thread
+            self._message_due = not _GOES_ON_RE.match(self._previous_line)
         else:
             self._warning_source_due = _PYTHON_WARNING_RE.search(text) is not None
         return level
@@ -184,14 +204,14 @@ class LogViewer(QPlainTextEdit):
         return shown[row] if 0 <= row < len(shown) else None
 
     def _row_for(self, top) -> int | None:
-        """The row of the line to show at the top for the line that was at the top.
+        """The row of the shown lines to show at the top for a kept line.
 
-        None: none, the newest lines are shown.
+        All lines: the line, else (older than the last lines) the first
+        line. The warnings and errors: the first from the line on, else
+        None (the newest are shown).
         """
         if not self._issues_only:
-            # The warning or error, else (older than the last lines) the first line
             return next((row for row, entry in enumerate(self._lines) if entry is top), 0)
-        # The first warning or error from the line on
         start = next((row for row, entry in enumerate(self._lines) if entry is top), len(self._lines))
         issue = next((entry for entry in islice(self._lines, start, None) if entry[1] in _ISSUES), None)
         return next((row for row, entry in enumerate(self._issues) if entry is issue), None)

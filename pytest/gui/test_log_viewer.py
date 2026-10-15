@@ -217,7 +217,17 @@ class TestWhatIsAWarningOrAnError:
         viewer.set_issues_only(True)
         assert _shown(viewer) == [*error, "[Queue] Song Title: failed (exit code 1)"]
 
-    @pytest.mark.parametrize("after", ["[UltraSinger] Retrying on the CPU", "100%|##########| 10/10"])
+    @pytest.mark.parametrize("before", ["Exception ignored in: <function Pipe.__del__ at 0x01>",
+                                        "Exception in thread Thread-1 (worker):"])
+    def test_the_output_goes_on_after_an_exception_ignored_or_in_a_thread(self, before):
+        error = [before, "Traceback (most recent call last):", '  File "x.py", line 1, in close',
+                 "RuntimeError: Event loop is closed"]
+        viewer = _viewer(*error, "Detected language: en (0.98)", "Transcribing: 100%|##########| 12/12")
+        viewer.set_issues_only(True)
+        assert _shown(viewer) == error
+
+    @pytest.mark.parametrize("after", ["[UltraSinger] Retrying on the CPU", "100%|##########| 10/10",
+                                       "model.bin: 45%|####      | 1.2G/2.6G"])
     def test_the_message_ends_at_a_tagged_line_or_a_progress_bar(self, after):
         viewer = _viewer("Traceback (most recent call last):", "ValueError: bad value", after, "plain")
         viewer.set_issues_only(True)
@@ -264,8 +274,22 @@ class TestScrolling:
         assert _top(viewer) == "line 55"
         viewer.set_issues_only(True)
         assert _top(viewer) == "Warning: w60"
-        viewer.set_issues_only(False)
+        viewer.set_issues_only(False)  # back without scrolling: where it was
+        assert _top(viewer) == "line 55"
+        viewer.set_issues_only(True)
         assert _top(viewer) == "Warning: w60"
+        viewer.verticalScrollBar().setValue(10)
+        viewer.set_issues_only(False)  # scrolled: the warning at the top
+        assert _top(viewer) == "Warning: w100"
+
+    def test_switching_back_without_scrolling_also_without_a_warning_after_the_line(self):
+        lines = [f"Warning: w{i}" if i < 100 and i % 10 == 0 else f"line {i}" for i in range(600)]
+        viewer = _viewer(*lines, shown=True)
+        viewer.verticalScrollBar().setValue(300)
+        viewer.set_issues_only(True)
+        assert _top(viewer) == "Warning: w0"  # no warning after the line: the newest (all 10)
+        viewer.set_issues_only(False)
+        assert _top(viewer) == "line 300"
 
     def test_a_view_at_the_end_stays_at_the_end(self):
         viewer = _viewer(*self._LINES, shown=True)
