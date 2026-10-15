@@ -181,6 +181,16 @@ class TestParsePlainLyrics:
             "Come on!", "Hello world \x00oh", "\x00oh", "Go,", "Stay;", "Wait…", "Say \"hey\"",
             "Hello x2, oh"]
 
+    def test_punctuation_and_symbols_are_no_words(self):
+        # a word of punctuation or symbols alone would become a note of its own
+        plain = ("Hello world (x2).\nSay \"hey (x2)\"\nHello - world\n♪ La la ♪\n(oh) .\nrockin '\n"
+                 "Hello , world\nHello ... world\n[[oh]] ]\nyou & me\n1 + 1 is 100 %")
+        assert parse_plain_lyrics(plain) == [
+            "Hello world.", "Say \"hey\"", "Hello world", "La la", "\x00oh.", "rockin'", "Hello, world",
+            "Hello... world", "\x00oh", "you & me", "1 + 1 is 100 %"]
+        segs = parse_lrc_synced_lyrics("[00:10.00] Hello , world -\n[00:12.00] ♪")
+        assert [(s["text"], s["start"]) for s in segs] == [("Hello, world", 10.0)]
+
     def test_labels_with_a_repeat_mark_and_punctuation(self):
         # the repeat mark makes the line a label; a label alone with punctuation may be sung
         plain = ("Chorus x2,\nVerse 2x!\n2x Refrain.\nPre-Chorus x2;\nChorus 2 times…\nChorus (x2).\n(x2) Solo!\n"

@@ -94,7 +94,10 @@ _TRAILING_REPEAT_RE = re.compile(
 _BRACKET_CHAR_RE = re.compile(r"[\[\]\(\)\{\}]")
 _WORD_CHAR_RE = re.compile(r"\w")
 _REPEAT_IN_TEXT_RE = re.compile(_REPEAT, re.IGNORECASE)
-_SPACE_BEFORE_PUNCTUATION_RE = re.compile(r"\s+(?=[.,;:!?…]+(?:\s|$))")
+# Punctuation that closes the word before it: "Hello .", "hey \"", "oh ..."
+_CLOSING_PUNCTUATION_RE = re.compile(r"[.,;:!?…\"'”’»]+")
+# Symbols that are sung as words: "you & me" ("and"), "1 + 1", "100 %"
+_SUNG_SYMBOL_RE = re.compile(r"[&+%$€£¥#@=°]")
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
@@ -136,9 +139,6 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
             sung.append(bracket)
         pos = m.end()
     text = " ".join(_LRC_WORD_TIME_RE.sub("", " ".join(sung + [raw_line[pos:]])).split())
-    # Closing punctuation that a removed mark left apart goes back to its word ("Hello (x2).")
-    if bracketed_mark:
-        text = _SPACE_BEFORE_PUNCTUATION_RE.sub("", text)
     # A label with a repeat mark before closing punctuation: "Chorus x2,", "2x Refrain!",
     # "Chorus (x2)." (a label alone with punctuation, "Chorus.", may be sung and stays)
     bare = text.rstrip(".,;:!?…")
@@ -272,12 +272,21 @@ def _mark_bracketed_words(text: str) -> str:
     if after:
         result_parts.append(after)
     marked = " ".join(result_parts) if result_parts else text
-    # Bracket characters left over by a nested pair ("[[oh yeah]]") are not sung
+    # Bracket characters left over by a nested pair ("[[oh yeah]]") are not sung,
+    # nor is a word of punctuation or symbols alone: it would be aligned as a
+    # note of its own. Closing punctuation goes to the word before it ("Hello
+    # (oh) ." -> "Hello \x00oh."), dashes and music notes ("-", "♪") are left
+    # out; symbols that are sung as words ("&", "+", "%") stay.
     words = []
     for w in marked.split():
         word = w.replace("\x00", "").strip("[](){}")
-        if word:
-            words.append(("\x00" if w.startswith("\x00") else "") + word)
+        if not word:
+            continue
+        if not _WORD_CHAR_RE.search(word) and not _SUNG_SYMBOL_RE.search(word):
+            if words and _CLOSING_PUNCTUATION_RE.fullmatch(word):
+                words[-1] += word
+            continue
+        words.append(("\x00" if w.startswith("\x00") else "") + word)
     return " ".join(words)
 
 
