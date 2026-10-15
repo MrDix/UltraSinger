@@ -185,9 +185,9 @@ class TestWhatIsAWarningOrAnError:
         assert _colors(viewer) == [_ORANGE, _ORANGE]
 
     def test_progress_after_a_warning_is_not_part_of_it(self):
-        viewer = _viewer("WARNING: [youtube] Falling back to a lower format", "  0%|          | 0/12")
+        viewer = _viewer("WARNING: [download] Falling back to a lower format", "  0%|          | 0/12")
         viewer.set_issues_only(True)
-        assert _shown(viewer) == ["WARNING: [youtube] Falling back to a lower format"]
+        assert _shown(viewer) == ["WARNING: [download] Falling back to a lower format"]
 
     def test_a_python_warning_without_its_source_line(self):
         viewer = _viewer("C:\\venv\\lib\\io.py:43: UserWarning: deprecated", "  0%|          | 0/12")
