@@ -8,6 +8,7 @@ from contextlib import contextmanager
 # CUDA_MODULE_LOADING=LAZY allows PyTorch to continue even if some cuDNN modules are not found
 #os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
 
+import numpy as np
 import torch
 import whisperx
 from enum import Enum
@@ -372,14 +373,27 @@ def sung_language(whisper_pipeline, audio) -> str:
     CORE_LANGUAGES is therefore detected again on the first 30 s of singing
     (voice activity detection, as detect_language_with_confidence does), which
     found English for all three and changed no other song. The first
-    detection stands when no singing is found.
+    detection stands when no singing is found, or when the second detection
+    fails (with a note).
     """
     language = whisper_pipeline.detect_language(audio)
     if language in CORE_LANGUAGES:
         return language
     try:
-        sung, probability, _ = whisper_pipeline.model.detect_language(audio, vad_filter=True)
-    except Exception:  # noqa: BLE001 - no singing found: a second opinion only
+        from faster_whisper.vad import get_speech_timestamps
+
+        # The singing, as faster-whisper's detect_language(vad_filter=True) cuts
+        # it out, but without singing there is nothing to detect the language on
+        chunks = get_speech_timestamps(audio)
+        if not chunks:
+            return language
+        singing = np.concatenate([audio[chunk["start"]:chunk["end"]] for chunk in chunks])
+        sung, probability, _ = whisper_pipeline.model.detect_language(singing)
+    except Exception as error:  # noqa: BLE001 - a second opinion only
+        print(
+            f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the language could not be detected in the "
+            f"singing ({error}); transcribing in {blue_highlighted(language)}"
+        )
         return language
     if sung != language:
         print(

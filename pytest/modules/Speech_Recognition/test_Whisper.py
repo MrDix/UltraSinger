@@ -466,37 +466,50 @@ class SungLanguageTest(unittest.TestCase):
     on the first 30 s of singing."""
 
     @staticmethod
-    def _pipeline(first, sung):
+    def _detect(first, sung="en", singing=((2, 4), (6, 9)), vad_error=None):
+        """sung_language on ten samples, with the voice activity detection finding ``singing``."""
+        import numpy as np
+
         pipeline = MagicMock()
         pipeline.detect_language.return_value = first
-        if isinstance(sung, Exception):
-            pipeline.model.detect_language.side_effect = sung
-        else:
-            pipeline.model.detect_language.return_value = (sung, 0.95, [(sung, 0.95)])
-        return pipeline
+        pipeline.model.detect_language.return_value = (sung, 0.95, [(sung, 0.95)])
+        speech = [{"start": start, "end": end} for start, end in singing]
+        with patch("faster_whisper.vad.get_speech_timestamps", side_effect=vad_error, return_value=speech) as vad, \
+                patch("builtins.print") as printed:
+            language = sung_language(pipeline, np.arange(10, dtype=np.float32))
+        return language, pipeline, vad, printed
 
     def test_core_language_of_the_first_30_s_is_kept(self):
-        pipeline = self._pipeline("de", "en")
-        self.assertEqual(sung_language(pipeline, "audio"), "de")
+        language, pipeline, vad, _ = self._detect("de")
+        self.assertEqual(language, "de")
+        vad.assert_not_called()
         pipeline.model.detect_language.assert_not_called()
 
     def test_other_language_is_detected_again_on_the_singing(self):
-        pipeline = self._pipeline("nn", "en")
-        with patch("builtins.print") as printed:
-            self.assertEqual(sung_language(pipeline, "audio"), "en")
-        pipeline.model.detect_language.assert_called_once_with("audio", vad_filter=True)
+        language, pipeline, _, printed = self._detect("nn", "en")
+        self.assertEqual(language, "en")
+        (singing,), kwargs = pipeline.model.detect_language.call_args
+        self.assertEqual(singing.tolist(), [2, 3, 6, 7, 8])
+        self.assertEqual(kwargs, {})
         self.assertIn("first 30 s of singing", printed.call_args.args[0])
 
     def test_other_language_confirmed_by_the_singing(self):
-        pipeline = self._pipeline("sv", "sv")
-        with patch("builtins.print") as printed:
-            self.assertEqual(sung_language(pipeline, "audio"), "sv")
+        language, _, _, printed = self._detect("sv", "sv")
+        self.assertEqual(language, "sv")
         printed.assert_not_called()
 
     def test_first_detection_stands_without_singing(self):
-        """No voice found: faster-whisper has no segment to detect the language on."""
-        pipeline = self._pipeline("nn", ValueError("max() arg is an empty sequence"))
-        self.assertEqual(sung_language(pipeline, "audio"), "nn")
+        language, pipeline, _, printed = self._detect("nn", singing=())
+        self.assertEqual(language, "nn")
+        pipeline.model.detect_language.assert_not_called()
+        printed.assert_not_called()
+
+    def test_first_detection_stands_when_the_second_fails(self):
+        error = RuntimeError("Applying the VAD filter requires the onnxruntime package")
+        language, _, _, printed = self._detect("nn", vad_error=error)
+        self.assertEqual(language, "nn")
+        self.assertIn("could not be detected in the singing", printed.call_args.args[0])
+        self.assertIn("onnxruntime", printed.call_args.args[0])
 
 
 class TranscribeWithWhisperLanguageTest(unittest.TestCase):
@@ -513,6 +526,7 @@ class TranscribeWithWhisperLanguageTest(unittest.TestCase):
             "segments": [], "language": language or "en"}
         with patch("whisperx.load_model", return_value=pipeline), \
                 patch("whisperx.load_audio", return_value=np.zeros(16000, dtype=np.float32)), \
+                patch("faster_whisper.vad.get_speech_timestamps", return_value=[{"start": 0, "end": 16000}]), \
                 patch("whisperx.load_align_model", return_value=(MagicMock(), {})), \
                 patch("whisperx.align", return_value={"segments": []}), \
                 patch("builtins.print"):
