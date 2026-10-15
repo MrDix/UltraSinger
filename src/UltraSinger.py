@@ -3,6 +3,7 @@
 import copy
 import getopt
 import importlib.util
+import logging
 import math
 import os
 import sys
@@ -2944,5 +2945,21 @@ def arg_options():
     ]
     return long, short
 
+
+def mark_log_levels() -> None:
+    """Print what UltraSinger's modules log with its level ("WARNING: ...").
+
+    Without a handler, Python prints only the message of a warning or an
+    error; the console of the GUI finds them by such a marker.
+    """
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    modules_logger = logging.getLogger("modules")
+    modules_logger.addHandler(handler)
+    # Printed once, also when a library gives the root logger a handler
+    modules_logger.propagate = False
+
+
 if __name__ == "__main__":
+    mark_log_levels()
     main(sys.argv[1:])

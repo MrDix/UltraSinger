@@ -36,7 +36,7 @@ _THOUSANDS_RE = re.compile(r"\d{1,3}([.,])\d{3}(?:\1\d{3})*(?:(?!\1)[.,]\d+)?")
 _EN_ORDINAL_RE = re.compile(r"(\d+)(?:st|nd|rd|th)", re.IGNORECASE)
 
 
-MEMORY_ERROR_MESSAGE = f"{ULTRASINGER_HEAD} {blue_highlighted('whisper')} ran out of GPU memory; reduce --whisper_batch_size or force usage of cpu with --force_cpu"
+MEMORY_ERROR_MESSAGE = f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} {blue_highlighted('whisper')} ran out of GPU memory; reduce --whisper_batch_size or force usage of cpu with --force_cpu"
 
 
 from modules.Speech_Recognition.language_constants import (
@@ -339,7 +339,7 @@ def transcribe_with_whisper(
         ):
             print(value_error)
             print(
-                f"{ULTRASINGER_HEAD} Your GPU does not support efficient float16 computation; run UltraSinger with '--whisper_compute_type int8'"
+                f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Your GPU does not support efficient float16 computation; run UltraSinger with '--whisper_compute_type int8'"
             )
 
         raise value_error

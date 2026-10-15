@@ -22,11 +22,26 @@ _app = QApplication.instance() or QApplication([])
 _RED, _ORANGE = "#ef5350", "#ffa726"
 
 
-def _viewer(*lines):
+def _viewer(*lines, shown=False):
     viewer = LogViewer()
+    if shown:  # laid out and scrolled as on the screen
+        viewer.resize(500, 300)
+        viewer.show()
     for line in lines:
         viewer.append_line(line)
+    _app.processEvents()
     return viewer
+
+
+def _at_end(viewer):
+    _app.processEvents()
+    sb = viewer.verticalScrollBar()
+    return sb.maximum() > 0 and sb.value() == sb.maximum()
+
+
+def _top(viewer):
+    _app.processEvents()
+    return viewer.firstVisibleBlock().text()
 
 
 def _shown(viewer):
@@ -103,6 +118,15 @@ class TestFilter:
         viewer.set_issues_only(True)
         assert _shown(viewer) == ["WARNING: [download] retrying"]
 
+    def test_all_the_last_lines_are_shown(self, monkeypatch):
+        monkeypatch.setattr(log_viewer, "_MAX_LINES", 10)
+        lines = [f"line {i}" for i in range(15)]
+        viewer = _viewer(*lines)
+        assert _shown(viewer) == lines[-10:]
+        viewer.set_issues_only(True)
+        viewer.set_issues_only(False)
+        assert _shown(viewer) == lines[-10:]
+
     def test_ansi_codes_are_stripped(self):
         viewer = _viewer("\x1b[92m[UltraSinger]\x1b[0m \x1b[93mWarning:\x1b[0m no cover found")
         viewer.set_issues_only(True)
@@ -163,6 +187,93 @@ class TestWhatIsAWarningOrAnError:
         viewer = _viewer("WARNING: [youtube] Falling back to a lower format", "  0%|          | 0/12")
         viewer.set_issues_only(True)
         assert _shown(viewer) == ["WARNING: [youtube] Falling back to a lower format"]
+
+    def test_a_python_warning_without_its_source_line(self):
+        viewer = _viewer("C:\\venv\\lib\\io.py:43: UserWarning: deprecated", "  0%|          | 0/12")
+        viewer.set_issues_only(True)
+        assert _shown(viewer) == ["C:\\venv\\lib\\io.py:43: UserWarning: deprecated"]
+
+    def test_the_first_keyword_gives_the_level(self):
+        viewer = _viewer("WARNING: [download] Got error: HTTP Error 503. Retrying (1/10)...",
+                         "[UltraSinger] Warning: an exception in the cover lookup",
+                         "[UltraSinger] Error: the warning: could not be shown")
+        assert _colors(viewer) == [_ORANGE, _ORANGE, _RED]
+
+    def test_error_as_a_word_is_an_error(self):
+        errors = ["[UltraSinger] Error in hyphenation for language xx, maybe you want to disable it?",
+                  "[UltraSinger] Error! The provided text file does not have a reference to the audio file",
+                  "[UltraSinger] Remote STT HTTP error 429"]
+        viewer = _viewer(*errors, "[UltraSinger] 3 lines checked, 0 errors", "[UltraSinger] error_tolerance=2")
+        viewer.set_issues_only(True)
+        assert _shown(viewer) == errors
+
+    def test_the_message_of_the_exception_is_kept(self):
+        error = ["Traceback (most recent call last):",
+                 '  File "src/UltraSinger.py", line 10, in <module>',
+                 "torch.AcceleratorError: CUDA error: unspecified launch failure",
+                 "CUDA kernel errors might be asynchronously reported at some other API call.",
+                 "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"]
+        viewer = _viewer(*error, "", "after the run", "[Queue] Song Title: failed (exit code 1)")
+        viewer.set_issues_only(True)
+        assert _shown(viewer) == [*error, "[Queue] Song Title: failed (exit code 1)"]
+
+    @pytest.mark.parametrize("after", ["[UltraSinger] Retrying on the CPU", "100%|##########| 10/10"])
+    def test_the_message_ends_at_a_tagged_line_or_a_progress_bar(self, after):
+        viewer = _viewer("Traceback (most recent call last):", "ValueError: bad value", after, "plain")
+        viewer.set_issues_only(True)
+        assert _shown(viewer) == ["Traceback (most recent call last):", "ValueError: bad value"]
+
+    def test_a_traceback_after_an_unfinished_progress_bar(self):
+        traceback = [" 50%|#####     | 5/10 [00:01<00:01]Traceback (most recent call last):",
+                     '  File "src/UltraSinger.py", line 10, in <module>',
+                     "KeyboardInterrupt"]
+        viewer = _viewer(*traceback, "", "plain")
+        viewer.set_issues_only(True)
+        assert _shown(viewer) == traceback
+
+
+class TestScrolling:
+    _MIXED = [f"Warning: {i} " + "a warning that wraps " * 8 if i % 4 == 0 else f"line {i}" for i in range(160)]
+    # 60 warnings: their view scrolls far enough not to follow the end at the 5th
+    _LINES = [f"Warning: w{i}" if i % 10 == 0 else f"line {i}" for i in range(600)]
+
+    def test_the_view_follows_new_lines_after_switching(self):
+        viewer = _viewer(*self._MIXED, shown=True)
+        viewer.set_issues_only(True)
+        for i in range(10):
+            viewer.append_line(f"Warning: new {i}")
+        assert _at_end(viewer)
+        viewer.set_issues_only(False)
+        for i in range(20):
+            viewer.append_line(f"line new {i}")
+        assert _at_end(viewer)
+
+    def test_switching_back_shows_the_warning_at_the_top_among_its_lines(self):
+        viewer = _viewer(*self._LINES, shown=True)
+        viewer.set_issues_only(True)
+        viewer.verticalScrollBar().setValue(5)
+        assert _top(viewer) == "Warning: w50"
+        viewer.set_issues_only(False)
+        assert _top(viewer) == "Warning: w50"
+        viewer.append_line("line new")
+        assert _top(viewer) == "Warning: w50"  # the view stays there
+
+    def test_switching_to_the_warnings_starts_at_the_line_at_the_top(self):
+        viewer = _viewer(*self._LINES, shown=True)
+        viewer.verticalScrollBar().setValue(55)
+        assert _top(viewer) == "line 55"
+        viewer.set_issues_only(True)
+        assert _top(viewer) == "Warning: w60"
+        viewer.set_issues_only(False)
+        assert _top(viewer) == "Warning: w60"
+
+    def test_a_view_at_the_end_stays_at_the_end(self):
+        viewer = _viewer(*self._LINES, shown=True)
+        assert _at_end(viewer)
+        viewer.set_issues_only(True)
+        assert _at_end(viewer)
+        viewer.set_issues_only(False)
+        assert _at_end(viewer)
 
     @pytest.mark.parametrize("status", ["expired", "missing"])
     def test_a_download_without_the_browser_stream_is_a_warning(self, tmp_path, status):
