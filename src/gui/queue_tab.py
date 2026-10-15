@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .widgets import AnimatedButton, LogViewer
+from .widgets import AnimatedButton, LogViewer, ToggleSwitch
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,17 @@ class QueueTab(QWidget):
         btn_row.addWidget(self._cancel_btn)
 
         btn_row.addStretch()
+
+        # Only the warnings and errors of the log, also those printed before
+        issues_tooltip = ("Show only the warnings and errors of the log, also those "
+                          "printed before. Switch it off to see all lines again.")
+        issues_label = QLabel("Warnings & errors only")
+        issues_label.setToolTip(issues_tooltip)
+        btn_row.addWidget(issues_label)
+        self._issues_only = ToggleSwitch()
+        self._issues_only.setToolTip(issues_tooltip)
+        self._issues_only.toggled_signal.connect(self._log.set_issues_only)
+        btn_row.addWidget(self._issues_only)
 
         self._clear_log_btn = QPushButton("Clear Log")
         self._clear_log_btn.setObjectName("ghostButton")
