@@ -55,6 +55,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     line_times_from_words,
     lyrics_tokens,
 )
+from modules.Speech_Recognition.sung_text import is_closing_punctuation, is_sung
 
 
 # ---------------------------------------------------------------------------
@@ -92,12 +93,9 @@ _BARE_LABEL_RE = re.compile(rf"{_LABEL}(?:\s*\d+)?(?:\s*{_REPEAT})?", re.IGNOREC
 _TRAILING_REPEAT_RE = re.compile(
     r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.,;:!?…\"'”’]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
 _BRACKET_CHAR_RE = re.compile(r"[\[\]\(\)\{\}]")
-_WORD_CHAR_RE = re.compile(r"\w")
+# A letter or a digit, as in sung_text
+_WORD_CHAR_RE = re.compile(r"[^\W_]")
 _REPEAT_IN_TEXT_RE = re.compile(_REPEAT, re.IGNORECASE)
-# Punctuation that closes the word before it: "Hello .", "hey \"", "oh ..."
-_CLOSING_PUNCTUATION_RE = re.compile(r"[.,;:!?…\"'”’»]+")
-# Symbols that are sung as words: "you & me" ("and"), "1 + 1", "100 %", "I ♥ you"
-_SUNG_SYMBOL_RE = re.compile(r"[&+%$€£¥#@=°♥❤♡]")
 # A word time of enhanced LRC: "<01:23.45>"
 _LRC_WORD_TIME_RE = re.compile(r"<\d+:\d+(?:\.\d+)?>")
 
@@ -154,8 +152,9 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
             or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
         text = ""
     # Labels and repeat marks without brackets: a line that is only "Chorus",
-    # "Verse 2", "x2" or "Repeat chorus" (also "x2,"); and a line that is
-    # only punctuation (the "," left of "(x2),")
+    # "Verse 2", "x2" or "Repeat chorus" (also "x2,"); and a line without a
+    # letter or a digit: punctuation (the "," left of "(x2),") or a separator
+    # ("=====", "+++", "♥ ♥ ♥"). A symbol is sung only among words (is_sung).
     if (_BARE_LABEL_RE.fullmatch(text) or _REPEAT_RE.fullmatch(text.rstrip(".,;:!?…"))
             or not _WORD_CHAR_RE.search(text)):
         text = ""
@@ -276,14 +275,14 @@ def _mark_bracketed_words(text: str) -> str:
     # nor is a word of punctuation or symbols alone: it would be aligned as a
     # note of its own. Closing punctuation goes to the word before it ("Hello
     # (oh) ." -> "Hello \x00oh."), dashes and music notes ("-", "♪") are left
-    # out; symbols that are sung as words ("&", "+", "%") stay.
+    # out; symbols that are sung as words ("&", "+", "%") stay (see sung_text).
     words = []
     for w in marked.split():
         word = w.replace("\x00", "").strip("[](){}")
         if not word:
             continue
-        if not _WORD_CHAR_RE.search(word) and not _SUNG_SYMBOL_RE.search(word):
-            if words and _CLOSING_PUNCTUATION_RE.fullmatch(word):
+        if not is_sung(word):
+            if words and is_closing_punctuation(word):
                 words[-1] += word
             continue
         words.append(("\x00" if w.startswith("\x00") else "") + word)

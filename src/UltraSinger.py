@@ -100,6 +100,7 @@ from modules.Ultrastar import (
     ultrastar_writer,
 )
 from modules.Speech_Recognition.TranscribedData import TranscribedData
+from modules.Speech_Recognition.sung_text import sung_words
 from modules.Speech_Recognition.Whisper import WhisperModel
 from modules.Ultrastar.ultrastar_score_calculator import Score, calculate_score_points
 from modules.Ultrastar.ultrastar_txt import FILE_ENCODING, FormatVersion
@@ -1940,11 +1941,14 @@ def TranscribeAudio(process_data):
         else:
             process_data.media_info.language = transcription_result.detected_language
 
-    process_data.transcribed_data = transcription_result.transcribed_data
+    # Words with nothing to sing, like the music note Whisper writes for an
+    # instrumental part, are no notes; a transcription that an earlier version
+    # cached may still hold them
+    process_data.transcribed_data = sung_words(transcription_result.transcribed_data)
     # The words where the transcriber placed them, before the corrections below
     # change transcribed_data (the lyrics correction rewrites its words in
     # place): their times anchor the lines of plain lyrics
-    process_data.transcription_words = [(w.word, w.start, w.end) for w in transcription_result.transcribed_data]
+    process_data.transcription_words = [(w.word, w.start, w.end) for w in process_data.transcribed_data]
 
     # Lyrics lookup correction (before LLM — uses verified reference lyrics)
     lyrics_lookup_result = None

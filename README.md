@@ -517,6 +517,8 @@ Each song gets a folder of its own in the output folder, named `Artist - Title` 
 
 By default (`--transcriber auto`) the lyrics are transcribed by **Qwen3-ASR** when a GPU with enough free memory is available and the song is in one of its languages, otherwise by **Whisper**. `--transcriber qwen3` asks for Qwen3-ASR (with a note when Whisper has to take over), `--transcriber whisper` or a Whisper model (`--whisper large-v2`) for Whisper.
 
+A word of the transcription that holds nothing to sing is no note, as in lyrics (see *Reading the lines* under [Reference-Lyrics-First Pipeline](#-reference-lyrics-first-pipeline)): Whisper writes a music note (`♪`) for an instrumental part, which is left out, as are dashes; closing punctuation that stands alone, like the `?` after a space in French, joins the word before it. This also holds for a transcription reused from the cache.
+
 #### Qwen3-ASR
 
 Qwen3-ASR 1.7B is an audio language model that is trained on singing as well. On 100 separated vocal tracks with hand-made charts it made 26.9 % word errors with the song's language given (27.7 % when it found the language itself), against 30.0 % for Whisper large-v2, mostly because it invents fewer words.
