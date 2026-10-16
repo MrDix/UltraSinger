@@ -148,6 +148,15 @@ def free_gpu_memory() -> int | None:
     return free + torch.cuda.memory_reserved() - torch.cuda.memory_allocated()
 
 
+def is_out_of_memory(error: BaseException) -> bool:
+    """Whether ``error`` says that the memory ran out: a ``MemoryError``, as
+    NumPy raises it, or PyTorch's on the GPU, or on the CPU, whose allocator
+    reports "not enough memory"."""
+    message = str(error)
+    return (isinstance(error, (MemoryError, torch.cuda.OutOfMemoryError)) or "out of memory" in message
+            or "not enough memory" in message)
+
+
 def __check_pytorch_support():
     pytorch_gpu_supported = torch.cuda.is_available()
     if not pytorch_gpu_supported:

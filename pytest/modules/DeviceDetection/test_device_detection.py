@@ -1,10 +1,16 @@
-"""Tests for the device detection module (auto Whisper batch size)."""
+"""Tests for the device detection module (auto Whisper batch size, GPU memory)."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 
-from modules.DeviceDetection.device_detection import auto_whisper_batch_size, free_gpu_memory, release_gpu_memory
+from modules.DeviceDetection.device_detection import (
+    auto_whisper_batch_size,
+    free_gpu_memory,
+    is_out_of_memory,
+    release_gpu_memory,
+)
 
 
 def _gpu_props(vram_gb: float):
@@ -100,3 +106,29 @@ class TestFreeGpuMemory:
         with patch("torch.cuda.is_available", return_value=True), \
              patch("torch.cuda.empty_cache", side_effect=RuntimeError("CUDA error: an illegal memory access")):
             release_gpu_memory()
+
+
+class TestOutOfMemory:
+    """The errors that say that the memory ran out."""
+
+    def test_numpy(self):
+        import numpy as np
+        try:
+            np.empty(2 ** 62, dtype=np.uint8)
+        except MemoryError as error:
+            assert is_out_of_memory(error)
+        else:
+            pytest.fail("an array of 4 EiB was made")
+
+    @pytest.mark.parametrize("error", [
+        torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 20.00 MiB"),
+        RuntimeError("CUDA error: out of memory"),
+        RuntimeError("[enforce fail at alloc_cpu.cpp:121] DefaultCPUAllocator: not enough memory: "
+                     "you tried to allocate 119039488 bytes."),
+    ])
+    def test_pytorch(self, error):
+        assert is_out_of_memory(error)
+
+    @pytest.mark.parametrize("error", [ValueError("the file holds no audio"), RuntimeError("CUDA error: unknown")])
+    def test_other_errors(self, error):
+        assert not is_out_of_memory(error)

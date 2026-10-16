@@ -36,7 +36,7 @@ import librosa
 import numpy as np
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted
-from modules.DeviceDetection.device_detection import release_gpu_memory
+from modules.DeviceDetection.device_detection import is_out_of_memory, release_gpu_memory
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Pitcher.pitched_data_helper import get_frequencies_with_high_confidence
@@ -448,7 +448,7 @@ def _alignment_emissions(model, model_type: str, audio: np.ndarray, device: str,
     try:
         whole = run(audio)
     except RuntimeError as error:
-        if not _out_of_memory(error):
+        if not is_out_of_memory(error):
             raise
     if whole is None:
         print(f"{ULTRASINGER_HEAD} Not enough memory to align the whole song at once "
@@ -484,16 +484,6 @@ def _align_model_log_probs(model, model_type: str, samples: np.ndarray, device: 
             raise NotImplementedError(f"Align model of type {model_type} not supported.")
         emissions = torch.log_softmax(emissions, dim=-1)
     return emissions[0].float().cpu().numpy()
-
-
-def _out_of_memory(error: RuntimeError) -> bool:
-    """Whether the model ran out of memory: on the GPU, or on the CPU, whose
-    allocator reports "not enough memory"."""
-    import torch
-
-    message = str(error)
-    return (isinstance(error, torch.cuda.OutOfMemoryError) or "out of memory" in message
-            or "not enough memory" in message)
 
 
 def _print_line_check(result, line_time: str) -> None:

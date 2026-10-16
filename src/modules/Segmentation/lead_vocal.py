@@ -61,8 +61,9 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
     The cache entry is keyed to the vocal file, so a cache folder shared by
     several songs never hands one song's lead stem to another. Raises
     ``NotEnoughGpuMemory`` instead of separating when the GPU has less than
-    ``MIN_FREE_GPU_BYTES`` free, or its free memory cannot be read. With
-    ``force_cpu`` (--force_cpu) it separates on the CPU.
+    ``MIN_FREE_GPU_BYTES`` free, or its free memory cannot be read, and
+    ``SeparationFailed`` when the separation failed. With ``force_cpu``
+    (--force_cpu) it separates on the CPU.
     """
     out_dir = os.path.join(cache_folder, "lead_vocal", os.path.splitext(model)[0], _source_key(vocals_path))
     lead_path = os.path.join(out_dir, "lead.wav")
@@ -81,12 +82,12 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
                                      f"about {MIN_FREE_GPU_BYTES / 2 ** 30:.1f} GB; with less it would run in "
                                      f"shared system memory and take very long")
         print(f"{ULTRASINGER_HEAD} Lead-vocal separation with {free / 2 ** 30:.1f} GB of GPU memory free")
-    from modules.Audio.separation import create_separator
+    from modules.Audio.separation import create_separator, run_separation
 
     os.makedirs(out_dir, exist_ok=True)
     separator = create_separator(out_dir, force_cpu)
     separator.load_model(model_filename=model)
-    separator.separate(vocals_path, custom_output_names={"Vocals": "lead", "Instrumental": "backing"})
+    run_separation(separator, vocals_path, {"Vocals": "lead", "Instrumental": "backing"})
     if not os.path.isfile(lead_path):
         raise FileNotFoundError(f"lead-vocal separation produced no {lead_path}")
     return lead_path
