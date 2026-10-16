@@ -238,7 +238,8 @@ def run_separation(separator, input_file_path: str, output_dir: str, output_name
                     pass
                 except OSError as error:
                     # The error of the separation goes on, not this one
-                    print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} could not remove {stem} ({error})")
+                    print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} could not remove {stem} "
+                          f"({error.strerror or error})")
 
 
 def _check_stems(paths: list[str]) -> None:
