@@ -184,8 +184,10 @@ class _Model:
         self.demix()
         self.library.events.append("write")
         for name in custom_output_names.values():
-            # The library logs the error of writing a stem, and goes on with the next
-            _write_stem(Path(self.library.output_dir, f"{name}.wav"), 0.5 if name == self.library.cut else 3.0)
+            # The library logs the error of writing a stem, and goes on with the
+            # next; a near-silent stem it does not write at all
+            if name != self.library.skipped:
+                _write_stem(Path(self.library.output_dir, f"{name}.wav"), 0.5 if name == self.library.cut else 3.0)
         return [f"{name}.wav" for name in custom_output_names.values()]
 
     def demix(self):
@@ -200,6 +202,7 @@ class _SwallowingSeparator:
 
     failures = []  # errors of the next demixings
     cut = None  # name of a stem whose writing fails halfway
+    skipped = None  # name of a stem not written
     events = []
 
     def __init__(self, output_dir, **kwargs):
@@ -227,6 +230,7 @@ def swallowing_separator(monkeypatch):
     monkeypatch.setattr(sepmod, "Separator", _SwallowingSeparator)
     _SwallowingSeparator.failures = []
     _SwallowingSeparator.cut = None
+    _SwallowingSeparator.skipped = None
     _SwallowingSeparator.events = []
     monkeypatch.setattr(separation, "release_gpu_memory", lambda: _SwallowingSeparator.events.append("release"))
     return _SwallowingSeparator
@@ -372,6 +376,22 @@ class TestFailedSeparation:
         with pytest.raises(separation.SeparationFailed, match=r"cut short \(vocals.wav 0.5 s, no_vocals.wav 3.0 s\)"):
             _separate(tmp_path / "cache", song)
         assert not any(_separate_folder(tmp_path / "cache", song).iterdir())
+
+    def test_a_stem_not_written(self, tmp_path, song, swallowing_separator):
+        swallowing_separator.skipped = "vocals"
+        with pytest.raises(separation.SeparationFailed, match="wrote no readable vocals.wav"):
+            _separate(tmp_path / "cache", song)
+        assert not any(_separate_folder(tmp_path / "cache", song).iterdir())
+
+    def test_a_stem_that_cannot_be_removed(self, tmp_path, song, swallowing_separator, monkeypatch, capsys):
+        # As one that another program holds open: the error of the separation goes on
+        def remove(path):
+            raise PermissionError(13, "The process cannot access the file", path)
+        swallowing_separator.cut = "vocals"
+        monkeypatch.setattr(separation.os, "remove", remove)
+        with pytest.raises(separation.SeparationFailed, match="cut short"):
+            _separate(tmp_path / "cache", song)
+        assert "could not remove" in capsys.readouterr().out
 
     def test_a_separation_without_stems(self, tmp_path, song, monkeypatch):
         # A library that went on without its stems, and logged nothing to raise

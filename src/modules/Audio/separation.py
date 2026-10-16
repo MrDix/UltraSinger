@@ -18,6 +18,7 @@ import soundfile as sf
 from modules.console_colors import (
     ULTRASINGER_HEAD,
     blue_highlighted,
+    gold_highlighted,
     green_highlighted,
     red_highlighted,
 )
@@ -231,14 +232,19 @@ def run_separation(separator, input_file_path: str, output_dir: str, output_name
         if not separated:
             # Stems of a failed separation must never pass as its stems later
             for stem in stems:
-                if os.path.exists(stem):
+                try:
                     os.remove(stem)
+                except FileNotFoundError:
+                    pass
+                except OSError as error:
+                    # The error of the separation goes on, not this one
+                    print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} could not remove {stem} ({error})")
 
 
 def _check_stems(paths: list[str]) -> None:
-    """Raises ``SeparationFailed`` unless each stem can be read and all are
-    about as long as each other: a stem whose writing failed is missing or
-    cut short."""
+    """Raises ``SeparationFailed`` unless each stem can be read and all are as
+    long as each other, as the library writes them: a stem whose writing
+    failed is missing or cut short."""
     durations = {}
     for path in paths:
         try:
@@ -246,7 +252,7 @@ def _check_stems(paths: list[str]) -> None:
         except RuntimeError as error:
             # Also a missing file
             raise SeparationFailed(f"the separation wrote no readable {os.path.basename(path)} ({error})") from error
-    if min(durations.values()) == 0 or max(durations.values()) - min(durations.values()) > 1:
+    if min(durations.values()) == 0 or max(durations.values()) - min(durations.values()) > 0.1:
         lengths = ", ".join(f"{name} {duration:.1f} s" for name, duration in durations.items())
         raise SeparationFailed(f"the separation wrote a stem cut short ({lengths})")
 
