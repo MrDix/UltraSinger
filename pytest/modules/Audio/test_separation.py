@@ -1,11 +1,15 @@
-"""Tests for the cache of the vocal separation (separation.py); no model is ever loaded."""
+"""Tests for the vocal separation (separation.py): its cache, device, GPU memory and
+errors; no model is ever loaded."""
 
+import logging
 import ntpath
 import os
 import weakref
 from pathlib import Path
 
+import numpy as np
 import pytest
+import soundfile as sf
 
 from src.modules.Audio import separation
 from src.modules.Audio.separation import AudioSeparatorModel, DemucsModel, SeparatorBackend
@@ -24,6 +28,16 @@ def _audio_separator(calls):
 def _separate(cache: Path, song: Path, **kwargs) -> str:
     return separation.separate_vocal_from_audio(str(cache), str(song), True, False, "cpu",
                                                 AudioSeparatorModel.MEL_BAND_ROFORMER, **kwargs)
+
+
+def _separate_folder(cache: Path, song: Path) -> Path:
+    """The folder of the stems of ``song`` that ``_separate`` makes."""
+    return cache / "separated" / AudioSeparatorModel.MEL_BAND_ROFORMER.value / cap_name_length(song.stem)
+
+
+def _write_stem(path: Path, seconds: float = 3.0) -> None:
+    """A stem as the library writes it: a WAV file, here of silence."""
+    sf.write(str(path), np.zeros((int(8000 * seconds), 2), dtype=np.float32), 8000)
 
 
 @pytest.fixture
@@ -148,7 +162,7 @@ class _LibrarySeparator:
     def separate(self, path, custom_output_names=None):
         _LibrarySeparator.devices.append(str(self.torch_device))
         for name in custom_output_names.values():
-            Path(self.output_dir, f"{name}.wav").write_bytes(b"stem")
+            _write_stem(Path(self.output_dir, f"{name}.wav"))
 
 
 @pytest.fixture
@@ -158,6 +172,68 @@ def library_separator(monkeypatch):
     _LibrarySeparator.devices = []
     _LibrarySeparator.alive = []
     return _LibrarySeparator
+
+
+class _Model:
+    """Stand-in for the library's model (the class of its architecture): demixes, then writes the stems."""
+
+    def __init__(self, library):
+        self.library = library
+
+    def separate(self, path, custom_output_names=None):
+        self.demix()
+        self.library.events.append("write")
+        for name in custom_output_names.values():
+            # The library logs the error of writing a stem, and goes on with the
+            # next; a near-silent stem it does not write at all
+            if name != self.library.skipped:
+                _write_stem(Path(self.library.output_dir, f"{name}.wav"), 0.5 if name == self.library.cut else 3.0)
+        return [f"{name}.wav" for name in custom_output_names.values()]
+
+    def demix(self):
+        self.library.events.append("demix")
+        if self.library.failures:
+            raise self.library.failures.pop(0)
+
+
+class _SwallowingSeparator:
+    """Stand-in for audio-separator's Separator that, like the library's, logs
+    the error of a separation and returns as if it had written the stems."""
+
+    failures = []  # errors of the next demixings
+    cut = None  # name of a stem whose writing fails halfway
+    skipped = None  # name of a stem not written
+    events = []
+
+    def __init__(self, output_dir, **kwargs):
+        self.output_dir = output_dir
+        self.setup_torch_device(None)
+
+    def setup_torch_device(self, system_info):
+        self.torch_device = "cuda"
+
+    def load_model(self, model_filename):
+        self.events.append("load")
+        self.model_instance = _Model(self)
+
+    def separate(self, path, custom_output_names=None):
+        try:
+            return self.model_instance.separate(path, custom_output_names)
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to process file {path}: {e}")
+            return []
+
+
+@pytest.fixture
+def swallowing_separator(monkeypatch):
+    import audio_separator.separator as sepmod
+    monkeypatch.setattr(sepmod, "Separator", _SwallowingSeparator)
+    _SwallowingSeparator.failures = []
+    _SwallowingSeparator.cut = None
+    _SwallowingSeparator.skipped = None
+    _SwallowingSeparator.events = []
+    monkeypatch.setattr(separation, "release_gpu_memory", lambda: _SwallowingSeparator.events.append("release"))
+    return _SwallowingSeparator
 
 
 class TestForceCpu:
@@ -236,7 +312,8 @@ class TestGpuMemoryAfterSeparation:
         monkeypatch.setattr(separation, "release_gpu_memory",
                             lambda: released.append([ref() is None for ref in library_separator.alive]))
         _separate(tmp_path / "cache", song)
-        assert released == [[True]]
+        # After the model load, and at the end
+        assert released == [[False], [True]]
 
     def test_released_after_a_failed_separation(self, tmp_path, song, library_separator, monkeypatch):
         released = []
@@ -244,7 +321,7 @@ class TestGpuMemoryAfterSeparation:
         monkeypatch.setattr(library_separator, "separate", lambda *args, **kwargs: 1 / 0)
         with pytest.raises(ZeroDivisionError):
             _separate(tmp_path / "cache", song)
-        assert released == [True]
+        assert released == [True, True]
 
     def test_released_after_demucs(self, tmp_path, song, monkeypatch):
         released = []
@@ -252,6 +329,107 @@ class TestGpuMemoryAfterSeparation:
         monkeypatch.setattr(separation.demucs.separate, "main", lambda args: None)
         separation._separate_with_demucs(str(song), str(tmp_path), DemucsModel.HTDEMUCS)
         assert released == [True]
+
+    def test_released_after_the_model_load_and_after_the_demixing(self, tmp_path, song, swallowing_separator):
+        # On Windows the GPU memory counts toward the memory the system can commit,
+        # and the stems are written in the main memory
+        _separate(tmp_path / "cache", song)
+        assert swallowing_separator.events == ["load", "release", "demix", "release", "write", "release"]
+
+
+class TestFailedSeparation:
+    """audio-separator logs the error of a separation and returns as if it had written the stems."""
+
+    def test_error_is_raised(self, tmp_path, song, swallowing_separator):
+        swallowing_separator.failures = [ValueError("the file holds no audio")]
+        with pytest.raises(separation.SeparationFailed, match="the file holds no audio") as raised:
+            _separate(tmp_path / "cache", song)
+        assert isinstance(raised.value.__cause__, ValueError) and not raised.value.out_of_memory
+        assert not Path(_separate_folder(tmp_path / "cache", song), separation.SOURCE_KEY_FILE).exists()
+
+    def test_stems_of_an_earlier_separation_are_not_taken(self, tmp_path, song, swallowing_separator):
+        folder = _separate(tmp_path / "cache", song)
+        song.write_bytes(b"mix B")
+        swallowing_separator.failures = [ValueError("the file holds no audio")]
+        with pytest.raises(separation.SeparationFailed):
+            _separate(tmp_path / "cache", song)
+        assert not any(Path(folder, name).exists()
+                       for name in ("vocals.wav", "no_vocals.wav", separation.SOURCE_KEY_FILE))
+
+    @pytest.mark.parametrize("error", [
+        MemoryError("Unable to allocate 114. MiB for an array with shape (2, 14879936) and data type float32"),
+        RuntimeError("CUDA out of memory. Tried to allocate 20.00 MiB"),
+    ])
+    def test_out_of_memory(self, tmp_path, song, swallowing_separator, capsys, error):
+        swallowing_separator.failures = [error]
+        with pytest.raises(separation.SeparationFailed, match="ran out of memory") as raised:
+            _separate(tmp_path / "cache", song)
+        assert raised.value.out_of_memory and raised.value.__cause__ is error
+        assert str(error) in str(raised.value)
+        out = capsys.readouterr().out
+        assert "Error:" in out and "close other programs" in out
+        assert not Path(_separate_folder(tmp_path / "cache", song), separation.SOURCE_KEY_FILE).exists()
+
+    def test_a_stem_cut_short(self, tmp_path, song, swallowing_separator):
+        # The library logs the error of writing a stem (as a full disk) and goes on
+        swallowing_separator.cut = "vocals"
+        with pytest.raises(separation.SeparationFailed, match=r"cut short \(vocals.wav 0.5 s, no_vocals.wav 3.0 s\)"):
+            _separate(tmp_path / "cache", song)
+        assert not any(_separate_folder(tmp_path / "cache", song).iterdir())
+
+    def test_a_stem_not_written(self, tmp_path, song, swallowing_separator):
+        swallowing_separator.skipped = "vocals"
+        with pytest.raises(separation.SeparationFailed, match="wrote no readable vocals.wav"):
+            _separate(tmp_path / "cache", song)
+        assert not any(_separate_folder(tmp_path / "cache", song).iterdir())
+
+    def test_a_stem_that_cannot_be_removed(self, tmp_path, song, swallowing_separator, monkeypatch, capsys):
+        # As one that another program holds open: the error of the separation goes on
+        def remove(path):
+            raise PermissionError(13, "The process cannot access the file", path)
+        swallowing_separator.cut = "vocals"
+        monkeypatch.setattr(separation.os, "remove", remove)
+        with pytest.raises(separation.SeparationFailed, match="cut short"):
+            _separate(tmp_path / "cache", song)
+        assert "could not remove" in capsys.readouterr().out
+
+    def test_a_separation_without_stems(self, tmp_path, song, monkeypatch):
+        # A library that went on without its stems, and logged nothing to raise
+        monkeypatch.setattr(separation, "_separate_with_audio_separator", lambda *args, **kwargs: None)
+        with pytest.raises(separation.SeparationFailed, match="wrote no vocals.wav and no no_vocals.wav"):
+            _separate(tmp_path / "cache", song)
+        assert not Path(_separate_folder(tmp_path / "cache", song), separation.SOURCE_KEY_FILE).exists()
+
+    def test_the_model_keeps_its_own_methods(self, tmp_path, song, swallowing_separator):
+        separator = separation.create_separator(str(tmp_path))
+        separator.load_model(model_filename="model.ckpt")
+        separation.run_separation(separator, str(song), str(tmp_path), separation.STEM_NAMES)
+        swallowing_separator.failures = [ValueError("the file holds no audio")]
+        with pytest.raises(separation.SeparationFailed):
+            separation.run_separation(separator, str(song), str(tmp_path), separation.STEM_NAMES)
+        assert not {"separate", "demix"} & set(vars(separator.model_instance))
+
+    def test_lead_vocal_separation(self, tmp_path, swallowing_separator):
+        from modules.Audio.separation import SeparationFailed
+        from modules.Segmentation import lead_vocal
+        vocals = tmp_path / "vocals.wav"
+        vocals.write_bytes(b"vocals")
+        swallowing_separator.failures = [MemoryError("Unable to allocate 57.0 MiB")]
+        with pytest.raises(SeparationFailed, match=r"ran out of memory \(Unable to allocate 57.0 MiB\)"):
+            lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path), force_cpu=True)
+
+    def test_lead_stem_cut_short_is_not_cached(self, tmp_path, swallowing_separator):
+        # The lead stem that is there counts as cached: one cut short must not stay
+        from modules.Audio.separation import SeparationFailed
+        from modules.Segmentation import lead_vocal
+        vocals = tmp_path / "vocals.wav"
+        vocals.write_bytes(b"vocals")
+        swallowing_separator.cut = "backing"
+        with pytest.raises(SeparationFailed, match="cut short"):
+            lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path), force_cpu=True)
+        swallowing_separator.cut = None
+        lead_path = lead_vocal.separate_lead_vocal(str(vocals), str(tmp_path), force_cpu=True)
+        assert swallowing_separator.events.count("demix") == 2 and sf.info(lead_path).duration == 3.0
 
 
 class TestPathLength:
