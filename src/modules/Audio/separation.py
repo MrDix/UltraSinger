@@ -13,6 +13,7 @@ import os
 from enum import Enum
 
 import demucs.separate
+import soundfile as sf
 
 from modules.console_colors import (
     ULTRASINGER_HEAD,
@@ -32,7 +33,7 @@ STEM_NAMES = {"Vocals": "vocals", "Instrumental": "no_vocals"}
 
 
 class SeparationFailed(RuntimeError):
-    """A separation that wrote no stems; ``out_of_memory`` when the memory ran out."""
+    """A separation that wrote no whole stems; ``out_of_memory`` when the memory ran out."""
 
     def __init__(self, message: str, out_of_memory: bool = False):
         super().__init__(message)
@@ -170,18 +171,20 @@ def _cpu_separator_class(separator_class):
     return CpuSeparator
 
 
-def run_separation(separator, input_file_path: str, output_names: dict[str, str]) -> None:
+def run_separation(separator, input_file_path: str, output_dir: str, output_names: dict[str, str]) -> None:
     """Separate ``input_file_path`` with ``separator``, an audio-separator
-    ``Separator`` with its model loaded; ``output_names`` maps the library's
-    names of the stems to their file names.
+    ``Separator`` with its model loaded, into WAV files in ``output_dir``;
+    ``output_names`` maps the library's names of the stems to their file names.
 
-    The library logs the error of a separation and returns as if it had
-    written the stems: this raises it as ``SeparationFailed``. The GPU memory
-    that PyTorch keeps cached is handed back after the model load and after
-    the demixing: on Windows it counts toward the memory that the system can
-    commit, and the stems are then written with copies of the whole song in
-    the main memory.
+    The library logs the error of a separation, and that of writing a stem,
+    and returns as if it had written the stems: this raises them as
+    ``SeparationFailed``, and a failed separation leaves no stems. The GPU
+    memory that PyTorch keeps cached is handed back after the model load and
+    after the demixing: on Windows it counts toward the memory that the system
+    can commit, and the stems are then written with copies of the whole song
+    in the main memory.
     """
+    stems = [os.path.join(output_dir, f"{name}.wav") for name in output_names.values()]
     model = getattr(separator, "model_instance", None)
     errors: list[Exception] = []
     methods = {}
@@ -209,17 +212,43 @@ def run_separation(separator, input_file_path: str, output_names: dict[str, str]
         setattr(model, name, method)
     # What the model load left cached
     release_gpu_memory()
+    separated = False
     try:
-        separator.separate(input_file_path, custom_output_names=output_names)
+        try:
+            separator.separate(input_file_path, custom_output_names=output_names)
+        finally:
+            for name in methods:
+                # Back to the method of the model's class
+                delattr(model, name)
+        if errors:
+            error = errors.pop()
+            if is_out_of_memory(error):
+                raise SeparationFailed(f"the separation ran out of memory ({error})", out_of_memory=True) from error
+            raise SeparationFailed(f"the separation failed ({error!r})") from error
+        _check_stems(stems)
+        separated = True
     finally:
-        for name in methods:
-            # Back to the method of the model's class
-            delattr(model, name)
-    if errors:
-        error = errors.pop()
-        if is_out_of_memory(error):
-            raise SeparationFailed(f"the separation ran out of memory ({error})", out_of_memory=True) from error
-        raise SeparationFailed(f"the separation failed ({error!r})") from error
+        if not separated:
+            # Stems of a failed separation must never pass as its stems later
+            for stem in stems:
+                if os.path.exists(stem):
+                    os.remove(stem)
+
+
+def _check_stems(paths: list[str]) -> None:
+    """Raises ``SeparationFailed`` unless each stem can be read and all are
+    about as long as each other: a stem whose writing failed is missing or
+    cut short."""
+    durations = {}
+    for path in paths:
+        try:
+            durations[os.path.basename(path)] = sf.info(path).duration
+        except RuntimeError as error:
+            # Also a missing file
+            raise SeparationFailed(f"the separation wrote no readable {os.path.basename(path)} ({error})") from error
+    if min(durations.values()) == 0 or max(durations.values()) - min(durations.values()) > 1:
+        lengths = ", ".join(f"{name} {duration:.1f} s" for name, duration in durations.items())
+        raise SeparationFailed(f"the separation wrote a stem cut short ({lengths})")
 
 
 def _separate_with_audio_separator(
@@ -244,7 +273,7 @@ def _separate_with_audio_separator(
     separator = create_separator(output_dir, force_cpu)
     try:
         separator.load_model(model_filename=model_name)
-        run_separation(separator, input_file_path, STEM_NAMES)
+        run_separation(separator, input_file_path, output_dir, STEM_NAMES)
     except SeparationFailed as error:
         if error.out_of_memory:
             print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} the vocal separation ran out of memory; "

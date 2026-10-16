@@ -87,9 +87,8 @@ def separate_lead_vocal(vocals_path: str, cache_folder: str, model: str = KARAOK
     os.makedirs(out_dir, exist_ok=True)
     separator = create_separator(out_dir, force_cpu)
     separator.load_model(model_filename=model)
-    run_separation(separator, vocals_path, {"Vocals": "lead", "Instrumental": "backing"})
-    if not os.path.isfile(lead_path):
-        raise FileNotFoundError(f"lead-vocal separation produced no {lead_path}")
+    # A failed separation leaves no lead stem, which would pass as cached next time
+    run_separation(separator, vocals_path, out_dir, {"Vocals": "lead", "Instrumental": "backing"})
     return lead_path
 
 

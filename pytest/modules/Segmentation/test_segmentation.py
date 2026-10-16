@@ -562,6 +562,13 @@ class TestSegmenter:
 from modules.Segmentation import lead_vocal  # noqa: E402
 
 
+def _write_stems(folder: str, names: dict[str, str]) -> None:
+    """The stems as the separation library writes them: WAV files, here of silence."""
+    import soundfile as sf
+    for name in names.values():
+        sf.write(os.path.join(folder, f"{name}.wav"), np.zeros((800, 2), dtype=np.float32), 8000)
+
+
 class TestLeadVocalPitch:
     def test_decode_prefers_pitch_analysis(self):
         n = 60
@@ -600,7 +607,7 @@ class TestLeadVocalPitch:
                 calls.append(model_filename)
 
             def separate(self, path, custom_output_names=None):
-                open(os.path.join(self.out, "lead.wav"), "wb").close()
+                _write_stems(self.out, custom_output_names)
 
         import os
         import audio_separator.separator as sepmod
@@ -657,7 +664,7 @@ class TestLeadVocalPitch:
                 pass
 
             def separate(self, path, custom_output_names=None):
-                open(os.path.join(self.out, "lead.wav"), "wb").close()
+                _write_stems(self.out, custom_output_names)
         monkeypatch.setattr(sepmod, "Separator", FakeSeparator)
         monkeypatch.setattr(lead_vocal, "free_gpu_memory", lambda: 3 * 2 ** 30)
         vocals = tmp_path / "vocals.wav"
