@@ -355,7 +355,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
             return __start_download(ydl_opts, url, formats)
         except yt_dlp.utils.DownloadError as error:
             if not formats.formats and last_error is not None:
-                if not retrying:
+                if not retrying or len(left_out) >= _MAX_FORMAT_FALLBACKS:
                     # No format is left to take (or the new try failed before one
                     # was picked): the error of the format that did not come stands
                     raise last_error

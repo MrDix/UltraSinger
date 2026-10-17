@@ -833,6 +833,15 @@ class TestIpv4Retry(unittest.TestCase):
         self.assertEqual(tries[-1][0], tries[-2][0])  # the same formats again
         self.assertIn("could not be downloaded over IPv6 - trying it again over IPv4", log)
 
+    def test_at_the_limit_an_ipv4_try_without_formats_ends_the_download(self):
+        fallbacks = video_platform._MAX_FORMAT_FALLBACKS
+        ended = {}
+        tries, log = self._tries(["192.0.2.1"] * fallbacks + ["2001:db8::1"], unreachable_on=(fallbacks + 2,),
+                                 ended=ended)
+        self.assertEqual(len(tries), fallbacks + 2)
+        self.assertEqual(ended["error"], self._NOT_DELIVERED)
+        self.assertNotIn("going on as before", log)
+
     def test_only_the_try_over_ipv4_goes_on_from_the_try_before(self):
         ended = {}
         self._tries("2001:db8::1", ended=ended)
@@ -1128,8 +1137,9 @@ class TestFailedDownloadFolder(unittest.TestCase):
             with self._song(), patch.object(yt_dlp.YoutubeDL, "extract_info", extract_info), \
                     patch.object(video_platform, "_retry_pause", return_value=0), \
                     patch.object(video_platform, "_fragment_retry_pause", return_value=0), \
-                    patch.object(video_platform, "_MAX_FORMAT_FALLBACKS", 0), \
+                    patch.object(video_platform, "_not_delivered", return_value=False), \
                     self.assertRaises(yt_dlp.utils.DownloadError):
+                # Taken for no format's error, it goes on as it came, with its frames
                 video_platform.download_from_video_platform(f"{base}/watch", out)
             left = os.listdir(out)
         self.assertEqual(left, [])
