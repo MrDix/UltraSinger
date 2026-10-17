@@ -453,11 +453,13 @@ def __start_download(ydl_opts, url: str, formats: _DownloadFormatsPP | None = No
 def _remove_failed_song_folder(folder: str, basename: str):
     """Delete the song folder that a download made, when the download failed: a
     new try makes a folder of its own ("Artist - Title (1)", ...). A folder that
-    holds anything but the files of this download (``basename`` plus an
-    extension) stays."""
+    holds anything but the files of this download stays, as does one with a
+    chart (.txt) in it, which a sync client can bring in from another computer."""
+    # The download and its audio and video apart
+    own = (f"{basename}.", f"{basename}_video.")
     try:
         names = os.listdir(folder)
-        if any(not name.startswith(f"{basename}.") or not os.path.isfile(os.path.join(folder, name))
+        if any(not name.startswith(own) or name.endswith(".txt") or not os.path.isfile(os.path.join(folder, name))
                for name in names):
             print(f"{ULTRASINGER_HEAD} The folder of the failed download holds other files and stays: {folder}")
             return
@@ -493,14 +495,6 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
             video_with_audio_path, basename_without_ext, song_output,
             keep_audio_in_video=keep_audio_in_video,
         )
-
-        if song_info.cover_url is not None and song_info.cover_image_data is not None:
-            cover_url = song_info.cover_url
-            save_image(song_info.cover_image_data, basename_without_ext, song_output)
-        else:
-            cover_url = __download_thumbnail(
-                input_url, basename_without_ext, song_output, cookiefile, po_token
-            )
     except BaseException as error:
         if isinstance(error, yt_dlp.utils.YoutubeDLError):
             # Its frames in yt-dlp keep the partial file of a fragmented format
@@ -508,7 +502,20 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
             error.__traceback__ = None
             gc.collect()
         _remove_failed_song_folder(song_output, basename_without_ext)
-        raise
+        raise error
+
+    cover_url = None
+    if song_info.cover_url is not None and song_info.cover_image_data is not None:
+        try:
+            save_image(song_info.cover_image_data, basename_without_ext, song_output)
+            cover_url = song_info.cover_url
+        except Exception as e:  # noqa: BLE001 - the cover is optional: the video's thumbnail stands in
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the cover from the song database could "
+                  f"not be saved ({e}) - the video's thumbnail is taken instead")
+    if cover_url is None:
+        cover_url = __download_thumbnail(
+            input_url, basename_without_ext, song_output, cookiefile, po_token
+        )
 
     return (
         basename_without_ext,

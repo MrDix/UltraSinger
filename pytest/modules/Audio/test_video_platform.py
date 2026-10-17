@@ -903,16 +903,58 @@ class TestFailedDownloadFolder(unittest.TestCase):
             self.assertEqual(os.listdir(os.path.join(out, "Artist - Title")), ["notes.txt"])
         self.assertIn("holds other files and stays", log.getvalue())
 
+    @staticmethod
+    def _downloaded(url, name, folder, *args):
+        path = os.path.join(folder, f"{name}.mp4")
+        open(path, "wb").close()
+        return path
+
     def test_a_failed_separation_of_audio_and_video(self):
-        def download(url, name, folder, *args):
-            path = os.path.join(folder, f"{name}.mp4")
-            open(path, "wb").close()
-            return path
+        def separate(path, name, folder, **kwargs):
+            # Its files of the audio and of the video without it
+            for file in (f"{name}.ogg", f"{name}_video.mp4"):
+                open(os.path.join(folder, file), "wb").close()
+            raise RuntimeError("ffmpeg failed")
 
         with tempfile.TemporaryDirectory() as out:
-            with self._song(download, separate=RuntimeError("ffmpeg failed")), self.assertRaises(RuntimeError):
+            with self._song(self._downloaded, separate), self.assertRaises(RuntimeError):
                 video_platform.download_from_video_platform("https://fakeUrl", out)
             self.assertEqual(os.listdir(out), [])
+
+    def test_a_folder_with_a_chart_stays(self):
+        """A sync client can bring a song of the same name in from another computer."""
+        def download(url, name, folder, *args):
+            open(os.path.join(folder, f"{name}.txt"), "w").close()
+            raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+
+        with tempfile.TemporaryDirectory() as out:
+            with self._song(download), self.assertRaises(yt_dlp.utils.DownloadError):
+                video_platform.download_from_video_platform("https://fakeUrl", out)
+            self.assertEqual(os.listdir(os.path.join(out, "Artist - Title")), ["Artist - Title.txt"])
+
+    def test_a_folder_that_cannot_be_removed(self):
+        def download(url, name, folder, *args):
+            raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+
+        with tempfile.TemporaryDirectory() as out:
+            with self._song(download) as log, \
+                    patch.object(video_platform.shutil, "rmtree", side_effect=PermissionError(13, "locked")), \
+                    self.assertRaises(yt_dlp.utils.DownloadError):
+                video_platform.download_from_video_platform("https://fakeUrl", out)
+        self.assertIn("the folder of the failed download could not be removed", log.getvalue())
+
+    def test_a_cover_that_cannot_be_saved(self):
+        """The download came: the song goes on with the video's thumbnail as its cover."""
+        song = SongInfo(title="Title", artist="Artist", cover_url="https://cover.example/c.jpg",
+                        cover_image_data=b"no image")
+        with tempfile.TemporaryDirectory() as out:
+            with self._song(self._downloaded, separate=lambda *args, **kwargs: ("a.ogg", "v.mp4", "ogg", "mp4")) \
+                    as log, patch.object(video_platform, "search_musicbrainz", return_value=song), \
+                    patch.object(video_platform, "__download_thumbnail", return_value="https://thumb.example/t.jpg"):
+                *_, media_info = video_platform.download_from_video_platform("https://fakeUrl", out)
+            self.assertEqual(os.listdir(out), ["Artist - Title"])
+        self.assertEqual(media_info.cover_url, "https://thumb.example/t.jpg")
+        self.assertIn("the cover from the song database could not be saved", log.getvalue())
 
     def test_a_cancelled_download(self):
         def download(url, name, folder, *args):
