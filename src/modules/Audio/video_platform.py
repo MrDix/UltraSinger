@@ -191,9 +191,11 @@ class _DownloadFormatsPP(PostProcessor):
     it picked; ``progress`` is a progress hook of the download.
     """
 
-    def __init__(self, announce: bool = False):
+    def __init__(self, announce: bool = False, goes_on_from: list[str] | None = None):
         super().__init__()
         self._announce = announce
+        # The format ids of the try whose partial files this one goes on from
+        self._goes_on_from = goes_on_from
         self.formats: list[dict] = []
         self._finished: set[str] = set()
         # The file that yt-dlp writes, without its extension (it expands
@@ -204,6 +206,12 @@ class _DownloadFormatsPP(PostProcessor):
         # A video and an audio format to merge, or a single format
         self.formats = list(info.get("requested_formats") or [info])
         self.stem = os.path.splitext(info.get("_filename") or "")[0]
+        if self._goes_on_from is not None and [f.get("format_id") for f in self.formats] != self._goes_on_from:
+            # Other formats than before: nothing of those may be taken up (a
+            # single format has no id in its file name)
+            for path, reason, _ in _remove_partial_files(self.stem, ()):
+                raise yt_dlp.utils.DownloadError(
+                    f"the partial file {os.path.basename(path)} of another format could not be deleted ({reason})")
         if self._announce:
             print(f"{ULTRASINGER_HEAD} Downloading format "
                   f"{' + '.join(_format_name(f) for f in self.formats)}")
@@ -319,6 +327,9 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
     left_out: list[str] = []
     last_error = None
     ipv4 = False
+    # The try over IPv6 that is tried again over IPv4: its failed format, the
+    # ids of its formats and its file without extension
+    over_ipv6: tuple[dict, list[str], str] | None = None
     while True:
         ydl_opts = _apply_po_token({
             "format": _video_format(left_out),
@@ -337,35 +348,45 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         }, po_token)
         if ipv4:
             ydl_opts["source_address"] = "0.0.0.0"  # IPv4 only, as yt-dlp's --force-ipv4
-        formats = _DownloadFormatsPP(announce=bool(left_out))
+        formats = _DownloadFormatsPP(announce=bool(left_out), goes_on_from=over_ipv6[1] if ipv4 else None)
         try:
             return __start_download(ydl_opts, url, formats)
         except yt_dlp.utils.DownloadError as error:
             if not formats.formats and last_error is not None:
-                # No format is left to take (or the new try failed before one
-                # was picked): the error of the format that did not come stands
-                raise last_error
-            # No format failed when the error came after all of them (merging)
-            failed = formats.failed() or {}
-            format_id = str(failed.get("format_id") or "")
-            if (not _FORMAT_ID.fullmatch(format_id) or not _not_delivered(error)
-                    or len(left_out) >= _MAX_FORMAT_FALLBACKS):
-                raise
-            # Only its message: the error's frames keep files of the format open
-            last_error = yt_dlp.utils.DownloadError(error.msg)
+                if not ipv4 or len(left_out) >= _MAX_FORMAT_FALLBACKS:
+                    # No format is left to take (or the new try failed before one
+                    # was picked): the error of the format that did not come stands
+                    raise last_error
+                # Over IPv4 the try did not get as far as its formats: IPv4 does
+                # not work here, and the format is left out as it would have been
+                ipv4 = False
+                failed = over_ipv6[0]
+                print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the video could not be reached "
+                      f"over IPv4 - going on as before")
+            else:
+                # No format failed when the error came after all of them (merging)
+                failed = formats.failed() or {}
+                if (not _FORMAT_ID.fullmatch(str(failed.get("format_id") or "")) or not _not_delivered(error)
+                        or len(left_out) >= _MAX_FORMAT_FALLBACKS):
+                    raise
+                # Only its message: the error's frames keep files of the format open
+                last_error = yt_dlp.utils.DownloadError(error.msg)
         # yt-dlp leaves the partial file of a fragmented format open until the
         # frames of the error are collected
         gc.collect()
-        if not ipv4 and ":" in _client_ip(failed.get("url")):
+        format_id = str(failed["format_id"])
+        if over_ipv6 is None and ":" in _client_ip(failed.get("url")):
             # The format came over IPv6, which some networks carry worse than
             # IPv4, and yt-dlp keeps to the address that answered first: the
             # same format is tried again over IPv4, from where it stopped
             ipv4 = True
+            over_ipv6 = (failed, [f.get("format_id") for f in formats.formats], formats.stem)
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
                   f"could not be downloaded over IPv6 - trying it again over IPv4")
             continue
         left_out.append(format_id)
-        stuck = _remove_partial_files(formats.stem, left_out)
+        # Without a format picked over IPv4, the files are those of the try over IPv6
+        stuck = _remove_partial_files(formats.stem or (over_ipv6[2] if over_ipv6 else ""), left_out)
         for path, reason, taken_up in stuck:
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the partial file {os.path.basename(path)} "
                   f"could not be deleted ({reason})"
