@@ -518,7 +518,7 @@ Older hand-made charts are read as well: in CP1252 or in the encoding their `#EN
 
 #### Song folder
 
-Each song gets a folder of its own in the output folder, named `Artist - Title` (`Artist - Title (1)` ... if that folder exists), and its files are named alike. A name longer than 60 characters is shortened and ends with a short code made from the full name, so the paths of the song's files and of its cache folder stay within the Windows path length limit.
+Each song gets a folder of its own in the output folder, named `Artist - Title` (`Artist - Title (1)` ... if that folder exists), and its files are named alike. When the download of a song from the video platform fails, its new folder is removed again, so that the next try does not leave `(1)`, `(2)` ... folders of partial downloads behind; a folder that holds other files stays. A name longer than 60 characters is shortened and ends with a short code made from the full name, so the paths of the song's files and of its cache folder stay within the Windows path length limit.
 
 ### 🗣 Transcriber
 

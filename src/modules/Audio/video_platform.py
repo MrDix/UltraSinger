@@ -5,6 +5,7 @@ import glob
 import logging
 import os
 import re
+import shutil
 from collections.abc import Sequence
 
 import yt_dlp
@@ -449,6 +450,24 @@ def __start_download(ydl_opts, url: str, formats: _DownloadFormatsPP | None = No
     return path
 
 
+def _remove_failed_song_folder(folder: str, basename: str):
+    """Delete the song folder that a download made, when the download failed: a
+    new try makes a folder of its own ("Artist - Title (1)", ...). A folder that
+    holds anything but the files of this download (``basename`` plus an
+    extension) stays."""
+    try:
+        names = os.listdir(folder)
+        if any(not name.startswith(f"{basename}.") or not os.path.isfile(os.path.join(folder, name))
+               for name in names):
+            print(f"{ULTRASINGER_HEAD} The folder of the failed download holds other files and stays: {folder}")
+            return
+        shutil.rmtree(folder)
+        print(f"{ULTRASINGER_HEAD} Removed the folder of the failed download: {folder}")
+    except OSError as error:
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the folder of the failed download "
+              f"could not be removed ({error}): {folder}")
+
+
 def download_from_video_platform(input_url: str, output_folder_path: str, cookiefile: str = None, *,
                                   keep_audio_in_video: bool = False,
                                   po_token: str = None) -> tuple[str, str, str, MediaInfo]:
@@ -463,24 +482,33 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
     song_output = get_unused_song_output_dir(song_output)
     os_helper.create_folder(song_output)
 
-    print(f"{ULTRASINGER_HEAD} Downloading from the video platform")
-    video_with_audio_path = __download_video_with_audio(
-        input_url, basename_without_ext, song_output, cookiefile, po_token
-    )
-
-    # Separate audio and video
-    audio_file_path, final_video_path, audio_ext, video_ext = separate_audio_video(
-        video_with_audio_path, basename_without_ext, song_output,
-        keep_audio_in_video=keep_audio_in_video,
-    )
-
-    if song_info.cover_url is not None and song_info.cover_image_data is not None:
-        cover_url = song_info.cover_url
-        save_image(song_info.cover_image_data, basename_without_ext, song_output)
-    else:
-        cover_url = __download_thumbnail(
+    try:
+        print(f"{ULTRASINGER_HEAD} Downloading from the video platform")
+        video_with_audio_path = __download_video_with_audio(
             input_url, basename_without_ext, song_output, cookiefile, po_token
         )
+
+        # Separate audio and video
+        audio_file_path, final_video_path, audio_ext, video_ext = separate_audio_video(
+            video_with_audio_path, basename_without_ext, song_output,
+            keep_audio_in_video=keep_audio_in_video,
+        )
+
+        if song_info.cover_url is not None and song_info.cover_image_data is not None:
+            cover_url = song_info.cover_url
+            save_image(song_info.cover_image_data, basename_without_ext, song_output)
+        else:
+            cover_url = __download_thumbnail(
+                input_url, basename_without_ext, song_output, cookiefile, po_token
+            )
+    except BaseException as error:
+        if isinstance(error, yt_dlp.utils.YoutubeDLError):
+            # Its frames in yt-dlp keep the partial file of a fragmented format
+            # open, which then could not be deleted: it goes on without them
+            error.__traceback__ = None
+            gc.collect()
+        _remove_failed_song_folder(song_output, basename_without_ext)
+        raise
 
     return (
         basename_without_ext,

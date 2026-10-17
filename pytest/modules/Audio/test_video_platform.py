@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
-from contextlib import contextmanager, nullcontext, redirect_stdout
+from contextlib import ExitStack, contextmanager, nullcontext, redirect_stdout
 from unittest.mock import patch
 
 import yt_dlp
@@ -857,6 +857,94 @@ class TestDownloadedFile(unittest.TestCase):
         # The cover is optional: the song goes on without it
         self.assertEqual((media_info.video_extension, media_info.cover_url), ("webm", ""))
         self.assertIn("the thumbnail could not be downloaded", log.getvalue())
+
+
+class TestFailedDownloadFolder(unittest.TestCase):
+    """A download that fails takes its new song folder along: the next try makes
+    a folder of its own ("Artist - Title (1)", ...)."""
+
+    _NOT_DELIVERED = "ERROR: \r[download] Got error: HTTP Error 503: Service Unavailable. Giving up after 10 retries"
+
+    @contextmanager
+    def _song(self, download=None, separate=None):
+        """The video's song is "Artist - Title"; ``download`` and ``separate`` stand in
+        for the download and for the separation of audio and video. Yields the console."""
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(video_platform, "get_video_title",
+                                             return_value=("Artist", "Title", "Artist - Title", "en")))
+            stack.enter_context(patch.object(video_platform, "search_musicbrainz",
+                                             return_value=SongInfo(title="Title", artist="Artist")))
+            if download:
+                stack.enter_context(patch.object(video_platform, "__download_video_with_audio", side_effect=download))
+            if separate:
+                stack.enter_context(patch.object(video_platform, "separate_audio_video", side_effect=separate))
+            yield stack.enter_context(redirect_stdout(io.StringIO()))
+
+    def test_the_folder_of_a_failed_download_goes(self):
+        def download(url, name, folder, *args):
+            open(os.path.join(folder, f"{name}.f399.mp4.part"), "wb").close()
+            raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+
+        with tempfile.TemporaryDirectory() as out:
+            with self._song(download) as log, self.assertRaises(yt_dlp.utils.DownloadError) as raised:
+                video_platform.download_from_video_platform("https://fakeUrl", out)
+            self.assertEqual(os.listdir(out), [])
+        self.assertEqual(str(raised.exception), self._NOT_DELIVERED)
+        self.assertIn("Removed the folder of the failed download", log.getvalue())
+
+    def test_a_folder_with_other_files_stays(self):
+        def download(url, name, folder, *args):
+            open(os.path.join(folder, "notes.txt"), "w").close()
+            raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+
+        with tempfile.TemporaryDirectory() as out:
+            with self._song(download) as log, self.assertRaises(yt_dlp.utils.DownloadError):
+                video_platform.download_from_video_platform("https://fakeUrl", out)
+            self.assertEqual(os.listdir(os.path.join(out, "Artist - Title")), ["notes.txt"])
+        self.assertIn("holds other files and stays", log.getvalue())
+
+    def test_a_failed_separation_of_audio_and_video(self):
+        def download(url, name, folder, *args):
+            path = os.path.join(folder, f"{name}.mp4")
+            open(path, "wb").close()
+            return path
+
+        with tempfile.TemporaryDirectory() as out:
+            with self._song(download, separate=RuntimeError("ffmpeg failed")), self.assertRaises(RuntimeError):
+                video_platform.download_from_video_platform("https://fakeUrl", out)
+            self.assertEqual(os.listdir(out), [])
+
+    def test_a_cancelled_download(self):
+        def download(url, name, folder, *args):
+            open(os.path.join(folder, f"{name}.mp4.part"), "wb").close()
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as out:
+            with self._song(download), self.assertRaises(KeyboardInterrupt):
+                video_platform.download_from_video_platform("https://fakeUrl", out)
+            self.assertEqual(os.listdir(out), [])
+
+    def test_a_fragmented_format_that_ends_the_download(self):
+        """yt-dlp leaves the file of the fragmented format open while its error is on the way
+        (yt-dlp and a local server)."""
+        files = {"/f1": b"1" * 30000, "/f2": b"2" * 30000}
+        with _media_server(files, refused={"/f2"}) as (_, base), \
+                tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as out:
+            fragmented = {**TestFormatFallback._format(base, "hd", 720), "protocol": "http_dash_segments",
+                          "fragments": [{"url": f"{base}/f1"}, {"url": f"{base}/f2"}]}
+            info = {"id": "vid", "title": "Video", "extractor": "test", "extractor_key": "Test",
+                    "webpage_url": f"{base}/watch", "formats": [fragmented]}
+
+            def extract_info(ydl, url, download=True, **kwargs):
+                return ydl.process_ie_result(copy.deepcopy(info), download=download)
+
+            with self._song(), patch.object(yt_dlp.YoutubeDL, "extract_info", extract_info), \
+                    patch.object(video_platform, "_retry_pause", return_value=0), \
+                    patch.object(video_platform, "_MAX_FORMAT_FALLBACKS", 0), \
+                    self.assertRaises(yt_dlp.utils.DownloadError):
+                video_platform.download_from_video_platform(f"{base}/watch", out)
+            left = os.listdir(out)
+        self.assertEqual(left, [])
 
 
 if __name__ == "__main__":
