@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from unittest.mock import patch, MagicMock
 
+from modules.Speech_Recognition import reference_lyrics_aligner as aligner
 from modules.Speech_Recognition.lyrics_alignment import lyrics_tokens
 from modules.Speech_Recognition.reference_lyrics_aligner import (
     parse_lrc_synced_lyrics,
@@ -578,11 +579,42 @@ def lrc_segments(n_lines):
             for i in range(n_lines)]
 
 
-def align_with(model, audio, segments, language="en", **kwargs):
+def align_with(model, audio, segments, language="en", device="cpu", **kwargs):
     with patch("whisperx.load_align_model", return_value=(model, METADATA)) as load_model, \
             patch("whisperx.load_audio", return_value=audio):
-        words = align_lyrics_to_audio(segments, "/fake/audio.wav", language, device="cpu", **kwargs)
+        words = align_lyrics_to_audio(segments, "/fake/audio.wav", language, device=device, **kwargs)
     return words, load_model
+
+
+GIB = 2 ** 30
+
+
+class FakeGpu:
+    """The GPU memory as the aligner reads it: the model takes ``per_sample``
+    bytes for each sample of its input, and ``free`` bytes are free (a
+    callable: free_gpu_memory itself). The model runs on the CPU. ``events``
+    holds the length of each input and each hand-back of the cache."""
+
+    def __init__(self, monkeypatch, free, per_sample=1000):
+        self.events = []
+        on_cpu = aligner._align_model_log_probs
+
+        def run(model, model_type, samples, device):
+            assert device == "cuda"
+            self.events.append(len(samples))
+            return on_cpu(model, model_type, samples, "cpu")
+
+        monkeypatch.setattr(aligner, "_align_model_log_probs", run)
+        monkeypatch.setattr(aligner, "release_gpu_memory", lambda: self.events.append("release"))
+        monkeypatch.setattr(aligner, "free_gpu_memory", free if callable(free) else lambda: free)
+        monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", lambda device=None: None)
+        monkeypatch.setattr(torch.cuda, "memory_allocated", lambda device=None: 1000)
+        monkeypatch.setattr(torch.cuda, "max_memory_allocated",
+                            lambda device=None: 1000 + per_sample * self.inputs[-1])
+
+    @property
+    def inputs(self):
+        return [event for event in self.events if event != "release"]
 
 
 class TestAlignLyricsToAudio:
@@ -674,6 +706,86 @@ class TestAlignLyricsToAudio:
         out = capsys.readouterr().out
         assert "Not enough memory" in out
         assert "(30-s pieces," in out
+
+    def test_on_the_gpu_a_whole_song_that_does_not_fit_is_left_out(self, monkeypatch, capsys):
+        """On Windows it would go on in the shared system memory instead of running out of memory."""
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+        # 1000 bytes a sample: 1000 x 64 s x 16000 x 1.4 = 1.34 GB for the whole song
+        gpu = FakeGpu(monkeypatch, free=GIB // 2)
+
+        words, _ = align_with(model, audio, segments, device="cuda")
+
+        # the 30-s pieces with their context and the probe of 40 s, not the whole song
+        assert gpu.inputs == [35 * 16000, 39 * 16000, 9 * 16000, 40 * 16000]
+        assert len(words) == 40
+        assert [w["start"] for w in words[::2]] == pytest.approx([s["start"] for s in segments], abs=0.011)
+        out = capsys.readouterr().out
+        # the need rounded up, the free memory down
+        assert ("Not enough GPU memory free to align the whole song at once (about 1.4 GB needed, "
+                "0.5 GB free) -- aligning it in 30-s pieces") in out
+        assert "(30-s pieces," in out
+
+    def test_on_the_gpu_a_whole_song_that_fits_runs_after_the_cache_is_handed_back(self, monkeypatch, capsys):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+        gpu = FakeGpu(monkeypatch, free=2 * GIB)
+
+        align_with(model, audio, segments, device="cuda")
+
+        assert gpu.events == [35 * 16000, 39 * 16000, 9 * 16000, "release", 40 * 16000, "release",
+                              64 * 16000, "release"]
+        assert "Not enough" not in capsys.readouterr().out
+
+    def test_on_the_gpu_plain_lyrics_that_do_not_fit_are_aligned_in_pieces(self, monkeypatch):
+        segments = [{"text": "aa aaa bb bbb", "start": 0.0, "end": 50.0}]
+        model, audio = fake_song(segments, [41.0], 50.0)
+        gpu = FakeGpu(monkeypatch, free=GIB // 2)
+
+        words, _ = align_with(model, audio, segments, device="cuda")
+
+        # the probe, then the pieces
+        assert gpu.inputs == [40 * 16000, 35 * 16000, 25 * 16000]
+        assert [w["start"] for w in words] == pytest.approx([41.0, 41.12, 41.28, 41.40], abs=0.011)
+
+    def test_on_the_gpu_unreadable_free_memory_leaves_the_whole_song_out(self, monkeypatch, capsys):
+        def unreadable():
+            raise RuntimeError("CUDA error: unknown error")
+
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+        gpu = FakeGpu(monkeypatch, free=unreadable)
+
+        align_with(model, audio, segments, device="cuda")
+
+        assert 64 * 16000 not in gpu.inputs
+        assert ("The free GPU memory could not be read (CUDA error: unknown error) "
+                "-- aligning it in 30-s pieces") in capsys.readouterr().out
+
+    def test_on_the_gpu_a_model_with_another_hop_aligns_with_the_whole_song(self, monkeypatch):
+        """Its pieces would not match the frames of the song, so the whole song runs, fit or not."""
+        segments = lrc_segments(20)
+
+        class Model:
+            def __call__(self, waveform, lengths=None):
+                return torch.zeros(1, waveform.shape[-1] // 160, len(DICTIONARY)), None
+
+        gpu = FakeGpu(monkeypatch, free=0)
+        with patch("modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics",
+                   return_value=None) as align:
+            align_with(Model(), np.zeros(64 * 16000, dtype=np.float32), segments, device="cuda")
+        assert gpu.inputs[-2:] == [40 * 16000, 64 * 16000]  # the probe, then the whole song
+        assert [label for label, _ in align.call_args.args[1]] == ["whole song"]
+
+    def test_on_the_gpu_a_song_no_longer_than_the_probe_is_not_measured(self, monkeypatch):
+        segments = lrc_segments(10)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 40.0)
+        gpu = FakeGpu(monkeypatch, free=lambda: pytest.fail("free GPU memory read"))
+
+        align_with(model, audio, segments, device="cuda")
+
+        # the pieces, then the whole song
+        assert gpu.inputs == [35 * 16000, 15 * 16000, 40 * 16000]
 
     def test_out_of_memory_runtime_error_of_plain_lyrics(self, capsys):
         segments = [{"text": "aa aaa bb bbb", "start": 0.0, "end": 50.0}]
