@@ -209,6 +209,8 @@ To restore full-quality downloads UltraSinger uses the maintained [`bgutil-ytdlp
 
 Once a provider responds on `http://127.0.0.1:4416`, `yt-dlp` uses it transparently for every download (GUI and CLI). If no provider is available the app still works, but video downloads fall back to the limited formats.
 
+A download that breaks off is retried up to 10 times, with pauses of 1, 2, 4 … 30 s in between (about 3 minutes in all); the console shows each retry and pause. The platform's servers sometimes refuse one format of a video for hours while its player still plays the video. When a format (or one fragment of a fragmented format) still does not come after the retries, the download starts again with the next best format (another video or another audio format, up to 3 times) instead of leaving a gap in the video; it never falls back to the audio alone. An error of this computer, such as a file that cannot be written, ends the download at once.
+
 Provider behaviour can be tuned in the GUI config (`~/.ultrasinger`): `potoken_auto_start` (check on launch), `potoken_auto_start_node` / `potoken_auto_start_docker` (allow the respective auto-launch), `potoken_base_url` (custom server URL). Save `config.json` as UTF-8. If the GUI cannot read it, it starts with the default settings and keeps a copy of the file as `config.json.<date>-<time>.bak`; a single setting with a wrong value falls back to its default (see the log).
 
 ## 🌐 Corporate proxy / firewall

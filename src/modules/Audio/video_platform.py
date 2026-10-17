@@ -1,10 +1,16 @@
 """Video Platform Downloader"""
 
+import gc
+import glob
 import logging
 import os
 import re
+from collections.abc import Sequence
 
 import yt_dlp
+from yt_dlp.networking.exceptions import network_exceptions
+from yt_dlp.postprocessor.common import PostProcessor
+from yt_dlp.utils import ContentTooShortError
 
 from modules.os_helper import sanitize_filename, get_unused_song_output_dir
 from modules import os_helper
@@ -95,7 +101,7 @@ _DOWNLOAD_RETRIES = 10
 
 # Longest pause before a retry (s): of the download, and of a fragment of a
 # fragmented stream, which has many (a fragment that is gone for good costs
-# all of its retries before it is left out)
+# all of its retries before its format is given up)
 _MAX_RETRY_PAUSE_S = 30.0
 _MAX_FRAGMENT_RETRY_PAUSE_S = 5.0
 
@@ -122,6 +128,103 @@ def _fragment_retry_pause(n: int) -> float:
 # their place comes at a normal speed. So they are only taken when no other
 # mp4 video is offered.
 _VIDEO_FORMAT = "bestvideo[ext=mp4][format_note!*=?Premium]+bestaudio/bestvideo[ext=mp4]+bestaudio/best"
+
+# A server can refuse one format of a video for hours ("503 Service
+# Unavailable", also after all retries) while the site's player plays the video
+# all the same. The download then starts again without that format, up to this
+# many times: with the next best video or audio format, never with the audio
+# alone.
+_MAX_FORMAT_FALLBACKS = 3
+
+# The format ids that a format string can leave out (the video platform's are
+# numbers, some with a suffix such as "251-drc")
+_FORMAT_ID = re.compile(r"[\w.-]+")
+
+# What yt-dlp says when a server does not deliver a format, also after the
+# retries. An error of this computer (a file that cannot be written or renamed,
+# no ffmpeg to merge) says otherwise, and another format would not help.
+_NOT_DELIVERED = ("[download] Got error:", "Did not get any data blocks",
+                  "The downloaded file is empty", "not found, unable to continue")
+
+
+def _not_delivered(error: yt_dlp.utils.DownloadError) -> bool:
+    """Whether a download failed because the server did not deliver a format."""
+    cause = (error.exc_info or (None, None, None))[1]
+    return (isinstance(cause, (*network_exceptions, ContentTooShortError))
+            or any(marker in str(error) for marker in _NOT_DELIVERED))
+
+
+def _video_format(left_out: Sequence[str] = ()) -> str:
+    """``_VIDEO_FORMAT`` without the formats ``left_out``: each of its parts
+    takes the best format that is none of them."""
+    # Quoted: yt-dlp compares a number as a number, and no format id (a
+    # string) equals one, so "[format_id!=399]" left no format out
+    skip = "".join(f"[format_id!='{format_id}']" for format_id in left_out)
+    return "/".join("+".join(f"{part}{skip}" for part in alternative.split("+"))
+                    for alternative in _VIDEO_FORMAT.split("/"))
+
+
+def _format_name(fmt: dict) -> str:
+    """A format as the console names it, e.g. "399 (1920x1080)" or "251 (audio only)"."""
+    resolution = fmt.get("resolution")
+    return f"{fmt.get('format_id')} ({resolution})" if resolution else str(fmt.get("format_id"))
+
+
+class _DownloadFormatsPP(PostProcessor):
+    """The formats of a download, and which of them came in full.
+
+    yt-dlp runs it before the download (``when="before_dl"``) with the formats
+    it picked; ``progress`` is a progress hook of the download.
+    """
+
+    def __init__(self, announce: bool = False):
+        super().__init__()
+        self._announce = announce
+        self.formats: list[dict] = []
+        self._finished: set[str] = set()
+        # The file that yt-dlp writes, without its extension (it expands
+        # environment variables such as "$NAME" in the name it was given)
+        self.stem = ""
+
+    def run(self, info):
+        # A video and an audio format to merge, or a single format
+        self.formats = list(info.get("requested_formats") or [info])
+        self.stem = os.path.splitext(info.get("_filename") or "")[0]
+        if self._announce:
+            print(f"{ULTRASINGER_HEAD} Downloading format "
+                  f"{' + '.join(_format_name(f) for f in self.formats)}")
+        return [], info
+
+    def progress(self, status: dict):
+        if status.get("status") == "finished":
+            self._finished.add((status.get("info_dict") or {}).get("format_id"))
+
+    def failed(self) -> dict | None:
+        """The format that did not come in full, if any: yt-dlp downloads the
+        formats one after the other and stops at the first that fails (one
+        downloader for all of them, as for a live stream, counts as the first)."""
+        return next((f for f in self.formats if f.get("format_id") not in self._finished), None)
+
+
+def _remove_partial_files(stem: str, left_out: Sequence[str]) -> list[tuple[str, OSError, bool]]:
+    """Delete the partial files of a download to ``stem`` plus an extension: of
+    a format, with the fragments and the state file of a fragmented one. The
+    formats that came in full stay, for the next try.
+
+    Returns the files that could not be deleted, with the reason and whether the
+    next try could go on from one (not from one of the formats ``left_out``,
+    which it never takes).
+    """
+    stuck = []
+    for path in glob.glob(f"{glob.escape(stem)}.*") if stem else ():
+        # What follows the name, e.g. ".f399.mp4.part" (the name can hold anything)
+        suffix = os.path.basename(path)[len(os.path.basename(stem)):]
+        if suffix.endswith((".part", ".ytdl")) or ".part-Frag" in suffix:
+            try:
+                os.remove(path)
+            except OSError as error:
+                stuck.append((path, error, not any(suffix.startswith(f".f{f}.") for f in left_out)))
+    return stuck
 
 
 def get_video_title(url: str, cookiefile: str | None = None,
@@ -199,19 +302,53 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
     """Download video with audio from the video platform and return the path of the file"""
 
     print(f"{ULTRASINGER_HEAD} Downloading Video with Audio")
-    ydl_opts = _apply_po_token({
-        "format": _VIDEO_FORMAT,
-        "outtmpl": _output_template(output_path, clear_filename),
-        # Only for formats that are merged: a single file keeps its own (e.g. webm)
-        "merge_output_format": "mp4",
-        "retries": _DOWNLOAD_RETRIES,
-        "fragment_retries": _DOWNLOAD_RETRIES,
-        "retry_sleep_functions": {"http": _retry_pause, "fragment": _fragment_retry_pause},
-        "cookiefile": cookiefile,
-        "logger": _FilteredLogger(),
-        "noplaylist": True,  # as in get_video_title
-    }, po_token)
-    return __start_download(ydl_opts, url)
+    left_out: list[str] = []
+    last_error = None
+    while True:
+        ydl_opts = _apply_po_token({
+            "format": _video_format(left_out),
+            "outtmpl": _output_template(output_path, clear_filename),
+            # Only for formats that are merged: a single file keeps its own (e.g. webm)
+            "merge_output_format": "mp4",
+            "retries": _DOWNLOAD_RETRIES,
+            "fragment_retries": _DOWNLOAD_RETRIES,
+            "retry_sleep_functions": {"http": _retry_pause, "fragment": _fragment_retry_pause},
+            # A fragment that does not come ends the download of its format,
+            # which the next best format then replaces, instead of a gap in the video
+            "skip_unavailable_fragments": False,
+            "cookiefile": cookiefile,
+            "logger": _FilteredLogger(),
+            "noplaylist": True,  # as in get_video_title
+        }, po_token)
+        formats = _DownloadFormatsPP(announce=bool(left_out))
+        try:
+            return __start_download(ydl_opts, url, formats)
+        except yt_dlp.utils.DownloadError as error:
+            if not formats.formats and last_error is not None:
+                # No format is left to take (or the new try failed before one
+                # was picked): the error of the format that did not come stands
+                raise last_error
+            # No format failed when the error came after all of them (merging)
+            failed = formats.failed() or {}
+            format_id = str(failed.get("format_id") or "")
+            if (not _FORMAT_ID.fullmatch(format_id) or not _not_delivered(error)
+                    or len(left_out) >= _MAX_FORMAT_FALLBACKS):
+                raise
+            # Only its message: the error's frames keep files of the format open
+            last_error = yt_dlp.utils.DownloadError(error.msg)
+        # yt-dlp leaves the partial file of a fragmented format open until the
+        # frames of the error are collected
+        gc.collect()
+        left_out.append(format_id)
+        stuck = _remove_partial_files(formats.stem, left_out)
+        for path, reason, taken_up in stuck:
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the partial file {os.path.basename(path)} "
+                  f"could not be deleted ({reason})"
+                  + (" - no other format is tried, the next one could go on from it" if taken_up else ""))
+        if any(taken_up for _, _, taken_up in stuck):
+            raise last_error
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
+              f"could not be downloaded - downloading the next best format instead")
 
 
 def __download_thumbnail(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
@@ -295,10 +432,14 @@ class _FilteredLogger:
         print(f"ERROR: {msg}")
 
 
-def __start_download(ydl_opts, url: str) -> str:
-    """Start the download the ydl_opts; the path of the downloaded file"""
+def __start_download(ydl_opts, url: str, formats: _DownloadFormatsPP | None = None) -> str:
+    """Start the download the ydl_opts; the path of the downloaded file
+    (``formats`` learns the formats of the download and how far they came)"""
     ydl_opts.setdefault("logger", _FilteredLogger())
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        if formats is not None:
+            ydl.add_post_processor(formats, when="before_dl")
+            ydl.add_progress_hook(formats.progress)
         info = ydl.extract_info(url, download=True)
     # The file as it is after merging, with the extension of its real container
     downloads = (info or {}).get("requested_downloads") or []
