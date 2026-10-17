@@ -330,6 +330,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
     # The try over IPv6 that is tried again over IPv4: its failed format, the
     # ids of its formats and its file without extension
     over_ipv6: tuple[dict, list[str], str] | None = None
+    retrying = False  # this try is that one again, over IPv4
     while True:
         ydl_opts = _apply_po_token({
             "format": _video_format(left_out),
@@ -348,12 +349,13 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         }, po_token)
         if ipv4:
             ydl_opts["source_address"] = "0.0.0.0"  # IPv4 only, as yt-dlp's --force-ipv4
-        formats = _DownloadFormatsPP(announce=bool(left_out), goes_on_from=over_ipv6[1] if ipv4 else None)
+        formats = _DownloadFormatsPP(announce=bool(left_out) or retrying,
+                                     goes_on_from=over_ipv6[1] if retrying else None)
         try:
             return __start_download(ydl_opts, url, formats)
         except yt_dlp.utils.DownloadError as error:
             if not formats.formats and last_error is not None:
-                if not ipv4 or len(left_out) >= _MAX_FORMAT_FALLBACKS:
+                if not retrying:
                     # No format is left to take (or the new try failed before one
                     # was picked): the error of the format that did not come stands
                     raise last_error
@@ -371,6 +373,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
                     raise
                 # Only its message: the error's frames keep files of the format open
                 last_error = yt_dlp.utils.DownloadError(error.msg)
+        retrying = False
         # yt-dlp leaves the partial file of a fragmented format open until the
         # frames of the error are collected
         gc.collect()
@@ -379,7 +382,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
             # The format came over IPv6, which some networks carry worse than
             # IPv4, and yt-dlp keeps to the address that answered first: the
             # same format is tried again over IPv4, from where it stopped
-            ipv4 = True
+            ipv4 = retrying = True
             over_ipv6 = (failed, [f.get("format_id") for f in formats.formats], formats.stem)
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
                   f"could not be downloaded over IPv6 - trying it again over IPv4")
