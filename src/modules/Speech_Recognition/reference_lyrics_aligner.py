@@ -500,9 +500,12 @@ def _whole_song_does_not_fit(run, audio: np.ndarray, device: str) -> Optional[st
     release_gpu_memory()
     torch.cuda.reset_peak_memory_stats()
     before = torch.cuda.memory_allocated()
-    frames = len(run(probe))
-    need = (torch.cuda.max_memory_allocated() - before) * len(audio) / len(probe) * _GPU_CACHE_FACTOR
-    release_gpu_memory()
+    try:
+        frames = len(run(probe))
+        need = (torch.cuda.max_memory_allocated() - before) * len(audio) / len(probe) * _GPU_CACHE_FACTOR
+    finally:
+        # Also when the probe ran out of memory: what it left is handed back at once
+        release_gpu_memory()
     if frames != (len(probe) - _MODEL_WINDOW) // HOP + 1:
         # A model with another hop: the pieces would not match the frames of
         # the song (see emission_in_pieces)

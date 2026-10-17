@@ -737,6 +737,20 @@ class TestAlignLyricsToAudio:
                               64 * 16000, "release"]
         assert "Not enough" not in capsys.readouterr().out
 
+    def test_on_the_gpu_a_probe_that_runs_out_of_memory_hands_the_cache_back(self, monkeypatch, capsys):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0,
+                                 out_of_memory_from=40 * 16000)
+        gpu = FakeGpu(monkeypatch, free=2 * GIB)
+
+        words, _ = align_with(model, audio, segments, device="cuda")
+
+        # the pieces, then the probe, which ran out of memory: its cache is handed back at once
+        assert gpu.events == [35 * 16000, 39 * 16000, 9 * 16000, "release", 40 * 16000, "release", "release"]
+        assert len(words) == 40
+        assert ("Not enough memory to align the whole song at once -- aligning it in 30-s pieces"
+                in capsys.readouterr().out)
+
     def test_on_the_gpu_plain_lyrics_that_do_not_fit_are_aligned_in_pieces(self, monkeypatch):
         segments = [{"text": "aa aaa bb bbb", "start": 0.0, "end": 50.0}]
         model, audio = fake_song(segments, [41.0], 50.0)
