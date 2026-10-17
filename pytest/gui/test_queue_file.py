@@ -839,6 +839,30 @@ class TestMainWindow:
         assert win._queue_mgr.items == [waiting]
         assert _process_events_until(lambda: _saved(settings_dir) == [(_URL, "pending")])
 
+    def test_a_failed_song_can_be_converted_again(self, settings_dir, open_window):
+        """↻ lets a failed song wait again, with its per-song settings; Start All converts it."""
+        _write_raw(settings_dir / "queue.json", [
+            {"input_type": "url", "input_source": _URL, "title": "Failed", "status": "failed",
+             "settings_overrides": {"language_mode": "manual", "language": "de"}},
+        ])
+        win = open_window()
+        [failed] = win._queue_mgr.items
+        assert "1 of them failed; ↻ lets a failed song wait again" in _console(win)
+        assert not win._sidebar._start_btn.isEnabled()
+        widget = win._sidebar.queue_list._item_widgets[failed.id]
+
+        widget._retry_btn.click()
+
+        assert failed.status == "pending"
+        assert failed.settings_overrides == {"language_mode": "manual", "language": "de"}
+        assert widget._retry_btn.isHidden() and not widget._gear_btn.isHidden()
+        assert win._sidebar._start_btn.isEnabled()
+        assert _process_events_until(lambda: _saved(settings_dir) == [(_URL, "pending")])
+        win._on_start_all()
+        args = win.conversion_start.call_args.args[0]
+        assert args[args.index("-i") + 1] == _URL
+        assert args[args.index("--language") + 1] == "de"
+
     @staticmethod
     def _open_on_a_locked_queue_file(settings_dir, open_window, monkeypatch):
         """A window whose saved queue can neither be read nor copied at start."""

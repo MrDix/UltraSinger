@@ -56,6 +56,7 @@ class QueueItemWidget(QWidget):
     remove_requested = Signal(str)  # item_id
     settings_requested = Signal(str)  # item_id
     requeue_requested = Signal(str)  # item_id
+    retry_requested = Signal(str)  # item_id
     clone_requested = Signal(str)  # item_id
 
     def __init__(self, item: QueueItem, parent=None):
@@ -123,6 +124,22 @@ class QueueItemWidget(QWidget):
             lambda: self.clone_requested.emit(self._item_id)
         )
         layout.addWidget(self._clone_btn)
+
+        # Retry button — ↻, for a failed or cancelled song: it waits again
+        self._retry_btn = QPushButton("\u21BB")
+        self._retry_btn.setFixedSize(22, 22)
+        self._retry_btn.setToolTip(
+            "Convert again (the song waits in the queue again, with its per-song settings)"
+        )
+        self._retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._retry_btn.setStyleSheet(
+            "font-size: 14px; color: #a09888; background: transparent; "
+            "border: none; padding: 0px; margin: 0px;"
+        )
+        self._retry_btn.clicked.connect(
+            lambda: self.retry_requested.emit(self._item_id)
+        )
+        layout.addWidget(self._retry_btn)
 
         # Remove button — U+00D7 (clean ×, no serifs)
         self._remove_btn = QPushButton("\u00D7")
@@ -239,9 +256,10 @@ class QueueItemWidget(QWidget):
         )
 
         # Gear only for pending items; completed items show the ℹ button in
-        # the info row instead. Remove also for failed and cancelled items:
-        # they are kept when the GUI closes (finished ones are not).
+        # the info row instead. Remove and retry also for failed and cancelled
+        # items: they are kept when the GUI closes (finished ones are not).
         self._remove_btn.setVisible(status in ("pending", "failed", "cancelled"))
+        self._retry_btn.setVisible(status in ("failed", "cancelled"))
         self._gear_btn.setVisible(status == "pending")
         self._clone_btn.setVisible(status == "pending")
 
@@ -417,6 +435,7 @@ class QueueListWidget(QWidget):
     remove_requested = Signal(str)  # item_id
     settings_requested = Signal(str)  # item_id
     requeue_requested = Signal(str)  # item_id
+    retry_requested = Signal(str)  # item_id
     clone_requested = Signal(str)  # item_id
     file_dropped = Signal(str)  # file path
 
@@ -472,6 +491,7 @@ class QueueListWidget(QWidget):
         widget.remove_requested.connect(self.remove_requested.emit)
         widget.settings_requested.connect(self.settings_requested.emit)
         widget.requeue_requested.connect(self.requeue_requested.emit)
+        widget.retry_requested.connect(self.retry_requested.emit)
         widget.clone_requested.connect(self.clone_requested.emit)
         self._item_widgets[item.id] = widget
 
