@@ -519,6 +519,7 @@ class TestFormatFallback(unittest.TestCase):
 
         with patch.object(yt_dlp.YoutubeDL, "extract_info", extract_info), \
                 patch.object(video_platform, "_retry_pause", return_value=0), \
+                patch.object(video_platform, "_fragment_retry_pause", return_value=0), \
                 redirect_stdout(io.StringIO()) as log:
             try:
                 result = getattr(video_platform, "__download_video_with_audio")(
@@ -547,6 +548,22 @@ class TestFormatFallback(unittest.TestCase):
         self.assertEqual(server.hits[-1], "/sd")
         self.assertIn("format hd (720p) could not be downloaded - downloading the next best format instead", log)
         self.assertIn("Downloading format sd (360p)", log)
+
+    def test_a_fragment_that_does_not_come_ends_its_format(self):
+        """Instead of a gap in the video: the next best format comes in full, and nothing
+        of the fragmented one is left (yt-dlp leaves its file open)."""
+        files = {"/f1": b"1" * 30000, "/f2": b"2" * 30000, "/sd": b"s" * 20000}
+        with _media_server(files, refused={"/f2"}) as (server, base), tempfile.TemporaryDirectory() as folder:
+            fragmented = {**self._format(base, "hd", 720), "protocol": "http_dash_segments",
+                          "fragments": [{"url": f"{base}/f1"}, {"url": f"{base}/f2"}]}
+            path, log = self._download(base, [self._format(base, "sd", 360), fragmented], folder)
+            with open(path, "rb") as file:
+                data = file.read()
+            left = os.listdir(folder)
+        self.assertEqual(data, files["/sd"])
+        self.assertEqual(left, ["Artist - Title.mp4"])
+        self.assertEqual(server.hits.count("/f2"), 11)  # the fragment and its 10 retries
+        self.assertIn("format hd (720p) could not be downloaded", log)
 
     @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
     def test_the_next_best_video_with_the_same_audio(self):
@@ -588,44 +605,74 @@ class TestFormatFallback(unittest.TestCase):
 class TestFormatFallbackOnlyForAFormat(unittest.TestCase):
     """An error that is no format's ends the download at once."""
 
+    _NOT_DELIVERED = "ERROR: \r[download] Got error: HTTP Error 503: Service Unavailable. Giving up after 10 retries"
+
     def _attempts(self, extract_info):
         """How often the download starts when ``extract_info`` (given the download's
-        formats) fails."""
+        formats and the number of the try) fails, and the error it ends with."""
         with patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl, \
                 tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()):
             instance = ydl.return_value.__enter__.return_value
             instance.extract_info.side_effect = lambda url, download: extract_info(
-                instance.add_post_processor.call_args.args[0])
-            with self.assertRaises(yt_dlp.utils.DownloadError):
+                instance.add_post_processor.call_args.args[0], instance.extract_info.call_count)
+            with self.assertRaises(yt_dlp.utils.DownloadError) as raised:
                 getattr(video_platform, "__download_video_with_audio")("https://fakeUrl", "Artist - Title", folder)
         self.assertEqual(instance.add_post_processor.call_args.kwargs, {"when": "before_dl"})
-        return instance.extract_info.call_count
+        return instance.extract_info.call_count, str(raised.exception)
+
+    @staticmethod
+    def _picked(formats):
+        formats.run({"requested_formats": [{"format_id": "614"}, {"format_id": "251"}]})
 
     def test_an_error_before_a_format_was_picked(self):
-        def extract_info(formats):
+        def extract_info(formats, attempt):
             raise yt_dlp.utils.DownloadError("ERROR: [test] vid: Video unavailable")
-        self.assertEqual(self._attempts(extract_info), 1)
+        self.assertEqual(self._attempts(extract_info)[0], 1)
 
     def test_an_error_after_all_formats_came(self):
-        def extract_info(formats):
-            formats.run({"requested_formats": [{"format_id": "614"}, {"format_id": "251"}]})
+        def extract_info(formats, attempt):
+            self._picked(formats)
             for format_id in ("614", "251"):
                 formats.progress({"status": "finished", "info_dict": {"format_id": format_id}})
             raise yt_dlp.utils.DownloadError("ERROR: Postprocessing: Conversion failed!")
-        self.assertEqual(self._attempts(extract_info), 1)
+        self.assertEqual(self._attempts(extract_info)[0], 1)
 
     def test_a_file_that_cannot_be_written(self):
-        def extract_info(formats):
-            formats.run({"requested_formats": [{"format_id": "614"}, {"format_id": "251"}]})
+        def extract_info(formats, attempt):
+            self._picked(formats)
             error = OSError(28, "No space left on device")
             raise yt_dlp.utils.DownloadError(f"ERROR: unable to write data: {error}", (OSError, error, None))
-        self.assertEqual(self._attempts(extract_info), 1)
+        self.assertEqual(self._attempts(extract_info)[0], 1)
+
+    def test_a_file_that_cannot_be_renamed(self):
+        """yt-dlp reports it without its cause, after its own retries."""
+        def extract_info(formats, attempt):
+            self._picked(formats)
+            raise yt_dlp.utils.DownloadError(
+                "ERROR: Unable to rename file: [WinError 32] The process cannot access the file")
+        self.assertEqual(self._attempts(extract_info)[0], 1)
+
+    def test_no_ffmpeg_to_merge(self):
+        def extract_info(formats, attempt):
+            self._picked(formats)
+            raise yt_dlp.utils.DownloadError("ERROR: You have requested merging of multiple formats but "
+                                             "ffmpeg is not installed. Aborting due to --abort-on-error")
+        self.assertEqual(self._attempts(extract_info)[0], 1)
 
     def test_an_error_of_a_format_starts_the_download_again(self):
-        def extract_info(formats):
-            formats.run({"requested_formats": [{"format_id": "614"}, {"format_id": "251"}]})
-            raise yt_dlp.utils.DownloadError("ERROR: [download] Got error: HTTP Error 503: Service Unavailable")
-        self.assertEqual(self._attempts(extract_info), 1 + video_platform._MAX_FORMAT_FALLBACKS)
+        def extract_info(formats, attempt):
+            self._picked(formats)
+            raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+        self.assertEqual(self._attempts(extract_info),
+                         (1 + video_platform._MAX_FORMAT_FALLBACKS, self._NOT_DELIVERED))
+
+    def test_the_error_of_the_format_stands_when_no_other_format_is_left(self):
+        def extract_info(formats, attempt):
+            if attempt == 1:
+                self._picked(formats)
+                raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+            raise yt_dlp.utils.DownloadError("ERROR: [test] vid: Requested format is not available")
+        self.assertEqual(self._attempts(extract_info), (2, self._NOT_DELIVERED))
 
 
 class TestPlaylistUrl(unittest.TestCase):
