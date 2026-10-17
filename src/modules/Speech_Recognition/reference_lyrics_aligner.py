@@ -28,6 +28,7 @@ timing accuracy problems of the Whisper-only pipeline.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -36,7 +37,7 @@ import librosa
 import numpy as np
 
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted
-from modules.DeviceDetection.device_detection import is_out_of_memory, release_gpu_memory
+from modules.DeviceDetection.device_detection import free_gpu_memory, is_out_of_memory, release_gpu_memory
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Pitcher.pitched_data_helper import get_frequencies_with_high_confidence
@@ -47,6 +48,9 @@ from modules.Midi.midi_creator import (
 from modules.Audio.key_detector import quantize_note_to_key
 from modules.Speech_Recognition.lyrics_alignment import (
     ANCHORED_SHARE,
+    CONTEXT_S,
+    HOP,
+    PIECE_S,
     RELIABLE_LINES,
     SAMPLE_RATE,
     align_lyrics,
@@ -295,6 +299,15 @@ def _mark_bracketed_words(text: str) -> str:
 
 _WHOLE_SONG = "whole song"
 _PIECES = "30-s pieces"
+# Audio on which the GPU memory that the model needs per sample is measured:
+# as long as a piece with its context on both sides
+_PROBE_S = PIECE_S + 2 * CONTEXT_S
+# Over a song of 337 s, PyTorch reserved 1.31 times what the probe, scaled to
+# the song, let the model allocate (6.8 for 5.2 GB): its cache rounds and
+# splits its blocks, and the whole song needs a little more per sample
+_GPU_CACHE_FACTOR = 1.4
+# Samples the convolutions of the wav2vec2 models take for their first frame
+_MODEL_WINDOW = 400
 
 
 def align_lyrics_to_audio(
@@ -446,13 +459,15 @@ def _alignment_emissions(model, model_type: str, audio: np.ndarray, device: str,
     pieces = emission_in_pieces(run, audio) if timed else None
     whole = None
     try:
-        whole = run(audio)
+        why = _whole_song_does_not_fit(run, audio, device)
+        if why is None:
+            whole = run(audio)
     except RuntimeError as error:
         if not is_out_of_memory(error):
             raise
+        why = "Not enough memory to align the whole song at once"
     if whole is None:
-        print(f"{ULTRASINGER_HEAD} Not enough memory to align the whole song at once "
-              f"-- aligning it in 30-s pieces")
+        print(f"{ULTRASINGER_HEAD} {why} -- aligning it in 30-s pieces")
         if pieces is None:
             release_gpu_memory()
             pieces = emission_in_pieces(run, audio)
@@ -462,6 +477,49 @@ def _alignment_emissions(model, model_type: str, audio: np.ndarray, device: str,
     if pieces is None or len(pieces) != len(whole):
         return [(_WHOLE_SONG, whole)]
     return [(_WHOLE_SONG, whole), (_PIECES, pieces)]
+
+
+def _whole_song_does_not_fit(run, audio: np.ndarray, device: str) -> Optional[str]:
+    """Why the model's pass over the whole song is left out, or None when it may run.
+
+    The pass needs GPU memory in proportion to the length of the song (PyTorch
+    reserved 6.8 GB for 337 s). On Windows a pass that does not fit raises no
+    out-of-memory error: the driver goes on in the shared system memory, more
+    than ten times slower, and takes the memory from the rest of the system.
+    So on the GPU the memory is measured on the first ``_PROBE_S`` of the
+    song, and the pass runs only when the free memory holds it. PyTorch's
+    cache, which the runs before leave, is handed back first.
+    """
+    if not str(device).startswith("cuda"):
+        return None
+    probe = audio[:int(_PROBE_S * SAMPLE_RATE)]
+    if len(probe) == len(audio):
+        return None  # the song is no longer than a piece with its context
+    import torch
+
+    release_gpu_memory()
+    torch.cuda.reset_peak_memory_stats()
+    before = torch.cuda.memory_allocated()
+    try:
+        frames = len(run(probe))
+        need = (torch.cuda.max_memory_allocated() - before) * len(audio) / len(probe) * _GPU_CACHE_FACTOR
+    finally:
+        # Also when the probe ran out of memory: what it left is handed back at once
+        release_gpu_memory()
+    if frames != (len(probe) - _MODEL_WINDOW) // HOP + 1:
+        # A model with another hop: the pieces would not match the frames of
+        # the song (see emission_in_pieces)
+        return None
+    try:
+        free = free_gpu_memory()
+    except RuntimeError as error:
+        return f"The free GPU memory could not be read ({error})"
+    if free is not None and need > free:
+        # Rounded up and down, so that the need never reads as no more than the free memory
+        return (f"Not enough GPU memory free to align the whole song at once (about "
+                f"{math.ceil(need / 2 ** 30 * 10) / 10:.1f} GB needed, "
+                f"{math.floor(free / 2 ** 30 * 10) / 10:.1f} GB free)")
+    return None
 
 
 def _align_model_log_probs(model, model_type: str, samples: np.ndarray, device: str) -> np.ndarray:
