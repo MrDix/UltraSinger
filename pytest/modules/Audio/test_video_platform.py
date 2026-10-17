@@ -728,23 +728,33 @@ class TestFormatFallbackOnlyForAFormat(unittest.TestCase):
         def extract_info(formats, attempt):
             self._picked(formats)
             raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
-        stuck = [("Artist - Title.mp4.part", PermissionError(13, "locked"))]
+        stuck = [("Artist - Title.mp4.part", PermissionError(13, "locked"), True)]
         with patch.object(video_platform, "_remove_partial_files", return_value=stuck):
             self.assertEqual(self._attempts(extract_info), (1, self._NOT_DELIVERED))
+
+    def test_a_partial_file_of_the_format_left_out_that_cannot_be_deleted(self):
+        """No later try takes it up: the next format is tried."""
+        def extract_info(formats, attempt):
+            self._picked(formats)
+            raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+        stuck = [("Artist - Title.f614.mp4.part", PermissionError(13, "locked"), False)]
+        with patch.object(video_platform, "_remove_partial_files", return_value=stuck):
+            self.assertEqual(self._attempts(extract_info)[0], 1 + video_platform._MAX_FORMAT_FALLBACKS)
 
 
 class TestRemovePartialFiles(unittest.TestCase):
     """After a format failed, the partial files of the song go; what came in full stays."""
 
-    def _remove(self, names, song, failing=None):
-        """The files left of ``names`` and the paths reported as stuck (``failing``:
-        the error of each delete)."""
+    def _remove(self, names, song, failing=None, left_out=("399",)):
+        """The files left of ``names``, and those reported as not deleted with whether
+        the next try could go on from them (``failing``: the error of each delete)."""
         with tempfile.TemporaryDirectory() as folder:
             for name in names:
                 open(os.path.join(folder, name), "wb").close()
             with patch.object(video_platform.os, "remove", side_effect=failing) if failing else nullcontext():
-                stuck = video_platform._remove_partial_files(os.path.join(folder, song), "399")
-            return sorted(os.listdir(folder)), [os.path.basename(path) for path, _ in stuck]
+                stuck = video_platform._remove_partial_files(os.path.join(folder, song), left_out)
+            return sorted(os.listdir(folder)), sorted((os.path.basename(path), taken_up)
+                                                      for path, _, taken_up in stuck)
 
     def test_the_partial_files_of_the_song(self):
         song = "Artist [Live] - Title"
@@ -758,11 +768,12 @@ class TestRemovePartialFiles(unittest.TestCase):
         self.assertEqual(self._remove([f"{song}.mp4"], song), ([f"{song}.mp4"], []))
 
     def test_a_file_that_cannot_be_deleted(self):
-        """Reported, unless it is one of the format left out, which no later try takes up."""
-        names = ["Artist - Title.mp4.part", "Artist - Title.f399.mp4.part"]
-        left, stuck = self._remove(names, "Artist - Title", PermissionError(13, "locked"))
+        """No later try takes up a file of a format left out, also of one left out before."""
+        names = ["Artist - Title.mp4.part", "Artist - Title.f399.mp4.part", "Artist - Title.f398.mp4.part"]
+        left, stuck = self._remove(names, "Artist - Title", PermissionError(13, "locked"), left_out=["399", "398"])
         self.assertEqual(left, sorted(names))
-        self.assertEqual(stuck, ["Artist - Title.mp4.part"])
+        self.assertEqual(stuck, [("Artist - Title.f398.mp4.part", False), ("Artist - Title.f399.mp4.part", False),
+                                 ("Artist - Title.mp4.part", True)])
 
 
 class TestPlaylistUrl(unittest.TestCase):

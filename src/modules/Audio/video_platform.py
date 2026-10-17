@@ -206,13 +206,14 @@ class _DownloadFormatsPP(PostProcessor):
         return next((f for f in self.formats if f.get("format_id") not in self._finished), None)
 
 
-def _remove_partial_files(stem: str, left_out: str) -> list[tuple[str, OSError]]:
+def _remove_partial_files(stem: str, left_out: Sequence[str]) -> list[tuple[str, OSError, bool]]:
     """Delete the partial files of a download to ``stem`` plus an extension: of
     a format, with the fragments and the state file of a fragmented one. The
     formats that came in full stay, for the next try.
 
-    Returns the files that could not be deleted and that the next try could go
-    on from, with the reason (none of the format ``left_out``, which it never takes).
+    Returns the files that could not be deleted, with the reason and whether the
+    next try could go on from one (not from one of the formats ``left_out``,
+    which it never takes).
     """
     stuck = []
     for path in glob.glob(f"{glob.escape(stem)}.*") if stem else ():
@@ -222,8 +223,7 @@ def _remove_partial_files(stem: str, left_out: str) -> list[tuple[str, OSError]]
             try:
                 os.remove(path)
             except OSError as error:
-                if not suffix.startswith(f".f{left_out}."):
-                    stuck.append((path, error))
+                stuck.append((path, error, not any(suffix.startswith(f".f{f}.") for f in left_out)))
     return stuck
 
 
@@ -339,13 +339,13 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         # yt-dlp leaves the partial file of a fragmented format open until the
         # frames of the error are collected
         gc.collect()
-        stuck = _remove_partial_files(formats.stem, format_id)
-        if stuck:
-            path, reason = stuck[0]
-            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the partial file {os.path.basename(path)} "
-                  f"could not be deleted ({reason}) - no other format is tried, it could go on from it")
-            raise last_error
         left_out.append(format_id)
+        for path, reason, taken_up in _remove_partial_files(formats.stem, left_out):
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the partial file {os.path.basename(path)} "
+                  f"could not be deleted ({reason})"
+                  + (" - no other format is tried, the next one could go on from it" if taken_up else ""))
+            if taken_up:
+                raise last_error
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
               f"could not be downloaded - downloading the next best format instead")
 
