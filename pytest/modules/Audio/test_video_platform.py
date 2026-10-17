@@ -350,14 +350,34 @@ class TestDownloadRetries(unittest.TestCase):
         ydl_opts = mock_yt_dl.call_args.args[0]
         self.assertEqual(ydl_opts["retries"], 10)
         self.assertEqual(ydl_opts["fragment_retries"], 10)
+        self.assertEqual(ydl_opts["retry_sleep_functions"],
+                         {"http": video_platform._retry_pause, "fragment": video_platform._retry_pause})
 
-    def test_retries_are_shown_and_other_screen_messages_are_not(self):
+    def test_the_pause_before_a_retry_doubles_up_to_half_a_minute(self):
+        pauses = [video_platform._retry_pause(n) for n in range(10)]
+        self.assertEqual(pauses, [1, 2, 4, 8, 16, 30, 30, 30, 30, 30])
+        self.assertEqual(sum(pauses), 181)  # about 3 minutes over the 10 retries
+
+    def test_yt_dlp_waits_the_pause_before_each_retry(self):
+        """yt-dlp passes the number of the retry, counted from 0, as n."""
+        shown = []
+        with patch("yt_dlp.utils._utils.time.sleep") as sleep:
+            for count in (1, 2, 6):
+                yt_dlp.utils.RetryManager.report_retry(
+                    Exception("HTTP Error 503: Service Unavailable"), count, 10,
+                    sleep_func=video_platform._retry_pause, info=shown.append, warn=lambda msg: None)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [1.0, 2.0, 30.0])
+        self.assertEqual(shown[0], "Sleeping 1.00 seconds ...")
+
+    def test_retries_and_their_pauses_are_shown_and_other_screen_messages_are_not(self):
         logger = video_platform._FilteredLogger()
         retry = "[download] Got error: Read timed out. Retrying (1/10)..."
         with patch("builtins.print") as mock_print:
             logger.debug(retry)
+            logger.debug("Sleeping 1.00 seconds ...")
             logger.debug("[download]  42.0% of 10.00MiB")
-        mock_print.assert_called_once_with(f"WARNING: {retry}")
+        self.assertEqual([c.args[0] for c in mock_print.call_args_list],
+                         [f"WARNING: {retry}", "[download] Sleeping 1.00 seconds ..."])
 
 
 _AUDIO = {"format_id": "251", "ext": "webm", "vcodec": "none", "acodec": "opus", "url": "https://a"}

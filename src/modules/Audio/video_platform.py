@@ -93,6 +93,20 @@ def _apply_po_token(ydl_opts: dict, po_token: str | None) -> dict:
 # where the download stopped.
 _DOWNLOAD_RETRIES = 10
 
+# Longest pause before a retry (s)
+_MAX_RETRY_PAUSE_S = 30.0
+
+
+def _retry_pause(n: int) -> float:
+    """Seconds to wait before retry ``n + 1`` of a download: 1, 2, 4, ... up to
+    ``_MAX_RETRY_PAUSE_S``, about 3 minutes over the 10 retries.
+
+    A server that cuts its connections ever earlier, or answers "503 Service
+    Unavailable", wants fewer requests: retries in quick succession used up
+    all 10 within a minute, and the download failed.
+    """
+    return min(2.0 ** n, _MAX_RETRY_PAUSE_S)
+
 # Premium formats (higher-bitrate copies for subscribers) can come very slowly,
 # with connections that stall again and again, even when the format picked in
 # their place comes at a normal speed. So they are only taken when no other
@@ -182,6 +196,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         "merge_output_format": "mp4",
         "retries": _DOWNLOAD_RETRIES,
         "fragment_retries": _DOWNLOAD_RETRIES,
+        "retry_sleep_functions": {"http": _retry_pause, "fragment": _retry_pause},
         "cookiefile": cookiefile,
         "logger": _FilteredLogger(),
         "noplaylist": True,  # as in get_video_title
@@ -243,10 +258,13 @@ class _FilteredLogger:
     """Custom yt-dlp logger that suppresses known harmless warnings and shows retries."""
 
     def debug(self, msg):
-        # yt-dlp passes its screen messages here. Retries are shown, so that a
-        # download that waits for a stalled connection does not look hung.
+        # yt-dlp passes its screen messages here. Retries and the pauses before
+        # them are shown, so that a download that waits does not look hung.
         if msg.startswith("[download] Got error"):
             print(f"WARNING: {msg}")
+            return
+        if msg.startswith("Sleeping "):
+            print(f"[download] {msg}")
             return
         _logger.debug(msg)
 
