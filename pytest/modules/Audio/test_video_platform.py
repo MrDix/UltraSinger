@@ -458,12 +458,12 @@ class TestVideoFormat(unittest.TestCase):
 class _MediaHandler(http.server.BaseHTTPRequestHandler):
     """Serves the files of its server, also from a byte on. A refused file breaks
     off once and then gets "503 Service Unavailable", as one format of a video did
-    on the video platform's server."""
+    on the video platform's server (with ``at_once``, it gets 503 from the start)."""
 
     def do_GET(self):
         server = self.server
         path = self.path.split("?")[0]
-        seen = path in server.hits
+        seen = path in server.hits or server.at_once
         server.hits.append(path)
         body = server.files[path]
         if path in server.refused:
@@ -491,11 +491,11 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _media_server(files, refused=()):
+def _media_server(files, refused=(), at_once=False):
     """A local server of ``files`` (path -> bytes) and its address; ``hits``
     lists the paths it was asked for."""
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _MediaHandler)
-    server.files, server.refused, server.hits = files, set(refused), []
+    server.files, server.refused, server.at_once, server.hits = files, set(refused), at_once, []
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         yield server, f"http://127.0.0.1:{server.server_address[1]}"
@@ -565,8 +565,24 @@ class TestFormatFallback(unittest.TestCase):
         self.assertEqual(server.hits.count("/f2"), 11)  # the fragment and its 10 retries
         self.assertIn("format hd (720p) could not be downloaded", log)
 
-    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
-    def test_the_next_best_video_with_the_same_audio(self):
+    def test_a_fragmented_format_refused_from_the_start_leaves_nothing(self):
+        """No data came, so no progress was reported: its empty partial file and its
+        state file go all the same."""
+        files = {"/f1": b"1" * 30000, "/sd": b"s" * 20000}
+        with _media_server(files, refused={"/f1"}, at_once=True) as (server, base), \
+                tempfile.TemporaryDirectory() as folder:
+            fragmented = {**self._format(base, "hd", 720), "protocol": "http_dash_segments",
+                          "fragments": [{"url": f"{base}/f1"}]}
+            path, _ = self._download(base, [self._format(base, "sd", 360), fragmented], folder)
+            with open(path, "rb") as file:
+                data = file.read()
+            left = os.listdir(folder)
+        self.assertEqual(data, files["/sd"])
+        self.assertEqual(left, ["Artist - Title.mp4"])
+
+    @staticmethod
+    def _media():
+        """A second of video without audio (mp4) and of audio (m4a), made by ffmpeg."""
         with tempfile.TemporaryDirectory() as media:
             video, audio = os.path.join(media, "v.mp4"), os.path.join(media, "a.m4a")
             subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=1",
@@ -574,7 +590,28 @@ class TestFormatFallback(unittest.TestCase):
             subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", "-c:a", "aac", audio],
                            check=True)
             with open(video, "rb") as v, open(audio, "rb") as a:
-                video_data, audio_data = v.read(), a.read()
+                return v.read(), a.read()
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
+    def test_the_same_video_with_the_next_best_audio(self):
+        """The video came before the audio failed: it is not downloaded again."""
+        video_data, audio_data = self._media()
+        files = {"/v": video_data, "/a160": audio_data, "/a64": audio_data}
+        with _media_server(files, refused={"/a160"}) as (server, base), tempfile.TemporaryDirectory() as folder:
+            path, log = self._download(base, [
+                {**self._format(base, "a64", None, vcodec="none", acodec="mp4a.40.2"), "ext": "m4a", "abr": 64},
+                {**self._format(base, "a160", None, vcodec="none", acodec="mp4a.40.2"), "ext": "m4a", "abr": 160},
+                self._format(base, "v", 720, vcodec="mp4v.20.3", acodec="none"),
+            ], folder)
+            self.assertEqual(path, os.path.join(folder, "Artist - Title.mp4"))
+            left = os.listdir(folder)
+        self.assertEqual(left, ["Artist - Title.mp4"])
+        self.assertEqual([hit for hit in server.hits if hit != "/a160"], ["/v", "/a64"])
+        self.assertIn("Downloading format v (720p) + a64 (audio only)", log)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
+    def test_the_next_best_video_with_the_same_audio(self):
+        video_data, audio_data = self._media()
         files = {"/1080": video_data, "/720": video_data, "/a": audio_data}
         with _media_server(files, refused={"/1080"}) as (server, base), tempfile.TemporaryDirectory() as folder:
             path, log = self._download(base, [
@@ -673,6 +710,39 @@ class TestFormatFallbackOnlyForAFormat(unittest.TestCase):
                 raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
             raise yt_dlp.utils.DownloadError("ERROR: [test] vid: Requested format is not available")
         self.assertEqual(self._attempts(extract_info), (2, self._NOT_DELIVERED))
+
+    def test_a_partial_file_that_cannot_be_deleted(self):
+        """The next format could go on from it: no other format is tried."""
+        def extract_info(formats, attempt):
+            self._picked(formats)
+            raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+        with patch.object(video_platform, "_remove_partial_files", return_value=["Artist - Title.mp4.part"]):
+            self.assertEqual(self._attempts(extract_info), (1, self._NOT_DELIVERED))
+
+
+class TestRemovePartialFiles(unittest.TestCase):
+    """After a format failed, the partial files of the song go; what came in full stays."""
+
+    def test_the_partial_files_of_the_song(self):
+        song = "Artist [Live] - Title"
+        partial = [f"{song}.mp4.part", f"{song}.f399.mp4.part", f"{song}.f399.mp4.ytdl",
+                   f"{song}.f399.mp4.part-Frag3", f"{song}.f399.mp4.part-Frag3.part"]
+        kept = [f"{song}.f251.webm", "Other - Song.mp4.part"]
+        with tempfile.TemporaryDirectory() as folder:
+            for name in partial + kept:
+                open(os.path.join(folder, name), "wb").close()
+            stuck = video_platform._remove_partial_files(folder, song)
+            left = sorted(os.listdir(folder))
+        self.assertEqual(stuck, [])
+        self.assertEqual(left, sorted(kept))
+
+    def test_a_file_that_cannot_be_deleted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "Artist - Title.mp4.part")
+            open(path, "wb").close()
+            with patch.object(video_platform.os, "remove", side_effect=PermissionError(13, "locked")):
+                stuck = video_platform._remove_partial_files(folder, "Artist - Title")
+        self.assertEqual(stuck, [path])
 
 
 class TestPlaylistUrl(unittest.TestCase):

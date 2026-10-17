@@ -1,6 +1,5 @@
 """Video Platform Downloader"""
 
-import contextlib
 import gc
 import glob
 import logging
@@ -102,7 +101,7 @@ _DOWNLOAD_RETRIES = 10
 
 # Longest pause before a retry (s): of the download, and of a fragment of a
 # fragmented stream, which has many (a fragment that is gone for good costs
-# all of its retries before it is left out)
+# all of its retries before its format is given up)
 _MAX_RETRY_PAUSE_S = 30.0
 _MAX_FRAGMENT_RETRY_PAUSE_S = 5.0
 
@@ -183,7 +182,6 @@ class _DownloadFormatsPP(PostProcessor):
         self._announce = announce
         self.formats: list[dict] = []
         self._finished: set[str] = set()
-        self._partial_files: dict[str, set[str]] = {}
 
     def run(self, info):
         # A video and an audio format to merge, or a single format
@@ -194,14 +192,8 @@ class _DownloadFormatsPP(PostProcessor):
         return [], info
 
     def progress(self, status: dict):
-        format_id = (status.get("info_dict") or {}).get("format_id")
         if status.get("status") == "finished":
-            self._finished.add(format_id)
-        elif status.get("tmpfilename"):
-            files = self._partial_files.setdefault(format_id, set())
-            files.add(status["tmpfilename"])
-            if status.get("filename"):
-                files.add(f"{status['filename']}.ytdl")  # the state of a fragmented download
+            self._finished.add((status.get("info_dict") or {}).get("format_id"))
 
     def failed(self) -> dict | None:
         """The format that did not come in full, if any: yt-dlp downloads the
@@ -209,13 +201,21 @@ class _DownloadFormatsPP(PostProcessor):
         downloader for all of them, as for a live stream, counts as the first)."""
         return next((f for f in self.formats if f.get("format_id") not in self._finished), None)
 
-    def remove_partial_files(self, format_id: str):
-        """Delete what came of the format ``format_id``, with the fragments of
-        a fragmented format. A file that cannot be deleted stays."""
-        for path in self._partial_files.get(format_id, ()):
-            for file in (path, *glob.glob(f"{glob.escape(path)}-Frag*")):
-                with contextlib.suppress(OSError):
-                    os.remove(file)
+
+def _remove_partial_files(output_path: str, clear_filename: str) -> list[str]:
+    """Delete the partial files of the download of ``clear_filename``: of a
+    format, with the fragments and the state file of a fragmented one. The
+    formats that came in full stay, for the next try. Returns the files that
+    could not be deleted."""
+    stuck = []
+    for path in glob.glob(f"{glob.escape(os.path.join(output_path, clear_filename))}.*"):
+        name = os.path.basename(path)
+        if name.endswith((".part", ".ytdl")) or ".part-Frag" in name:
+            try:
+                os.remove(path)
+            except OSError:
+                stuck.append(path)
+    return stuck
 
 
 def get_video_title(url: str, cookiefile: str | None = None,
@@ -311,10 +311,6 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
             "logger": _FilteredLogger(),
             "noplaylist": True,  # as in get_video_title
         }, po_token)
-        if left_out:
-            # The next format starts afresh, also next to a partial file of the
-            # same name that could not be deleted
-            ydl_opts["continuedl"] = False
         formats = _DownloadFormatsPP(announce=bool(left_out))
         try:
             return __start_download(ydl_opts, url, formats)
@@ -334,7 +330,12 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         # yt-dlp leaves the partial file of a fragmented format open until the
         # frames of the error are collected
         gc.collect()
-        formats.remove_partial_files(format_id)
+        stuck = _remove_partial_files(output_path, clear_filename)
+        if stuck:
+            # The next format could go on from a file of the same name
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the partial file "
+                  f"{os.path.basename(stuck[0])} could not be deleted - no other format is tried")
+            raise last_error
         left_out.append(format_id)
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
               f"could not be downloaded - downloading the next best format instead")
