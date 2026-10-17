@@ -769,11 +769,12 @@ class TestRemovePartialFiles(unittest.TestCase):
 
     def test_a_file_that_cannot_be_deleted(self):
         """No later try takes up a file of a format left out, also of one left out before."""
-        names = ["Artist - Title.mp4.part", "Artist - Title.f399.mp4.part", "Artist - Title.f398.mp4.part"]
+        names = ["Artist - Title.mp4.part", "Artist - Title.f399.mp4.part", "Artist - Title.f398.mp4.part",
+                 "Artist - Title.f3990.mp4.part"]
         left, stuck = self._remove(names, "Artist - Title", PermissionError(13, "locked"), left_out=["399", "398"])
         self.assertEqual(left, sorted(names))
         self.assertEqual(stuck, [("Artist - Title.f398.mp4.part", False), ("Artist - Title.f399.mp4.part", False),
-                                 ("Artist - Title.mp4.part", True)])
+                                 ("Artist - Title.f3990.mp4.part", True), ("Artist - Title.mp4.part", True)])
 
 
 class TestPlaylistUrl(unittest.TestCase):

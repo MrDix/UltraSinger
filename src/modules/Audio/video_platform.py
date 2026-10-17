@@ -340,12 +340,13 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         # frames of the error are collected
         gc.collect()
         left_out.append(format_id)
-        for path, reason, taken_up in _remove_partial_files(formats.stem, left_out):
+        stuck = _remove_partial_files(formats.stem, left_out)
+        for path, reason, taken_up in stuck:
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the partial file {os.path.basename(path)} "
                   f"could not be deleted ({reason})"
                   + (" - no other format is tried, the next one could go on from it" if taken_up else ""))
-            if taken_up:
-                raise last_error
+        if any(taken_up for _, _, taken_up in stuck):
+            raise last_error
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
               f"could not be downloaded - downloading the next best format instead")
 
