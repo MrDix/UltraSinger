@@ -796,7 +796,6 @@ class TestIpv4Retry(unittest.TestCase):
                 if ended is not None:
                     ended["error"] = str(error)
             if ended is not None:
-                # pylint: disable-next=protected-access
                 ended["goes_on_from"] = [c.args[0]._goes_on_from for c in instance.add_post_processor.call_args_list]
         return [(c.args[0]["format"], c.args[0].get("source_address")) for c in ydl.call_args_list], log.getvalue()
 
@@ -804,6 +803,7 @@ class TestIpv4Retry(unittest.TestCase):
         tries, log = self._tries("2001:db8::1", comes_on=2)
         self.assertEqual(tries, [(video_platform._VIDEO_FORMAT, None), (video_platform._VIDEO_FORMAT, "0.0.0.0")])
         self.assertIn("format 399 could not be downloaded over IPv6 - trying it again over IPv4", log)
+        self.assertIn("Downloading format 399 + 251", log)
 
     def test_a_format_over_ipv4_is_left_out_at_once(self):
         tries, _ = self._tries("192.0.2.1", comes_on=2)
