@@ -637,13 +637,10 @@ class QueueManager(QObject):
         )
         self.line_output.emit("")
 
-        # If cancelled, don't continue the queue
+        # If cancelled, don't continue the queue. Only cancel_all() cancels,
+        # and it cancelled the waiting items already: a song retried since
+        # then waits for the next Start All.
         if item.status == "cancelled":
-            # Cancel remaining
-            for it in self._items:
-                if it.status == "pending":
-                    it.status = "cancelled"
-                    self.item_status_changed.emit(it.id, "cancelled")
             self._running = False
             self._current_item = None
             self._emit_finished(cancelled=True)

@@ -84,6 +84,24 @@ class TestRetryItem:
         assert running.status == "done" and failed.status == "running"
         assert manager.is_running
 
+    def test_a_retry_while_cancel_all_stops_the_running_song_is_kept(self):
+        """Cancel All cancels the waiting songs at once; the running one ends later."""
+        manager = _manager()
+        running = manager.add_item(_URL, "url", "Running")
+        waiting = manager.add_item("https://video.invalid/watch?v=2", "url", "Waiting")
+        manager.start_all()
+        finished = []
+        manager.queue_finished.connect(lambda failed, cancelled: finished.append(cancelled))
+
+        manager.cancel_all()
+        assert waiting.status == "cancelled"
+        manager.retry_item(waiting.id)
+        manager._on_item_finished(-2)  # the runner reports the cancelled conversion
+
+        assert running.status == "cancelled" and waiting.status == "pending"
+        assert finished == [True] and not manager.is_running
+        manager._runner.start.assert_called_once()  # the queue stopped; Start All converts it
+
 
 class TestRetryButton:
     @pytest.mark.parametrize("status, shown", [("failed", True), ("cancelled", True), ("pending", False),
