@@ -116,6 +116,7 @@ def _fragment_retry_pause(n: int) -> float:
     up to ``_MAX_FRAGMENT_RETRY_PAUSE_S``, 42 s over the 10 retries."""
     return min(2.0 ** n, _MAX_FRAGMENT_RETRY_PAUSE_S)
 
+
 # Premium formats (higher-bitrate copies for subscribers) can come very slowly,
 # with connections that stall again and again, even when the format picked in
 # their place comes at a normal speed. So they are only taken when no other

@@ -376,10 +376,10 @@ class TestDownloadRetries(unittest.TestCase):
             downloader.report_retry(error, 4, 10)
             downloader.report_retry(error, 4, 10, frag_index=7)
         self.assertEqual([c.args[0] for c in sleep.call_args_list], [8.0, 5.0])
-        printed = [c.args[0] for c in mock_print.call_args_list]
-        self.assertEqual(printed[:2], ["WARNING: [download] Got error: HTTP Error 503: Service Unavailable. "
-                                       "Retrying (4/10)...", "[download] Sleeping 8.00 seconds ..."])
-        self.assertEqual(printed[3], "[download] Sleeping 5.00 seconds ...")
+        retry = "WARNING: [download] Got error: HTTP Error 503: Service Unavailable. Retrying"
+        self.assertEqual([c.args[0] for c in mock_print.call_args_list], [
+            f"{retry} (4/10)...", "[download] Sleeping 8.00 seconds ...",
+            f"{retry} fragment 7 (4/10)...", "[download] Sleeping 5.00 seconds ..."])
 
     def test_yt_dlp_waits_the_pause_before_each_retry(self):
         """yt-dlp passes the number of the retry, counted from 0, as n."""
