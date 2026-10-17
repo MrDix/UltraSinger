@@ -983,6 +983,7 @@ class TestFailedDownloadFolder(unittest.TestCase):
 
             with self._song(), patch.object(yt_dlp.YoutubeDL, "extract_info", extract_info), \
                     patch.object(video_platform, "_retry_pause", return_value=0), \
+                    patch.object(video_platform, "_fragment_retry_pause", return_value=0), \
                     patch.object(video_platform, "_MAX_FORMAT_FALLBACKS", 0), \
                     self.assertRaises(yt_dlp.utils.DownloadError):
                 video_platform.download_from_video_platform(f"{base}/watch", out)
