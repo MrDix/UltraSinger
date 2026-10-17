@@ -368,8 +368,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
             else:
                 # No format failed when the error came after all of them (merging)
                 failed = formats.failed() or {}
-                if (not _FORMAT_ID.fullmatch(str(failed.get("format_id") or "")) or not _not_delivered(error)
-                        or len(left_out) >= _MAX_FORMAT_FALLBACKS):
+                if not _FORMAT_ID.fullmatch(str(failed.get("format_id") or "")) or not _not_delivered(error):
                     raise
                 # Only its message: the error's frames keep files of the format open
                 last_error = yt_dlp.utils.DownloadError(error.msg)
@@ -387,6 +386,9 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
                   f"could not be downloaded over IPv6 - trying it again over IPv4")
             continue
+        # The limit is on the formats left out, not on the one try over IPv4
+        if len(left_out) >= _MAX_FORMAT_FALLBACKS:
+            raise last_error
         left_out.append(format_id)
         # Without a format picked over IPv4, the files are those of the try over IPv6
         stuck = _remove_partial_files(formats.stem or (over_ipv6[2] if over_ipv6 else ""), left_out)

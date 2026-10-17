@@ -771,7 +771,8 @@ class TestIpv4Retry(unittest.TestCase):
     def _tries(self, ip, comes_on=None, unreachable_on=(), ended=None):
         """The format string and source address of each try when the try ``comes_on``
         (counted from 1) comes, or none; the tries ``unreachable_on`` fail before they pick
-        their formats. And the console. ``ended`` gets the error the download ended with
+        their formats. ``ip`` is the address in the stream URLs, or a list of them, one
+        for each try. And the console. ``ended`` gets the error the download ended with
         and the formats each try was to go on from."""
         with patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl, \
                 tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()) as log:
@@ -781,9 +782,10 @@ class TestIpv4Retry(unittest.TestCase):
             def extract_info(url, download):
                 if instance.extract_info.call_count in unreachable_on:
                     raise yt_dlp.utils.DownloadError("ERROR: [test] vid: Unable to download API page")
+                address = ip[instance.extract_info.call_count - 1] if isinstance(ip, list) else ip
                 instance.add_post_processor.call_args.args[0].run({"requested_formats": [
-                    {"format_id": "399", "url": f"https://v.example/videoplayback?ip={ip}"},
-                    {"format_id": "251", "url": f"https://a.example/videoplayback?ip={ip}"}]})
+                    {"format_id": "399", "url": f"https://v.example/videoplayback?ip={address}"},
+                    {"format_id": "251", "url": f"https://a.example/videoplayback?ip={address}"}]})
                 if instance.extract_info.call_count == comes_on:
                     open(video, "wb").close()
                     return {"requested_downloads": [{"filepath": video}]}
@@ -820,6 +822,16 @@ class TestIpv4Retry(unittest.TestCase):
         self.assertEqual(tries, [(video_platform._VIDEO_FORMAT, None), (video_platform._VIDEO_FORMAT, "0.0.0.0"),
                                  (video_platform._video_format(["399"]), None)])
         self.assertIn("the video could not be reached over IPv4 - going on as before", log)
+
+    def test_the_last_format_left_to_try_is_tried_over_ipv4_too(self):
+        """IPv6 can come and go on a network: three formats came over IPv4 and were left
+        out, the fourth came over IPv6. The limit is on the formats left out."""
+        fallbacks = video_platform._MAX_FORMAT_FALLBACKS
+        ips = ["192.0.2.1"] * fallbacks + ["2001:db8::1"] * 2
+        tries, log = self._tries(ips, comes_on=fallbacks + 2)
+        self.assertEqual([address for _, address in tries], [None] * (fallbacks + 1) + ["0.0.0.0"])
+        self.assertEqual(tries[-1][0], tries[-2][0])  # the same formats again
+        self.assertIn("could not be downloaded over IPv6 - trying it again over IPv4", log)
 
     def test_only_the_try_over_ipv4_goes_on_from_the_try_before(self):
         ended = {}
