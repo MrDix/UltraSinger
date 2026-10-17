@@ -93,8 +93,11 @@ def _apply_po_token(ydl_opts: dict, po_token: str | None) -> dict:
 # where the download stopped.
 _DOWNLOAD_RETRIES = 10
 
-# Longest pause before a retry (s)
+# Longest pause before a retry (s): of the download, and of a fragment of a
+# fragmented stream, which has many (a fragment that is gone for good costs
+# all of its retries before it is left out)
 _MAX_RETRY_PAUSE_S = 30.0
+_MAX_FRAGMENT_RETRY_PAUSE_S = 5.0
 
 
 def _retry_pause(n: int) -> float:
@@ -106,6 +109,12 @@ def _retry_pause(n: int) -> float:
     all 10 within a minute, and the download failed.
     """
     return min(2.0 ** n, _MAX_RETRY_PAUSE_S)
+
+
+def _fragment_retry_pause(n: int) -> float:
+    """Seconds to wait before retry ``n + 1`` of a fragment: as ``_retry_pause``,
+    up to ``_MAX_FRAGMENT_RETRY_PAUSE_S``, 42 s over the 10 retries."""
+    return min(2.0 ** n, _MAX_FRAGMENT_RETRY_PAUSE_S)
 
 # Premium formats (higher-bitrate copies for subscribers) can come very slowly,
 # with connections that stall again and again, even when the format picked in
@@ -196,7 +205,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         "merge_output_format": "mp4",
         "retries": _DOWNLOAD_RETRIES,
         "fragment_retries": _DOWNLOAD_RETRIES,
-        "retry_sleep_functions": {"http": _retry_pause, "fragment": _retry_pause},
+        "retry_sleep_functions": {"http": _retry_pause, "fragment": _fragment_retry_pause},
         "cookiefile": cookiefile,
         "logger": _FilteredLogger(),
         "noplaylist": True,  # as in get_video_title
@@ -258,13 +267,17 @@ class _FilteredLogger:
     """Custom yt-dlp logger that suppresses known harmless warnings and shows retries."""
 
     def debug(self, msg):
-        # yt-dlp passes its screen messages here. Retries and the pauses before
-        # them are shown, so that a download that waits does not look hung.
+        # yt-dlp passes its screen messages here. Retries, the pauses before
+        # them and the wait the site asks for before a download are shown, so
+        # that a download that waits does not look hung.
         if msg.startswith("[download] Got error"):
             print(f"WARNING: {msg}")
             return
         if msg.startswith("Sleeping "):
             print(f"[download] {msg}")
+            return
+        if msg.startswith("[download] Sleeping "):
+            print(msg)
             return
         _logger.debug(msg)
 

@@ -336,27 +336,50 @@ class TestGetVideoTitle(unittest.TestCase):
 class TestDownloadRetries(unittest.TestCase):
     """A stalled connection is retried instead of ending the download."""
 
-    @patch("src.modules.Audio.video_platform.yt_dlp.YoutubeDL")
-    def test_download_retries_like_the_command_line(self, mock_yt_dl):
+    @staticmethod
+    def _download_options():
+        """The yt-dlp options of the download of a video with its audio."""
         download = getattr(video_platform, "__download_video_with_audio")
-        with tempfile.TemporaryDirectory() as folder:
+        with patch("src.modules.Audio.video_platform.yt_dlp.YoutubeDL") as mock_yt_dl, \
+                tempfile.TemporaryDirectory() as folder:
             video = os.path.join(folder, "test.mp4")
             open(video, "wb").close()
             mock_yt_dl.return_value.__enter__.return_value.extract_info.return_value = {
                 "requested_downloads": [{"filepath": video}]}
-
             download("https://fakeUrl", "test", folder)
+        return mock_yt_dl.call_args.args[0]
 
-        ydl_opts = mock_yt_dl.call_args.args[0]
+    def test_download_retries_like_the_command_line(self):
+        ydl_opts = self._download_options()
         self.assertEqual(ydl_opts["retries"], 10)
         self.assertEqual(ydl_opts["fragment_retries"], 10)
         self.assertEqual(ydl_opts["retry_sleep_functions"],
-                         {"http": video_platform._retry_pause, "fragment": video_platform._retry_pause})
+                         {"http": video_platform._retry_pause, "fragment": video_platform._fragment_retry_pause})
 
     def test_the_pause_before_a_retry_doubles_up_to_half_a_minute(self):
         pauses = [video_platform._retry_pause(n) for n in range(10)]
         self.assertEqual(pauses, [1, 2, 4, 8, 16, 30, 30, 30, 30, 30])
         self.assertEqual(sum(pauses), 181)  # about 3 minutes over the 10 retries
+
+    def test_the_pause_before_a_retry_of_a_fragment_stays_short(self):
+        """A stream has many fragments; one that is gone for good costs all of its retries."""
+        pauses = [video_platform._fragment_retry_pause(n) for n in range(10)]
+        self.assertEqual(pauses, [1, 2, 4, 5, 5, 5, 5, 5, 5, 5])
+        self.assertEqual(sum(pauses), 42)
+
+    def test_the_downloader_waits_the_pauses_and_shows_them(self):
+        """With yt-dlp's own HTTP downloader: the download and the fragment pause, both shown."""
+        ydl = yt_dlp.YoutubeDL(self._download_options())
+        downloader = yt_dlp.downloader.http.HttpFD(ydl, ydl.params)
+        error = Exception("HTTP Error 503: Service Unavailable")
+        with patch("yt_dlp.utils._utils.time.sleep") as sleep, patch("builtins.print") as mock_print:
+            downloader.report_retry(error, 4, 10)
+            downloader.report_retry(error, 4, 10, frag_index=7)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [8.0, 5.0])
+        printed = [c.args[0] for c in mock_print.call_args_list]
+        self.assertEqual(printed[:2], ["WARNING: [download] Got error: HTTP Error 503: Service Unavailable. "
+                                       "Retrying (4/10)...", "[download] Sleeping 8.00 seconds ..."])
+        self.assertEqual(printed[3], "[download] Sleeping 5.00 seconds ...")
 
     def test_yt_dlp_waits_the_pause_before_each_retry(self):
         """yt-dlp passes the number of the retry, counted from 0, as n."""
@@ -369,15 +392,17 @@ class TestDownloadRetries(unittest.TestCase):
         self.assertEqual([c.args[0] for c in sleep.call_args_list], [1.0, 2.0, 30.0])
         self.assertEqual(shown[0], "Sleeping 1.00 seconds ...")
 
-    def test_retries_and_their_pauses_are_shown_and_other_screen_messages_are_not(self):
+    def test_retries_and_waits_are_shown_and_other_screen_messages_are_not(self):
         logger = video_platform._FilteredLogger()
         retry = "[download] Got error: Read timed out. Retrying (1/10)..."
+        site_wait = "[download] Sleeping 12.00 seconds as required by the site..."
         with patch("builtins.print") as mock_print:
             logger.debug(retry)
             logger.debug("Sleeping 1.00 seconds ...")
+            logger.debug(site_wait)
             logger.debug("[download]  42.0% of 10.00MiB")
         self.assertEqual([c.args[0] for c in mock_print.call_args_list],
-                         [f"WARNING: {retry}", "[download] Sleeping 1.00 seconds ..."])
+                         [f"WARNING: {retry}", "[download] Sleeping 1.00 seconds ...", site_wait])
 
 
 _AUDIO = {"format_id": "251", "ext": "webm", "vcodec": "none", "acodec": "opus", "url": "https://a"}
