@@ -1,5 +1,6 @@
 """Tests for video_platform.py"""
 
+import contextlib
 import copy
 import http.server
 import io
@@ -463,11 +464,13 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         server = self.server
         path = self.path.split("?")[0]
-        seen = path in server.hits or server.at_once
         server.hits.append(path)
+        server.ranges.append(self.headers.get("Range"))
+        count = server.hits.count(path)
         body = server.files[path]
-        if path in server.refused:
-            if seen:
+        # ``refused_until``: the request after which a refused file comes after all
+        if path in server.refused and count <= server.refused_until:
+            if count > 1 or server.at_once:
                 self.send_error(503, "Service Unavailable")
                 return
             self.send_response(200)
@@ -491,11 +494,12 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _media_server(files, refused=(), at_once=False):
+def _media_server(files, refused=(), at_once=False, refused_until=float("inf")):
     """A local server of ``files`` (path -> bytes) and its address; ``hits``
-    lists the paths it was asked for."""
+    lists the paths it was asked for, ``ranges`` the Range header of each."""
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _MediaHandler)
     server.files, server.refused, server.at_once, server.hits = files, set(refused), at_once, []
+    server.refused_until, server.ranges = refused_until, []
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         yield server, f"http://127.0.0.1:{server.server_address[1]}"
@@ -740,6 +744,134 @@ class TestFormatFallbackOnlyForAFormat(unittest.TestCase):
         stuck = [("Artist - Title.f614.mp4.part", PermissionError(13, "locked"), False)]
         with patch.object(video_platform, "_remove_partial_files", return_value=stuck):
             self.assertEqual(self._attempts(extract_info)[0], 1 + video_platform._MAX_FORMAT_FALLBACKS)
+
+
+class TestClientIp(unittest.TestCase):
+    """The address that a stream URL is made out to tells IPv4 from IPv6."""
+
+    def test_in_the_query(self):
+        url = "https://stream.example/videoplayback?expire=1&ip=2001%3Adb8%3A%3A1&id=o-A"
+        self.assertEqual(video_platform._client_ip(url), "2001:db8::1")
+
+    def test_in_the_path_of_a_playlist(self):
+        url = "https://playlist.example/api/manifest/hls_playlist/expire/1/ip/2001:db8::1/id/x/index.m3u8"
+        self.assertEqual(video_platform._client_ip(url), "2001:db8::1")
+
+    def test_none(self):
+        self.assertEqual(video_platform._client_ip("https://video.example/v.mp4"), "")
+        self.assertEqual(video_platform._client_ip("https://video.example/ip"), "")
+        self.assertEqual(video_platform._client_ip(None), "")
+
+
+class TestIpv4Retry(unittest.TestCase):
+    """A format that came over IPv6 is tried once more over IPv4 before the next format."""
+
+    _NOT_DELIVERED = "ERROR: \r[download] Got error: HTTP Error 503: Service Unavailable. Giving up after 10 retries"
+
+    def _tries(self, ip, comes_on=None, unreachable_on=(), ended=None):
+        """The format string and source address of each try when the try ``comes_on``
+        (counted from 1) comes, or none; the tries ``unreachable_on`` fail before they pick
+        their formats. And the console. ``ended`` gets the error the download ended with
+        and the formats each try was to go on from."""
+        with patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl, \
+                tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()) as log:
+            instance = ydl.return_value.__enter__.return_value
+            video = os.path.join(folder, "Artist - Title.mp4")
+
+            def extract_info(url, download):
+                if instance.extract_info.call_count in unreachable_on:
+                    raise yt_dlp.utils.DownloadError("ERROR: [test] vid: Unable to download API page")
+                instance.add_post_processor.call_args.args[0].run({"requested_formats": [
+                    {"format_id": "399", "url": f"https://v.example/videoplayback?ip={ip}"},
+                    {"format_id": "251", "url": f"https://a.example/videoplayback?ip={ip}"}]})
+                if instance.extract_info.call_count == comes_on:
+                    open(video, "wb").close()
+                    return {"requested_downloads": [{"filepath": video}]}
+                raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+
+            instance.extract_info.side_effect = extract_info
+            try:
+                getattr(video_platform, "__download_video_with_audio")("https://fakeUrl", "Artist - Title", folder)
+            except yt_dlp.utils.DownloadError as error:
+                if ended is not None:
+                    ended["error"] = str(error)
+            if ended is not None:
+                ended["goes_on_from"] = [c.args[0]._goes_on_from for c in instance.add_post_processor.call_args_list]
+        return [(c.args[0]["format"], c.args[0].get("source_address")) for c in ydl.call_args_list], log.getvalue()
+
+    def test_a_format_over_ipv6_is_tried_again_over_ipv4(self):
+        tries, log = self._tries("2001:db8::1", comes_on=2)
+        self.assertEqual(tries, [(video_platform._VIDEO_FORMAT, None), (video_platform._VIDEO_FORMAT, "0.0.0.0")])
+        self.assertIn("format 399 could not be downloaded over IPv6 - trying it again over IPv4", log)
+        self.assertIn("Downloading format 399 + 251", log)
+
+    def test_a_format_over_ipv4_is_left_out_at_once(self):
+        tries, _ = self._tries("192.0.2.1", comes_on=2)
+        self.assertEqual(tries, [(video_platform._VIDEO_FORMAT, None), (video_platform._video_format(["399"]), None)])
+
+    def test_the_next_formats_come_over_ipv4_as_well(self):
+        tries, _ = self._tries("2001:db8::1")
+        self.assertEqual([address for _, address in tries],
+                         [None] + ["0.0.0.0"] * (1 + video_platform._MAX_FORMAT_FALLBACKS))
+
+    def test_without_ipv4_the_next_format_comes_as_before(self):
+        """The try over IPv4 does not get as far as its formats: no IPv4 here."""
+        tries, log = self._tries("2001:db8::1", comes_on=3, unreachable_on=(2,))
+        self.assertEqual(tries, [(video_platform._VIDEO_FORMAT, None), (video_platform._VIDEO_FORMAT, "0.0.0.0"),
+                                 (video_platform._video_format(["399"]), None)])
+        self.assertIn("the video could not be reached over IPv4 - going on as before", log)
+
+    def test_only_the_try_over_ipv4_goes_on_from_the_try_before(self):
+        ended = {}
+        self._tries("2001:db8::1", ended=ended)
+        self.assertEqual(ended["goes_on_from"], [None, ["399", "251"]] + [None] * video_platform._MAX_FORMAT_FALLBACKS)
+
+    def test_a_later_try_that_picks_no_format_ends_the_download(self):
+        """After the try over IPv4 the next one fails before it picks its formats: the
+        error of the format that did not come stands, and IPv4 is kept."""
+        ended = {}
+        tries, log = self._tries("2001:db8::1", unreachable_on=(3,), ended=ended)
+        self.assertEqual([address for _, address in tries], [None, "0.0.0.0", "0.0.0.0"])
+        self.assertEqual(ended["error"], self._NOT_DELIVERED)
+        self.assertNotIn("could not be reached over IPv4", log)
+
+    def test_over_ipv4_the_format_goes_on_from_where_it_stopped(self):
+        """With yt-dlp and a local server that refuses the format the 11 times of its first try."""
+        files = {"/hd": b"h" * 30000, "/sd": b"s" * 20000}
+        with _media_server(files, refused={"/hd"}, refused_until=11) as (server, base), \
+                tempfile.TemporaryDirectory() as folder:
+            hd = {**TestFormatFallback._format(base, "hd", 720), "url": f"{base}/hd?ip=2001:db8::1"}
+            path, log = TestFormatFallback._download(base, [TestFormatFallback._format(base, "sd", 360), hd], folder)
+            with open(path, "rb") as file:
+                data = file.read()
+            left = os.listdir(folder)
+        self.assertEqual(data, files["/hd"])
+        self.assertEqual(left, ["Artist - Title.mp4"])
+        self.assertNotIn("/sd", server.hits)
+        self.assertIn("over IPv6 - trying it again over IPv4", log)
+        # The 12th request went on from what came of the third that was sent
+        self.assertEqual(server.hits.count("/hd"), 12)
+        start = re.fullmatch(r"bytes=(\d+)-", server.ranges[-1] or "")
+        self.assertTrue(start and 0 < int(start.group(1)) <= len(files["/hd"]) // 3, server.ranges[-1])
+
+    def test_over_ipv4_another_format_does_not_go_on_from_the_first(self):
+        """The extraction over IPv4 picks another single format, of the same file name."""
+        files = {"/a": b"a" * 30000, "/b": b"b" * 20000}
+        with _media_server(files, refused={"/a"}) as (_, base), tempfile.TemporaryDirectory() as folder:
+            first = {**TestFormatFallback._format(base, "a", 720), "url": f"{base}/a?ip=2001:db8::1"}
+            infos = iter([[first], [TestFormatFallback._format(base, "b", 360)]])
+
+            def extract_info(ydl, url, download=True, **kwargs):
+                info = {"id": "vid", "title": "Video", "extractor": "test", "extractor_key": "Test",
+                        "webpage_url": f"{base}/watch", "formats": next(infos)}
+                return ydl.process_ie_result(info, download=download)
+
+            with patch.object(yt_dlp.YoutubeDL, "extract_info", extract_info), \
+                    patch.object(video_platform, "_retry_pause", return_value=0), redirect_stdout(io.StringIO()):
+                path = getattr(video_platform, "__download_video_with_audio")(f"{base}/watch", "Artist - Title", folder)
+            with open(path, "rb") as file:
+                data = file.read()
+        self.assertEqual(data, files["/b"])
 
 
 class TestRemovePartialFiles(unittest.TestCase):
