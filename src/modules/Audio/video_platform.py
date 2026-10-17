@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import urllib.parse
 from collections.abc import Sequence
 
 import yt_dlp
@@ -165,6 +166,18 @@ def _video_format(left_out: Sequence[str] = ()) -> str:
                     for alternative in _VIDEO_FORMAT.split("/"))
 
 
+def _client_ip(url: str) -> str:
+    """The address of this computer that a stream URL of the video platform is
+    made out to ("ip=" in its query, or "/ip/<address>/" in the path of a
+    playlist), "" for none."""
+    parsed = urllib.parse.urlparse(url or "")
+    in_query = urllib.parse.parse_qs(parsed.query).get("ip")
+    if in_query:
+        return in_query[0]
+    parts = parsed.path.split("/")
+    return urllib.parse.unquote(parts[parts.index("ip") + 1]) if "ip" in parts[:-1] else ""
+
+
 def _format_name(fmt: dict) -> str:
     """A format as the console names it, e.g. "399 (1920x1080)" or "251 (audio only)"."""
     resolution = fmt.get("resolution")
@@ -305,6 +318,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
     print(f"{ULTRASINGER_HEAD} Downloading Video with Audio")
     left_out: list[str] = []
     last_error = None
+    ipv4 = False
     while True:
         ydl_opts = _apply_po_token({
             "format": _video_format(left_out),
@@ -321,6 +335,8 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
             "logger": _FilteredLogger(),
             "noplaylist": True,  # as in get_video_title
         }, po_token)
+        if ipv4:
+            ydl_opts["source_address"] = "0.0.0.0"  # IPv4 only, as yt-dlp's --force-ipv4
         formats = _DownloadFormatsPP(announce=bool(left_out))
         try:
             return __start_download(ydl_opts, url, formats)
@@ -340,6 +356,14 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         # yt-dlp leaves the partial file of a fragmented format open until the
         # frames of the error are collected
         gc.collect()
+        if not ipv4 and ":" in _client_ip(failed.get("url")):
+            # The format came over IPv6, which some networks carry worse than
+            # IPv4, and yt-dlp keeps to the address that answered first: the
+            # same format is tried again over IPv4, from where it stopped
+            ipv4 = True
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
+                  f"could not be downloaded over IPv6 - trying it again over IPv4")
+            continue
         left_out.append(format_id)
         stuck = _remove_partial_files(formats.stem, left_out)
         for path, reason, taken_up in stuck:

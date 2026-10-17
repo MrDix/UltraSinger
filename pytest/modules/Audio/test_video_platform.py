@@ -1,5 +1,6 @@
 """Tests for video_platform.py"""
 
+import contextlib
 import copy
 import http.server
 import io
@@ -463,11 +464,12 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         server = self.server
         path = self.path.split("?")[0]
-        seen = path in server.hits or server.at_once
         server.hits.append(path)
+        count = server.hits.count(path)
         body = server.files[path]
-        if path in server.refused:
-            if seen:
+        # ``refused_until``: the request after which a refused file comes after all
+        if path in server.refused and count <= server.refused_until:
+            if count > 1 or server.at_once:
                 self.send_error(503, "Service Unavailable")
                 return
             self.send_response(200)
@@ -491,11 +493,12 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _media_server(files, refused=(), at_once=False):
+def _media_server(files, refused=(), at_once=False, refused_until=float("inf")):
     """A local server of ``files`` (path -> bytes) and its address; ``hits``
     lists the paths it was asked for."""
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _MediaHandler)
     server.files, server.refused, server.at_once, server.hits = files, set(refused), at_once, []
+    server.refused_until = refused_until
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         yield server, f"http://127.0.0.1:{server.server_address[1]}"
@@ -740,6 +743,80 @@ class TestFormatFallbackOnlyForAFormat(unittest.TestCase):
         stuck = [("Artist - Title.f614.mp4.part", PermissionError(13, "locked"), False)]
         with patch.object(video_platform, "_remove_partial_files", return_value=stuck):
             self.assertEqual(self._attempts(extract_info)[0], 1 + video_platform._MAX_FORMAT_FALLBACKS)
+
+
+class TestClientIp(unittest.TestCase):
+    """The address that a stream URL is made out to tells IPv4 from IPv6."""
+
+    def test_in_the_query(self):
+        url = "https://rr5---sn-x.googlevideo.com/videoplayback?expire=1&ip=2001%3Adb8%3A%3A1&id=o-A"
+        self.assertEqual(video_platform._client_ip(url), "2001:db8::1")
+
+    def test_in_the_path_of_a_playlist(self):
+        url = "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/1/ip/2001:db8::1/id/x/index.m3u8"
+        self.assertEqual(video_platform._client_ip(url), "2001:db8::1")
+
+    def test_none(self):
+        self.assertEqual(video_platform._client_ip("https://video.example/v.mp4"), "")
+        self.assertEqual(video_platform._client_ip("https://video.example/ip"), "")
+        self.assertEqual(video_platform._client_ip(None), "")
+
+
+class TestIpv4Retry(unittest.TestCase):
+    """A format that came over IPv6 is tried once more over IPv4 before the next format."""
+
+    _NOT_DELIVERED = "ERROR: \r[download] Got error: HTTP Error 503: Service Unavailable. Giving up after 10 retries"
+
+    def _tries(self, ip, comes_on=None):
+        """The format string and source address of each try when the try ``comes_on``
+        (counted from 1) comes, or none; and the console."""
+        with patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl, \
+                tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()) as log:
+            instance = ydl.return_value.__enter__.return_value
+            video = os.path.join(folder, "Artist - Title.mp4")
+
+            def extract_info(url, download):
+                instance.add_post_processor.call_args.args[0].run({"requested_formats": [
+                    {"format_id": "399", "url": f"https://v.example/videoplayback?ip={ip}"},
+                    {"format_id": "251", "url": f"https://a.example/videoplayback?ip={ip}"}]})
+                if instance.extract_info.call_count == comes_on:
+                    open(video, "wb").close()
+                    return {"requested_downloads": [{"filepath": video}]}
+                raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
+
+            instance.extract_info.side_effect = extract_info
+            with contextlib.suppress(yt_dlp.utils.DownloadError):
+                getattr(video_platform, "__download_video_with_audio")("https://fakeUrl", "Artist - Title", folder)
+        return [(c.args[0]["format"], c.args[0].get("source_address")) for c in ydl.call_args_list], log.getvalue()
+
+    def test_a_format_over_ipv6_is_tried_again_over_ipv4(self):
+        tries, log = self._tries("2001:db8::1", comes_on=2)
+        self.assertEqual(tries, [(video_platform._VIDEO_FORMAT, None), (video_platform._VIDEO_FORMAT, "0.0.0.0")])
+        self.assertIn("format 399 could not be downloaded over IPv6 - trying it again over IPv4", log)
+
+    def test_a_format_over_ipv4_is_left_out_at_once(self):
+        tries, _ = self._tries("192.0.2.1", comes_on=2)
+        self.assertEqual(tries, [(video_platform._VIDEO_FORMAT, None), (video_platform._video_format(["399"]), None)])
+
+    def test_the_next_formats_come_over_ipv4_as_well(self):
+        tries, _ = self._tries("2001:db8::1")
+        self.assertEqual([address for _, address in tries],
+                         [None] + ["0.0.0.0"] * (1 + video_platform._MAX_FORMAT_FALLBACKS))
+
+    def test_over_ipv4_the_format_goes_on_from_where_it_stopped(self):
+        """With yt-dlp and a local server that refuses the format the 11 times of its first try."""
+        files = {"/hd": b"h" * 30000, "/sd": b"s" * 20000}
+        with _media_server(files, refused={"/hd"}, refused_until=11) as (server, base), \
+                tempfile.TemporaryDirectory() as folder:
+            hd = {**TestFormatFallback._format(base, "hd", 720), "url": f"{base}/hd?ip=2001:db8::1"}
+            path, log = TestFormatFallback._download(base, [TestFormatFallback._format(base, "sd", 360), hd], folder)
+            with open(path, "rb") as file:
+                data = file.read()
+            left = os.listdir(folder)
+        self.assertEqual(data, files["/hd"])
+        self.assertEqual(left, ["Artist - Title.mp4"])
+        self.assertNotIn("/sd", server.hits)
+        self.assertIn("over IPv6 - trying it again over IPv4", log)
 
 
 class TestRemovePartialFiles(unittest.TestCase):
