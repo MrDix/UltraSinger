@@ -134,6 +134,24 @@ class QueueManager(QObject):
                 logger.info("Queue: removed '%s'", item.title)
                 return
 
+    def retry_item(self, item_id: str) -> bool:
+        """Let a failed or cancelled item wait again, in its place and with its
+        per-song settings. Returns whether it waits.
+
+        Start All converts it; a running queue converts it too.
+        """
+        for item in self._items:
+            if item.id == item_id and item.status in ("failed", "cancelled"):
+                item.status = "pending"
+                # Nothing of the run that ended may show as the next one's
+                item.exit_code = None
+                item.result_info = {}
+                item.resolved_config = {}
+                self.item_status_changed.emit(item.id, "pending")
+                logger.info("Queue: '%s' waits again", item.title)
+                return True
+        return False
+
     def clear_pending(self):
         """Remove all pending items from the queue."""
         pending = [it for it in self._items if it.status == "pending"]

@@ -219,6 +219,10 @@ class MainWindow(QMainWindow):
         self._sidebar.queue_list.requeue_requested.connect(
             self._on_requeue_item
         )
+        # Wire retry button (failed and cancelled songs)
+        self._sidebar.queue_list.retry_requested.connect(
+            self._on_retry_item
+        )
         # Wire clone button
         self._sidebar.queue_list.clone_requested.connect(
             self._on_clone_item
@@ -589,6 +593,11 @@ class MainWindow(QMainWindow):
         # Auto-open per-song settings so the user can adjust language etc.
         self._on_per_song_settings(new_item.id)
 
+    def _on_retry_item(self, item_id: str):
+        """Let a failed or cancelled item wait again (Start All converts it)."""
+        self._queue_mgr.retry_item(item_id)
+        self._update_queue_buttons()
+
     def _on_start_all(self):
         """Start processing all pending queue items."""
         if self._queue_mgr.pending_count() == 0:
@@ -667,7 +676,7 @@ class MainWindow(QMainWindow):
         failed = sum(1 for item in items if item.status == "failed")
         self._queue_tab.append_log(
             f"[Queue] Restored {len(items)} song(s) from the last session"
-            + (f" ({failed} of them failed)" if failed else "")
+            + (f" ({failed} of them failed; \u21BB lets a failed song wait again)" if failed else "")
             + ". The queue does not start by itself - press Start All."
         )
 
