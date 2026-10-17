@@ -34,6 +34,10 @@ _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 # Found versions of a song at most this much further off the length of the
 # audio than the closest one count as just as close (see _best_version)
 _SAME_LENGTH_S = 5.0
+# The last search, with the title before a dash whatever follows it ("Title
+# - Chapter 2"), takes only versions at most this far off the length of the
+# audio: "Title - Part 2" can be another song than "Title"
+_SAME_RECORDING_S = 5.0
 # What separates the artists of one credit: "A & B", "A, B", "A / B", "A and B",
 # "A feat. B" - not a slash or a comma inside a name ("A/B", "A,B")
 _CREDIT_SEPARATOR_RE = re.compile(
@@ -106,28 +110,36 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     "[HD]", "feat. Guest") and nothing is found with them, both searches are
     repeated without, and then with the title before a dash that a
     description follows ("Title - Singer Name live in the studio", see
-    ``title_before_dash``); ``verbose`` reports that.
+    ``title_before_dash``); ``verbose`` reports that. Last, with a known
+    ``duration``, the title before a dash whatever follows it ("Title -
+    Chapter 2") is searched, taking only versions of about the length of
+    the audio (see ``_SAME_RECORDING_S``).
 
     Only results whose artist and title match are taken. Of several
     versions of the song, the one closest in length to the audio
     (``duration``, in seconds) wins, preferably one with synced lyrics,
-    see ``_best_version``. The length never rules a version out.
+    see ``_best_version``. Apart from that last search, the length never
+    rules a version out.
     """
     if not (artist or "").strip() or not (title or "").strip():
         return None
-    titles, seen = [], set()  # (title, how it was shortened)
-    for wanted, how in ((title, ""), (strip_title_additions(title), "without the additions to the title"),
-                        (title_before_dash(title), "with the title before the dash")):
+    titles, seen = [], set()  # (title, how it was shortened, how far a version may be off the length)
+    for wanted, how, max_off in (
+            (title, "", None),
+            (strip_title_additions(title), "without the additions to the title", None),
+            (title_before_dash(title), "with the title before the dash", None),
+            (title_before_dash(title, any_rest=True) if duration else "",
+             "with the title before the dash, for a version of the length of the audio", _SAME_RECORDING_S)):
         key = " ".join(wanted.split()).casefold()
         if key and key not in seen:
             seen.add(key)
-            titles.append((wanted, how))
+            titles.append((wanted, how, max_off))
     found = None
-    for wanted, how in titles:
+    for wanted, how, max_off in titles:
         if how and verbose:
             print(f"{ULTRASINGER_HEAD} Searching LRCLIB again {how}: {blue_highlighted(wanted)}")
-        results = [result for result in (_search_by_fields(artist, wanted, duration),
-                                         _search_by_query(f"{artist} {wanted}", artist, wanted, duration))
+        results = [result for result in (_search_by_fields(artist, wanted, duration, max_off),
+                                         _search_by_query(f"{artist} {wanted}", artist, wanted, duration, max_off))
                    if result is not None]
         with_lyrics = [result for result in results if result.has_lyrics]
         if with_lyrics:
@@ -144,29 +156,33 @@ def _best_result(results: list[LyricsInfo], duration: Optional[float]) -> Lyrics
     return next(result for result, version in zip(results, versions) if version is best)
 
 
-def _search_by_fields(artist: str, title: str, duration: Optional[float] = None) -> Optional[LyricsInfo]:
+def _search_by_fields(artist: str, title: str, duration: Optional[float] = None,
+                      max_off: Optional[float] = None) -> Optional[LyricsInfo]:
     """Search LRCLIB using separate artist_name and track_name parameters."""
     params = urllib.parse.urlencode({
         "artist_name": artist,
         "track_name": title,
     })
-    return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=title, duration=duration)
+    return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=title, duration=duration,
+                      max_off=max_off)
 
 
 def _search_by_query(query: str, artist: str = "", title: str = "",
-                     duration: Optional[float] = None) -> Optional[LyricsInfo]:
+                     duration: Optional[float] = None, max_off: Optional[float] = None) -> Optional[LyricsInfo]:
     """Search LRCLIB using a combined query string."""
     params = urllib.parse.urlencode({"q": query})
-    return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=title, duration=duration)
+    return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=title, duration=duration,
+                      max_off=max_off)
 
 
 def _do_search(url: str, artist: str = "", title: str = "",
-               duration: Optional[float] = None) -> Optional[LyricsInfo]:
+               duration: Optional[float] = None, max_off: Optional[float] = None) -> Optional[LyricsInfo]:
     """Execute a search request and return the best result with lyrics.
 
     With ``artist`` and ``title`` given, only results of that song count
-    (see ``_names_match``). A song that LRCLIB only knows as instrumental is
-    returned as such, without lyrics.
+    (see ``_names_match``); with ``max_off``, only those at most that many
+    seconds off the length of the audio (``duration``). A song that LRCLIB
+    only knows as instrumental is returned as such, without lyrics.
     """
     data = _get_json(url)
     if not isinstance(data, list):
@@ -175,6 +191,7 @@ def _do_search(url: str, artist: str = "", title: str = "",
     matching = [
         entry for entry in data
         if isinstance(entry, dict) and (not (artist and title) or _names_match(entry, artist, title))
+        and (max_off is None or _length_off(entry, duration) <= max_off)
     ]
     with_lyrics = [entry for entry in matching if _has_lyrics(entry)]
     if with_lyrics:

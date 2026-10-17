@@ -214,6 +214,34 @@ class TestFindLyrics(unittest.TestCase):
         self.assertEqual([p.get("track_name") or p.get("q") for p in requests],
                          ["Song Title - Part Two of It", "Some Artist Song Title - Part Two of It"])
 
+    def test_the_title_before_any_dash_for_a_version_of_the_length_of_the_audio(self):
+        """"Chapter 2" after the dash is no description, but a version of the length of
+        the audio shows that "Song Title" is the song."""
+        def answer(params):
+            return [_version(239.0)] if params.get("track_name") == "Song Title" else []
+        title = "Song Title [OFFICIAL VIDEO] - Chapter 2"
+        result, requests = self._find(answer, title=title, duration=238.0)
+        self.assertEqual((result.track_name, result.duration), ("Song Title", 239.0))
+        self.assertEqual([p.get("track_name") or p.get("q") for p in requests], [
+            title, f"Some Artist {title}",
+            "Song Title - Chapter 2", "Some Artist Song Title - Chapter 2",
+            "Song Title", "Some Artist Song Title",
+        ])
+
+    def test_the_title_before_any_dash_takes_no_version_of_another_length(self):
+        """"Song Title - Part 2" can be another song than "Song Title"."""
+        def answer(params):
+            return [_version(180.0)] if params.get("track_name") == "Song Title" else []
+        result, _ = self._find(answer, title="Song Title - Part 2", duration=238.0)
+        self.assertIsNone(result)
+
+    def test_the_title_before_any_dash_needs_the_length_of_the_audio(self):
+        def answer(params):
+            return [_version(239.0)] if params.get("track_name") == "Song Title" else []
+        result, requests = self._find(answer, title="Song Title - Part 2")
+        self.assertIsNone(result)
+        self.assertEqual(len(requests), 2)
+
     def test_full_title_is_searched_first(self):
         result, requests = self._find(lambda params: [_version(200.0, track="Song Title (Live)")],
                                       title="Song Title (Live)")
