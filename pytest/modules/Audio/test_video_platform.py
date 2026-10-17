@@ -924,7 +924,7 @@ class TestFailedDownloadFolder(unittest.TestCase):
     def test_a_folder_with_a_chart_stays(self):
         """A sync client can bring a song of the same name in from another computer."""
         for chart in ("Artist - Title.txt", "Artist - Title.TXT"):
-            def download(url, name, folder, *args):
+            def download(url, name, folder, *args, chart=chart):
                 open(os.path.join(folder, chart), "w").close()
                 raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
 
