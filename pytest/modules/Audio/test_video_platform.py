@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stdout
 from unittest.mock import patch
 
 import yt_dlp
@@ -509,7 +509,7 @@ class TestFormatFallback(unittest.TestCase):
     download starts again with the next best one (yt-dlp and a local server)."""
 
     @staticmethod
-    def _download(base, formats, folder):
+    def _download(base, formats, folder, name="Artist - Title"):
         """The downloaded file, or the error of the download, and the console."""
         info = {"id": "vid", "title": "Video", "extractor": "test", "extractor_key": "Test",
                 "webpage_url": f"{base}/watch", "formats": formats}
@@ -522,8 +522,7 @@ class TestFormatFallback(unittest.TestCase):
                 patch.object(video_platform, "_fragment_retry_pause", return_value=0), \
                 redirect_stdout(io.StringIO()) as log:
             try:
-                result = getattr(video_platform, "__download_video_with_audio")(
-                    f"{base}/watch", "Artist - Title", folder)
+                result = getattr(video_platform, "__download_video_with_audio")(f"{base}/watch", name, folder)
             except yt_dlp.utils.DownloadError as error:
                 result = error
         return result, log.getvalue()
@@ -548,6 +547,19 @@ class TestFormatFallback(unittest.TestCase):
         self.assertEqual(server.hits[-1], "/sd")
         self.assertIn("format hd (720p) could not be downloaded - downloading the next best format instead", log)
         self.assertIn("Downloading format sd (360p)", log)
+
+    def test_the_partial_files_of_the_name_that_yt_dlp_writes(self):
+        """yt-dlp expands an environment variable in the name it is given."""
+        files = {"/hd": b"h" * 30000, "/sd": b"s" * 20000}
+        with _media_server(files, refused={"/hd"}) as (_, base), tempfile.TemporaryDirectory() as folder, \
+                patch.dict(os.environ, {"ULTRASINGER_TEST_NAME": "Title"}):
+            path, _ = self._download(base, [self._format(base, "sd", 360), self._format(base, "hd", 720)],
+                                     folder, name="Artist - $ULTRASINGER_TEST_NAME")
+            with open(path, "rb") as file:
+                data = file.read()
+            left = os.listdir(folder)
+        self.assertEqual(data, files["/sd"])
+        self.assertEqual(left, ["Artist - Title.mp4"])
 
     def test_a_fragment_that_does_not_come_ends_its_format(self):
         """Instead of a gap in the video: the next best format comes in full, and nothing
@@ -716,33 +728,41 @@ class TestFormatFallbackOnlyForAFormat(unittest.TestCase):
         def extract_info(formats, attempt):
             self._picked(formats)
             raise yt_dlp.utils.DownloadError(self._NOT_DELIVERED)
-        with patch.object(video_platform, "_remove_partial_files", return_value=["Artist - Title.mp4.part"]):
+        stuck = [("Artist - Title.mp4.part", PermissionError(13, "locked"))]
+        with patch.object(video_platform, "_remove_partial_files", return_value=stuck):
             self.assertEqual(self._attempts(extract_info), (1, self._NOT_DELIVERED))
 
 
 class TestRemovePartialFiles(unittest.TestCase):
     """After a format failed, the partial files of the song go; what came in full stays."""
 
+    def _remove(self, names, song, failing=None):
+        """The files left of ``names`` and the paths reported as stuck (``failing``:
+        the error of each delete)."""
+        with tempfile.TemporaryDirectory() as folder:
+            for name in names:
+                open(os.path.join(folder, name), "wb").close()
+            with patch.object(video_platform.os, "remove", side_effect=failing) if failing else nullcontext():
+                stuck = video_platform._remove_partial_files(os.path.join(folder, song), "399")
+            return sorted(os.listdir(folder)), [os.path.basename(path) for path, _ in stuck]
+
     def test_the_partial_files_of_the_song(self):
         song = "Artist [Live] - Title"
         partial = [f"{song}.mp4.part", f"{song}.f399.mp4.part", f"{song}.f399.mp4.ytdl",
                    f"{song}.f399.mp4.part-Frag3", f"{song}.f399.mp4.part-Frag3.part"]
         kept = [f"{song}.f251.webm", "Other - Song.mp4.part"]
-        with tempfile.TemporaryDirectory() as folder:
-            for name in partial + kept:
-                open(os.path.join(folder, name), "wb").close()
-            stuck = video_platform._remove_partial_files(folder, song)
-            left = sorted(os.listdir(folder))
-        self.assertEqual(stuck, [])
-        self.assertEqual(left, sorted(kept))
+        self.assertEqual(self._remove(partial + kept, song), (sorted(kept), []))
+
+    def test_only_the_end_of_a_name_counts(self):
+        song = "Artist.part-Frag - Title.part"
+        self.assertEqual(self._remove([f"{song}.mp4"], song), ([f"{song}.mp4"], []))
 
     def test_a_file_that_cannot_be_deleted(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "Artist - Title.mp4.part")
-            open(path, "wb").close()
-            with patch.object(video_platform.os, "remove", side_effect=PermissionError(13, "locked")):
-                stuck = video_platform._remove_partial_files(folder, "Artist - Title")
-        self.assertEqual(stuck, [path])
+        """Reported, unless it is one of the format left out, which no later try takes up."""
+        names = ["Artist - Title.mp4.part", "Artist - Title.f399.mp4.part"]
+        left, stuck = self._remove(names, "Artist - Title", PermissionError(13, "locked"))
+        self.assertEqual(left, sorted(names))
+        self.assertEqual(stuck, ["Artist - Title.mp4.part"])
 
 
 class TestPlaylistUrl(unittest.TestCase):

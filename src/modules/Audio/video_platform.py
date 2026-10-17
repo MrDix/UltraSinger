@@ -182,10 +182,14 @@ class _DownloadFormatsPP(PostProcessor):
         self._announce = announce
         self.formats: list[dict] = []
         self._finished: set[str] = set()
+        # The file that yt-dlp writes, without its extension (it expands
+        # environment variables such as "$NAME" in the name it was given)
+        self.stem = ""
 
     def run(self, info):
         # A video and an audio format to merge, or a single format
         self.formats = list(info.get("requested_formats") or [info])
+        self.stem = os.path.splitext(info.get("_filename") or "")[0]
         if self._announce:
             print(f"{ULTRASINGER_HEAD} Downloading format "
                   f"{' + '.join(_format_name(f) for f in self.formats)}")
@@ -202,19 +206,24 @@ class _DownloadFormatsPP(PostProcessor):
         return next((f for f in self.formats if f.get("format_id") not in self._finished), None)
 
 
-def _remove_partial_files(output_path: str, clear_filename: str) -> list[str]:
-    """Delete the partial files of the download of ``clear_filename``: of a
-    format, with the fragments and the state file of a fragmented one. The
-    formats that came in full stay, for the next try. Returns the files that
-    could not be deleted."""
+def _remove_partial_files(stem: str, left_out: str) -> list[tuple[str, OSError]]:
+    """Delete the partial files of a download to ``stem`` plus an extension: of
+    a format, with the fragments and the state file of a fragmented one. The
+    formats that came in full stay, for the next try.
+
+    Returns the files that could not be deleted and that the next try could go
+    on from, with the reason (none of the format ``left_out``, which it never takes).
+    """
     stuck = []
-    for path in glob.glob(f"{glob.escape(os.path.join(output_path, clear_filename))}.*"):
-        name = os.path.basename(path)
-        if name.endswith((".part", ".ytdl")) or ".part-Frag" in name:
+    for path in glob.glob(f"{glob.escape(stem)}.*") if stem else ():
+        # What follows the name, e.g. ".f399.mp4.part" (the name can hold anything)
+        suffix = os.path.basename(path)[len(os.path.basename(stem)):]
+        if suffix.endswith((".part", ".ytdl")) or ".part-Frag" in suffix:
             try:
                 os.remove(path)
-            except OSError:
-                stuck.append(path)
+            except OSError as error:
+                if not suffix.startswith(f".f{left_out}."):
+                    stuck.append((path, error))
     return stuck
 
 
@@ -330,11 +339,11 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
         # yt-dlp leaves the partial file of a fragmented format open until the
         # frames of the error are collected
         gc.collect()
-        stuck = _remove_partial_files(output_path, clear_filename)
+        stuck = _remove_partial_files(formats.stem, format_id)
         if stuck:
-            # The next format could go on from a file of the same name
-            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the partial file "
-                  f"{os.path.basename(stuck[0])} could not be deleted - no other format is tried")
+            path, reason = stuck[0]
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the partial file {os.path.basename(path)} "
+                  f"could not be deleted ({reason}) - no other format is tried, it could go on from it")
             raise last_error
         left_out.append(format_id)
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} format {_format_name(failed)} "
