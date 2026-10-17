@@ -459,8 +459,8 @@ def _remove_failed_song_folder(folder: str, basename: str):
     own = (f"{basename}.", f"{basename}_video.")
     try:
         names = os.listdir(folder)
-        if any(not name.startswith(own) or name.endswith(".txt") or not os.path.isfile(os.path.join(folder, name))
-               for name in names):
+        if any(not name.startswith(own) or name.lower().endswith(".txt")
+               or not os.path.isfile(os.path.join(folder, name)) for name in names):
             print(f"{ULTRASINGER_HEAD} The folder of the failed download holds other files and stays: {folder}")
             return
         shutil.rmtree(folder)
