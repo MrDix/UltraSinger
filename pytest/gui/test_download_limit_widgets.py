@@ -18,7 +18,7 @@ pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from src.gui import browser_tab
@@ -237,7 +237,7 @@ class TestQualityBadge:
             with patch.object(browser_tab, "_FormatProbeWorker") as worker, \
                     patch.object(browser_tab.threading, "Thread"):
                 browser_tab.BrowserTab._probe_formats(tab, "vid")
-            assert worker.call_args.kwargs == expected
+            assert {key: worker.call_args.kwargs[key] for key in expected} == expected
 
 
 class _BadgeHost:
@@ -269,6 +269,7 @@ def _probed_badge(config):
         max_fps=limit_setting(config, "max_video_fps"))
     worker.badge_ready.connect(host._on_badge_ready)
     worker.finished.connect(host._on_format_probed)
+    host._active_probe = 0  # the worker's default number
     info = {"title": "Artist - Title", "duration": 200, "formats": _FORMATS}
     with patch.object(browser_tab._FormatProbeWorker, "_dump_json", return_value=json.dumps(info)), \
             patch.object(browser_tab._FormatProbeWorker, "_check_lrclib", return_value="lyrics"):
@@ -306,42 +307,35 @@ class TestBadgeAfterSavedLimits:
         assert not host._page.runJavaScript.called
 
 
-class _SignalBadgeHost(QObject):
-    """The badge part of BrowserTab as a QObject, which gets the probes' signals."""
-
-    _on_badge_ready = browser_tab.BrowserTab._on_badge_ready
-    _on_format_probed = browser_tab.BrowserTab._on_format_probed
-    _from_earlier_probe = browser_tab.BrowserTab._from_earlier_probe
-    _probe_limits = browser_tab.BrowserTab._probe_limits
-    refresh_quality_badge = browser_tab.BrowserTab.refresh_quality_badge
-
-    def __init__(self, config):
-        super().__init__()
-        self.probe_config = config
-        self._page = MagicMock()
-        self._probe_video_id = "vid"
-        self._badge = None
-
-
 def test_the_result_of_a_replaced_probe_of_the_same_video_is_not_taken():
     """A second probe of the same video (e.g. once the PO token provider is ready)
-    replaces the first; a result of the first that arrives later is not shown or kept."""
-    host = _SignalBadgeHost({"max_video_resolution": 0, "max_video_fps": 0})
-    earlier = browser_tab._FormatProbeWorker("vid")
-    newer = browser_tab._FormatProbeWorker("vid")
-    for worker in (earlier, newer):
-        worker.badge_ready.connect(host._on_badge_ready)
-        worker.finished.connect(host._on_format_probed)
+    replaces the first. A result of the first that is still queued is not shown
+    or kept: each result names its probe (the worker may be gone by then)."""
+    host = _BadgeHost({"max_video_resolution": 0, "max_video_fps": 0})
+    earlier, newer = 1, 2
     host._active_probe = newer
-    earlier.badge_ready.emit("vid", browser_tab._QualityBadge({"formats": _FORMATS}, 2160, "VP9", []))
-    earlier.finished.emit("vid", "old text", "")
+    host._on_badge_ready("vid", browser_tab._QualityBadge({"formats": _FORMATS}, 2160, "VP9", []), earlier)
+    host._on_format_probed("vid", "old text", "", earlier)
     assert host._badge is None
     assert not host._page.runJavaScript.called
     badge = browser_tab._QualityBadge({"formats": _FORMATS[2:]}, 1080, "AV1", [])
-    newer.badge_ready.emit("vid", badge)
-    newer.finished.emit("vid", badge.text(0, 0), "")
+    host._on_badge_ready("vid", badge, newer)
+    host._on_format_probed("vid", badge.text(0, 0), "", newer)
     assert host._badge is badge
     assert host._page.runJavaScript.call_count == 1
+    assert "1080p AV1" in host._page.runJavaScript.call_args.args[0]
+
+
+def test_a_probe_result_names_its_probe():
+    """The worker sends its number with both results, so that a replaced probe's can be told apart."""
+    worker = browser_tab._FormatProbeWorker("vid", probe_number=7)
+    got = []
+    worker.badge_ready.connect(lambda *args: got.append(("badge", args[-1])))
+    worker.finished.connect(lambda *args: got.append(("finished", args[-1])))
+    info = {"title": "Artist - Title", "duration": 200, "formats": _FORMATS}
+    with patch.object(browser_tab._FormatProbeWorker, "_dump_json", return_value=json.dumps(info)),             patch.object(browser_tab._FormatProbeWorker, "_check_lrclib", return_value="lyrics"):
+        worker.run()
+    assert got == [("badge", 7), ("finished", 7)]
 
 
 class _FakeBrowserTab(QWidget):

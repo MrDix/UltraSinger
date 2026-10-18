@@ -97,12 +97,14 @@ class _FormatProbeWorker(QObject):
     file, and removes both files itself.
     """
 
-    finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
-    badge_ready = Signal(str, object)  # video_id, _QualityBadge (just before finished)
+    # Both carry the probe's number last: a result of a probe that a newer one
+    # replaced can still be queued
+    finished = Signal(str, str, str, int)  # video_id, info_text (HTML), yt_language, probe number
+    badge_ready = Signal(str, object, int)  # video_id, _QualityBadge (just before finished), probe number
 
     def __init__(self, video_id: str, cookie_file: str = "",
                  options_file: str = "", parent: QObject | None = None, *,
-                 max_resolution: int = 0, max_fps: int = 0):
+                 max_resolution: int = 0, max_fps: int = 0, probe_number: int = 0):
         """``cookie_file`` (a private copy) and ``options_file`` (a private
         yt-dlp option file with the PO token) are for this probe only; it
         removes them. ``max_resolution`` and ``max_fps`` are the limits of a
@@ -114,6 +116,7 @@ class _FormatProbeWorker(QObject):
         self._options_file = options_file
         self._max_resolution = max_resolution
         self._max_fps = max_fps
+        self._probe_number = probe_number
         self._process: subprocess.Popen | None = None
         self._cancelled = False
 
@@ -183,7 +186,7 @@ class _FormatProbeWorker(QObject):
                 if private_file:
                     remove_cookie_file(private_file)
         if output is None:
-            self.finished.emit(self._video_id, "", "")
+            self.finished.emit(self._video_id, "", "", self._probe_number)
             return
 
         try:
@@ -240,13 +243,13 @@ class _FormatProbeWorker(QObject):
 
             badge = _QualityBadge(info, best_height,
                                   codec_names.get(best_vcodec, best_vcodec), parts)
-            self.badge_ready.emit(self._video_id, badge)
+            self.badge_ready.emit(self._video_id, badge, self._probe_number)
             self.finished.emit(
-                self._video_id, badge.text(self._max_resolution, self._max_fps), yt_language
+                self._video_id, badge.text(self._max_resolution, self._max_fps), yt_language, self._probe_number
             )
 
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
-            self.finished.emit(self._video_id, "", "")
+            self.finished.emit(self._video_id, "", "", self._probe_number)
 
     def _check_lrclib(self, info: dict, duration: float | None = None) -> str:
         """Which lyrics a conversion of the video finds.
@@ -818,13 +821,14 @@ class BrowserTab(QWidget):
             except OSError as e:
                 logger.warning("PO token file for format probe failed: %s", e)
 
+        self._active_probe = getattr(self, "_active_probe", 0) + 1
         worker = _FormatProbeWorker(
             video_id, cookie_file, options_file,
             max_resolution=limit_setting(self.probe_config, "max_video_resolution"),
-            max_fps=limit_setting(self.probe_config, "max_video_fps"))
+            max_fps=limit_setting(self.probe_config, "max_video_fps"),
+            probe_number=self._active_probe)
         worker.badge_ready.connect(self._on_badge_ready)
         worker.finished.connect(self._on_format_probed)
-        self._active_probe = worker
         # A daemon thread, not a QThread: closing the window must not wait for
         # a slow lyrics lookup, and a QThread destroyed while running aborts
         # the application. The worker stays referenced until its thread ends.
@@ -838,17 +842,16 @@ class BrowserTab(QWidget):
         return (limit_setting(self.probe_config, "max_video_resolution"),
                 limit_setting(self.probe_config, "max_video_fps"))
 
-    def _from_earlier_probe(self) -> bool:
-        """Whether the signal being handled comes from a probe that a newer one
-        replaced: its result can still be queued when a probe of the same video
-        starts again (e.g. once the PO token provider is ready)."""
-        sender = self.sender() if hasattr(self, "sender") else None
-        return (sender is not None and hasattr(sender, "badge_ready")
-                and sender is not getattr(self, "_active_probe", None))
+    def _from_earlier_probe(self, probe: int | None) -> bool:
+        """Whether a result comes from a probe that a newer one replaced: it can
+        still be queued when a probe of the same video starts again (e.g. once
+        the PO token provider is ready). ``probe`` is the number of the probe,
+        None for the badge shown again without a probe."""
+        return probe is not None and probe != getattr(self, "_active_probe", 0)
 
-    def _on_badge_ready(self, video_id: str, badge: "_QualityBadge"):
+    def _on_badge_ready(self, video_id: str, badge: "_QualityBadge", probe: int | None = None):
         """Keep what the badge of the current video shows, for a change of the limits."""
-        if self._probe_video_id == video_id and not self._from_earlier_probe():
+        if self._probe_video_id == video_id and not self._from_earlier_probe(probe):
             self._badge = badge
 
     def refresh_quality_badge(self):
@@ -858,12 +861,13 @@ class BrowserTab(QWidget):
         if badge is not None:
             self._on_format_probed(self._probe_video_id, badge.text(*self._probe_limits()), "")
 
-    def _on_format_probed(self, video_id: str, info_text: str, _yt_language: str):
+    def _on_format_probed(self, video_id: str, info_text: str, _yt_language: str,
+                          probe: int | None = None):
         """Show the format info badge in the browser overlay."""
         if not info_text or not self._page:
             return
         # Only update if still on the same video, from its newest probe
-        if self._probe_video_id != video_id or self._from_earlier_probe():
+        if self._probe_video_id != video_id or self._from_earlier_probe(probe):
             return
         # The limits may have been saved while the probe ran
         badge = getattr(self, "_badge", None)
