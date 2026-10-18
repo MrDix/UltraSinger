@@ -187,6 +187,7 @@ class MainWindow(QMainWindow):
         )
         self._settings_tab.log_message.connect(self._queue_tab.append_log)
         self._settings_tab.signin_allowed_changed.connect(self._on_signin_allowed_changed)
+        self._settings_tab.settings_saved.connect(self._on_settings_saved)
         self._browser_tab.settings_requested.connect(self._show_signin_setting)
 
         self._stack.addWidget(self._browser_tab)
@@ -621,6 +622,7 @@ class MainWindow(QMainWindow):
         all_settings = self._settings_tab.collect_all()
         self._config.update(all_settings)
         save_config(self._config)
+        self._on_settings_saved()
 
         # Auto-export cookies
         self._auto_export_cookies()
@@ -895,6 +897,11 @@ class MainWindow(QMainWindow):
             exists = True  # let the removal report it
         if exists and remove_cookie_file(cookie_path):
             logger.info("Deleted cookie file (signing in is off): %s", cookie_path)
+
+    def _on_settings_saved(self):
+        """The saved settings may have new download limits: the quality badge
+        of the video shown names the resolution that is downloaded now."""
+        self._browser_tab.refresh_quality_badge()
 
     def _on_signin_allowed_changed(self, allowed: bool):
         """Apply "Allow signing in to the video platform" at once (the settings

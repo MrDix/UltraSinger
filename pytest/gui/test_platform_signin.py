@@ -479,6 +479,9 @@ class _ProbeHost:
     def _on_format_probed(self, *args):
         pass
 
+    def _on_badge_ready(self, *args):
+        pass
+
 
 @pytest.mark.parametrize("signin_allowed", [False, True])
 def test_the_format_probe_gets_cookies_only_while_signing_in_is_allowed(tmp_path, signin_allowed):

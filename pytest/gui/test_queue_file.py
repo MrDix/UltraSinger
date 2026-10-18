@@ -609,6 +609,7 @@ class _FakeBrowserTab(QWidget):
         self.media_interceptor = MagicMock()
         self.probe_cookie_file = ""
         self.set_signin_allowed = MagicMock()
+        self.refresh_quality_badge = MagicMock()
         self.shutdown = MagicMock()
         self._view = MagicMock()
 
