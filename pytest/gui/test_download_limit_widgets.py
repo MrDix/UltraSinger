@@ -18,7 +18,7 @@ pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from src.gui import browser_tab
@@ -245,6 +245,7 @@ class _BadgeHost:
 
     _on_badge_ready = browser_tab.BrowserTab._on_badge_ready
     _on_format_probed = browser_tab.BrowserTab._on_format_probed
+    _from_earlier_probe = browser_tab.BrowserTab._from_earlier_probe
     _probe_limits = browser_tab.BrowserTab._probe_limits
     refresh_quality_badge = browser_tab.BrowserTab.refresh_quality_badge
 
@@ -303,6 +304,44 @@ class TestBadgeAfterSavedLimits:
         host._on_badge_ready("other", browser_tab._QualityBadge({"formats": _FORMATS}, 2160, "VP9", []))
         host.refresh_quality_badge()  # the badge of another video is not kept
         assert not host._page.runJavaScript.called
+
+
+class _SignalBadgeHost(QObject):
+    """The badge part of BrowserTab as a QObject, which gets the probes' signals."""
+
+    _on_badge_ready = browser_tab.BrowserTab._on_badge_ready
+    _on_format_probed = browser_tab.BrowserTab._on_format_probed
+    _from_earlier_probe = browser_tab.BrowserTab._from_earlier_probe
+    _probe_limits = browser_tab.BrowserTab._probe_limits
+    refresh_quality_badge = browser_tab.BrowserTab.refresh_quality_badge
+
+    def __init__(self, config):
+        super().__init__()
+        self.probe_config = config
+        self._page = MagicMock()
+        self._probe_video_id = "vid"
+        self._badge = None
+
+
+def test_the_result_of_a_replaced_probe_of_the_same_video_is_not_taken():
+    """A second probe of the same video (e.g. once the PO token provider is ready)
+    replaces the first; a result of the first that arrives later is not shown or kept."""
+    host = _SignalBadgeHost({"max_video_resolution": 0, "max_video_fps": 0})
+    earlier = browser_tab._FormatProbeWorker("vid")
+    newer = browser_tab._FormatProbeWorker("vid")
+    for worker in (earlier, newer):
+        worker.badge_ready.connect(host._on_badge_ready)
+        worker.finished.connect(host._on_format_probed)
+    host._active_probe = newer
+    earlier.badge_ready.emit("vid", browser_tab._QualityBadge({"formats": _FORMATS}, 2160, "VP9", []))
+    earlier.finished.emit("vid", "old text", "")
+    assert host._badge is None
+    assert not host._page.runJavaScript.called
+    badge = browser_tab._QualityBadge({"formats": _FORMATS[2:]}, 1080, "AV1", [])
+    newer.badge_ready.emit("vid", badge)
+    newer.finished.emit("vid", badge.text(0, 0), "")
+    assert host._badge is badge
+    assert host._page.runJavaScript.call_count == 1
 
 
 class _FakeBrowserTab(QWidget):

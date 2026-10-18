@@ -824,6 +824,7 @@ class BrowserTab(QWidget):
             max_fps=limit_setting(self.probe_config, "max_video_fps"))
         worker.badge_ready.connect(self._on_badge_ready)
         worker.finished.connect(self._on_format_probed)
+        self._active_probe = worker
         # A daemon thread, not a QThread: closing the window must not wait for
         # a slow lyrics lookup, and a QThread destroyed while running aborts
         # the application. The worker stays referenced until its thread ends.
@@ -837,9 +838,17 @@ class BrowserTab(QWidget):
         return (limit_setting(self.probe_config, "max_video_resolution"),
                 limit_setting(self.probe_config, "max_video_fps"))
 
+    def _from_earlier_probe(self) -> bool:
+        """Whether the signal being handled comes from a probe that a newer one
+        replaced: its result can still be queued when a probe of the same video
+        starts again (e.g. once the PO token provider is ready)."""
+        sender = self.sender() if hasattr(self, "sender") else None
+        return (sender is not None and hasattr(sender, "badge_ready")
+                and sender is not getattr(self, "_active_probe", None))
+
     def _on_badge_ready(self, video_id: str, badge: "_QualityBadge"):
         """Keep what the badge of the current video shows, for a change of the limits."""
-        if self._probe_video_id == video_id:
+        if self._probe_video_id == video_id and not self._from_earlier_probe():
             self._badge = badge
 
     def refresh_quality_badge(self):
@@ -853,8 +862,8 @@ class BrowserTab(QWidget):
         """Show the format info badge in the browser overlay."""
         if not info_text or not self._page:
             return
-        # Only update if still on the same video
-        if self._probe_video_id != video_id:
+        # Only update if still on the same video, from its newest probe
+        if self._probe_video_id != video_id or self._from_earlier_probe():
             return
         # The limits may have been saved while the probe ran
         badge = getattr(self, "_badge", None)
