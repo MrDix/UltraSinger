@@ -172,7 +172,10 @@ groups onto the pinned icon.
 
 #### Features
 
-- **Video Browser** — Browse video platforms, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads. A **quality badge** next to the Queue button shows the best available download resolution, audio codec, duration, and LRCLIB lyrics availability — so you can evaluate video quality even when the embedded browser cannot play certain codecs. When a conversion downloads a lower resolution, mostly for the download limits (as last saved), the badge names it, e.g. "2160p AV1 (downloads 1080p)".
+- **Video Browser** — Browse video platforms and send videos directly to conversion. Downloads work without an account; only age-restricted or members-only videos need one.
+  - **Signing in is off by default:** the platform can restrict or lock accounts that are used for automated downloads. The browser then does not open the sign-in pages, it deletes the account cookies (anonymous ones stay), and no cookies go to yt-dlp; an exported cookie file is deleted.
+  - **Settings → Video Platform Sign-in → Allow signing in to the video platform** turns it on after a warning. Then you can sign in, and the browser's cookies are exported and passed to every download. If you do, use at most a throwaway account, never your main account.
+  - A **quality badge** next to the Queue button shows the best available download resolution, audio codec, duration, and LRCLIB lyrics availability — so you can evaluate video quality even when the embedded browser cannot play certain codecs. When a conversion downloads a lower resolution, mostly for the download limits (as last saved), the badge names it, e.g. "2160p AV1 (downloads 1080p)".
 - **Settings Panel** — All CLI parameters available as form controls: Whisper model, language, post-processing options, experimental features, LLM lyric correction, and more. The **Output** card also holds the limits of a video download: **Download Rate Limit**, **Max Video Resolution** and **Max Video Frame Rate** (see [below](#full-quality-video-downloads-po-token)).
 - **Conversion Queue** — Real-time color-coded log output with stage detection (Separating Vocals → Transcribing → Pitching → …), elapsed timer, and cancel support. After conversion, each song shows an **info line** with:
   - **Language badge** — detected language code with color-coded background: green = synced lyrics (best quality), orange = plain lyrics or fallback, red = transcribed only
@@ -190,7 +193,7 @@ groups onto the pinned icon.
   - The menu button (**☰**) next to **Clear** has **Export Queue…**, which saves the songs that are not finished to a file, and **Import Queue…**, which adds the songs of such a file as waiting songs. A song that already waits in the queue with the same settings is skipped.
   - Per-song settings are kept, API keys and tokens never. An imported file may come from someone else, so it does not set per-song settings that name a program, folder, web address or model, and takes the other settings only with values the per-song settings dialog offers; your own settings apply there.
   - The queue is stored in `~/.ultrasinger/queue.json`. A queue file is read up to its 1000th song. If the GUI cannot read the file, or has to leave songs or settings in it out, it first keeps a copy as `queue.json.<date>-<time>.bak`; a file it cannot read starts an empty queue. If even the copy fails, the GUI tells you and saves the queue only once the copy works: it tries again with every change and when it closes.
-- **Preferences** — Default output folder, LLM/Groq API configuration, cookie management.
+- **Preferences** — Default output folder, LLM/Groq API configuration, the video platform sign-in switch and cookie management.
 - **Model training** — **Train...** next to the Segmentation Model setting trains a [segmentation model](#model-based-note-segmentation---segmentation_model) on your own song library: pick the library, a work folder and the model file and follow the progress; the finished model is set for your conversions automatically.
 
 > **Note:** The GUI is a native desktop application (Qt). It requires a display and cannot run inside a Docker container. Use the [CLI](#run-cli) for containerized workflows.
@@ -472,8 +475,9 @@ _Not all options working now!_
     --yt_po_token           GVS Proof-of-Origin token for yt-dlp (web.gvs). Without it the
                             video platform limits downloads to a reduced format set or blocks
                             them (HTTP 403). The GUI captures this token automatically from its
-                            embedded browser while a video plays and passes it through together
-                            with the cookies, restoring full-quality downloads. For manual CLI
+                            embedded browser while a video plays and passes it through (with the
+                            cookies only while signing in is allowed), restoring full-quality
+                            downloads. For manual CLI
                             use see yt-dlp's PO token guide
                             (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
                             Can also be given as ULTRASINGER_YT_PO_TOKEN environment
@@ -513,10 +517,14 @@ default (Full Automatic Mode) - Creates all, depending on command line options
 -i https://www.youtube.com/watch?v=YwNs1Z0qRY0
 ```
 
-Note that if you run into a yt-dlp error such as `Sign in to confirm you’re not a bot. This helps protect our community` ([yt-dlp issue](https://github.com/yt-dlp/yt-dlp/issues/10128)) you can follow these steps:
+Note that if you run into a yt-dlp error such as `Sign in to confirm you’re not a bot. This helps protect our community` ([yt-dlp issue](https://github.com/yt-dlp/yt-dlp/issues/10128)): the platform asks this after many downloads from one connection. Wait a while (some hours) before you download more, or use another network. Downloads do not need an account.
+
+`--cookiefile` passes the cookies of a signed-in browser to yt-dlp, for experts:
 
 * generate a cookies.txt file with [yt-dlp](https://github.com/yt-dlp/yt-dlp/wiki/Installation) `yt-dlp --cookies cookies.txt --cookies-from-browser firefox`
 * then pass the cookies.txt to UltraSinger `--cookiefile cookies.txt`
+
+Downloads with an account's cookies can get that account restricted or locked by the platform: use at most a throwaway account, never your main account.
 
 #### UltraStar (re-pitch)
 

@@ -164,11 +164,16 @@ class MainWindow(QMainWindow):
         self._stack.setFrameShape(QFrame.Shape.NoFrame)
         main_layout.addWidget(self._stack, 1)
 
-        # Create tabs (Video, Console, Settings)
-        self._browser_tab = BrowserTab()
+        # Create tabs (Video, Console, Settings). While signing in to the video
+        # platform is not allowed, the browser deletes its account cookies and
+        # an exported cookie file is deleted (it may hold them).
+        signin_allowed = self._config.get("allow_platform_signin", False) is True
+        self._browser_tab = BrowserTab(signin_allowed=signin_allowed)
         self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
         # The settings as saved (updated in place): the badge's download limits
         self._browser_tab.probe_config = self._config
+        if not signin_allowed:
+            self._delete_cookie_file()
         # Private cookie copies and yt-dlp option files of yt-dlp runs that a
         # crash left behind
         stale_dirs = {config_dir()}
@@ -181,6 +186,8 @@ class MainWindow(QMainWindow):
             self._config, self._browser_tab.cookie_manager
         )
         self._settings_tab.log_message.connect(self._queue_tab.append_log)
+        self._settings_tab.signin_allowed_changed.connect(self._on_signin_allowed_changed)
+        self._browser_tab.settings_requested.connect(self._show_signin_setting)
 
         self._stack.addWidget(self._browser_tab)
         self._stack.addWidget(self._queue_tab)
@@ -804,12 +811,28 @@ class MainWindow(QMainWindow):
             "server's own log is .potoken/provider.log."
         )
 
-    def _check_for_bot_detection(self, line: str):
-        """Detect yt-dlp bot-detection errors and trigger cookie reset.
+    _BOT_CHECK = (
+        "The video platform asked to confirm that this is not a bot. This happens "
+        "after many downloads from one connection."
+    )
+    _BOT_CHECK_ADVICE = (
+        "Wait a while (some hours) before you convert more videos, or use another "
+        "network. Signing in is not needed for downloads."
+    )
+    _ACCOUNT_RISK = (
+        "Downloads with an account's cookies can get that account restricted or "
+        "locked: if you sign in again, use at most a throwaway account, never your "
+        "main account."
+    )
 
-        When the video platform returns a bot challenge, the exported
-        cookies are stale.  We clear them, delete the cookie file, and
-        ask the user to re-login in the embedded browser.
+    def _check_for_bot_detection(self, line: str):
+        """Explain the platform's bot check (once per queue run).
+
+        The platform asks to confirm that this is not a bot after many
+        downloads from one connection; signing in does not help the
+        downloads. While signing in is allowed, the browser's cookies and the
+        exported cookie file are deleted as well (they are used for the
+        downloads), and the browser is reloaded signed out.
 
         We match on "not a bot" which is the stable, apostrophe-free
         tail of the platform's error message.
@@ -820,7 +843,18 @@ class MainWindow(QMainWindow):
             return
         self._bot_detection_handled = True
 
-        logger.warning("Bot detection triggered — clearing cookies")
+        signin_allowed = self._config.get("allow_platform_signin", False) is True
+        if not signin_allowed:
+            logger.warning("Bot check of the video platform (no cookies are used)")
+            self._queue_tab.append_log(
+                f"[Queue] WARNING: {self._BOT_CHECK} {self._BOT_CHECK_ADVICE}"
+            )
+            QMessageBox.information(
+                self, "UltraSinger", f"{self._BOT_CHECK}\n\n{self._BOT_CHECK_ADVICE}"
+            )
+            return
+
+        logger.warning("Bot check of the video platform — clearing cookies")
 
         # 1. Clear in-memory cookies (also wipes the QWebEngine cookie DB)
         self._browser_tab.cookie_manager.clear_all()
@@ -831,22 +865,66 @@ class MainWindow(QMainWindow):
         if cookie_path and remove_cookie_file(cookie_path):
             logger.info("Deleted cookie file: %s", cookie_path)
 
-        # 3. Reload the browser so the user sees a logged-out state
+        # 3. Reload the browser so the user sees a signed-out state
         self._browser_tab._view.reload()
 
         # 4. Switch to browser tab and inform the user
         self._sidebar.set_active(self._TAB_VIDEO)
+        self._queue_tab.append_log(
+            f"[Queue] WARNING: {self._BOT_CHECK} The browser's cookies and the cookie "
+            f"file were deleted. {self._BOT_CHECK_ADVICE} {self._ACCOUNT_RISK}"
+        )
         QMessageBox.information(
             self,
             "UltraSinger",
-            "Die Video-Plattform hat eine Bot-Erkennung ausgelöst.\n\n"
-            "Deine Cookies wurden gelöscht.\n"
-            "Bitte melde dich im Browser erneut an\n"
-            "und starte die Konvertierung danach neu.",
+            f"{self._BOT_CHECK}\n\n"
+            "The browser's cookies and the exported cookie file were deleted.\n\n"
+            f"{self._BOT_CHECK_ADVICE}\n\n{self._ACCOUNT_RISK}",
         )
 
+    # ── Signing in to the video platform ──────────────────────────────
+
+    def _delete_cookie_file(self):
+        """Delete the exported cookie file: it may hold account cookies."""
+        cookie_path = self._config.get("cookie_file", "")
+        if not cookie_path:
+            return
+        try:
+            exists = Path(cookie_path).exists()
+        except OSError:
+            exists = True  # let the removal report it
+        if exists and remove_cookie_file(cookie_path):
+            logger.info("Deleted cookie file (signing in is off): %s", cookie_path)
+
+    def _on_signin_allowed_changed(self, allowed: bool):
+        """Apply "Allow signing in to the video platform" at once (the settings
+        tab has saved it)."""
+        self._config["allow_platform_signin"] = allowed
+        self._browser_tab.set_signin_allowed(allowed)
+        self._queue_mgr.set_signin_allowed(allowed)
+        if allowed:
+            self._queue_tab.append_log(
+                "[GUI] Signing in to the video platform is allowed: the browser's "
+                "cookies go to the downloads. Use at most a throwaway account."
+            )
+            return
+        self._delete_cookie_file()
+        self._queue_tab.append_log(
+            "[GUI] Signing in to the video platform is off: the account cookies were "
+            "deleted from the browser, and downloads get no cookies."
+            + (" The conversion that runs now keeps the cookies it started with."
+               if self._queue_mgr.is_running else "")
+        )
+
+    def _show_signin_setting(self):
+        """Show the setting that allows signing in (the browser's notice links to it)."""
+        self._sidebar.set_active(self._TAB_SETTINGS)
+        self._settings_tab.show_signin_switch()
+
     def _auto_export_cookies(self):
-        """Export browser cookies to file if available."""
+        """Export browser cookies to file if available (only while signing in is allowed)."""
+        if self._config.get("allow_platform_signin", False) is not True:
+            return
         cookie_path = self._config.get("cookie_file", "")
         if cookie_path and self._browser_tab.cookie_manager.has_video_cookies:
             try:

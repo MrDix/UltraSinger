@@ -220,12 +220,14 @@ class TestLanguageInAutoMode:
 
 class _FakeBrowserTab(QWidget):
     convert_requested = Signal(str, str)
+    settings_requested = Signal()
 
-    def __init__(self):
+    def __init__(self, signin_allowed=False):
         super().__init__()
         self.cookie_manager = MagicMock(has_video_cookies=False)
         self.media_interceptor = MagicMock()
         self.probe_cookie_file = ""
+        self.set_signin_allowed = MagicMock()
         self.shutdown = MagicMock()
         self._view = MagicMock()
 
@@ -316,8 +318,10 @@ class TestCloseWindow:
 
     @pytest.mark.parametrize("deleted", [True, False])
     def test_bot_reset_logs_only_a_real_deletion(self, window, caplog, deleted):
+        """The reset happens while signing in is allowed (without it no cookies are used)."""
         from src.gui import main_window
 
+        window._config["allow_platform_signin"] = True
         window._config["cookie_file"] = "cookies.txt"
         with patch.object(main_window, "remove_cookie_file", return_value=deleted) as remove, \
                 patch.object(QMessageBox, "information"), \

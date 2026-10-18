@@ -601,12 +601,14 @@ class TestPerSongSettings:
 
 class _FakeBrowserTab(QWidget):
     convert_requested = Signal(str, str)
+    settings_requested = Signal()
 
-    def __init__(self):
+    def __init__(self, signin_allowed=False):
         super().__init__()
         self.cookie_manager = MagicMock(has_video_cookies=False)
         self.media_interceptor = MagicMock()
         self.probe_cookie_file = ""
+        self.set_signin_allowed = MagicMock()
         self.shutdown = MagicMock()
         self._view = MagicMock()
 

@@ -165,6 +165,7 @@ class _ProbeHost:
     def __init__(self, tmp_path):
         self._page = None
         self._view = MagicMock()
+        self.signin_allowed = True  # the probe gets cookies only while signing in is allowed
         self.probe_cookie_file = str(tmp_path / "cookies.txt")
         self.probe_config = {}
         self.cookie_manager = MagicMock(has_video_cookies=True)

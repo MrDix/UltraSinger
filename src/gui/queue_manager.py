@@ -73,6 +73,12 @@ class QueueManager(QObject):
         """Set the global config used as base for all conversions."""
         self._global_config = dict(config)
 
+    def set_signin_allowed(self, allowed: bool):
+        """Whether the conversions may get the browser's cookies (the global
+        "Allow signing in" setting). Applies at once, also to the songs a
+        running queue has not started yet."""
+        self._global_config["allow_platform_signin"] = allowed
+
     def set_media_interceptor(self, interceptor: MediaInterceptor):
         """Set the media interceptor for capturing browser audio URLs."""
         self._media_interceptor = interceptor
@@ -266,7 +272,7 @@ class QueueManager(QObject):
         self.line_output.emit("")
 
         # Preferred path: the bgutil PO-token provider. When it runs, plain
-        # yt-dlp (with the plugin + exported cookies) downloads any URL in
+        # yt-dlp (with the plugin; no cookies needed) downloads any URL in
         # full quality — no interception needed.
         if next_item.input_type == "url" and self._potoken_available:
             self.line_output.emit(
@@ -340,13 +346,7 @@ class QueueManager(QObject):
 
         # Fallback: standard yt-dlp path
         args = self._runner.build_args(merged, next_item.input_source)
-
-        # Auto-export cookies if available
-        cookie_file = merged.get("cookie_file", "")
-        if cookie_file and next_item.input_type == "url":
-            self.line_output.emit(
-                f"[Queue] Cookie file: {cookie_file}"
-            )
+        self._log_cookie_file(args, next_item)
 
         self._runner.start(
             args, proxy_config=merged, extra_env=self._runner.build_env(merged)
@@ -456,11 +456,17 @@ class QueueManager(QObject):
                 pass
 
             args = self._runner.build_args(merged, item.input_source)
-            cookie_file = merged.get("cookie_file", "")
-            if cookie_file and item.input_type == "url":
-                self.line_output.emit(f"[Queue] Cookie file: {cookie_file}")
+            self._log_cookie_file(args, item)
             self._runner.start(
                 args, proxy_config=merged, extra_env=self._runner.build_env(merged)
+            )
+
+    def _log_cookie_file(self, args: list[str], item: QueueItem):
+        """Name the cookie file in the console when the download of a video gets
+        one (only while signing in is allowed)."""
+        if item.input_type == "url" and "--cookiefile" in args[:-1]:
+            self.line_output.emit(
+                f"[Queue] Cookie file: {args[args.index('--cookiefile') + 1]}"
             )
 
     def _parse_output_line(self, line: str):
