@@ -203,6 +203,18 @@ class TestParsePlainLyrics:
         segs = parse_lrc_synced_lyrics("[00:10.00] You & me\n[00:12.00] =====")
         assert [(s["text"], s["start"]) for s in segs] == [("You & me", 10.0)]
 
+    def test_labels_with_decoration_are_not_sung(self):
+        plain = ("=== Chorus ===\n# Chorus\n** Verse 2 **\n~ Bridge ~\n-- Outro --\n• Chorus •\n"
+                 "== [Chorus] ==\n*(Verse 1)*\n# [Verse 1: Artist]\n-- Pre-Chorus x2 --\n— Refrain —\nSung line")
+        assert parse_plain_lyrics(plain) == ["Sung line"]
+        segs = parse_lrc_synced_lyrics("[00:10.00] === Chorus ===\n[00:12.00] Hello")
+        assert [(s["text"], s["start"]) for s in segs] == [("Hello", 12.0)]
+
+    def test_lyrics_with_decoration_stay_sung(self):
+        # decoration does not make a label of a line with other words, nor of a shouted word
+        assert parse_plain_lyrics("# 1 in my heart\n** Chorus of angels sing **\n== Break ==\n~ la la ~") == [
+            "# 1 in my heart", "Chorus of angels sing", "== Break ==", "la la"]
+
     def test_full_width_punctuation_joins_the_word_before_it(self):
         assert parse_plain_lyrics("こんにちは 、 世界 。\nこんにちは、世界。\n」") == ["こんにちは、 世界。", "こんにちは、世界。"]
         segs = parse_lrc_synced_lyrics("[00:10.00] 世界 ！\n[00:12.00] 。")
