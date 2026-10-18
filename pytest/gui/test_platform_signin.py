@@ -468,6 +468,7 @@ class _ProbeHost:
     def __init__(self, tmp_path, signin_allowed):
         self._page = None
         self.signin_allowed = signin_allowed
+        self.probe_config = {}  # the saved settings: the default download limits
         self.probe_cookie_file = str(tmp_path / "cookies.txt")
         self.cookie_manager = MagicMock(has_video_cookies=True)
         self.cookie_manager.export_private_copy.side_effect = (

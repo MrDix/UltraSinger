@@ -203,7 +203,7 @@ class TestQualityBadge:
 
     def test_the_probe_gets_the_saved_limits(self):
         """BrowserTab hands the limits of its settings to the probe; one that is none gets the default."""
-        tab = SimpleNamespace(_probes=[], _page=None, probe_cookie_file="",
+        tab = SimpleNamespace(_probes=[], _page=None, probe_cookie_file="", signin_allowed=False,
                               cookie_manager=MagicMock(has_video_cookies=False),
                               media_interceptor=MagicMock(get_po_token=MagicMock(return_value="")),
                               _on_format_probed=MagicMock())
@@ -219,8 +219,9 @@ class TestQualityBadge:
 
 class _FakeBrowserTab(QWidget):
     convert_requested = Signal(str, str)
+    settings_requested = Signal()
 
-    def __init__(self):
+    def __init__(self, signin_allowed=False):
         super().__init__()
         self.cookie_manager = MagicMock(has_video_cookies=False)
         self.media_interceptor = MagicMock()
