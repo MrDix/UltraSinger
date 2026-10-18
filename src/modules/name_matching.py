@@ -84,6 +84,10 @@ _QUALITY_RE = re.compile(r"(?:\s+(?:hd|hq|4k|8k|\d{3,4}p))+\s*$", re.IGNORECASE)
 # What a video title puts after a dash is a description of the video, not a
 # part of the song title, from this many words on (see title_before_dash)
 DESCRIPTION_WORDS = 3
+# The last search for a song, with the title before a dash whatever follows it
+# ("Title - Chapter 2"), takes only versions at most this many seconds off the
+# length of the audio: "Title - Part 2" can be another song than "Title"
+SAME_RECORDING_S = 5.0
 # A Roman number up to ten ("I" to "X")
 _ROMAN = r"(?:i{1,3}|iv|vi{0,3}|ix|x)"
 # A word that names a part of a work ("Part Two", "Vol. 3", "Chapter II",

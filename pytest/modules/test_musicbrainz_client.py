@@ -586,6 +586,103 @@ class TestTitleAdditions(unittest.TestCase):
         self.assertEqual([r['id'] for r in _releases_of(recordings)], ['album', 'single'])
 
 
+class TestTitleBeforeAnyDash(unittest.TestCase):
+    """Last, with the length of the audio known, the title before a dash is searched whatever follows it
+    ("Wanted Title - Chapter 2"), for a recording of that length: "Wanted Title - Part 2" can be another
+    song than "Wanted Title"."""
+
+    @staticmethod
+    def _recording(title, rec_id, length, year='2019', artist='Wanted Artist'):
+        """A recording of a single from ``year``; its ``length`` in milliseconds, as the song database
+        gives it (None: unknown)."""
+        rec = TestTitleAdditions._recording(title, rec_id, ('Official', year, 'Single'))
+        rec['artist-credit-phrase'] = artist
+        if length is not None:
+            rec['length'] = length
+        return rec
+
+    def _search(self, title, recordings, duration=None, quick=False):
+        """The song found for ``title``, the titles searched and the console. Like a search engine, the
+        song database lists the ``recordings`` for any search that names "Wanted Title"; the covers
+        asked for go to ``self.covers``."""
+        def search(**kwargs):
+            found = recordings if 'wanted title' in kwargs['recording'].lower() else []
+            return {'recording-count': len(found), 'recording-list': found}
+
+        out = io.StringIO()
+        with patch('musicbrainzngs.search_recordings', side_effect=search) as mock_search, \
+                patch('musicbrainzngs.get_release_group_by_id', return_value=None), \
+                patch('musicbrainzngs.get_image_front', return_value=None) as front, redirect_stdout(out):
+            info = search_musicbrainz(title, 'Wanted Artist', quick=quick, duration=duration)
+        self.covers = [c.args[0] for c in front.call_args_list]
+        # Each title is searched as the title and, swapped, as the artist
+        return info, [c.kwargs['recording'].lower() for c in mock_search.call_args_list][::2], out.getvalue()
+
+    def test_a_recording_of_the_length_of_the_audio(self):
+        info, searched, out = self._search('Wanted Title [OFFICIAL VIDEO] - Chapter 2',
+                                           [self._recording('Wanted Title', 'r1', '239000')], duration=238.0)
+        self.assertEqual((info.title, info.artist, info.year), ('Wanted Title', 'Wanted Artist', '2019'))
+        self.assertEqual(searched, ['wanted title - chapter 2', 'wanted title'])
+        self.assertIn('Searching again with the title before the dash, for a recording of the length of the audio',
+                      out)
+
+    def test_up_to_5_s_off_the_length_of_the_audio(self):
+        for length, taken in (('243000', True), ('233000', True), ('243010', False), ('', False), (None, False)):
+            with self.subTest(length=length):
+                info, _, _ = self._search('Wanted Title - Part 2', [self._recording('Wanted Title', 'r1', length)],
+                                          duration=238.0)
+                self.assertEqual(info.title, 'Wanted Title' if taken else 'Wanted Title - Part 2')
+
+    def test_only_with_the_length_of_the_audio(self):
+        info, searched, _ = self._search('Wanted Title - Chapter 2', [self._recording('Wanted Title', 'r1', '238000')])
+        self.assertEqual(info.title, 'Wanted Title - Chapter 2')
+        self.assertEqual(searched, ['wanted title - chapter 2'])
+
+    def test_the_searches_before_take_any_length(self):
+        """The title, and the title before a description, still find a recording of any length."""
+        for title, searched in (('Wanted Title', ['wanted title']),
+                                ('Wanted Title - Singer Name live in the studio',
+                                 ['wanted title - singer name live in the studio', 'wanted title'])):
+            for length in ('300000', None):
+                with self.subTest(title=title, length=length):
+                    info, asked, _ = self._search(title, [self._recording('Wanted Title', 'r1', length)],
+                                                  duration=238.0)
+                    self.assertEqual(info.title, 'Wanted Title')
+                    self.assertEqual(asked, searched)
+
+    def test_a_title_is_searched_once(self):
+        # Before a description, the title before the dash was searched already
+        _, searched, _ = self._search('Wanted Title - Singer Name live in the studio', [], duration=238.0)
+        self.assertEqual(searched, ['wanted title - singer name live in the studio', 'wanted title'])
+
+    def test_only_recordings_of_the_length_of_the_audio_name_and_date_the_song(self):
+        # Listed first, a recording of another length is another song: not taken, and without its
+        # year and cover
+        recordings = [self._recording('Wanted Title', 'other', '180000', year='2005'),
+                      self._recording('Wanted Title', 'song', '239000', artist='Wanted Artist feat. Guest')]
+        info, _, _ = self._search('Wanted Title - Chapter 2', recordings, duration=238.0)
+        self.assertEqual((info.artist, info.title, info.year), ('Wanted Artist feat. Guest', 'Wanted Title', '2019'))
+        self.assertEqual(self.covers, ['song-0'])
+
+    def test_a_bracketed_part_of_another_length(self):
+        # The bracketed part has to match first, but a recording of another length does not count
+        info, _, _ = self._search('Wanted Title (Some Words) - Chapter 2',
+                                  [self._recording('Wanted Title (Some Words)', 'other', '180000'),
+                                   self._recording('Wanted Title', 'song', '239000')], duration=238.0)
+        self.assertEqual(info.title, 'Wanted Title')
+
+    def test_quick(self):
+        """The GUI's lyrics badge names the song so too, reporting nothing."""
+        recordings = [self._recording('Wanted Title', 'r1', '239000')]
+        full, full_searched, _ = self._search('Wanted Title [OFFICIAL VIDEO] - Chapter 2', recordings, duration=238.0)
+        quick, quick_searched, out = self._search('Wanted Title [OFFICIAL VIDEO] - Chapter 2', recordings,
+                                                  duration=238.0, quick=True)
+        self.assertEqual((quick.artist, quick.title), (full.artist, full.title))
+        self.assertEqual((quick.artist, quick.title, quick.year), ('Wanted Artist', 'Wanted Title', None))
+        self.assertEqual(quick_searched, full_searched)
+        self.assertEqual((self.covers, out), ([], ''))
+
+
 class TestSimilarity(unittest.TestCase):
     def test_values(self):
         from src.modules.name_matching import similarity as _similarity

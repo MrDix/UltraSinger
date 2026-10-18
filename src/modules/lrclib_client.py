@@ -19,6 +19,7 @@ from Settings import Settings
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted
 from modules.name_matching import (
     MIN_MATCH_SIMILARITY,
+    SAME_RECORDING_S,
     normalize_name,
     similarity,
     strip_title_additions,
@@ -34,10 +35,6 @@ _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 # Found versions of a song at most this much further off the length of the
 # audio than the closest one count as just as close (see _best_version)
 _SAME_LENGTH_S = 5.0
-# The last search, with the title before a dash whatever follows it ("Title
-# - Chapter 2"), takes only versions at most this far off the length of the
-# audio: "Title - Part 2" can be another song than "Title"
-_SAME_RECORDING_S = 5.0
 # What separates the artists of one credit: "A & B", "A, B", "A / B", "A and B",
 # "A feat. B" - not a slash or a comma inside a name ("A/B", "A,B")
 _CREDIT_SEPARATOR_RE = re.compile(
@@ -113,7 +110,7 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     ``title_before_dash``); ``verbose`` reports that. Last, with a known
     ``duration``, the title before a dash whatever follows it ("Title -
     Chapter 2") is searched, taking only versions of about the length of
-    the audio (see ``_SAME_RECORDING_S``).
+    the audio (see ``SAME_RECORDING_S``).
 
     Only results whose artist and title match are taken. Of several
     versions of the song, the one closest in length to the audio
@@ -129,7 +126,7 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
             (strip_title_additions(title), "without the additions to the title", None),
             (title_before_dash(title), "with the title before the dash", None),
             (title_before_dash(title, any_rest=True) if duration else "",
-             "with the title before the dash, for a version of the length of the audio", _SAME_RECORDING_S)):
+             "with the title before the dash, for a version of the length of the audio", SAME_RECORDING_S)):
         key = " ".join(wanted.split()).casefold()
         if key and key not in seen:
             seen.add(key)

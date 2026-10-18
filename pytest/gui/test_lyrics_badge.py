@@ -29,10 +29,13 @@ PLAIN = "⚠️ Plain lyrics only"
 NO_LYRICS = "\U0001f4dd No lyrics"
 
 
-def _recording(artist, title):
-    """A recording as the song database lists it."""
-    return {"id": f"{artist} - {title}", "title": title, "artist-credit-phrase": artist,
-            "artist-credit": [{"artist": {"id": artist}}], "release-list": []}
+def _recording(artist, title, length=None):
+    """A recording as the song database lists it (with its ``length`` in seconds, when it knows it)."""
+    recording = {"id": f"{artist} - {title}", "title": title, "artist-credit-phrase": artist,
+                 "artist-credit": [{"artist": {"id": artist}}], "release-list": []}
+    if length is not None:
+        recording["length"] = str(length * 1000)
+    return recording
 
 
 def _lyrics(artist, title, duration, synced=True):
@@ -135,6 +138,12 @@ _CASES = {
         {"title": "Band - Song Title - Singer live one take performance", "channel": "Band",
          "duration": 230, "formats": []},
         _recording("Band", "Song Title"), _lyrics("Band", "Song Title", 229), None),
+    # "Chapter 2" after the dash is no description: the title before the dash is searched for a
+    # recording and lyrics of the length of the video
+    "chapter after the title": (
+        {"title": "Band - Song Title [OFFICIAL VIDEO] - Chapter 2", "channel": "Band", "duration": 238,
+         "formats": []},
+        _recording("Band", "Song Title", 239), _lyrics("Band", "Song Title", 239), SYNCED),
 }
 
 
@@ -154,6 +163,22 @@ def test_badge_shows_what_the_conversion_finds(case, tmp_path, capsys):
         assert badge == expected
     # The badge runs in the GUI: it prints nothing
     assert capsys.readouterr() == ("", "")
+
+
+def test_the_song_database_names_the_song_by_the_title_before_any_dash(tmp_path):
+    """Both with the length of the video: the conversion names the song folder after the recording
+    of that length, and the badge asks the song database as the conversion does."""
+    info, recording, lyrics, _ = _CASES["chapter after the title"]
+    with _Services(recording, lyrics) as services:
+        _conversion(info, str(tmp_path))
+        conversion_asked = services.take()
+        _badge(info)
+        badge_asked = services.take()
+    assert (tmp_path / "Band - Song Title").is_dir()
+    searched = [asked[2]["recording"] for asked in badge_asked if asked[0] == "song database"]
+    # Each title is searched as the title and, swapped, as the artist
+    assert searched[::2] == ["song title - chapter 2", "Song Title"]
+    assert badge_asked == conversion_asked
 
 
 def test_the_lookup_prints_and_logs_nothing(capsys, caplog):
