@@ -182,10 +182,11 @@ def get_duration(file_path: str) -> float | None:
         return None
     if result.returncode != 0:  # no file with audio that ffmpeg reads
         return None
-    # The last progress gives the end of the decoded audio, in microseconds
-    # (also as "out_time_ms", which is in microseconds too)
-    times = [line.split("=", 1)[1] for line in result.stdout.splitlines()
-             if line.startswith(("out_time_us=", "out_time_ms="))]
+    # The last progress gives the end of the decoded audio, in microseconds;
+    # "out_time_ms" (microseconds too) only where an older ffmpeg lacks "out_time_us"
+    lines = result.stdout.splitlines()
+    times = [line.split("=", 1)[1] for line in lines if line.startswith("out_time_us=")] or \
+        [line.split("=", 1)[1] for line in lines if line.startswith("out_time_ms=")]
     try:
         duration = int(times[-1]) / 1_000_000
     except (IndexError, ValueError):  # none, or "N/A"
