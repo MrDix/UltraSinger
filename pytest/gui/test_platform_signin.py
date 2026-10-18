@@ -599,6 +599,24 @@ def test_switching_off_reaches_the_next_song_of_a_running_queue(tmp_path):
     assert "--cookiefile" not in second
 
 
+@pytest.mark.parametrize("downloaded", [True, False])
+def test_switching_off_during_the_browser_pre_download_reaches_that_song(tmp_path, downloaded):
+    """The song's settings were taken before its pre-download; the conversion starts after it.
+    The cookie file may still exist (its deletion can fail, e.g. while another program reads it)."""
+    manager, _lines = _queue(tmp_path, _cookie_file(tmp_path), allowed=True)
+    manager.add_item(_VIDEO, "url", "Song Title")
+    item = manager._items[0]
+    audio = tmp_path / "audio.m4a"
+    if downloaded:
+        audio.write_bytes(b"audio")
+    manager._predownload = (item, {**manager._global_config}, str(audio))
+    manager.set_signin_allowed(False)  # while the browser downloads the audio
+    manager._on_predownload_finished(downloaded, str(audio), "" if downloaded else "failed")
+    args = manager._runner.start.call_args.args[0]
+    assert args[args.index("-i") + 1] == (str(audio) if downloaded else _VIDEO)
+    assert "--cookiefile" not in args
+
+
 def test_a_queue_file_cannot_allow_signing_in_for_a_song(tmp_path):
     path = tmp_path / "queue.json"
     path.write_text(json.dumps({"version": 1, "items": [{

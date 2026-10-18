@@ -426,6 +426,10 @@ class QueueManager(QObject):
             self._on_item_finished(-2)
             return
 
+        # The conversion has not started yet: the sign-in setting as it is now
+        # applies (switching it off during the pre-download must reach this song)
+        merged["allow_platform_signin"] = self._global_config.get("allow_platform_signin") is True
+
         if success and Path(audio_path).exists():
             self.line_output.emit(
                 "[Queue] Using browser-intercepted audio (yt-dlp bypassed)"
