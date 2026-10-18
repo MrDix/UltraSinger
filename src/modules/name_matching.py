@@ -104,6 +104,45 @@ _PART_NUMBER_RE = re.compile(rf"^\s*{_ROMAN}\b|\b(?:\d{{1,3}}|ii|iii|iv|vi|vii|v
                              re.IGNORECASE)
 # A dashed part that is only a part number ("3", "I", "IV")
 _BARE_PART_NUMBER_RE = re.compile(rf"\s*(?:\d{{1,3}}|{_ROMAN})\s*", re.IGNORECASE)
+# The number of a part, to compare "Part I", "Pt. 1" and "Part One" as one
+_PART_NUMBERS = {name: number for number, names in enumerate(
+    (("1", "i", "one"), ("2", "ii", "two"), ("3", "iii", "three"), ("4", "iv", "four"), ("5", "v", "five"),
+     ("6", "vi", "six"), ("7", "vii", "seven"), ("8", "viii", "eight"), ("9", "ix", "nine"), ("10", "x", "ten")),
+    start=1) for name in names}
+# "I" and a number word are a part number only before the end or a mark,
+# not before another word: "Part One of the Story", "The Part I Played"
+_PART_NUMBER = (r"(?:10|0?[1-9]|viii|vii|iii|vi|iv|ix|ii|v|x)\b"
+                r"|(?:i|one|two|three|four|five|six|seven|eight|nine|ten)\b(?!['’]|\s+[^\W\d_])")
+# A part designation: "Part I", "Pt. 2", "(Part One)", ", Part 1"
+_PART_DESIGNATION_RE = re.compile(rf"\b(?:part|pt)\b\.?\s*({_PART_NUMBER})", re.IGNORECASE)
+# A part number alone after a dash at the end of a title: "Title - I", "Title - 2"
+_DASHED_PART_NUMBER_RE = re.compile(rf"\s+[-–—]\s+({_PART_NUMBER})\s*$", re.IGNORECASE)
+# A part designation with its separator or brackets, to search without it
+_PART_SUFFIX_RE = re.compile(
+    rf"\s*[,:;\-–—]?\s*[(\[{{]?\s*\b(?:part|pt)\b\.?\s*(?:{_PART_NUMBER})\s*[)\]}}]?\s*$", re.IGNORECASE)
+
+
+def _part_number(name: str) -> str:
+    return f"part {_PART_NUMBERS[name.lower().lstrip('0')]}"
+
+
+def _same_part_numbers(title: str) -> str:
+    """The title with its part designations written one way: "Title - I",
+    "Title, Part I", "Title (Pt. 1)" and "Title Part One" all name "part 1"."""
+    title = _DASHED_PART_NUMBER_RE.sub(lambda m: " " + _part_number(m.group(1)), title)
+    return _PART_DESIGNATION_RE.sub(lambda m: _part_number(m.group(1)), title)
+
+
+def title_without_part(title: str) -> str:
+    """The title (without its additions) before a part designation at its
+    end ("Title" of "Title, Part I", "Title (Pt. 2)" or "Title - I"), to
+    search for all its parts with; "" when it ends with none."""
+    s = strip_title_additions(title)
+    shorter = _DASHED_PART_NUMBER_RE.sub("", s)
+    if shorter == s:
+        shorter = _PART_SUFFIX_RE.sub("", s)
+    shorter = shorter.strip(" ,:;-–—")
+    return shorter if shorter and shorter != s else ""
 
 
 def _clean(s: str) -> str:
@@ -224,9 +263,10 @@ def _title_words(title: str) -> str:
     """The title for comparing songs: without its additions and without a
     bracketed part it starts with (often left out: "(Some Words) Title" is
     also called "Title"); other bracketed parts stay, as plain words, since
-    "Title (Part 2)" or "Title (Reprise)" is another song than "Title"."""
+    "Title (Part 2)" or "Title (Reprise)" is another song than "Title".
+    Part designations are written one way (see _same_part_numbers)."""
     s = strip_title_additions(title)
-    s = _LEADING_BRACKETS_RE.sub("", s) or s
+    s = _same_part_numbers(_LEADING_BRACKETS_RE.sub("", s) or s)
     return " ".join(re.sub(r"[()\[\]{}]", " ", s).split())
 
 

@@ -2,7 +2,14 @@
 
 import unittest
 
-from src.modules.name_matching import similarity, strip_title_additions, title_before_dash, titles_match
+from src.modules.name_matching import (
+    similarity,
+    strip_title_additions,
+    title_before_dash,
+    title_key,
+    title_without_part,
+    titles_match,
+)
 
 
 class TestStripTitleAdditions(unittest.TestCase):
@@ -155,6 +162,38 @@ class TestTitlesMatch(unittest.TestCase):
                      ("Some Much Longer Song Title", "Some Much Longer Song Title (Reprise)")):
             with self.subTest(a=a, b=b):
                 self.assertFalse(titles_match(a, b))
+
+    def test_part_numbers_written_differently(self):
+        for a, b in (("Song Title - I", "Song Title, Part I"), ("Song Title - Part I", "Song Title (Part 1)"),
+                     ("Song Title, Pt. 1", "Song Title Part One"), ("Song Title Pt. II", "Song Title, Part 2"),
+                     ("Song Title (Part 1)", "Song Title, Part I"), ("Song Title - 2", "Song Title Part II"),
+                     ("Song Title, Part 10", "Song Title - X")):
+            with self.subTest(a=a, b=b):
+                self.assertTrue(titles_match(a, b))
+                self.assertEqual(title_key(a), title_key(b))
+
+    def test_other_part_numbers_written_differently(self):
+        for a, b in (("Song Title - II", "Song Title, Part I"), ("Song Title Part 1", "Song Title Part II"),
+                     ("Song Title", "Song Title, Part I"), ("Song Title - I", "Song Title")):
+            with self.subTest(a=a, b=b):
+                self.assertFalse(titles_match(a, b))
+
+    def test_i_as_a_word_is_no_part_number(self):
+        for a, b in (("I", "I"), ("I Will", "I Will"), ("Song Title - I Will", "Song Title - I Will"),
+                     ("The Part I Played", "The Part I Played")):
+            with self.subTest(a=a, b=b):
+                self.assertTrue(titles_match(a, b))
+        self.assertNotIn("part 1", title_key("The Part I Played"))
+        self.assertNotIn("part 1", title_key("Song Title - Part One of It"))
+
+    def test_title_without_part(self):
+        cases = {"Song Title - I": "Song Title", "Song Title, Part I": "Song Title", "Song Title (Pt. 2)": "Song Title",
+                 "Song Title Part One": "Song Title", "Song Title - I (Official Video)": "Song Title",
+                 "Song Title": "", "I": "", "Me & I": "", "Part 1": "", "Song Title - Part Two of It": "",
+                 "The Part I Played": ""}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(title_without_part(title), expected)
 
     def test_longer_artist_name_is_another_artist(self):
         self.assertLess(similarity("Some Much Longer Artist Name Tribute", "Some Much Longer Artist Name",

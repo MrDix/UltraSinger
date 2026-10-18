@@ -24,6 +24,7 @@ from modules.name_matching import (
     similarity,
     strip_title_additions,
     title_before_dash,
+    title_without_part,
     titles_match,
 )
 
@@ -107,7 +108,10 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     "[HD]", "feat. Guest") and nothing is found with them, both searches are
     repeated without, and then with the title before a dash that a
     description follows ("Title - Singer Name live in the studio", see
-    ``title_before_dash``); ``verbose`` reports that. Last, with a known
+    ``title_before_dash``); ``verbose`` reports that. A title that ends
+    with a part number ("Title - I", "Title (Pt. 1)") is then searched
+    once (by artist and title) without it, for the same part under another
+    name ("Title, Part I", see ``title_without_part``). Last, with a known
     ``duration``, the title before a dash whatever follows it ("Title -
     Chapter 2") is searched, taking only versions of about the length of
     the audio (see ``SAME_RECORDING_S``).
@@ -120,28 +124,34 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     """
     if not (artist or "").strip() or not (title or "").strip():
         return None
-    titles, seen = [], set()  # (title, how it was shortened, how far a version may be off the length)
-    for wanted, how, max_off in (
-            (title, "", None),
-            (strip_title_additions(title), "without the additions to the title", None),
-            (title_before_dash(title), "with the title before the dash", None),
-            (title_before_dash(title, any_rest=True) if duration else "",
+    # (title searched, title of the song, how it was shortened, how far a version may be off the length)
+    titles, seen = [], set()
+    for wanted, song, how, max_off in (
+            (title, title, "", None),
+            (strip_title_additions(title), None, "without the additions to the title", None),
+            (title_before_dash(title), None, "with the title before the dash", None),
+            # "Title - I" is listed as "Title, Part I": all parts of "Title", for the one of ours
+            (title_without_part(title), title, "with the title before its part number", None),
+            (title_before_dash(title, any_rest=True) if duration else "", None,
              "with the title before the dash, for a version of the length of the audio", SAME_RECORDING_S)):
-        key = " ".join(wanted.split()).casefold()
-        if key and key not in seen:
+        song = song or wanted
+        key = (" ".join(wanted.split()).casefold(), " ".join(song.split()).casefold())
+        if key[0] and key not in seen:
             seen.add(key)
-            titles.append((wanted, how, max_off))
+            titles.append((wanted, song, how, max_off))
     found = None
-    for wanted, how, max_off in titles:
+    for wanted, song, how, max_off in titles:
         if max_off is not None and found is not None:
             # The song was found, as instrumental: the title before the dash
             # can be another song
             break
         if how and verbose:
             print(f"{ULTRASINGER_HEAD} Searching LRCLIB again {how}: {blue_highlighted(wanted)}")
-        results = [result for result in (_search_by_fields(artist, wanted, duration, max_off),
-                                         _search_by_query(f"{artist} {wanted}", artist, wanted, duration, max_off))
-                   if result is not None]
+        searches = [_search_by_fields(artist, wanted, duration, max_off, song=song)]
+        if song == wanted:
+            # The parts of a title are found by its name alone: one search is enough
+            searches.append(_search_by_query(f"{artist} {wanted}", artist, wanted, duration, max_off))
+        results = [result for result in searches if result is not None]
         with_lyrics = [result for result in results if result.has_lyrics]
         if with_lyrics:
             return _best_result(with_lyrics, duration)
@@ -158,13 +168,14 @@ def _best_result(results: list[LyricsInfo], duration: Optional[float]) -> Lyrics
 
 
 def _search_by_fields(artist: str, title: str, duration: Optional[float] = None,
-                      max_off: Optional[float] = None) -> Optional[LyricsInfo]:
-    """Search LRCLIB using separate artist_name and track_name parameters."""
+                      max_off: Optional[float] = None, song: Optional[str] = None) -> Optional[LyricsInfo]:
+    """Search LRCLIB using separate artist_name and track_name parameters;
+    the results must be of the title ``song``, if given, else of ``title``."""
     params = urllib.parse.urlencode({
         "artist_name": artist,
         "track_name": title,
     })
-    return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=title, duration=duration,
+    return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=song or title, duration=duration,
                       max_off=max_off)
 
 
