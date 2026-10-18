@@ -163,17 +163,32 @@ def get_audio_codec_and_extension(video_file_path: str) -> str:
 
 
 def get_duration(file_path: str) -> float | None:
-    """The length of an audio or video file in seconds, as ffprobe reads it
-    from the file, or None when it cannot be read."""
+    """The length of the audio of a file (also of a video) in seconds, or
+    None when it cannot be read.
+
+    The audio is decoded, about 0.3 s for a song of 4 minutes: for a VBR MP3
+    without a Xing header, ffprobe only estimates the length from the bitrate
+    at its start (34 s for 10 s that start with silence).
+    """
     try:
-        _, ffprobe_path = get_ffmpeg_and_ffprobe_paths()
+        ffmpeg_path, _ = get_ffmpeg_and_ffprobe_paths()
+        # Only the progress is read: the messages would be decoded with the
+        # console code page, which fails for some file names
         result = subprocess.run(
-            [ffprobe_path, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
-            capture_output=True, text=True)
-        duration = float(result.stdout.strip())
-    except (OSError, ValueError):
-        # No ffprobe, or no length: "N/A", or nothing for a file it cannot read
+            [ffmpeg_path, "-nostdin", "-v", "error", "-progress", "pipe:1", "-i", file_path,
+             "-map", "0:a:0", "-f", "null", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+    except OSError:  # no ffmpeg
+        return None
+    if result.returncode != 0:  # no file with audio that ffmpeg reads
+        return None
+    # The last progress gives the end of the decoded audio, in microseconds
+    # (also as "out_time_ms", which is in microseconds too)
+    times = [line.split("=", 1)[1] for line in result.stdout.splitlines()
+             if line.startswith(("out_time_us=", "out_time_ms="))]
+    try:
+        duration = int(times[-1]) / 1_000_000
+    except (IndexError, ValueError):  # none, or "N/A"
         return None
     return duration if duration > 0 else None
 
