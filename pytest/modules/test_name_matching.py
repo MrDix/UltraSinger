@@ -126,6 +126,15 @@ class TestTitleBeforeDash(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertEqual(title_before_dash(title), "")
 
+    def test_any_rest(self):
+        """For a search whose finds must show by their length that they are the song."""
+        for title, before in (("Song Title [OFFICIAL VIDEO] - Chapter 2", "Song Title"),
+                              ("Song Title - Part 2", "Song Title"), ("Song Title - Reprise", "Song Title"),
+                              ("Song A - Song B - Song C", "Song A"),
+                              ("Song Title", ""), ("Song Title | Label Name", ""), (" - Two Words", "")):
+            with self.subTest(title=title):
+                self.assertEqual(title_before_dash(title, any_rest=True), before)
+
 
 class TestTitlesMatch(unittest.TestCase):
     def test_same_song(self):

@@ -192,7 +192,7 @@ def strip_title_additions(title: str) -> str:
     return " ".join(s.split()) or (title or "").strip()
 
 
-def title_before_dash(title: str) -> str:
+def title_before_dash(title: str, any_rest: bool = False) -> str:
     """The title before the dash that a video title puts a description
     after ("Title - Singer Name live in the studio"), to search with when
     nothing was found with the whole title; "" when there is none.
@@ -201,15 +201,17 @@ def title_before_dash(title: str) -> str:
     a description when it has at least DESCRIPTION_WORDS words, no part or
     volume number and no further dash: "Title - Part Two" or "Title -
     Reprise" can name another song, "Title - Part 2 of the Story" too, and
-    "Song A - Song B - Song C" is a medley.
+    "Song A - Song B - Song C" is a medley. With ``any_rest`` it can be
+    anything ("Title - Chapter 2"), for a search whose finds must show by
+    their length that they are the song.
     """
     s = strip_title_additions(title)
     separator = _SEPARATOR_RE.search(s)
     if separator is None or separator.group(1) in ("|", "//"):
         return ""
     before, rest = s[:separator.start()].strip(), s[separator.end():]
-    if (not before or len(rest.split()) < DESCRIPTION_WORDS or _PART_NUMBER_RE.search(rest)
-            or _SEPARATOR_RE.search(rest)):
+    if not before or (not any_rest and (len(rest.split()) < DESCRIPTION_WORDS or _PART_NUMBER_RE.search(rest)
+                                        or _SEPARATOR_RE.search(rest))):
         return ""
     return strip_title_additions(before)
 
