@@ -117,6 +117,13 @@ _PART_NUMBER = (r"(?:10|0?[1-9]|viii|vii|iii|vi|iv|ix|ii|v|x)\b"
 _PART_DESIGNATION_RE = re.compile(rf"\b(?:part|pt)\b\.?\s*({_PART_NUMBER})", re.IGNORECASE)
 # A part number alone after a dash at the end of a title: "Title - I", "Title - 2"
 _DASHED_PART_NUMBER_RE = re.compile(rf"\s+[-–—]\s+({_PART_NUMBER})\s*$", re.IGNORECASE)
+# A number at the end of a title, after its last word (group 2): digits up
+# to ten or a Roman number of two letters or more ("I", "V" and "X" alone are
+# words or names: "Me & I", "Generation X"), also in brackets
+_BARE_END_NUMBER_RE = re.compile(
+    r"\s+(\(\s*|\[\s*|\{\s*)?\b(10|0?[1-9]|viii|vii|iii|vi|iv|ix|ii)\b(?(1)\s*[)\]}])\s*$", re.IGNORECASE)
+# Words a number after them belongs to, as no part number
+_NUMBER_WORDS = frozenset("part pt vol volume no nr number chapter act movement episode book op opus".split())
 # A part designation with its separator or brackets, to search without it
 _PART_SUFFIX_RE = re.compile(
     rf"\s*[,:;\-–—]?\s*[(\[{{]?\s*\b(?:part|pt)\b\.?\s*(?:{_PART_NUMBER})\s*[)\]}}]?\s*$", re.IGNORECASE)
@@ -130,7 +137,15 @@ def _same_part_numbers(title: str) -> str:
     """The title with its part designations written one way: "Title - I",
     "Title, Part I", "Title (Pt. 1)" and "Title Part One" all name "part 1"."""
     title = _DASHED_PART_NUMBER_RE.sub(lambda m: " " + _part_number(m.group(1)), title)
-    return _PART_DESIGNATION_RE.sub(lambda m: _part_number(m.group(1)), title)
+    title = _PART_DESIGNATION_RE.sub(lambda m: _part_number(m.group(1)), title)
+    # A number alone at the end, also in brackets: "Title 2", "Title II",
+    # "Title (2)" are "Title - 2" (not after a word that names a number
+    # itself: "Vol. 2", "No. 2", "Number 2", nor "Part 2", written above)
+    m = _BARE_END_NUMBER_RE.search(title)
+    words_before = re.findall(r"\w+", title[:m.start()]) if m else []
+    if words_before and words_before[-1].lower() not in _NUMBER_WORDS:
+        title = f"{title[:m.start()]} {_part_number(m.group(2))}"
+    return title
 
 
 def title_without_part(title: str) -> str:
@@ -259,14 +274,17 @@ def title_before_dash(title: str, any_rest: bool = False) -> str:
     return strip_title_additions(before)
 
 
-def _title_words(title: str) -> str:
+def _title_words(title: str, same_part_numbers: bool = True) -> str:
     """The title for comparing songs: without its additions and without a
     bracketed part it starts with (often left out: "(Some Words) Title" is
     also called "Title"); other bracketed parts stay, as plain words, since
     "Title (Part 2)" or "Title (Reprise)" is another song than "Title".
-    Part designations are written one way (see _same_part_numbers)."""
+    Part designations are written one way (see _same_part_numbers), unless
+    not ``same_part_numbers``."""
     s = strip_title_additions(title)
-    s = _same_part_numbers(_LEADING_BRACKETS_RE.sub("", s) or s)
+    s = _LEADING_BRACKETS_RE.sub("", s) or s
+    if same_part_numbers:
+        s = _same_part_numbers(s)
     return " ".join(re.sub(r"[()\[\]{}]", " ", s).split())
 
 
@@ -277,8 +295,18 @@ def titles_match(a: str, b: str) -> bool:
     by ``similarity``; a bracketed part that is not an addition counts like
     any other word, except at the start of a title. Numbers left in both
     titles must be the same: "Intro (Part 1)" is not "Intro (Part 2)".
+    Part numbers are compared however they are written ("Title - I" is
+    "Title, Part I", see _same_part_numbers); titles that are alike as
+    written match too, unless their part numbers differ ("Title - I" is
+    "Title I", where "I" alone is no part number).
     """
-    a, b = _title_words(a), _title_words(b)
+    same_a, same_b = _title_words(a), _title_words(b)
+    numbers_a, numbers_b = sorted(re.findall(r"\d+", same_a)), sorted(re.findall(r"\d+", same_b))
+    if numbers_a and numbers_b and numbers_a != numbers_b:
+        return False
+    if similarity(same_a, same_b) >= MIN_MATCH_SIMILARITY:
+        return True
+    a, b = _title_words(a, same_part_numbers=False), _title_words(b, same_part_numbers=False)
     numbers_a, numbers_b = sorted(re.findall(r"\d+", a)), sorted(re.findall(r"\d+", b))
     if numbers_a and numbers_b and numbers_a != numbers_b:
         return False

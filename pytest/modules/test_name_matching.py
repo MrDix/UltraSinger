@@ -172,6 +172,25 @@ class TestTitlesMatch(unittest.TestCase):
                 self.assertTrue(titles_match(a, b))
                 self.assertEqual(title_key(a), title_key(b))
 
+    def test_bare_numbers_at_the_end(self):
+        # a sequel number without a part word is the part number after a dash
+        for a, b in (("Song Title - II", "Song Title II"), ("Song Title - 2", "Song Title 2"),
+                     ("Song Title - 2", "Song Title (2)"), ("Song Title - III", "Song Title III"),
+                     ("Song Title II", "Song Title 2"), ("Song Title - I", "Song Title I"),
+                     ("Song Title 2", "Song Title Part 2")):
+            with self.subTest(a=a, b=b):
+                self.assertTrue(titles_match(a, b))
+        for a, b in (("Song Title - II", "Song Title 3"), ("Song Title II", "Song Title III"),
+                     ("Song Title 2", "Song Title, Part I"), ("Song Title - I", "Song Title II")):
+            with self.subTest(a=a, b=b):
+                self.assertFalse(titles_match(a, b))
+        # numbers that belong to a word, years and words stay as they are
+        for title in ("Part of Me", "Part Time Lover", "One", "Number 1", "Vol. 2", "Song Title 1999",
+                      "The Part I Played", "Song Title Part 11", "Generation X", "Me & I", "2"):
+            with self.subTest(title=title):
+                self.assertNotIn("part 1", title_key(title).replace("part 11", ""))
+                self.assertNotIn("part 2", title_key(title))
+
     def test_other_part_numbers_written_differently(self):
         for a, b in (("Song Title - II", "Song Title, Part I"), ("Song Title Part 1", "Song Title Part II"),
                      ("Song Title", "Song Title, Part I"), ("Song Title - I", "Song Title")):
