@@ -812,8 +812,8 @@ class MainWindow(QMainWindow):
         )
 
     _BOT_CHECK = (
-        "The video platform asked to confirm that this is not a bot. This happens "
-        "after many downloads from one connection."
+        "The video platform asked to confirm that this is not a bot. This usually "
+        "happens after many downloads from one connection."
     )
     _BOT_CHECK_ADVICE = (
         "Wait a while (some hours) before you convert more videos, or use another "
@@ -828,8 +828,8 @@ class MainWindow(QMainWindow):
     def _check_for_bot_detection(self, line: str):
         """Explain the platform's bot check (once per queue run).
 
-        The platform asks to confirm that this is not a bot after many
-        downloads from one connection; signing in does not help the
+        The platform asks to confirm that this is not a bot, usually after
+        many downloads from one connection; signing in does not help the
         downloads. While signing in is allowed, the browser's cookies and the
         exported cookie file are deleted as well (they are used for the
         downloads), and the browser is reloaded signed out.

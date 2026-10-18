@@ -172,8 +172,8 @@ groups onto the pinned icon.
 
 #### Features
 
-- **Video Browser** — Browse video platforms and send videos directly to conversion. Downloads work without an account; only age-restricted or members-only videos need one.
-  - **Signing in is off by default:** the platform can restrict or lock accounts that are used for automated downloads. The browser then does not open the sign-in pages, it deletes the account cookies (anonymous ones stay), and no cookies go to yt-dlp; an exported cookie file is deleted.
+- **Video Browser** — Browse video platforms and send videos directly to conversion. Downloads work without an account; mainly age-restricted or members-only videos need one.
+  - **Signing in is off by default:** the platform can restrict or lock accounts that are used for automated downloads. The browser then does not open the sign-in pages, it deletes the account cookies (anonymous ones stay; of the account provider's country domains, those of your locale's country), and no cookies go to yt-dlp; an exported cookie file is deleted.
   - **Settings → Video Platform Sign-in → Allow signing in to the video platform** turns it on after a warning. Then you can sign in, and the browser's cookies are exported and passed to every download. If you do, use at most a throwaway account, never your main account.
   - A **quality badge** next to the Queue button shows the best available download resolution, audio codec, duration, and LRCLIB lyrics availability — so you can evaluate video quality even when the embedded browser cannot play certain codecs. When a conversion downloads a lower resolution, mostly for the download limits (as last saved), the badge names it, e.g. "2160p AV1 (downloads 1080p)".
 - **Settings Panel** — All CLI parameters available as form controls: Whisper model, language, post-processing options, experimental features, LLM lyric correction, and more. The **Output** card also holds the limits of a video download: **Download Rate Limit**, **Max Video Resolution** and **Max Video Frame Rate** (see [below](#full-quality-video-downloads-po-token)).
@@ -517,7 +517,7 @@ default (Full Automatic Mode) - Creates all, depending on command line options
 -i https://www.youtube.com/watch?v=YwNs1Z0qRY0
 ```
 
-Note that if you run into a yt-dlp error such as `Sign in to confirm you’re not a bot. This helps protect our community` ([yt-dlp issue](https://github.com/yt-dlp/yt-dlp/issues/10128)): the platform asks this after many downloads from one connection. Wait a while (some hours) before you download more, or use another network. Downloads do not need an account.
+Note that if you run into a yt-dlp error such as `Sign in to confirm you’re not a bot. This helps protect our community` ([yt-dlp issue](https://github.com/yt-dlp/yt-dlp/issues/10128)): the platform usually asks this after many downloads from one connection. Wait a while (some hours) before you download more, or use another network. Downloads do not need an account.
 
 `--cookiefile` passes the cookies of a signed-in browser to yt-dlp, for experts:
 

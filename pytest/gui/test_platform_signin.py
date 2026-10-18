@@ -21,7 +21,7 @@ pytest.importorskip("PySide6.QtWebEngineCore", exc_type=ImportError)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import QLocale, QUrl, Signal
 from PySide6.QtNetwork import QNetworkCookie
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineUrlRequestInfo
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
@@ -37,6 +37,7 @@ from src.gui.media_interceptor import MediaInterceptor
 from src.gui.platform_signin import (
     STORED_ACCOUNT_COOKIE_HOSTS,
     STORED_ACCOUNT_COOKIES,
+    account_cookie_hosts,
     is_account_cookie,
     is_signed_in,
     is_signin_host,
@@ -179,6 +180,36 @@ def test_the_names_deleted_at_start_are_account_cookies():
     assert "accounts.google.com" in STORED_ACCOUNT_COOKIE_HOSTS
 
 
+@pytest.mark.parametrize("territory, host", [
+    ("DE", "accounts.google.de"), ("de", "accounts.google.de"), ("AT", "accounts.google.at"),
+    ("GB", "accounts.google.co.uk"), ("JP", "accounts.google.co.jp"), ("BR", "accounts.google.com.br"),
+])
+def test_the_country_domain_of_the_locale_is_covered(territory, host):
+    """The provider's country domain of the locale; for one with a stored account."""
+    hosts = account_cookie_hosts(territory)
+    assert host in hosts
+    assert hosts[:len(STORED_ACCOUNT_COOKIE_HOSTS)] == STORED_ACCOUNT_COOKIE_HOSTS
+    assert all(is_signin_host(h) for h in hosts if h.startswith("accounts."))
+    assert is_account_cookie("SID", "." + host.removeprefix("accounts."))
+
+
+@pytest.mark.parametrize("territory", ["", "C", "DEU", "1A", " "])
+def test_no_country_domain_without_a_country(territory):
+    assert account_cookie_hosts(territory) == STORED_ACCOUNT_COOKIE_HOSTS
+
+
+def test_the_locale_gives_the_country():
+    from src.gui.cookie_manager import _locale_territory
+
+    previous = QLocale()
+    try:
+        for name, code in (("de_DE", "DE"), ("en_GB", "GB"), ("pt_BR", "BR"), ("C", "")):
+            QLocale.setDefault(QLocale(name))
+            assert _locale_territory() == code, name
+    finally:
+        QLocale.setDefault(previous)
+
+
 # ── The cookie manager ────────────────────────────────────────────────────
 
 
@@ -189,10 +220,12 @@ def _qcookie(name, domain):
     return cookie
 
 
-def _manager(signin_allowed):
-    """A cookie manager on a stand-in cookie store (no browser profile)."""
+def _manager(signin_allowed, territory=""):
+    """A cookie manager on a stand-in cookie store (no browser profile), in a
+    locale of the country ``territory``."""
     profile = MagicMock()
-    manager = CookieManager(profile, None, signin_allowed=signin_allowed)
+    with patch("src.gui.cookie_manager._locale_territory", return_value=territory):
+        manager = CookieManager(profile, None, signin_allowed=signin_allowed)
     return manager, profile.cookieStore.return_value
 
 
@@ -217,8 +250,16 @@ def test_start_while_off_deletes_the_stored_account_cookies():
                    for name, _host in _deleted(store))
 
 
+def test_start_while_off_also_deletes_them_on_the_country_domain_of_the_locale():
+    _unused, store = _manager(signin_allowed=False, territory="DE")
+    deleted = set(_deleted(store))
+    for name in STORED_ACCOUNT_COOKIES:
+        assert (name, "accounts.google.de") in deleted, name
+        assert (name, "accounts.google.com") in deleted, name
+
+
 def test_start_while_allowed_deletes_nothing():
-    _unused, store = _manager(signin_allowed=True)
+    _unused, store = _manager(signin_allowed=True, territory="DE")
     store.deleteCookie.assert_not_called()
 
 
@@ -453,8 +494,43 @@ def test_the_format_probe_gets_cookies_only_while_signing_in_is_allowed(tmp_path
         for thread, _worker in host._probes:
             thread.join(5)
     assert ("--cookies" in commands[0]) is signin_allowed
+    assert "--ignore-config" in commands[0]
     assert host.cookie_manager.export_private_copy.called is signin_allowed
     assert list(tmp_path.iterdir()) == []  # a copy is removed after the probe
+
+
+def test_the_probe_reads_no_yt_dlp_configuration_of_the_user_but_its_option_file(tmp_path, monkeypatch):
+    """A configuration file of the user could add cookies (e.g. --cookies-from-browser)
+    although signing in is off; the private option file with the PO token is still read.
+    yt-dlp's own option parser reads the probe's command line."""
+    yt_dlp_options = pytest.importorskip("yt_dlp.options")
+    from src.gui import config as config_module
+
+    monkeypatch.setattr(config_module, "_CONFIG_DIR", tmp_path / "settings")
+    for name in ("HOME", "USERPROFILE", "APPDATA", "XDG_CONFIG_HOME"):  # no real one is read
+        monkeypatch.setenv(name, str(tmp_path / "nobody"))
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "yt-dlp.conf").write_text("--cookies users-cookies.txt\n", encoding="utf-8")
+    host = _ProbeHost(tmp_path, signin_allowed=False)
+    host.media_interceptor.get_po_token.return_value = "pot-value"
+    parsed = {}
+
+    def fake_popen(cmd, **kwargs):
+        args = cmd[1:] + ["-P", f"home:{home}"]  # the user's configuration as the home one
+        parsed["probe"] = yt_dlp_options.parseOpts(args, ignore_config_files=False)[1]
+        without = [arg for arg in args if arg != "--ignore-config"]
+        parsed["without the option"] = yt_dlp_options.parseOpts(without, ignore_config_files=False)[1]
+        return MagicMock(returncode=1, communicate=MagicMock(return_value=("", "")))
+
+    with patch("src.gui.browser_tab.shutil.which", return_value="yt-dlp"), \
+            patch("src.gui.browser_tab.subprocess.Popen", side_effect=fake_popen):
+        BrowserTab._probe_formats(host, "vid")
+        for thread, _worker in host._probes:
+            thread.join(5)
+    assert parsed["probe"].cookiefile is None
+    assert parsed["probe"].extractor_args == {"youtube": {"po_token": ["web.gvs+pot-value"]}}
+    assert parsed["without the option"].cookiefile == "users-cookies.txt"
 
 
 # ── No cookies go to the conversions ──────────────────────────────────────
@@ -477,15 +553,18 @@ def test_the_runner_passes_the_cookie_file_only_while_signing_in_is_allowed(tmp_
     assert _DEFAULTS["allow_platform_signin"] is False
 
 
-def _queue_run(tmp_path, cookie, allowed, switch_off=False):
+def _queue(tmp_path, cookie, allowed):
     manager = QueueManager()
     manager._runner.start = MagicMock()
     lines = []
     manager.line_output.connect(lines.append)
     manager.set_global_config({**_DEFAULTS, "output_folder": str(tmp_path), "cookie_file": str(cookie),
                                "allow_platform_signin": allowed})
-    if switch_off:
-        manager.set_signin_allowed(False)
+    return manager, lines
+
+
+def _queue_run(tmp_path, cookie, allowed):
+    manager, lines = _queue(tmp_path, cookie, allowed)
     manager.add_item(_VIDEO, "url", "Song Title")
     manager.start_all()
     return manager._runner.start.call_args.args[0], lines
@@ -505,9 +584,18 @@ def test_the_queue_passes_and_names_the_cookie_file_when_allowed(tmp_path):
     assert f"[Queue] Cookie file: {cookie}" in lines
 
 
-def test_switching_off_reaches_the_songs_a_running_queue_has_not_started(tmp_path):
-    args, _lines = _queue_run(tmp_path, _cookie_file(tmp_path), allowed=True, switch_off=True)
-    assert "--cookiefile" not in args
+def test_switching_off_reaches_the_next_song_of_a_running_queue(tmp_path):
+    manager, _lines = _queue(tmp_path, _cookie_file(tmp_path), allowed=True)
+    manager.add_item(_VIDEO, "url", "First Song")
+    manager.add_item("https://video.invalid/watch?v=def", "url", "Second Song")
+    manager.start_all()
+    assert "--cookiefile" in manager._runner.start.call_args.args[0]
+    manager.set_signin_allowed(False)  # while the first song converts
+    manager._on_item_finished(0)  # the queue goes on with the second song
+    assert manager.is_running and manager._runner.start.call_count == 2
+    second = manager._runner.start.call_args.args[0]
+    assert second[second.index("-i") + 1] == "https://video.invalid/watch?v=def"
+    assert "--cookiefile" not in second
 
 
 def test_a_queue_file_cannot_allow_signing_in_for_a_song(tmp_path):
@@ -550,6 +638,7 @@ def test_signing_in_is_off_by_default():
     assert not tab._signin_switch.isChecked() and not tab.signin_allowed
     assert tab.collect_all()["allow_platform_signin"] is False
     assert "throwaway account" in tab._signin_switch.toolTip()
+    assert "mainly age-restricted or members-only" in tab._signin_switch.toolTip()
     assert not tab._export_btn.isEnabled()
 
 
@@ -567,7 +656,7 @@ def test_switching_on_asks_first_and_cancel_keeps_it_off(settings_dir, monkeypat
     assert warning.default != warning.buttons[QMessageBox.ButtonRole.AcceptRole]  # Enter cancels
     for words in ("restrict or lock accounts", "automated downloads", "throwaway account",
                   "never your main account", "Downloads work without signing in",
-                  "age-restricted or members-only"):
+                  "Mainly age-restricted or members-only"):
         assert words in warning.details, words
     assert not tab._signin_switch.isChecked() and not tab.signin_allowed
     assert changes == []
@@ -712,7 +801,7 @@ def test_bot_check_while_off_advises_waiting_instead_of_signing_in(open_window, 
         window._check_for_bot_detection(_BOT_LINE)  # once per queue run
     information.assert_called_once()
     message = information.call_args.args[2]
-    for words in ("not a bot", "many downloads from one connection", "Wait a while",
+    for words in ("not a bot", "usually happens after many downloads from one connection", "Wait a while",
                   "another network", "Signing in is not needed for downloads"):
         assert words in message, words
     assert "throwaway" not in message
@@ -729,7 +818,7 @@ def test_bot_check_while_allowed_resets_the_cookies_and_warns_about_the_account(
     with patch.object(QMessageBox, "information") as information:
         window._check_for_bot_detection(_BOT_LINE)
     message = information.call_args.args[2]
-    for words in ("not a bot", "many downloads from one connection", "were deleted",
+    for words in ("not a bot", "usually happens after many downloads from one connection", "were deleted",
                   "restricted or locked", "throwaway account", "never your main account",
                   "Signing in is not needed for downloads"):
         assert words in message, words

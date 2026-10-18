@@ -31,7 +31,7 @@ _SIGNIN_TOOLTIP = (
     "On: you can sign in, and the browser's cookies go to every download. The "
     "platform can restrict or lock accounts that are used for automated downloads: "
     "use at most a throwaway account, never your main account. Downloads work "
-    "without signing in; only age-restricted or members-only videos need an account."
+    "without signing in; mainly age-restricted or members-only videos need an account."
 )
 
 # The warning before signing in is allowed
@@ -43,7 +43,7 @@ SIGNIN_WARNING_DETAILS = (
     "cookies, and with them the account, to every download.\n\n"
     "If you sign in anyway, use at most a throwaway account, never your main "
     "account.\n\n"
-    "Downloads work without signing in. Only age-restricted or members-only "
+    "Downloads work without signing in. Mainly age-restricted or members-only "
     "videos need an account."
 )
 SIGNIN_CONFIRM_BUTTON = "I understand the risk, allow signing in"
@@ -196,7 +196,7 @@ class PreferencesTab(QWidget):
         self._signin_switch.toggled_signal.connect(self._on_signin_switch_toggled)
 
         cookie_card.add_info(
-            "Downloads work without signing in; only age-restricted or members-only "
+            "Downloads work without signing in; mainly age-restricted or members-only "
             "videos need an account. The video platform can restrict or lock accounts "
             "that are used for automated downloads, so signing in is off by default: "
             "the browser does not open the sign-in pages, account cookies are deleted, "

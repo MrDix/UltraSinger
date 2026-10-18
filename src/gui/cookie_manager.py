@@ -3,19 +3,24 @@
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QLocale, QObject, Signal
 from PySide6.QtNetwork import QNetworkCookie
 from PySide6.QtWebEngineCore import QWebEngineCookieStore, QWebEngineProfile
 
 from .cookie_file import write_cookie_file, write_private_copy
 from .platform_signin import (
-    STORED_ACCOUNT_COOKIE_HOSTS,
     STORED_ACCOUNT_COOKIES,
+    account_cookie_hosts,
     is_account_cookie,
     is_signed_in,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _locale_territory() -> str:
+    """The country code (ISO 3166) of the user's locale, e.g. "DE"; "" without one."""
+    return QLocale.territoryToCode(QLocale().territory())
 
 
 def _name(cookie: QNetworkCookie) -> str:
@@ -66,12 +71,13 @@ class CookieManager(QObject):
 
         Those the browser has reported, and those of an earlier session by
         name (the browser does not report its stored cookies; see
-        ``STORED_ACCOUNT_COOKIES``). A name not stored is no error.
+        ``STORED_ACCOUNT_COOKIES``), also on the account provider's country
+        domain of the user's locale. A name not stored is no error.
         """
         tracked = [c for c in self._cookies if _is_account(c)]
         for cookie in tracked:
             self._store.deleteCookie(cookie)
-        for host in STORED_ACCOUNT_COOKIE_HOSTS:
+        for host in account_cookie_hosts(_locale_territory()):
             for name in STORED_ACCOUNT_COOKIES:
                 cookie = QNetworkCookie(name.encode("ascii"), b"")
                 cookie.setDomain(host)

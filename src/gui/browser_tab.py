@@ -103,8 +103,12 @@ class _FormatProbeWorker(QObject):
             return None
 
         url = f"https://www.youtube.com/watch?v={self._video_id}"
+        # --ignore-config: none of the user's yt-dlp configuration files, which
+        # could add cookies (--cookies, --cookies-from-browser) although
+        # signing in is off; the private option file of --config-locations
+        # below is still read
         cmd = [
-            yt_dlp, "--dump-json", "--no-download",
+            yt_dlp, "--ignore-config", "--dump-json", "--no-download",
             "--no-playlist", "--skip-download", url,
         ]
         # With the PO token (and the cookies, while signing in is allowed) the

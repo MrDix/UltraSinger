@@ -1,14 +1,17 @@
 """Signing in to the video platform: its sign-in pages and account cookies.
 
 Downloads with an account's cookies can get that account restricted or locked
-by the platform, and downloads work without them (only age-restricted or
+by the platform, and downloads work without them (mainly age-restricted or
 members-only videos need an account). So signing in is off unless the user
 allows it in the settings ("Allow signing in to the video platform"). While it
 is off:
 
 - the embedded browser does not open the sign-in pages (``is_signin_host``);
-- the account cookies are deleted from the browser (``is_account_cookie``);
-  anonymous cookies, such as the visitor and consent cookies, stay;
+- the account cookies are deleted from the browser: those it reports
+  (``is_account_cookie``), and those of an earlier session on the platform's
+  and the account provider's hosts (``account_cookie_hosts``), of the
+  provider's country domains only on that of the user's locale. Anonymous
+  cookies, such as the visitor and consent cookies, stay;
 - no cookies go to yt-dlp: the conversions and the format probe get no cookie
   file, and an exported one is deleted.
 """
@@ -45,10 +48,10 @@ _SIGNED_IN_KEYS = ("SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID")
 
 # The browser does not report the cookies it has stored (Qt's loadAllCookies
 # reports none), so the account cookies of an earlier session are deleted by
-# name: each of these names on each of these hosts (a deletion for a host also
-# deletes the cookies of its parent domain, e.g. of .youtube.com for
-# www.youtube.com). Cookies set while the GUI runs are reported, and deleted
-# by is_account_cookie.
+# name: each of these names on each host of account_cookie_hosts (a deletion
+# for a host also deletes the cookies of its parent domain, e.g. of
+# .youtube.com for www.youtube.com). Cookies set while the GUI runs are
+# reported, and deleted by is_account_cookie.
 STORED_ACCOUNT_COOKIES = tuple(sorted(_ACCOUNT_COOKIES)) + (
     "__Secure-1PSID", "__Secure-3PSID", "__Secure-1PAPISID", "__Secure-3PAPISID",
     "__Secure-1PSIDTS", "__Secure-3PSIDTS", "__Secure-1PSIDCC", "__Secure-3PSIDCC",
@@ -59,6 +62,26 @@ STORED_ACCOUNT_COOKIES = tuple(sorted(_ACCOUNT_COOKIES)) + (
 STORED_ACCOUNT_COOKIE_HOSTS = (
     "www.youtube.com", "accounts.youtube.com", "accounts.google.com", "myaccount.google.com",
 )
+
+# Country codes whose country domain has another top-level domain
+_COUNTRY_TLDS = {"gb": "uk"}
+
+
+def account_cookie_hosts(territory: str = "") -> tuple[str, ...]:
+    """The hosts on which the stored account cookies are deleted by name.
+
+    ``STORED_ACCOUNT_COOKIE_HOSTS``, and the sign-in hosts of the account
+    provider's country domain of ``territory`` (the ISO 3166 code of the
+    user's locale, e.g. "DE"). That domain has the country's top-level domain
+    directly or after "co." or "com." (e.g. for "GB", "JP" or "BR"), so all
+    three are named: a deletion of a cookie that is not stored does nothing.
+    """
+    code = territory.strip().lower()
+    if not re.fullmatch(r"[a-z]{2}", code):
+        return STORED_ACCOUNT_COOKIE_HOSTS
+    tld = _COUNTRY_TLDS.get(code, code)
+    return STORED_ACCOUNT_COOKIE_HOSTS + tuple(
+        f"accounts.google.{infix}{tld}" for infix in ("", "co.", "com."))
 
 
 def _normalized(host: str) -> str:
@@ -76,7 +99,7 @@ def is_signin_url(url: str) -> bool:
     """True for an address on a host of the sign-in pages."""
     try:
         host = urlsplit(url).hostname or ""
-    except ValueError:  # e.g. an invalid port
+    except ValueError:  # a malformed address, e.g. an unclosed IPv6 bracket
         return False
     return is_signin_host(host)
 
