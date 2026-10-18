@@ -173,7 +173,7 @@ groups onto the pinned icon.
 #### Features
 
 - **Video Browser** — Browse video platforms, log in to your account, and send videos directly to conversion. Cookies are captured automatically for authenticated downloads. A **quality badge** next to the Queue button shows the best available download resolution, audio codec, duration, and LRCLIB lyrics availability — so you can evaluate video quality even when the embedded browser cannot play certain codecs.
-- **Settings Panel** — All CLI parameters available as form controls: Whisper model, language, post-processing options, experimental features, LLM lyric correction, and more.
+- **Settings Panel** — All CLI parameters available as form controls: Whisper model, language, post-processing options, experimental features, LLM lyric correction, and more. The **Output** card also holds the limits of a video download: **Download Rate Limit**, **Max Video Resolution** and **Max Video Frame Rate** (see [below](#full-quality-video-downloads-po-token)).
 - **Conversion Queue** — Real-time color-coded log output with stage detection (Separating Vocals → Transcribing → Pitching → …), elapsed timer, and cancel support. After conversion, each song shows an **info line** with:
   - **Language badge** — detected language code with color-coded background: green = synced lyrics (best quality), orange = plain lyrics or fallback, red = transcribed only
   - **Lyrics source** — "Synced lyrics", "Plain lyrics", or "Transcribed"
@@ -210,6 +210,8 @@ To restore full-quality downloads UltraSinger uses the maintained [`bgutil-ytdlp
 Once a provider responds on `http://127.0.0.1:4416`, `yt-dlp` uses it transparently for every download (GUI and CLI). If no provider is available the app still works, but video downloads fall back to the limited formats.
 
 A download that breaks off is retried up to 10 times, with pauses of 1, 2, 4 … 30 s in between (about 3 minutes in all); the console shows each retry and pause. The platform's servers sometimes refuse one format of a video for hours while its player still plays the video. When a format (or one fragment of a fragmented format) still does not come after the retries, the download starts again with the next best format (another video or another audio format, up to 3 times) instead of leaving a gap in the video; it never falls back to the audio alone. When the format came over IPv6, which some networks (often Wi-Fi) carry worse than IPv4, the same format is first tried once more over IPv4, from where it stopped, and the next formats come over IPv4 as well. An error of this computer, such as a file that cannot be written, ends the download at once.
+
+Downloads are kept gentle by default: the video platform can slow down or block a connection that downloads a lot, and then also for watching videos on the other devices of the network. So a video comes at up to 2000 KiB/s (about 16 Mbit/s), in up to 1080p and 60 fps; the 4K video of a song can be over 100 MB. Resolution and frame rate are soft limits, so that no video fails for them: the best format at or below them is taken, else the smallest one above, and the frame rate picks among the formats of the resolution. Change them with `--download_rate_limit`, `--max_video_resolution` and `--max_video_fps` (0 for no limit), in the GUI with **Download Rate Limit**, **Max Video Resolution** and **Max Video Frame Rate** in the **Output** card of the settings.
 
 Provider behaviour can be tuned in the GUI config (`~/.ultrasinger`): `potoken_auto_start` (check on launch), `potoken_auto_start_node` / `potoken_auto_start_docker` (allow the respective auto-launch), `potoken_base_url` (custom server URL). Save `config.json` as UTF-8. If the GUI cannot read it, it starts with the default settings and keeps a copy of the file as `config.json.<date>-<time>.bak`; a single setting with a wrong value falls back to its default (see the log).
 
@@ -442,6 +444,16 @@ _Not all options working now!_
 
     [yt-dlp / metadata]
     --cookiefile            File name where cookies should be read from and dumped to.
+    --download_rate_limit   Highest download speed of a video link in KiB/s, 0 for no limit
+                            >> ((default) is 2000, about 16 Mbit/s). The video platform can slow down
+                            or block a connection that downloads a lot (also for watching videos on
+                            the other devices of the network).
+    --max_video_resolution  Highest resolution of the video, e.g. 1080 for 1080p (the shorter side of
+                            the picture), 0 for no limit >> ((default) is 1080). 4K videos are large.
+                            A soft limit: the best format at or below it is taken, else the smallest
+                            one above, so that no video fails for it.
+    --max_video_fps         Highest frame rate of the video, 0 for no limit >> ((default) is 60).
+                            A soft limit like the resolution, among the formats of the resolution.
     --video_url             Video URL for metadata lookup when -i is a local file.
                             When -i is a video URL, UltraSinger extracts artist/title
                             directly from the video platform. When -i is a local file,

@@ -8,6 +8,7 @@ import re
 import shutil
 import urllib.parse
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import yt_dlp
 from yt_dlp.networking.exceptions import network_exceptions
@@ -164,6 +165,46 @@ def _video_format(left_out: Sequence[str] = ()) -> str:
     skip = "".join(f"[format_id!='{format_id}']" for format_id in left_out)
     return "/".join("+".join(f"{part}{skip}" for part in alternative.split("+"))
                     for alternative in _VIDEO_FORMAT.split("/"))
+
+
+@dataclass(frozen=True)
+class DownloadLimits:
+    """Limits that keep the download of a video gentle, 0 for no limit: the
+    video platform can slow down or block a connection that downloads a lot
+    (also for watching videos on the other devices of the network).
+
+    ``rate_limit`` is the highest speed in KiB/s. ``max_resolution`` (as in
+    "1080p": the shorter side of the picture) and ``max_fps`` are soft limits,
+    so that no video fails for them: the best format at or below them is taken,
+    else the smallest one above. The frame rate picks among the formats of the
+    resolution.
+    """
+
+    rate_limit: int = 0
+    max_resolution: int = 0
+    max_fps: int = 0
+
+    def format_sort(self) -> list[str]:
+        """yt-dlp's format sorting for the limits of resolution and frame rate;
+        [] without them, which keeps yt-dlp's own order."""
+        sort = [f"res:{self.max_resolution}"] if self.max_resolution else []
+        if self.max_fps:
+            # The resolution comes first, also without a limit
+            sort = (sort or ["res"]) + [f"fps:{self.max_fps}"]
+        return sort
+
+    def ratelimit(self) -> int | None:
+        """The rate limit in bytes per second for yt-dlp; None without one
+        (yt-dlp divides by it, so 0 would fail)."""
+        return self.rate_limit * 1024 or None
+
+    def describe(self) -> str:
+        """The limits as the console names them, e.g. "up to 1080p, 60 fps,
+        2000 KiB/s"; "" for none."""
+        limits = [text for value, text in ((self.max_resolution, f"{self.max_resolution}p"),
+                                           (self.max_fps, f"{self.max_fps} fps"),
+                                           (self.rate_limit, f"{self.rate_limit} KiB/s")) if value]
+        return f"up to {', '.join(limits)}" if limits else ""
 
 
 def _client_ip(url: str) -> str:
@@ -326,10 +367,11 @@ def _output_template(output_path: str, clear_filename: str) -> str:
 
 
 def __download_video_with_audio(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
-                                 po_token: str = None) -> str:
+                                 po_token: str = None, limits: DownloadLimits = DownloadLimits()) -> str:
     """Download video with audio from the video platform and return the path of the file"""
 
-    print(f"{ULTRASINGER_HEAD} Downloading Video with Audio")
+    note = limits.describe()
+    print(f"{ULTRASINGER_HEAD} Downloading Video with Audio" + (f" ({note})" if note else ""))
     left_out: list[str] = []
     last_error = None
     ipv4 = False
@@ -340,6 +382,9 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
     while True:
         ydl_opts = _apply_po_token({
             "format": _video_format(left_out),
+            # The formats within the limits of resolution and frame rate first
+            "format_sort": limits.format_sort(),
+            "ratelimit": limits.ratelimit(),
             "outtmpl": _output_template(output_path, clear_filename),
             # Only for formats that are merged: a single file keeps its own (e.g. webm)
             "merge_output_format": "mp4",
@@ -528,7 +573,8 @@ def _remove_failed_song_folder(folder: str, basename: str):
 
 def download_from_video_platform(input_url: str, output_folder_path: str, cookiefile: str = None, *,
                                   keep_audio_in_video: bool = False,
-                                  po_token: str = None) -> tuple[str, str, str, MediaInfo]:
+                                  po_token: str = None,
+                                  limits: DownloadLimits = DownloadLimits()) -> tuple[str, str, str, MediaInfo]:
     """Download from the video platform"""
     info = get_video_info(input_url, cookiefile, po_token)
     (artist, title, video_title, yt_language) = video_title_from_info(info)
@@ -544,7 +590,7 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
     try:
         print(f"{ULTRASINGER_HEAD} Downloading from the video platform")
         video_with_audio_path = __download_video_with_audio(
-            input_url, basename_without_ext, song_output, cookiefile, po_token
+            input_url, basename_without_ext, song_output, cookiefile, po_token, limits
         )
 
         # Separate audio and video

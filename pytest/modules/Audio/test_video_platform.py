@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import ExitStack, contextmanager, nullcontext, redirect_stdout
 from unittest.mock import patch
@@ -456,6 +457,150 @@ class TestVideoFormat(unittest.TestCase):
         self.assertIsNone(self._pick([_AUDIO, _VIDEO_WITH_AUDIO, _VIDEO], ["614", "18"]))
 
 
+# The format sorting of the video platform's extractor, and the quality it gives
+# the formats of a resolution (from its label: "hd1080" ...)
+_PLATFORM_SORT = ("quality", "res", "fps", "hdr:12", "source", "vcodec", "channels", "acodec", "lang", "proto")
+_PLATFORM_QUALITY = {360: 6, 480: 7, 720: 8, 1080: 9, 1440: 10, 2160: 11}
+_PLATFORM_AUDIO = [
+    {"format_id": "251", "ext": "webm", "vcodec": "none", "acodec": "opus", "quality": 3,
+     "source_preference": -1, "protocol": "https", "url": "https://audio.invalid/251"},
+    {"format_id": "140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2", "quality": 3,
+     "source_preference": -1, "protocol": "https", "url": "https://audio.invalid/140"},
+]
+_GENTLE = video_platform.DownloadLimits(2000, 1080, 60)  # the defaults of the command line
+
+
+def _platform_video(format_id, height, fps=30, vcodec="av01.0.08M.08", width=None, **fields):
+    """A video-only mp4 format as the video platform's extractor gives it (16:9 unless ``width``)."""
+    width = width or height * 16 // 9
+    return {"format_id": format_id, "ext": "mp4", "vcodec": vcodec, "acodec": "none", "height": height,
+            "width": width, "fps": fps, "quality": _PLATFORM_QUALITY[min(width, height)],
+            "source_preference": -1, "protocol": "https", "url": f"https://video.invalid/{format_id}", **fields}
+
+
+def _picked(options, formats):
+    """The format ids that yt-dlp picks with ``options`` (it sorts the formats itself)."""
+    info = {"id": "vid", "title": "Video", "extractor": "test", "extractor_key": "Test",
+            "webpage_url": "https://video.invalid/watch", "formats": copy.deepcopy(formats),
+            "_format_sort_fields": _PLATFORM_SORT}
+    with redirect_stdout(io.StringIO()):
+        picked = yt_dlp.YoutubeDL(options).process_ie_result(info, download=False)
+    return [f["format_id"] for f in picked.get("requested_formats") or [picked]]
+
+
+class TestDownloadLimits(unittest.TestCase):
+    """A video comes gently: at up to the rate limit, in the best format at or below
+    the resolution and frame rate, else in the smallest one above (yt-dlp's own
+    sorting and selector, with the format sorting of the video platform's extractor)."""
+
+    _UP_TO_2160P = [_platform_video("398", 720), _platform_video("399", 1080), _platform_video("400", 1440),
+                    _platform_video("401", 2160)]
+
+    @staticmethod
+    def _options(limits):
+        """The yt-dlp options of the download within ``limits``, and the console."""
+        download = getattr(video_platform, "__download_video_with_audio")
+        with patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl, tempfile.TemporaryDirectory() as folder, \
+                redirect_stdout(io.StringIO()) as log:
+            video = os.path.join(folder, "Artist - Title.mp4")
+            open(video, "wb").close()
+            ydl.return_value.__enter__.return_value.extract_info.return_value = {
+                "requested_downloads": [{"filepath": video}]}
+            download("https://fakeUrl", "Artist - Title", folder, None, None, limits)
+        return ydl.call_args.args[0], log.getvalue()
+
+    def _pick(self, formats, limits=_GENTLE, left_out=()):
+        """The format ids that the download within ``limits`` picks."""
+        return _picked({**self._options(limits)[0], "format": video_platform._video_format(left_out)}, formats)
+
+    def test_the_options_of_the_limits(self):
+        options, log = self._options(_GENTLE)
+        self.assertEqual(options["ratelimit"], 2000 * 1024)  # bytes per second
+        self.assertEqual(options["format_sort"], ["res:1080", "fps:60"])
+        self.assertIn("Downloading Video with Audio (up to 1080p, 60 fps, 2000 KiB/s)\n", log)
+
+    def test_without_limits_the_options_leave_yt_dlp_as_it_is(self):
+        """No rate limit at all (yt-dlp divides by it, 0 would fail) and its own order."""
+        options, log = self._options(video_platform.DownloadLimits())
+        self.assertIsNone(options["ratelimit"])
+        self.assertEqual(options["format_sort"], [])
+        self.assertIn("Downloading Video with Audio\n", log)
+
+    def test_one_limit_alone(self):
+        limits = video_platform.DownloadLimits
+        self.assertEqual(limits(max_resolution=720).format_sort(), ["res:720"])
+        # The resolution comes first also without its limit: the frame rate picks among its formats
+        self.assertEqual(limits(max_fps=30).format_sort(), ["res", "fps:30"])
+        self.assertEqual((limits(rate_limit=500).format_sort(), limits(rate_limit=500).ratelimit()), ([], 512000))
+        self.assertEqual(limits(max_fps=30).describe(), "up to 30 fps")
+
+    def test_1080p_of_a_video_up_to_2160p(self):
+        self.assertEqual(self._pick(self._UP_TO_2160P + _PLATFORM_AUDIO), ["399", "251"])
+
+    def test_without_limits_the_best_as_before(self):
+        formats = self._UP_TO_2160P + _PLATFORM_AUDIO
+        self.assertEqual(self._pick(formats, video_platform.DownloadLimits()), ["401", "251"])
+        self.assertEqual(_picked({"format": video_platform._VIDEO_FORMAT}, formats), ["401", "251"])
+
+    def test_the_smallest_resolution_above_when_none_is_at_or_below(self):
+        """A soft limit: no video fails for it."""
+        self.assertEqual(self._pick([_platform_video("401", 2160)] + _PLATFORM_AUDIO), ["401", "251"])
+        self.assertEqual(self._pick([_platform_video("401", 2160), _platform_video("400", 1440)] + _PLATFORM_AUDIO),
+                         ["400", "251"])
+
+    def test_the_highest_frame_rate_up_to_the_limit(self):
+        formats = [_platform_video("137", 1080, 30, "avc1.640028"), _platform_video("299", 1080, 60, "avc1.64002a"),
+                   *_PLATFORM_AUDIO]
+        self.assertEqual(self._pick(formats), ["299", "251"])
+        self.assertEqual(self._pick(formats, video_platform.DownloadLimits(2000, 1080, 30)), ["137", "251"])
+
+    def test_the_resolution_comes_before_the_frame_rate(self):
+        """A video of 60 fps comes at 60 fps from 720p on: its 1080p is taken with a limit of 30 fps too."""
+        formats = [_platform_video("397", 480, 30), _platform_video("398", 720, 60),
+                   _platform_video("399", 1080, 60), *_PLATFORM_AUDIO]
+        self.assertEqual(self._pick(formats, video_platform.DownloadLimits(2000, 1080, 30)), ["399", "251"])
+
+    def test_the_codec_order_of_a_resolution_stays(self):
+        """AV1, then VP9, then H.264, with the limits as without them."""
+        formats = [_platform_video("137", 1080, vcodec="avc1.640028"), _platform_video("399", 1080),
+                   _platform_video("614", 1080, vcodec="vp09.00.40.08", protocol="m3u8_native"), *_PLATFORM_AUDIO]
+        for limits in (_GENTLE, video_platform.DownloadLimits()):
+            with self.subTest(limits=limits):
+                self.assertEqual(self._pick(formats, limits), ["399", "251"])
+                self.assertEqual(self._pick(formats, limits, ["399"]), ["614", "251"])
+                self.assertEqual(self._pick(formats, limits, ["399", "614"]), ["137", "251"])
+
+    def test_a_format_left_out_gives_the_next_best_within_the_limits(self):
+        formats = self._UP_TO_2160P + [_platform_video("137", 1080, vcodec="avc1.640028"), *_PLATFORM_AUDIO]
+        self.assertEqual(self._pick(formats, left_out=["399"]), ["137", "251"])  # not 1440p
+        self.assertEqual(self._pick(formats, left_out=["399", "137"]), ["398", "251"])  # the best below
+
+    def test_premium_formats_are_still_skipped(self):
+        premium = _platform_video("616", 1080, vcodec="vp09.00.40.08", format_note="1080p Premium",
+                                  source_preference=99, protocol="m3u8_native")
+        self.assertEqual(self._pick([_platform_video("399", 1080), premium, *_PLATFORM_AUDIO]), ["399", "251"])
+        self.assertEqual(self._pick([premium, *_PLATFORM_AUDIO]), ["616", "251"])
+
+    def test_the_shorter_side_counts_for_a_portrait_video(self):
+        """As the video platform names it: 1080x1920 is 1080p."""
+        formats = [_platform_video("720p", 1280, width=720), _platform_video("1080p", 1920, width=1080),
+                   _platform_video("1440p", 2560, width=1440), *_PLATFORM_AUDIO]
+        self.assertEqual(self._pick(formats), ["1080p", "251"])
+
+    def test_the_download_keeps_to_the_rate_limit(self):
+        """With yt-dlp and a local server: 48 KiB at 32 KiB/s take 1.5 s."""
+        files = {"/v": b"v" * 48 * 1024}
+        with _media_server(files) as (_, base), tempfile.TemporaryDirectory() as folder:
+            start = time.monotonic()
+            path, _ = TestFormatFallback._download(base, [TestFormatFallback._format(base, "v", 360)], folder,
+                                                   limits=video_platform.DownloadLimits(rate_limit=32))
+            elapsed = time.monotonic() - start
+            with open(path, "rb") as file:
+                data = file.read()
+        self.assertEqual(data, files["/v"])
+        self.assertGreaterEqual(elapsed, 1.4)
+
+
 class _MediaHandler(http.server.BaseHTTPRequestHandler):
     """Serves the files of its server, also from a byte on. A refused file breaks
     off once and then gets "503 Service Unavailable", as one format of a video did
@@ -513,7 +658,7 @@ class TestFormatFallback(unittest.TestCase):
     download starts again with the next best one (yt-dlp and a local server)."""
 
     @staticmethod
-    def _download(base, formats, folder, name="Artist - Title"):
+    def _download(base, formats, folder, name="Artist - Title", limits=video_platform.DownloadLimits()):
         """The downloaded file, or the error of the download, and the console."""
         info = {"id": "vid", "title": "Video", "extractor": "test", "extractor_key": "Test",
                 "webpage_url": f"{base}/watch", "formats": formats}
@@ -526,7 +671,8 @@ class TestFormatFallback(unittest.TestCase):
                 patch.object(video_platform, "_fragment_retry_pause", return_value=0), \
                 redirect_stdout(io.StringIO()) as log:
             try:
-                result = getattr(video_platform, "__download_video_with_audio")(f"{base}/watch", name, folder)
+                result = getattr(video_platform, "__download_video_with_audio")(
+                    f"{base}/watch", name, folder, None, None, limits)
             except yt_dlp.utils.DownloadError as error:
                 result = error
         return result, log.getvalue()

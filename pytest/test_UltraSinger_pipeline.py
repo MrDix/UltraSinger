@@ -614,6 +614,13 @@ class TestInputKinds(unittest.TestCase):
         _, _, download, _ = self._init("http://example.invalid/watch?v=1")
         download.assert_called_once()
 
+    def test_http_link_is_downloaded_within_the_limits(self):
+        with patch.object(us.settings, "download_rate_limit", 500), \
+                patch.object(us.settings, "max_video_resolution", 720), \
+                patch.object(us.settings, "max_video_fps", 30):
+            _, _, download, _ = self._init("http://example.invalid/watch?v=1")
+        self.assertEqual(download.call_args.kwargs["limits"], us.DownloadLimits(500, 720, 30))
+
     def test_ignore_audio_needs_a_txt(self):
         for name in ("song.mp3", "https://example.invalid/watch?v=1"):
             with self.subTest(name=name), self.assertRaises(SystemExit) as stop:

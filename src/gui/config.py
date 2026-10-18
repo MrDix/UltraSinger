@@ -111,6 +111,11 @@ _DEFAULTS = {
     "create_karaoke": True,
     "write_metadata_tags": True,
     "keep_audio_in_video": False,
+    # Download of a video link, 0 = no limit (kept gentle: the video platform
+    # can slow down or block a connection that downloads a lot)
+    "download_rate_limit": 2000,  # KiB/s
+    "max_video_resolution": 1080,  # soft limit, as in "1080p"
+    "max_video_fps": 60,  # soft limit
     "write_settings_info": False,
     # Device
     "force_cpu": False,

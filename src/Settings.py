@@ -123,6 +123,11 @@ class Settings:
     cookiefile = None
     video_url: str | None = None  # For metadata when audio is pre-downloaded
     yt_po_token: str | None = None  # GVS PO token captured by the GUI browser; restores full yt-dlp formats
+    # Gentle downloads of a video link, 0 = no limit: the video platform can slow
+    # down or block a connection that downloads a lot
+    download_rate_limit: int = 2000  # Highest download speed in KiB/s (about 16 Mbit/s)
+    max_video_resolution: int = 1080  # Soft limit as in "1080p": the best format up to it, else the smallest above
+    max_video_fps: int = 60  # Soft limit like the resolution, among the formats of the resolution
 
     # LLM lyric correction
     llm_correct_lyrics = False  # Enable LLM-based lyric post-correction
