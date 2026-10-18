@@ -123,6 +123,11 @@ class TestLanguage(unittest.TestCase):
         cantonese = "我哋今晚一齊去睇戲好唔好" * 5
         self.assertEqual(transcribed_language([piece(text=cantonese, language="Cantonese")] * 3), "yue")
 
+    def test_kanji_alone_do_not_override_a_japanese_tag(self):
+        piece = types.SimpleNamespace
+        kanji = "東京夜空星降雪桜咲春風" * 5
+        self.assertEqual(transcribed_language([piece(text=kanji, language="Japanese")] * 3), "ja")
+
     def test_the_words_win_over_tags_of_another_script(self):
         piece = types.SimpleNamespace
         japanese = "わたしはあなたをずっとまっていますこころのなかで" * 5

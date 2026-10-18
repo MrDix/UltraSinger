@@ -115,6 +115,9 @@ def words_override_tag(from_words: str | None, tag: str | None) -> bool:
         return True
     if _same_language(from_words, tag):
         return False
+    if from_words == "zh" and tag == "ja":
+        # Japanese written mostly in kanji reads as Chinese
+        return False
     return from_words not in _FUNCTION_WORDS or tag in _KNOWN_LANGUAGES
 
 
