@@ -69,6 +69,40 @@ class TestOptionErrors(unittest.TestCase):
         init_settings(["-i", "test.mp3"])
 
 
+class TestDownloadLimitOptions(unittest.TestCase):
+    """The limits of a video download: whole numbers, 0 for no limit."""
+
+    _OPTIONS = ("--download_rate_limit", "--max_video_resolution", "--max_video_fps")
+
+    @staticmethod
+    def _limits(settings):
+        return settings.download_rate_limit, settings.max_video_resolution, settings.max_video_fps
+
+    def test_defaults(self):
+        self.assertEqual(self._limits(init_settings(["-i", "test.mp3"])), (2000, 1080, 60))
+
+    def test_given_limits_and_no_limit(self):
+        settings = init_settings(["-i", "test.mp3", "--download_rate_limit", "0",
+                                  "--max_video_resolution", "720", "--max_video_fps", "30"])
+        self.assertEqual(self._limits(settings), (0, 720, 30))
+        # The next run starts from the defaults again
+        self.assertEqual(self._limits(init_settings(["-i", "test.mp3"])), (2000, 1080, 60))
+
+    def test_no_whole_number(self):
+        for option, arg in zip(self._OPTIONS, ("1.5", "1080p", "fast")):
+            with self.subTest(option=option):
+                code, out = _stop(["-i", "test.mp3", option, arg])
+                self.assertEqual(code, 1)
+                self.assertIn(f"{option} needs a whole number", out)
+
+    def test_no_negative_limit(self):
+        for option in self._OPTIONS:
+            with self.subTest(option=option):
+                code, out = _stop(["-i", "test.mp3", option, "-1"])
+                self.assertEqual(code, 1)
+                self.assertIn(f"{option} needs 0 (no limit) or more", out)
+
+
 class TestInputKindOptions(unittest.TestCase):
     def test_http_link_gets_the_default_output_folder(self):
         settings = init_settings(["-i", "http://example.invalid/watch?v=1"])

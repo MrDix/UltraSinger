@@ -273,6 +273,16 @@ def print_help() -> None:
 
     [yt-dlp]
     --cookiefile            File name where cookies should be read from and dumped to.
+    --download_rate_limit   Highest download speed of a video link in KiB/s, 0 for no limit
+                            >> ((default) is 2000, about 16 Mbit/s). The video platform can slow down
+                            or block a connection that downloads a lot (also for watching videos on
+                            the other devices of the network).
+    --max_video_resolution  Highest resolution of the video, e.g. 1080 for 1080p: up to 1920x1080, or
+                            1080x1920 for a portrait video. 0 for no limit >> ((default) is 1080).
+                            4K videos are large. A soft limit: the best format at or below it is
+                            taken, else the smallest one above, so that no video fails for it.
+    --max_video_fps         Highest frame rate of the video, 0 for no limit >> ((default) is 60).
+                            A soft limit like the resolution, among the formats of the resolution.
 
     [paths]
     --musescore_path        Path to MuseScore executable

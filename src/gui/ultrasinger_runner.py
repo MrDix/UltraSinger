@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from .config import octave_consistency_choice
+from .config import LIMIT_SETTINGS, limit_setting, octave_consistency_choice
 from .cookie_file import copy_cookie_file, remove_cookie_file
 from .uv_locator import find_uv
 
@@ -421,6 +421,12 @@ class UltraSingerRunner(QObject):
         # Cookie file
         if config.get("cookie_file") and Path(config["cookie_file"]).exists():
             args.extend(["--cookiefile", config["cookie_file"]])
+
+        # Download limits of a video link (0 = no limit). Always passed, so
+        # the GUI selection wins regardless of the CLI default; a stored value
+        # that is no limit gets the default, as the settings show it
+        for key in LIMIT_SETTINGS:
+            args.extend([f"--{key}", str(limit_setting(config, key))])
 
         # Transcriber; it wins over the transcriber that --whisper alone selects
         args.extend(["--transcriber", config.get("transcriber") or "auto"])

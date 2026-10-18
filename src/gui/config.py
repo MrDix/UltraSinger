@@ -111,6 +111,11 @@ _DEFAULTS = {
     "create_karaoke": True,
     "write_metadata_tags": True,
     "keep_audio_in_video": False,
+    # Download of a video link, 0 = no limit (kept gentle: the video platform
+    # can slow down or block a connection that downloads a lot)
+    "download_rate_limit": 2000,  # KiB/s
+    "max_video_resolution": 1080,  # soft limit, as in "1080p"
+    "max_video_fps": 60,  # soft limit
     "write_settings_info": False,
     # Device
     "force_cpu": False,
@@ -329,6 +334,30 @@ def octave_consistency_choice(value) -> str:
     if value is True:
         return "all"
     return value if value in ("all", "off") else "model"
+
+
+# The download limits of a video link: whole numbers, 0 = no limit
+LIMIT_SETTINGS = ("download_rate_limit", "max_video_resolution", "max_video_fps")
+
+
+def is_limit(value) -> bool:
+    """Whether ``value`` is a download limit: a whole number from 0 (no limit)
+    up to the largest that a C int holds."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return 0 <= value <= 2**31 - 1 and (isinstance(value, int) or value.is_integer())
+
+
+def limit_setting(config: dict, key: str) -> int:
+    """The download limit ``key`` of ``config``; its default, with a warning,
+    for a value that is no limit (e.g. a hand-edited -1, which the command line
+    refuses, so that every conversion would end)."""
+    value = config.get(key, _DEFAULTS[key])
+    if is_limit(value):
+        return int(value)
+    logger.warning("Ignoring the setting '%s': %r is no whole number of 0 or more; using the default %r",
+                   key, value, _DEFAULTS[key])
+    return _DEFAULTS[key]
 
 
 def _back_up_file(path: Path) -> Path | None:

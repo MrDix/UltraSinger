@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .config import config_dir
+from .config import config_dir, limit_setting
 from .cookie_file import remove_cookie_file, write_private_options
 from .cookie_manager import CookieManager
 from .media_interceptor import MediaInterceptor
@@ -55,14 +55,19 @@ class _FormatProbeWorker(QObject):
     finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
 
     def __init__(self, video_id: str, cookie_file: str = "",
-                 options_file: str = "", parent: QObject | None = None):
+                 options_file: str = "", parent: QObject | None = None, *,
+                 max_resolution: int = 0, max_fps: int = 0):
         """``cookie_file`` (a private copy) and ``options_file`` (a private
         yt-dlp option file with the PO token) are for this probe only; it
-        removes them."""
+        removes them. ``max_resolution`` and ``max_fps`` are the limits of a
+        download (0 = none): the badge names the resolution a conversion
+        downloads when they make it lower than the best."""
         super().__init__(parent)
         self._video_id = video_id
         self._cookie_file = cookie_file
         self._options_file = options_file
+        self._max_resolution = max_resolution
+        self._max_fps = max_fps
         self._process: subprocess.Popen | None = None
         self._cancelled = False
 
@@ -177,7 +182,9 @@ class _FormatProbeWorker(QObject):
             parts = []
             if best_height:
                 vname = codec_names.get(best_vcodec, best_vcodec)
-                parts.append(f"\U0001f4f9 {best_height}p {vname}")
+                downloaded = self._downloaded_height(info)
+                limited = f" (downloads {downloaded}p)" if 0 < downloaded < best_height else ""
+                parts.append(f"\U0001f4f9 {best_height}p {vname}{limited}")
             if best_abr:
                 aname = codec_names.get(best_acodec, best_acodec)
                 parts.append(f"\U0001f50a {best_abr:.0f}k {aname}")
@@ -193,6 +200,18 @@ class _FormatProbeWorker(QObject):
 
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
             self.finished.emit(self._video_id, "", "")
+
+    def _downloaded_height(self, info: dict) -> int:
+        """The height of the video that a conversion downloads of the formats in
+        ``info``, within the limits; 0 when unknown. It sends no request."""
+        try:
+            from modules.Audio.video_platform import DownloadLimits, video_format_of_download
+            video = video_format_of_download(
+                info, DownloadLimits(max_resolution=self._max_resolution, max_fps=self._max_fps))
+        except Exception:  # noqa: BLE001 - the badge goes on without it
+            logger.debug("The format of the download is unknown", exc_info=True)
+            return 0
+        return int((video or {}).get("height") or 0)
 
     def _check_lrclib(self, info: dict, duration: float | None = None) -> str:
         """Which lyrics a conversion of the video finds.
@@ -492,6 +511,9 @@ class BrowserTab(QWidget):
         # Set by MainWindow to the configured cookie-file path; when set,
         # the format probe exports and uses the browser cookies
         self.probe_cookie_file: str = ""
+        # Set by MainWindow to its settings: the format badge names the
+        # resolution that their download limits let a conversion take
+        self.probe_config: dict = {}
         # True once the PO-token provider is running (enables the Queue
         # button globally; re-asserted to the page on every navigation)
         self._provider_ready: bool = False
@@ -696,7 +718,10 @@ class BrowserTab(QWidget):
             except OSError as e:
                 logger.warning("PO token file for format probe failed: %s", e)
 
-        worker = _FormatProbeWorker(video_id, cookie_file, options_file)
+        worker = _FormatProbeWorker(
+            video_id, cookie_file, options_file,
+            max_resolution=limit_setting(self.probe_config, "max_video_resolution"),
+            max_fps=limit_setting(self.probe_config, "max_video_fps"))
         worker.finished.connect(self._on_format_probed)
         # A daemon thread, not a QThread: closing the window must not wait for
         # a slow lyrics lookup, and a QThread destroyed while running aborts

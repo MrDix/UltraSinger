@@ -532,6 +532,33 @@ class TestOctaveInfoLines(unittest.TestCase):
         self.assertIn("Octave consistency:       True\n", self._info(True))
 
 
+class TestDownloadLimitInfoLines(unittest.TestCase):
+    """The info file names the limits of a video download."""
+
+    def _info(self, **limits):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        import src.UltraSinger as us
+        with tempfile.TemporaryDirectory() as d, patch.multiple(us.settings, **limits):
+            us._write_settings_info_file(d, None, None)
+            with open(os.path.join(d, "ultrasinger_parameter.info"), encoding="utf-8") as f:
+                return f.read()
+
+    def test_the_limits(self):
+        text = self._info(download_rate_limit=2000, max_video_resolution=1080, max_video_fps=60)
+        self.assertIn("  Download rate limit:      2000 KiB/s\n"
+                      "  Max video resolution:     1080p\n"
+                      "  Max video fps:            60 fps\n", text)
+
+    def test_no_limits(self):
+        text = self._info(download_rate_limit=0, max_video_resolution=0, max_video_fps=0)
+        self.assertIn("  Download rate limit:      no limit\n"
+                      "  Max video resolution:     no limit\n"
+                      "  Max video fps:            no limit\n", text)
+
+
 class TestRepitchedChart(unittest.TestCase):
     """An UltraStar txt as input (re-pitch): the new chart and its game score."""
 

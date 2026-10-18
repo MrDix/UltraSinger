@@ -166,6 +166,7 @@ class _ProbeHost:
         self._page = None
         self._view = MagicMock()
         self.probe_cookie_file = str(tmp_path / "cookies.txt")
+        self.probe_config = {}
         self.cookie_manager = MagicMock(has_video_cookies=True)
         self.cookie_manager.export_private_copy.side_effect = (
             lambda directory: cookie_file.write_private_copy(directory, "cookies"))

@@ -48,6 +48,7 @@ from modules.Audio.key_detector import detect_key_from_audio, get_allowed_notes_
 from modules.Audio.silence_processing import remove_silence_from_transcription_data, mute_no_singing_parts
 from modules.Audio.convert_audio import convert_audio_to_mono_wav, convert_audio_format
 from modules.Audio.video_platform import (
+    DownloadLimits,
     download_from_video_platform,
     strip_unmatched_suffixes,
 )
@@ -1152,6 +1153,11 @@ def octave_consistency_wanted(setting: bool | None, model_segmentation_used: boo
     return model_segmentation_used if setting is None else setting
 
 
+def _limit_text(value: int, unit: str) -> str:
+    """A download limit as the settings info file shows it, e.g. "1080p"; 0 is none."""
+    return f"{value}{unit}" if value else "no limit"
+
+
 def _write_settings_info_file(
         output_folder: str,
         simple_score: "Score | None",
@@ -1192,6 +1198,9 @@ def _write_settings_info_file(
             f.write(f"  Format version:           {settings.format_version.value}\n")
             f.write(f"  Line break timing:        {settings.linebreak_timing}\n")
             f.write(f"  PO token used:            {bool(settings.yt_po_token)}\n")
+            f.write(f"  Download rate limit:      {_limit_text(settings.download_rate_limit, ' KiB/s')}\n")
+            f.write(f"  Max video resolution:     {_limit_text(settings.max_video_resolution, 'p')}\n")
+            f.write(f"  Max video fps:            {_limit_text(settings.max_video_fps, ' fps')}\n")
             f.write("\n")
 
             # Transcription
@@ -1843,6 +1852,8 @@ def InitProcessData():
             settings.input_file_path, settings.output_folder_path, settings.cookiefile,
             keep_audio_in_video=settings.keep_audio_in_video,
             po_token=settings.yt_po_token,
+            limits=DownloadLimits(settings.download_rate_limit, settings.max_video_resolution,
+                                  settings.max_video_fps),
         )
     else:
         # Audio/Video File
@@ -2472,6 +2483,17 @@ def _option_number(opt: str, arg: str, kind: type = float):
     sys.exit(1)
 
 
+def _option_limit(opt: str, arg: str) -> int:
+    """The limit given to an option, a whole number with 0 for no limit; a
+    clear error and exit for a negative one."""
+    value = _option_number(opt, arg, int)
+    if value < 0:
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} {opt} needs 0 (no limit) or more, "
+              f"got {blue_highlighted(arg)}")
+        sys.exit(1)
+    return value
+
+
 def init_settings(argv: list[str]) -> Settings:
     """Init settings"""
     # settings is a reused module singleton: every run starts from the class
@@ -2637,6 +2659,12 @@ def init_settings(argv: list[str]) -> Settings:
                 sys.exit(1)
         elif opt in ("--cookiefile"):
             settings.cookiefile = arg
+        elif opt == "--download_rate_limit":
+            settings.download_rate_limit = _option_limit(opt, arg)
+        elif opt == "--max_video_resolution":
+            settings.max_video_resolution = _option_limit(opt, arg)
+        elif opt == "--max_video_fps":
+            settings.max_video_fps = _option_limit(opt, arg)
         elif opt in ("--interactive"):
             settings.interactive_mode = True
         elif opt in ("--disable_quantization"):
@@ -2908,6 +2936,9 @@ def arg_options():
         "no_freestyle_spectral",
         "interactive",
         "cookiefile=",
+        "download_rate_limit=",
+        "max_video_resolution=",
+        "max_video_fps=",
         "ffmpeg=",
         "denoise_nr=",
         "denoise_nf=",
