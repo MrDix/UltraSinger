@@ -44,6 +44,7 @@ class Sidebar(QWidget):
     start_all_requested = Signal()
     export_queue_requested = Signal()
     import_queue_requested = Signal()
+    retry_all_requested = Signal()
     file_dropped = Signal(str)  # file path from drop zone
 
     def __init__(self, parent=None):
@@ -104,16 +105,27 @@ class Sidebar(QWidget):
         self._clear_btn.setEnabled(False)
         btn_row.addWidget(self._clear_btn)
 
-        # Export / import of the queue as a file (also while it runs)
+        # Retry of all failed and cancelled songs, and export / import of the
+        # queue as a file (also while it runs)
         self._queue_menu_btn = QPushButton("\u2630")
         self._queue_menu_btn.setObjectName("ghostButton")
         # Selector: the menu is a child of the button and keeps the menu style
         self._queue_menu_btn.setStyleSheet("QPushButton { font-size: 18px; padding: 0px 10px; }")
         self._queue_menu_btn.setMinimumHeight(34)
         self._queue_menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._queue_menu_btn.setToolTip("Export the queue to a file, or import songs from one")
+        self._queue_menu_btn.setToolTip(
+            "Let all failed and cancelled songs wait again, export the queue to a file, "
+            "or import songs from one"
+        )
         queue_menu = QMenu(self._queue_menu_btn)
         queue_menu.setToolTipsVisible(True)
+        self._retry_all_action = queue_menu.addAction("Retry Failed and Cancelled")
+        self._retry_all_action.setToolTip(
+            "Let all failed and cancelled songs wait again, as \u21BB does for one song"
+        )
+        self._retry_all_action.setEnabled(False)
+        self._retry_all_action.triggered.connect(lambda: self.retry_all_requested.emit())
+        queue_menu.addSeparator()
         self._export_action = queue_menu.addAction("Export Queue\u2026")
         self._export_action.setToolTip(
             "Save the songs that are not finished, with their per-song settings, to a file"
@@ -181,10 +193,13 @@ class Sidebar(QWidget):
             self._buttons[index].setChecked(True)
             self.section_changed.emit(index)
 
-    def update_queue_buttons(self, has_pending: bool, is_running: bool):
-        """Update Start All / Clear button states."""
+    def update_queue_buttons(self, has_pending: bool, is_running: bool,
+                             has_retryable: bool = False):
+        """Update Start All / Clear button states, and "Retry Failed and
+        Cancelled" (also while the queue runs, as \u21BB)."""
         self._start_btn.setEnabled(has_pending and not is_running)
         self._clear_btn.setEnabled(not is_running)
+        self._retry_all_action.setEnabled(has_retryable)
         if is_running:
             self._start_btn.setText("\u23F3  Running...")
         else:

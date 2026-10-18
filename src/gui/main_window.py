@@ -233,6 +233,7 @@ class MainWindow(QMainWindow):
         self._sidebar.queue_list.retry_requested.connect(
             self._on_retry_item
         )
+        self._sidebar.retry_all_requested.connect(self._on_retry_all)
         # Wire clone button
         self._sidebar.queue_list.clone_requested.connect(
             self._on_clone_item
@@ -608,6 +609,12 @@ class MainWindow(QMainWindow):
         self._queue_mgr.retry_item(item_id)
         self._update_queue_buttons()
 
+    def _on_retry_all(self):
+        """Let all failed and cancelled items wait again, in queue order, as \u21BB does for each."""
+        for item in list(self._queue_mgr.items):
+            if item.status in ("failed", "cancelled"):
+                self._on_retry_item(item.id)
+
     def _on_start_all(self):
         """Start processing all pending queue items."""
         if self._queue_mgr.pending_count() == 0:
@@ -657,7 +664,9 @@ class MainWindow(QMainWindow):
         """Sync Start All / Clear button states with queue state."""
         has_pending = self._queue_mgr.pending_count() > 0
         is_running = self._queue_mgr.is_running
-        self._sidebar.update_queue_buttons(has_pending, is_running)
+        has_retryable = any(item.status in ("failed", "cancelled")
+                            for item in self._queue_mgr.items)
+        self._sidebar.update_queue_buttons(has_pending, is_running, has_retryable)
 
     # ── Queue file (kept between sessions, export / import) ───────────
 
