@@ -178,7 +178,10 @@ class TestTitlesMatch(unittest.TestCase):
         for a, b in (("Go 2", "So 2"), ("Me 2", "We 2"), ("Up 2", "Us 2"), ("Go (2)", "So (2)"),
                      ("Song Title No. 2", "Song Title 2"), ("Song Title (Act 2)", "Song Title 2"),
                      ("Song Title (Chapter 2)", "Song Title 2"), ("Song Title Vol. 2", "Song Title 2"),
-                     ("Song Title Op. 2", "Song Title 2"), ("Track 7", "Track 8"), ("Intro", "Intro (Part 2)")):
+                     ("Song Title Op. 2", "Song Title 2"), ("Track 7", "Track 8"), ("Intro", "Intro (Part 2)"),
+                     # another number on one side only
+                     ("Song Title 2", "Song Title 1 & 2"), ("Song Title 3", "Song Title 2 & 3"),
+                     ("Song Title 2", "Song Title 3 2"), ("Song Title 2", "Song Title 1999 2")):
             with self.subTest(a=a, b=b):
                 self.assertFalse(titles_match(a, b))
         for a, b in (("Song Title", "Song Title 2"), ("Blink 182", "Blink 182"), ("Catch 22", "Catch 22"),

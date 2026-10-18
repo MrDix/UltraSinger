@@ -307,7 +307,8 @@ def titles_match(a: str, b: str) -> bool:
     same_a, same_b = _title_words(a), _title_words(b)
     parts_a, parts_b = sorted(_PART_TOKEN_RE.findall(same_a)), sorted(_PART_TOKEN_RE.findall(same_b))
     if parts_a and parts_b:
-        if parts_a != parts_b:
+        # all numbers, not only the part numbers: "Title 2" is not "Title 1 & 2"
+        if parts_a != parts_b or sorted(re.findall(r"\d+", same_a)) != sorted(re.findall(r"\d+", same_b)):
             return False
         return _words_match(_PART_TOKEN_RE.sub(" ", same_a), _PART_TOKEN_RE.sub(" ", same_b))
     return _words_match(_title_words(a, same_part_numbers=False), _title_words(b, same_part_numbers=False))
