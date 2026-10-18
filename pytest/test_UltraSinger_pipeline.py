@@ -461,6 +461,9 @@ class TestLyricsAlignedAgainAfterLanguageCorrection(unittest.TestCase):
                          [("cy", []), ("en", self._HEARD_LOCALLY)])
         self.assertEqual(notes, _ALIGNED_NOTES)
         self.assertIn("Lyrics alignment recovered after language correction", out)
+        # one "Language corrected" line, from the synced retry
+        self.assertEqual(out.count("Language corrected"), 1)
+        self.assertIn("Aligning the plain lyrics in the corrected language", out)
         info = files["ultrasinger_parameter.info"]
         self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
         self.assertIn("Reference recovery:        yes (retried with corrected language)", info)
@@ -492,7 +495,7 @@ class TestLyricsAlignedAgainAfterLanguageCorrection(unittest.TestCase):
             bpm_override=60.0,
         )
         self.assertEqual(len(calls), 1)
-        self.assertNotIn("aligning the plain lyrics again", out)
+        self.assertNotIn("Aligning the plain lyrics in the corrected language", out)
         self.assertEqual([n[0] for n in notes], ["hello ", "world "])
 
 

@@ -627,9 +627,9 @@ def run() -> tuple[str, Score, Score]:
                         and corrected_language != initial_language
                         and (process_data.plain_lyrics or remote_transcription is not None)):
                     print(
-                        f"{ULTRASINGER_HEAD} Language corrected: "
-                        f"{blue_highlighted(initial_language)} -> {blue_highlighted(corrected_language)} "
-                        f"— aligning the {'plain lyrics' if process_data.plain_lyrics else 'remote text'} again"
+                        f"{ULTRASINGER_HEAD} Aligning the "
+                        f"{'plain lyrics' if process_data.plain_lyrics else 'remote text'} in the corrected "
+                        f"language ({blue_highlighted(corrected_language)})"
                     )
                     try:
                         if process_data.plain_lyrics:
