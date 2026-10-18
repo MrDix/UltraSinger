@@ -210,8 +210,8 @@ def title_before_dash(title: str, any_rest: bool = False) -> str:
     if separator is None or separator.group(1) in ("|", "//"):
         return ""
     before, rest = s[:separator.start()].strip(), s[separator.end():]
-    if not before or not any_rest and (len(rest.split()) < DESCRIPTION_WORDS or _PART_NUMBER_RE.search(rest)
-                                       or _SEPARATOR_RE.search(rest)):
+    if not before or (not any_rest and (len(rest.split()) < DESCRIPTION_WORDS or _PART_NUMBER_RE.search(rest)
+                                        or _SEPARATOR_RE.search(rest))):
         return ""
     return strip_title_additions(before)
 

@@ -136,6 +136,10 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
             titles.append((wanted, how, max_off))
     found = None
     for wanted, how, max_off in titles:
+        if max_off is not None and found is not None:
+            # The song was found, as instrumental: the title before the dash
+            # can be another song
+            break
         if how and verbose:
             print(f"{ULTRASINGER_HEAD} Searching LRCLIB again {how}: {blue_highlighted(wanted)}")
         results = [result for result in (_search_by_fields(artist, wanted, duration, max_off),
@@ -180,9 +184,9 @@ def _do_search(url: str, artist: str = "", title: str = "",
     """Execute a search request and return the best result with lyrics.
 
     With ``artist`` and ``title`` given, only results of that song count
-    (see ``_names_match``); with ``max_off``, only those at most that many
-    seconds off the length of the audio (``duration``). A song that LRCLIB
-    only knows as instrumental is returned as such, without lyrics.
+    (see ``_names_match``); with ``max_off`` and a known ``duration``, only
+    those at most that many seconds off the length of the audio. A song that
+    LRCLIB only knows as instrumental is returned as such, without lyrics.
     """
     data = _get_json(url)
     if not isinstance(data, list):
