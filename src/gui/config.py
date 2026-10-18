@@ -353,15 +353,22 @@ def is_limit(value) -> bool:
     return 0 <= value <= 2**31 - 1 and (isinstance(value, int) or value.is_integer())
 
 
+# The stored limits that were no limit and have been warned about: (key, repr of the value)
+_warned_limits: set[tuple[str, str]] = set()
+
+
 def limit_setting(config: dict, key: str) -> int:
     """The download limit ``key`` of ``config``; its default, with a warning,
     for a value that is no limit (e.g. a hand-edited -1, which the command line
-    refuses, so that every conversion would end)."""
+    refuses, so that every conversion would end). The warning comes once a run
+    for each such value, not with each badge and each song that reads it."""
     value = config.get(key, _DEFAULTS[key])
     if is_limit(value):
         return int(value)
-    logger.warning("Ignoring the setting '%s': %r is no whole number of 0 or more; using the default %r",
-                   key, value, _DEFAULTS[key])
+    if (key, repr(value)) not in _warned_limits:
+        _warned_limits.add((key, repr(value)))
+        logger.warning("Ignoring the setting '%s': %r is no whole number of 0 or more; using the default %r",
+                       key, value, _DEFAULTS[key])
     return _DEFAULTS[key]
 
 
