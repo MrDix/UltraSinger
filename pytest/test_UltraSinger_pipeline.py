@@ -632,39 +632,91 @@ class TestInputKinds(unittest.TestCase):
 class TestVideoUrlNaming(unittest.TestCase):
     """--video_url: the song is looked up and named by the video, not by the temporary file name."""
 
-    def test_folder_files_and_lookup_follow_the_video(self):
+    _URL = "https://example.invalid/watch?v=abc"
+
+    def _init(self, folder, info, file_length=None):
+        """InitProcessData for the file "_intercepted_abc.mp3" of ``folder`` and the --video_url
+        video, whose extraction gives ``info``; the file is ``file_length`` seconds long. Returns the
+        process data, the song folder, the song lookup, the extraction and the file's length lookup."""
         from modules.musicbrainz_client import SongInfo
 
-        url = "https://example.invalid/watch?v=abc"
-        with tempfile.TemporaryDirectory() as folder:
-            source = os.path.join(folder, "_intercepted_abc.mp3")
-            with open(source, "wb") as file:
-                file.write(b"audio")
-            out_root = os.path.join(folder, "out")
-            os.makedirs(out_root)
-            video = ("Artist", "Song: Title?", "Artist - Song: Title? (Official Video)", "en")
-            with patch.object(us.settings, "input_file_path", source), \
-                    patch.object(us.settings, "output_folder_path", out_root), \
-                    patch.object(us.settings, "ignore_audio", False), \
-                    patch.object(us.settings, "video_url", url), \
-                    patch("modules.Audio.video_platform.get_video_title", return_value=video), \
-                    patch.object(us, "search_musicbrainz",
-                                 side_effect=lambda title, artist: SongInfo(title=title, artist=artist)) as lookup, \
-                    patch.object(us, "is_video_file", return_value=False), \
-                    contextlib.redirect_stdout(io.StringIO()):
-                process_data = us.InitProcessData()
-                song_folder = us.settings.output_folder_path
+        source = os.path.join(folder, "_intercepted_abc.mp3")
+        with open(source, "wb") as file:
+            file.write(b"audio")
+        out_root = os.path.join(folder, "out")
+        os.makedirs(out_root)
+        with patch.object(us.settings, "input_file_path", source), \
+                patch.object(us.settings, "output_folder_path", out_root), \
+                patch.object(us.settings, "ignore_audio", False), \
+                patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                patch.object(us.settings, "video_url", self._URL), \
+                patch("yt_dlp.YoutubeDL") as ydl, \
+                patch.object(us, "get_duration", return_value=file_length) as length_of_file, \
+                patch.object(us, "search_musicbrainz",
+                             side_effect=lambda title, artist, duration=None: SongInfo(title=title, artist=artist)) \
+                as lookup, \
+                patch.object(us, "is_video_file", return_value=False), \
+                contextlib.redirect_stdout(io.StringIO()):
+            extract_info = ydl.return_value.__enter__.return_value.extract_info
+            extract_info.return_value = info
+            process_data = us.InitProcessData()
+            return process_data, us.settings.output_folder_path, lookup, extract_info, length_of_file
 
-            lookup.assert_called_once_with("Song: Title?", "Artist")
+    def test_folder_files_and_lookup_follow_the_video(self):
+        info = {"title": "Artist - Song: Title? (Official Video)", "artist": "Artist", "track": "Song: Title?",
+                "language": "en", "duration": 238}
+        url = self._URL
+        with tempfile.TemporaryDirectory() as folder:
+            process_data, song_folder, lookup, extract_info, length_of_file = self._init(folder, info)
+
+            # The title and the length of the video come from one extraction
+            extract_info.assert_called_once_with(url, download=False)
+            lookup.assert_called_once_with("Song: Title?", "Artist", duration=238)
+            length_of_file.assert_not_called()
             basename = us.os_helper.sanitize_filename("Artist - Song: Title?")
             self.assertEqual(process_data.basename, basename)
-            self.assertEqual(song_folder, os.path.join(out_root, basename))
+            self.assertEqual(song_folder, os.path.join(folder, "out", basename))
             audio = os.path.join(song_folder, f"{basename}.mp3")
             self.assertEqual(process_data.process_data_paths.audio_output_file_path, audio)
             self.assertTrue(os.path.isfile(audio))
             self.assertEqual((process_data.media_info.artist, process_data.media_info.title),
                              ("Artist", "Song: Title?"))
             self.assertEqual((process_data.media_info.language, process_data.media_info.video_url), ("en", url))
+
+    def test_the_length_of_the_file_without_that_of_the_video(self):
+        for info in ({"title": "Artist - Title - Chapter 2"}, {"title": "Artist - Title - Chapter 2", "duration": 0}):
+            with self.subTest(info=info), tempfile.TemporaryDirectory() as folder:
+                _, _, lookup, extract_info, length_of_file = self._init(folder, info, file_length=238.5)
+                extract_info.assert_called_once()
+                length_of_file.assert_called_once_with(os.path.join(folder, "_intercepted_abc.mp3"))
+                lookup.assert_called_once_with("Title - Chapter 2", "Artist", duration=238.5)
+
+
+class TestLocalFileLookup(unittest.TestCase):
+    """A local file is looked up by its name and with its length."""
+
+    def test_the_length_of_the_file(self):
+        from modules.musicbrainz_client import SongInfo
+
+        for file_length in (238.5, None):
+            with self.subTest(file_length=file_length), tempfile.TemporaryDirectory() as folder:
+                source = os.path.join(folder, "Artist - Title - Chapter 2.mp3")
+                with open(source, "wb") as file:
+                    file.write(b"audio")
+                with patch.object(us.settings, "input_file_path", source), \
+                        patch.object(us.settings, "output_folder_path", folder), \
+                        patch.object(us.settings, "ignore_audio", False), \
+                        patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                        patch.object(us.settings, "video_url", None), \
+                        patch.object(us, "get_duration", return_value=file_length) as length_of_file, \
+                        patch.object(us, "search_musicbrainz",
+                                     return_value=SongInfo(title="Title", artist="Artist")) as lookup, \
+                        patch.object(us, "is_video_file", return_value=False), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    process_data = us.InitProcessData()
+                length_of_file.assert_called_once_with(source)
+                lookup.assert_called_once_with("Title - Chapter 2", "Artist", duration=file_length)
+                self.assertEqual(process_data.basename, "Artist - Title")
 
 
 class TestRepitchRun(unittest.TestCase):

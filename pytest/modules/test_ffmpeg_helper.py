@@ -20,6 +20,7 @@ from modules.ffmpeg_helper import (
     convert_to_ultrastar_format,
     extract_audio,
     get_audio_codec_and_extension,
+    get_duration,
     is_video_file,
 )
 
@@ -77,6 +78,32 @@ class TestIsVideoFile:
 
     def test_missing_file(self, tmp_path):
         assert is_video_file(str(tmp_path / "missing.mp4")) is False
+
+
+class TestDuration:
+    """The length of an input file, of a video too, for the song lookup."""
+
+    @needs_ffmpeg
+    def test_audio_and_video(self, tmp_path):
+        audio = tmp_path / "song.mp3"
+        _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=2", str(audio))
+        video = tmp_path / "clip.mp4"
+        _ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=64x64:d=2", "-f", "lavfi",
+                "-i", "sine=frequency=440:duration=2", "-shortest", "-pix_fmt", "yuv420p", str(video))
+        for path in (audio, video):
+            assert get_duration(str(path)) == pytest.approx(2.0, abs=0.1)
+
+    @needs_ffmpeg
+    def test_a_file_without_a_length(self, tmp_path):
+        no_audio = tmp_path / "song.mp3"
+        no_audio.write_bytes(b"audio")
+        assert get_duration(str(no_audio)) is None
+        assert get_duration(str(tmp_path / "missing.mp3")) is None
+
+    def test_without_ffprobe(self):
+        with patch.object(ffmpeg_helper, "get_ffmpeg_and_ffprobe_paths",
+                          side_effect=FileNotFoundError("FFprobe executable not found in the system path.")):
+            assert get_duration("song.mp3") is None
 
 
 @needs_ffmpeg

@@ -249,7 +249,7 @@ def _remove_partial_files(stem: str, left_out: Sequence[str]) -> list[tuple[str,
     return stuck
 
 
-def _video_info(url: str, cookiefile: str | None = None, po_token: str | None = None) -> dict:
+def get_video_info(url: str, cookiefile: str | None = None, po_token: str | None = None) -> dict:
     """The yt-dlp info of the video (its title, its length, ...), without
     downloading it."""
     ydl_opts = _apply_po_token({
@@ -272,7 +272,7 @@ def get_video_title(url: str, cookiefile: str | None = None,
         A 4-tuple of (artist, track, video_title, language), see
         ``video_title_from_info``.
     """
-    return video_title_from_info(_video_info(url, cookiefile, po_token))
+    return video_title_from_info(get_video_info(url, cookiefile, po_token))
 
 
 def video_title_from_info(info: dict, verbose: bool = True) -> tuple[str, str, str, str]:
@@ -304,7 +304,7 @@ def video_title_from_info(info: dict, verbose: bool = True) -> tuple[str, str, s
 def find_song(artist: str, title: str, video_title: str, quick: bool = False,
               duration: float | None = None) -> SongInfo:
     """The song of a video, from the ``artist`` and ``title`` of
-    ``get_video_title`` as the song database names them (``quick`` and
+    ``video_title_from_info`` as the song database names them (``quick`` and
     ``duration``, the length of the video in seconds: see
     ``search_musicbrainz``)."""
     song_info = search_musicbrainz(title, artist, quick=quick, duration=duration)
@@ -351,7 +351,7 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
             "skip_unavailable_fragments": False,
             "cookiefile": cookiefile,
             "logger": _FilteredLogger(),
-            "noplaylist": True,  # as in _video_info
+            "noplaylist": True,  # as in get_video_info
         }, po_token)
         if ipv4:
             ydl_opts["source_address"] = "0.0.0.0"  # IPv4 only, as yt-dlp's --force-ipv4
@@ -417,7 +417,7 @@ def __download_thumbnail(url: str, clear_filename: str, output_path: str, cookie
         "skip_download": True,
         "writethumbnail": True,
         "cookiefile": cookiefile,
-        "noplaylist": True,  # as in _video_info
+        "noplaylist": True,  # as in get_video_info
     }, po_token)
 
     try:
@@ -530,7 +530,7 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
                                   keep_audio_in_video: bool = False,
                                   po_token: str = None) -> tuple[str, str, str, MediaInfo]:
     """Download from the video platform"""
-    info = _video_info(input_url, cookiefile, po_token)
+    info = get_video_info(input_url, cookiefile, po_token)
     (artist, title, video_title, yt_language) = video_title_from_info(info)
 
     # Get additional data for song, with the length of the video (see search_musicbrainz)

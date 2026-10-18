@@ -993,7 +993,7 @@ class TestDownloadedFile(unittest.TestCase):
                 open(video, "wb").close()
                 return {"requested_downloads": [{"filepath": video}]}
 
-            with patch.object(video_platform, "_video_info",
+            with patch.object(video_platform, "get_video_info",
                               return_value={"title": "Artist - Title", "language": "en"}), \
                     patch.object(video_platform, "search_musicbrainz",
                                  return_value=SongInfo(title="Title", artist="Artist")), \
@@ -1023,7 +1023,7 @@ class TestFailedDownloadFolder(unittest.TestCase):
         """The video's song is "Artist - Title"; ``download`` and ``separate`` stand in
         for the download and for the separation of audio and video. Yields the console."""
         with ExitStack() as stack:
-            stack.enter_context(patch.object(video_platform, "_video_info",
+            stack.enter_context(patch.object(video_platform, "get_video_info",
                                              return_value={"title": "Artist - Title", "language": "en"}))
             stack.enter_context(patch.object(video_platform, "search_musicbrainz",
                                              return_value=SongInfo(title="Title", artist="Artist")))

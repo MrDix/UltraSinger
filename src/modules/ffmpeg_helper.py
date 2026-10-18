@@ -162,6 +162,22 @@ def get_audio_codec_and_extension(video_file_path: str) -> str:
         return "wav"
 
 
+def get_duration(file_path: str) -> float | None:
+    """The length of an audio or video file in seconds, as ffprobe reads it
+    from the file, or None when it cannot be read."""
+    try:
+        _, ffprobe_path = get_ffmpeg_and_ffprobe_paths()
+        result = subprocess.run(
+            [ffprobe_path, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            capture_output=True, text=True)
+        duration = float(result.stdout.strip())
+    except (OSError, ValueError):
+        # No ffprobe, or no length: "N/A", or nothing for a file it cannot read
+        return None
+    return duration if duration > 0 else None
+
+
 def convert_to_ultrastar_format(audio_file_path: str, basename_without_ext: str, output_folder: str, audio_ext: str) -> tuple[str, str]:
     """
     Convert audio to an UltraStar-compatible format (ogg) if needed.

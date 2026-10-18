@@ -592,10 +592,10 @@ class TestTitleBeforeAnyDash(unittest.TestCase):
     song than "Wanted Title"."""
 
     @staticmethod
-    def _recording(title, rec_id, length, year='2019', artist='Wanted Artist'):
-        """A recording of a single from ``year``; its ``length`` in milliseconds, as the song database
-        gives it (None: unknown)."""
-        rec = TestTitleAdditions._recording(title, rec_id, ('Official', year, 'Single'))
+    def _recording(title, rec_id, length, year='2019', artist='Wanted Artist', kind='Single'):
+        """A recording on an official release of ``kind`` from ``year``; its ``length`` in milliseconds,
+        as the song database gives it (None: unknown)."""
+        rec = TestTitleAdditions._recording(title, rec_id, ('Official', year, kind))
         rec['artist-credit-phrase'] = artist
         if length is not None:
             rec['length'] = length
@@ -655,14 +655,26 @@ class TestTitleBeforeAnyDash(unittest.TestCase):
         _, searched, _ = self._search('Wanted Title - Singer Name live in the studio', [], duration=238.0)
         self.assertEqual(searched, ['wanted title - singer name live in the studio', 'wanted title'])
 
-    def test_only_recordings_of_the_length_of_the_audio_name_and_date_the_song(self):
-        # Listed first, a recording of another length is another song: not taken, and without its
-        # year and cover
+    def test_the_length_chooses_the_recording(self):
+        # Listed first, a recording of another length does not name the song; as another version
+        # of it, it dates it all the same
         recordings = [self._recording('Wanted Title', 'other', '180000', year='2005'),
                       self._recording('Wanted Title', 'song', '239000', artist='Wanted Artist feat. Guest')]
         info, _, _ = self._search('Wanted Title - Chapter 2', recordings, duration=238.0)
-        self.assertEqual((info.artist, info.title, info.year), ('Wanted Artist feat. Guest', 'Wanted Title', '2019'))
-        self.assertEqual(self.covers, ['song-0'])
+        self.assertEqual((info.artist, info.title, info.year), ('Wanted Artist feat. Guest', 'Wanted Title', '2005'))
+        self.assertEqual(self.covers, ['other-0', 'song-0'])
+
+    def test_all_recordings_of_the_title_date_the_song(self):
+        # The video is 20 s longer than the album version: a live recording of its length shows
+        # that the song is "Wanted Title", and the album dates it and gives the cover
+        album = self._recording('Wanted Title', 'album', '218000', year='2010-05-01', kind='Album')
+        live = self._recording('Wanted Title', 'live', '239000', year='2015', kind='Live')
+        info, _, _ = self._search('Wanted Title - Chapter 2', [live, album], duration=238.0)
+        self.assertEqual((info.title, info.year), ('Wanted Title', '2010'))
+        self.assertEqual(self.covers, ['album-0', 'live-0'])
+        # The album version alone does not show it
+        info, _, _ = self._search('Wanted Title - Chapter 2', [album], duration=238.0)
+        self.assertEqual((info.title, info.year), ('Wanted Title - Chapter 2', None))
 
     def test_a_bracketed_part_of_another_length(self):
         # The bracketed part has to match first, but a recording of another length does not count

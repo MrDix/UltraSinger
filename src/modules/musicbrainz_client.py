@@ -149,10 +149,11 @@ def search_musicbrainz(title: str, artist, quick: bool = False, duration: float 
     Singer Name live in the studio"), the title before the dash is searched
     (see ``title_before_dash``). Last, with a known ``duration`` (the length
     of the audio, in seconds), the title before a dash whatever follows it
-    ("Title - Chapter 2") is searched, taking only recordings of about the
-    length of the audio (see ``SAME_RECORDING_S``). ``quick`` only looks up
-    the artist and the title, and reports nothing (for the GUI's lyrics
-    badge, which names the song as a conversion does).
+    ("Title - Chapter 2") is searched: then only a recording of about the
+    length of the audio (see ``SAME_RECORDING_S``) names the song, which all
+    recordings of its title date. ``quick`` only looks up the artist and the
+    title, and reports nothing (for the GUI's lyrics badge, which names the
+    song as a conversion does).
     """
     # Musicbrainz API documentation
     # https://python-musicbrainzngs.readthedocs.io/en/latest/api/
@@ -294,8 +295,9 @@ def __multi_line_search(artist: str, title: str, verbose: bool = True, length: f
 
     The title is searched without its additions (see strip_title_additions):
     with "(US Version)" or "- Live" in the search, a version of the song was
-    found first, or no recording at all. With ``length`` (in seconds), only
-    recordings of that length count (see _has_length).
+    found first, or no recording at all. With ``length`` (in seconds), one
+    of that length comes first, and none count without one (see
+    _matching_recordings).
     """
     title = strip_title_additions(title)
     # Try both combinations since we don't know which one is the artist and which one is the title
@@ -339,7 +341,8 @@ def _matching_recordings(searches, strict: bool, length: float | None = None) ->
     The titles are compared with ``titles_match``; unless ``strict``, the
     wanted title without its bracketed parts (the recording's title keeps
     them: "Title (Part 2)" still is another song than "Title"). With
-    ``length`` (in seconds), only recordings of that length count.
+    ``length`` (in seconds), the best one of that length comes first, and
+    there are none without one.
     """
     matches = []
     for result, wanted_artist, wanted_title in searches:
@@ -348,8 +351,6 @@ def _matching_recordings(searches, strict: bool, length: float | None = None) ->
             record_title = record.get('title', '')
             artist_sim = similarity(record.get('artist-credit-phrase', ''), wanted_artist, artist=True)
             if artist_sim < MIN_MATCH_SIMILARITY or not titles_match(record_title, compared_title):
-                continue
-            if length is not None and not _has_length(record, length):
                 continue
             title_sim = similarity(record_title, wanted_title)
             plain = strip_title_additions(record_title) == record_title.strip()
@@ -362,6 +363,14 @@ def _matching_recordings(searches, strict: bool, length: float | None = None) ->
         if key not in seen:
             seen.add(key)
             recordings.append(record)
+    if length is not None:
+        # The length only chooses the recording that names the song: the
+        # others of its title, of any length (the album version of a longer
+        # video), still date it
+        chosen = next((record for record in recordings if _has_length(record, length)), None)
+        if chosen is None:
+            return []
+        recordings = [chosen] + [record for record in recordings if record is not chosen]
     return recordings
 
 

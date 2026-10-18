@@ -123,6 +123,7 @@ from modules.DeviceDetection.device_detection import (
 from modules.Image.image_helper import save_image
 from modules.ffmpeg_helper import (
     is_ffmpeg_available,
+    get_duration,
     get_ffmpeg_and_ffprobe_paths,
     is_video_file,
     separate_audio_video,
@@ -1853,13 +1854,14 @@ def InitProcessData():
         # the song is looked up, and the output folder and all its files are
         # named, by the video's artist/title instead of the temporary
         # intercepted filename.
-        yt_artist, yt_title, yt_video_title, yt_language = None, None, None, None
+        yt_artist, yt_title, yt_video_title, yt_language, yt_duration = None, None, None, None, None
         if settings.video_url:
             try:
-                from modules.Audio.video_platform import get_video_title
-                yt_artist, yt_title, yt_video_title, yt_language = get_video_title(
-                    settings.video_url, settings.cookiefile, settings.yt_po_token
-                )
+                from modules.Audio.video_platform import get_video_info, video_title_from_info
+                # The title and the length of the video, from one extraction
+                info = get_video_info(settings.video_url, settings.cookiefile, settings.yt_po_token)
+                yt_artist, yt_title, yt_video_title, yt_language = video_title_from_info(info)
+                yt_duration = info.get("duration") or None
                 print(
                     f"{ULTRASINGER_HEAD} Video platform metadata: "
                     f"{yt_artist} - {yt_title}"
@@ -1875,7 +1877,7 @@ def InitProcessData():
             settings.output_folder_path,
             process_data.process_data_paths.audio_output_file_path,
             process_data.media_info,
-        ) = infos_from_audio_video_input_file(yt_artist, yt_title, yt_video_title)
+        ) = infos_from_audio_video_input_file(yt_artist, yt_title, yt_video_title, yt_duration)
 
         if yt_language and not process_data.media_info.language:
             process_data.media_info.language = yt_language
@@ -2258,13 +2260,16 @@ def infos_from_audio_video_input_file(
         artist: str | None = None,
         title: str | None = None,
         video_title: str | None = None,
+        duration: float | None = None,
 ) -> tuple[str, str, str, MediaInfo]:
     """Infos from audio/video input file
 
     The song is looked up by ``artist`` and ``title`` when a title is given
     (the metadata of the --video_url video, whose raw title is
     ``video_title``), else by the file name. The song folder and its files
-    are named after what the lookup finds.
+    are named after what the lookup finds. The lookup gets the length of
+    the audio: ``duration``, the length of the --video_url video, or else
+    the length of the file.
     """
     basename = os.path.basename(settings.input_file_path)
     basename_without_ext = os.path.splitext(basename)[0]
@@ -2276,7 +2281,8 @@ def infos_from_audio_video_input_file(
         else:
             title = basename_without_ext
 
-    song_info = search_musicbrainz(title, artist or None)
+    song_info = search_musicbrainz(title, artist or None,
+                                   duration=duration or get_duration(settings.input_file_path))
     if video_title:
         # As for a video URL input (-i): the song lookup may re-introduce
         # suffixes that the video title does not have
