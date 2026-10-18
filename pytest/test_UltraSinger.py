@@ -321,21 +321,21 @@ class TestTranscribeAudioDispatch(unittest.TestCase):
     def test_cached_qwen3_transcription_needs_no_gpu(self):
         from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
         run = self._run(TranscriberChoice("whisper", reason="only 1.0 GB of GPU memory free"),
-                        cached="qwen3_1.7B_None_None_p30_kn0_aligned_{key}.json")
+                        cached="qwen3_1.7B_None_None_p30_tl_kn0_aligned_{key}.json")
         run["choose"].assert_not_called()
         run["qwen"].assert_not_called()
         run["whisper"].assert_not_called()
         self.assertEqual((run["result"].detected_language, run["used"]), ("de", "qwen3 (Qwen/Qwen3-ASR-1.7B)"))
         # Whisper, when asked for, does not take it
         self.assertEqual(self._run(TranscriberChoice("whisper", reason="selected"), "whisper",
-                                   cached="qwen3_1.7B_None_None_p30_kn0_aligned_{key}.json")["whisper"].call_count, 1)
+                                   cached="qwen3_1.7B_None_None_p30_tl_kn0_aligned_{key}.json")["whisper"].call_count, 1)
 
     def test_cache_depends_on_keep_numbers(self):
         # numbers are written as words before caching unless --keep_numbers: no reuse across the setting
         from src.modules.Speech_Recognition.qwen3_asr import TranscriberChoice
-        qwen_run = self._run(self.QWEN3, cached="qwen3_1.7B_None_None_p30_kn0_aligned_{key}.json", keep_numbers=True)
+        qwen_run = self._run(self.QWEN3, cached="qwen3_1.7B_None_None_p30_tl_kn0_aligned_{key}.json", keep_numbers=True)
         qwen_run["qwen"].assert_called_once()
-        self.assertIn(f"qwen3_1.7B_None_None_p30_kn1_aligned_{qwen_run['key']}.json", qwen_run["files"])
+        self.assertIn(f"qwen3_1.7B_None_None_p30_tl_kn1_aligned_{qwen_run['key']}.json", qwen_run["files"])
         whisper = TranscriberChoice("whisper", reason="selected")
         runs = [self._run(whisper, "whisper", keep_numbers=value) for value in (False, True)]
         names = [run["files"][0] for run in runs]
@@ -343,6 +343,12 @@ class TestTranscribeAudioDispatch(unittest.TestCase):
                         and names[1].endswith(f"_kn1_aligned_{runs[1]['key']}.json"))
         cached_run = self._run(whisper, "whisper", cached=names[0], keep_numbers=True)
         cached_run["whisper"].assert_called_once()
+
+    def test_qwen3_cache_from_before_the_text_language_is_not_reused(self):
+        # earlier results took the language from the model's tags, which can name the wrong language
+        run = self._run(self.QWEN3, cached="qwen3_1.7B_None_None_p30_kn0_aligned_{key}.json")
+        run["qwen"].assert_called_once()
+        self.assertIn(f"qwen3_1.7B_None_None_p30_tl_kn0_aligned_{run['key']}.json", run["files"])
 
     def test_whisper_cache_names_how_the_language_was_found(self):
         # Without --language, Whisper's transcription runs in the language found in the singing (sung_language);

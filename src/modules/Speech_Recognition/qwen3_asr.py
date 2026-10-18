@@ -154,7 +154,7 @@ def transcribe_with_qwen3(audio_path: str, choice: TranscriberChoice, device: st
         model = None
         release_gpu_memory()
 
-    detected = language or majority_language([r.language for r in results])
+    detected = language or transcribed_language(results)
     print(f"{ULTRASINGER_HEAD} Detected language: {blue_highlighted(detected)}")
     segments = [{"text": r.text.strip(), "start": offset, "end": offset + len(wav) / SAMPLE_RATE}
                 for (wav, offset), r in zip(pieces, results) if r.text and r.text.strip()]
@@ -173,9 +173,28 @@ def audio_pieces(audio) -> list:
             if len(wav) >= MIN_PIECE_SECONDS * SAMPLE_RATE]
 
 
+def transcribed_language(results) -> str:
+    """The ISO code of the language the pieces were transcribed in.
+
+    The model's language tag of a piece is unreliable: it tagged most pieces
+    of a clearly Spanish transcription "English". So the words decide, and
+    the tags only when the words leave the language open (too few of them,
+    or no clear margin between two languages).
+    """
+    from modules.Speech_Recognition.text_language import detect_text_language
+
+    text = " ".join(r.text.strip() for r in results if r.text and r.text.strip())
+    return detect_text_language(text) or majority_language([r.language for r in results])
+
+
 def majority_language(names: list[str | None]) -> str:
-    """The ISO code of the language most pieces were in ("en" when none is known)."""
-    codes = [_ISO_OF[name.lower()] for name in names if name and name.lower() in _ISO_OF]
+    """The ISO code of the language most pieces were in ("en" when none is known).
+
+    A piece the model decoded in several chunks has the languages of the
+    chunks joined by commas ("Spanish,English"); each of them counts.
+    """
+    codes = [_ISO_OF[part.strip().lower()] for name in names if name
+             for part in name.split(",") if part.strip().lower() in _ISO_OF]
     return Counter(codes).most_common(1)[0][0] if codes else "en"
 
 

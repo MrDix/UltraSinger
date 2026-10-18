@@ -15,6 +15,7 @@ from src.modules.Speech_Recognition.qwen3_asr import (
     TranscriberChoice,
     choose_transcriber,
     majority_language,
+    transcribed_language,
     song_language,
     transcribe_with_qwen3,
 )
@@ -95,6 +96,30 @@ class TestLanguage(unittest.TestCase):
         self.assertEqual(majority_language(["Filipino"]), "tl")
         self.assertEqual(majority_language([]), "en")
 
+    def test_majority_language_counts_each_language_of_a_piece(self):
+        # a piece decoded in several chunks has the chunks' languages joined by commas
+        self.assertEqual(majority_language(["Spanish,English", "Spanish", "English"]), "es")
+        self.assertEqual(majority_language(["German, English", "German"]), "de")
+        self.assertEqual(majority_language(["Klingon,Filipino"]), "tl")
+
+    def test_the_words_decide_over_the_tags(self):
+        piece = types.SimpleNamespace
+        spanish = ("no sé por qué te quiero si tú no me quieres a mí y yo te espero cada noche en la "
+                   "puerta de mi casa con el corazón en la mano porque eres todo lo que tengo y ya no "
+                   "puedo más")
+        words = spanish.split()
+        results = [piece(text=" ".join(words[:12]), language="Spanish"),
+                   piece(text=" ".join(words[12:24]), language="English"),
+                   piece(text=" ".join(words[24:]), language="English")]
+        self.assertEqual(transcribed_language(results), "es")
+
+    def test_the_tags_decide_when_the_words_leave_it_open(self):
+        piece = types.SimpleNamespace
+        # too few words to tell the language
+        results = [piece(text="la la la", language="German"), piece(text="oh", language="German"),
+                   piece(text="", language="English")]
+        self.assertEqual(transcribed_language(results), "de")
+
     def test_given_language_wins(self):
         with patch("modules.Speech_Recognition.Whisper.detect_language_with_confidence") as detect:
             self.assertEqual(song_language("a.wav", "de"), "de")
@@ -163,6 +188,13 @@ class TestTranscribe(unittest.TestCase):
         result, seen, _ = self._run(["eins", "zwei", "drei"], language="de")
         self.assertEqual((seen["language"], seen["align_language"], result.detected_language),
                          ("German", "de", "de"))
+
+    def test_the_language_comes_from_the_words(self):
+        # the model tags every piece "English" here; the words are Spanish
+        words = ("no sé por qué te quiero si tú no me quieres a mí y yo te espero cada noche en la "
+                 "puerta de mi casa con el corazón en la mano porque eres todo lo que tengo").split()
+        result, seen, _ = self._run([" ".join(words[:10]), " ".join(words[10:20]), " ".join(words[20:])])
+        self.assertEqual((seen["language"], seen["align_language"], result.detected_language), (None, "es", "es"))
 
     def test_the_model_is_dropped(self):
         _, seen, models = self._run(["a", "b", "c"])
