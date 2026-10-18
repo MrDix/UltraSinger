@@ -137,6 +137,11 @@ _DEFAULTS = {
     "ffmpeg_path": "",
     # Cookie
     "cookie_file": str(_CONFIG_DIR / "cookies.txt"),
+    # Signing in to the video platform in the embedded browser. Off: the
+    # sign-in pages are not opened, account cookies are deleted, and no
+    # cookies go to yt-dlp (the cookie file is deleted). Downloads with an
+    # account's cookies can get that account restricted or locked.
+    "allow_platform_signin": False,
     # Refinement
     "refine_from_vocal": True,
     "refine_pitch": True,

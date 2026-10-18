@@ -21,9 +21,32 @@ from PySide6.QtWidgets import (
 
 from .models import LLMProvider
 from .settings_tab import ConversionSettingsForm, _NoScrollComboBox
-from .widgets import AnimatedButton, LLMProviderListWidget, SettingsCard
+from .widgets import AnimatedButton, LLMProviderListWidget, SettingsCard, ToggleSwitch
 
 logger = logging.getLogger(__name__)
+
+_SIGNIN_TOOLTIP = (
+    "Off (default): the embedded browser does not open the video platform's sign-in "
+    "pages, its account cookies are deleted, and downloads get no cookies. "
+    "On: you can sign in, and the browser's cookies go to every download. The "
+    "platform can restrict or lock accounts that are used for automated downloads: "
+    "use at most a throwaway account, never your main account. Downloads work "
+    "without signing in; mainly age-restricted or members-only videos need an account."
+)
+
+# The warning before signing in is allowed
+SIGNIN_WARNING_TITLE = "Allow Signing In"
+SIGNIN_WARNING_TEXT = "Signing in to the video platform puts the account at risk."
+SIGNIN_WARNING_DETAILS = (
+    "The platform can restrict or lock accounts that are used for automated "
+    "downloads. While signing in is allowed, UltraSinger passes the browser's "
+    "cookies, and with them the account, to every download.\n\n"
+    "If you sign in anyway, use at most a throwaway account, never your main "
+    "account.\n\n"
+    "Downloads work without signing in. Mainly age-restricted or members-only "
+    "videos need an account."
+)
+SIGNIN_CONFIRM_BUTTON = "I understand the risk, allow signing in"
 
 
 class _YtdlpUpdateRunWorker(QObject):
@@ -59,11 +82,14 @@ class PreferencesTab(QWidget):
     log_message = Signal(str)
     # "Train..." next to the Segmentation Model; MainWindow opens the training window.
     training_requested = Signal()
+    # "Allow signing in to the video platform" was switched (and saved); MainWindow applies it
+    signin_allowed_changed = Signal(bool)
 
     def __init__(self, config: dict, cookie_manager=None, parent=None):
         super().__init__(parent)
         self._config = config
         self._cookie_manager = cookie_manager
+        self._signin_allowed = config.get("allow_platform_signin", False) is True
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -157,11 +183,26 @@ class PreferencesTab(QWidget):
 
         main_layout.addWidget(llm_card)
 
-        # ── Cookie Management ────────────────────────────────────────────
-        cookie_header = QLabel("Cookie Management")
+        # ── Video Platform Sign-in (and the cookies) ─────────────────────
+        cookie_header = QLabel("Video Platform Sign-in")
         cookie_header.setObjectName("subsectionHeader")
         main_layout.addWidget(cookie_header)
+        self._signin_header = cookie_header
         cookie_card = SettingsCard()
+
+        self._signin_switch = ToggleSwitch(checked=self._signin_allowed)
+        cookie_card.add_toggle_row("Allow signing in to the video platform",
+                                   self._signin_switch, _SIGNIN_TOOLTIP)
+        self._signin_switch.toggled_signal.connect(self._on_signin_switch_toggled)
+
+        cookie_card.add_info(
+            "Downloads work without signing in; mainly age-restricted or members-only "
+            "videos need an account. The video platform can restrict or lock accounts "
+            "that are used for automated downloads, so signing in is off by default: "
+            "the browser does not open the sign-in pages, account cookies are deleted, "
+            "and no cookies go to downloads. If you allow it, use at most a throwaway "
+            "account, never your main account."
+        )
 
         if cookie_manager:
             self._cookie_status = QLabel("Checking...")
@@ -170,9 +211,9 @@ class PreferencesTab(QWidget):
             self._update_cookie_status()
 
         cookie_card.add_info(
-            "Cookies are used for premium account authentication. "
-            "Log in via the Video browser tab to capture cookies automatically. "
-            "They are exported in Netscape format for yt-dlp."
+            "While signing in is allowed, the browser's cookies are exported in "
+            "Netscape format to the file below and passed to yt-dlp. While it is "
+            "off, nothing is exported and the file is deleted."
         )
 
         cookie_path_row = QHBoxLayout()
@@ -181,8 +222,8 @@ class PreferencesTab(QWidget):
         self._cookie_path.setPlaceholderText("Cookie file path...")
         self._cookie_path.setReadOnly(True)
         self._cookie_path.setToolTip(
-            "Path to the exported Netscape cookie file. "
-            "This file is passed to yt-dlp for authenticated downloads."
+            "Path to the exported Netscape cookie file. It is passed to yt-dlp "
+            "only while signing in is allowed; while it is off, it is deleted."
         )
         cookie_path_row.addWidget(self._cookie_path, 1)
         cookie_card.add_layout(cookie_path_row)
@@ -192,18 +233,18 @@ class PreferencesTab(QWidget):
 
         export_btn = QPushButton("Export Cookies")
         export_btn.setToolTip(
-            "Save all browser cookies to a Netscape-format file. "
-            "The file is used by yt-dlp for premium content downloads."
+            "Save all browser cookies to the cookie file for yt-dlp. "
+            "Only while signing in is allowed."
         )
         export_btn.clicked.connect(self._export_cookies)
-        export_btn.setEnabled(bool(cookie_manager))
+        self._export_btn = export_btn
+        self._update_export_enabled()
         btn_row.addWidget(export_btn)
 
         clear_btn = QPushButton("Clear Cookies")
         clear_btn.setObjectName("dangerButton")
         clear_btn.setToolTip(
-            "Delete all stored browser cookies. "
-            "You will need to log in again via the Video browser tab."
+            "Delete all cookies of the embedded browser, also those of a sign-in."
         )
         clear_btn.clicked.connect(self._clear_cookies)
         clear_btn.setEnabled(bool(cookie_manager))
@@ -393,21 +434,75 @@ class PreferencesTab(QWidget):
         if path:
             self._output_folder.setText(path)
 
+    # ── Signing in to the video platform ─────────────────────────────────
+
+    @property
+    def signin_allowed(self) -> bool:
+        """Whether signing in to the video platform is allowed (the switch, as saved)."""
+        return self._signin_allowed
+
+    def _on_signin_switch_toggled(self, checked: bool):
+        """Switching on asks first (Cancel leaves it off); either way the change
+        is saved at once and applies at once."""
+        if checked == self._signin_allowed:
+            return  # set back after Cancel
+        if checked and not self._confirm_signin():
+            self._signin_switch.setChecked(False)
+            return
+        from .config import save_config
+
+        self._signin_allowed = checked
+        self._config["allow_platform_signin"] = checked
+        try:
+            save_config(self._config)
+        except OSError:  # it applies all the same; the next save stores it
+            logger.warning("Failed to save the sign-in setting", exc_info=True)
+        logger.info("Signing in to the video platform %s", "allowed" if checked else "switched off")
+        self._update_cookie_status()
+        self._update_export_enabled()
+        self.signin_allowed_changed.emit(checked)
+
+    def _confirm_signin(self) -> bool:
+        """The warning before signing in is allowed; True when the user confirms it."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(SIGNIN_WARNING_TITLE)
+        box.setText(SIGNIN_WARNING_TEXT)
+        box.setInformativeText(SIGNIN_WARNING_DETAILS)
+        allow = box.addButton(SIGNIN_CONFIRM_BUTTON, QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel)
+        box.setEscapeButton(cancel)
+        box.exec()
+        confirmed = box.clickedButton() == allow
+        box.deleteLater()
+        return confirmed
+
+    def show_signin_switch(self):
+        """Scroll to "Allow signing in to the video platform" (the browser's notice links here)."""
+        self._scroll.ensureWidgetVisible(self._signin_header, ymargin=24)
+
+    def _update_export_enabled(self):
+        self._export_btn.setEnabled(bool(self._cookie_manager) and self._signin_allowed)
+
     def _update_cookie_status(self):
         if not hasattr(self, "_cookie_status"):
             return
-        if self._cookie_manager and self._cookie_manager.has_video_cookies:
-            count = self._cookie_manager.video_cookie_count
+        manager = self._cookie_manager
+        if not self._signin_allowed:
+            self._cookie_status.setText("Signing in is off: downloads get no cookies.")
+            self._cookie_status.setStyleSheet("color: #a09888;")
+        elif manager and manager.is_signed_in:
             self._cookie_status.setText(
-                f"\u2705 {count} cookies captured"
+                f"\u2705 Signed in ({manager.video_cookie_count} cookies captured)"
             )
             self._cookie_status.setStyleSheet("color: #4caf50;")
         else:
-            self._cookie_status.setText("\u26A0 No cookies (log in via Video browser tab)")
+            self._cookie_status.setText("\u26A0 Not signed in (sign in via the Video browser tab)")
             self._cookie_status.setStyleSheet("color: #ffa726;")
 
     def _export_cookies(self):
-        if self._cookie_manager:
+        if self._cookie_manager and self._signin_allowed:
             cookie_path = self._cookie_path.text() or self._config.get("cookie_file", "")
             if cookie_path:
                 try:
@@ -518,6 +613,7 @@ class PreferencesTab(QWidget):
         result = self._conversion_form.collect_config()
         result["output_folder"] = self._output_folder.text()
         result["cookie_file"] = self._cookie_path.text()
+        result["allow_platform_signin"] = self._signin_allowed
         result["proxy_mode"] = self._proxy_mode.currentData()
         result["proxy_url"] = self._proxy_url.text()
         result["proxy_no_proxy"] = self._proxy_no_proxy.text()

@@ -418,8 +418,11 @@ class UltraSingerRunner(QObject):
         if config.get("output_folder"):
             args.extend(["-o", config["output_folder"]])
 
-        # Cookie file
-        if config.get("cookie_file") and Path(config["cookie_file"]).exists():
+        # Cookie file: only while signing in to the video platform is allowed.
+        # Downloads with an account's cookies can get that account restricted
+        # or locked, and they work without cookies.
+        if (config.get("allow_platform_signin") is True and config.get("cookie_file")
+                and Path(config["cookie_file"]).exists()):
             args.extend(["--cookiefile", config["cookie_file"]])
 
         # Download limits of a video link (0 = no limit). Always passed, so

@@ -54,7 +54,8 @@ _MAX_SOURCE = 32_767
 
 # Settings that apply to all songs: the per-song settings dialog does not show them
 _GLOBAL_ONLY = frozenset({
-    "output_folder", "cookie_file", "proxy_mode", "proxy_url", "proxy_no_proxy",
+    "output_folder", "cookie_file", "allow_platform_signin",
+    "proxy_mode", "proxy_url", "proxy_no_proxy",
     "potoken_auto_start", "potoken_auto_start_node", "potoken_auto_start_docker",
     "potoken_base_url", "llm_providers", "llm_api_base_url", "llm_model",
     "llm_legacy_provider_id", "training_library", "training_workdir",

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from PySide6.QtCore import QLocale, QObject, QUrl, Signal, Qt
+from PySide6.QtCore import QLocale, QObject, QTimer, QUrl, Signal, Qt
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -33,12 +33,23 @@ from .config import config_dir, limit_setting
 from .cookie_file import remove_cookie_file, write_private_options
 from .cookie_manager import CookieManager
 from .media_interceptor import MediaInterceptor
+from .platform_signin import is_signin_host
 
 logger = logging.getLogger(__name__)
 # The lyrics badge looks songs up in the song database. Its client library
 # logs each retry and each part of an answer it does not read at INFO level,
 # which the GUI's log would show.
 logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
+
+_HOME_URL = "https://www.youtube.com"
+
+# Shown above the page when a sign-in page was not opened
+_SIGNIN_NOTICE = (
+    "Signing in to the video platform is off, so its sign-in page was not opened: "
+    "the platform can restrict or lock accounts that are used for automated "
+    "downloads. Downloads work without signing in. To change it: "
+    '<a href="settings" style="color: #f7d547;">Settings → Video Platform Sign-in</a>.'
+)
 
 
 class _FormatProbeWorker(QObject):
@@ -48,8 +59,9 @@ class _FormatProbeWorker(QObject):
     metadata (no download) and does NOT trigger bot detection — the API
     calls are identical to what the platform's own player makes.
 
-    It passes the browser session's cookies as a private copy and the PO
-    token in a private yt-dlp option file, and removes both files itself.
+    It passes the browser session's cookies (only while signing in is
+    allowed) as a private copy and the PO token in a private yt-dlp option
+    file, and removes both files itself.
     """
 
     finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
@@ -91,13 +103,16 @@ class _FormatProbeWorker(QObject):
             return None
 
         url = f"https://www.youtube.com/watch?v={self._video_id}"
+        # --ignore-config: none of the user's yt-dlp configuration files, which
+        # could add cookies (--cookies, --cookies-from-browser) although
+        # signing in is off; the private option file of --config-locations
+        # below is still read
         cmd = [
-            yt_dlp, "--dump-json", "--no-download",
+            yt_dlp, "--ignore-config", "--dump-json", "--no-download",
             "--no-playlist", "--skip-download", url,
         ]
-        # With the browser session's cookies and PO token the probe sees
-        # the same formats as the authenticated download (without them
-        # The platform reports only a limited fallback set, e.g. 360p H.264).
+        # With the PO token (and the cookies, while signing in is allowed) the
+        # probe sees the same formats as the download
         if self._cookie_file:
             cmd[1:1] = ["--cookies", self._cookie_file]
         if self._options_file:
@@ -447,9 +462,19 @@ def _clean_video_url(url: str) -> str:
 
 
 class UltraSingerWebPage(QWebEnginePage):
-    """Custom web page that intercepts the ultrasinger:// URL scheme."""
+    """Custom web page that intercepts the ultrasinger:// URL scheme.
+
+    While signing in is not allowed it does not open the sign-in pages, in
+    the main frame or in a frame, also not after a redirect.
+    """
 
     convert_requested = Signal(str)
+    signin_blocked = Signal(str)  # host of a sign-in page not opened in the main frame
+
+    def __init__(self, profile: QWebEngineProfile, parent=None, signin_allowed: bool = False):
+        super().__init__(profile, parent)
+        # While False, the sign-in pages are not opened (set by BrowserTab)
+        self.signin_allowed = signin_allowed
 
     def javaScriptConsoleMessage(self, level, message, line, source):
         """Suppress noisy JS console messages from embedded websites."""
@@ -465,16 +490,33 @@ class UltraSingerWebPage(QWebEnginePage):
                 # Double-safety: clean the URL in Python too
                 self.convert_requested.emit(_clean_video_url(video_url))
             return False
+        if not self.signin_allowed and is_signin_host(url.host()):
+            logger.info("Sign-in page not opened (signing in is off): %s", url.host())
+            if is_main_frame:
+                self.signin_blocked.emit(url.host())
+            return False
         return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
 
 class BrowserTab(QWidget):
-    """Video browser with navigation bar, cookie management, and Convert overlay."""
+    """Video browser with navigation bar, cookie management, and Convert overlay.
+
+    ``signin_allowed``: whether signing in to the video platform is allowed
+    (the global setting; ``set_signin_allowed`` changes it). While it is not,
+    the browser does not open the sign-in pages, deletes the account cookies
+    and the format probe gets no cookies.
+    """
 
     convert_requested = Signal(str, str)  # url, page_title
+    # The link in the sign-in notice: show the setting that allows signing in
+    settings_requested = Signal()
 
-    def __init__(self, parent=None):
+    # A sign-in notice hides after this long
+    _SIGNIN_NOTICE_MS = 20_000
+
+    def __init__(self, parent=None, signin_allowed: bool = False):
         super().__init__(parent)
+        self._signin_allowed = signin_allowed
         # Persistent browser profile — use a named profile so Qt/Chromium
         # manages its own storage location automatically.  Do NOT override
         # setPersistentStoragePath: Qt's Chromium backend may initialise the
@@ -486,13 +528,14 @@ class BrowserTab(QWidget):
         )
 
         # NOTE: we intentionally keep the DEFAULT QtWebEngine user agent.
-        # Spoofing a plain Chrome UA (to coax the platform's high-quality player)
-        # breaks Google sign-in ("This browser or app may not be secure",
-        # because a Chrome UA without Chrome client hints is rejected).
+        # Spoofing a plain desktop-browser UA (to coax the platform's
+        # high-quality player) breaks the account sign-in ("This browser or
+        # app may not be secure", because such a UA without the matching
+        # client hints is rejected).
         # Full-quality downloads no longer depend on the embedded player at
         # all — they go through yt-dlp + the bgutil PO-token provider — so
-        # the browser only needs to log in and pick videos, which the
-        # default UA does reliably.
+        # the browser only needs to pick videos (and to sign in, when that
+        # is allowed), which the default UA does reliably.
 
         # Real browsers always send an Accept-Language header; the Qt
         # default is empty, which is another embedded-browser fingerprint.
@@ -506,10 +549,12 @@ class BrowserTab(QWidget):
             self._profile.setHttpAcceptLanguage(accept)
             logger.info("Browser Accept-Language set: %s", accept)
 
-        # Cookie manager
-        self.cookie_manager = CookieManager(self._profile, self)
-        # Set by MainWindow to the configured cookie-file path; when set,
-        # the format probe exports and uses the browser cookies
+        # Cookie manager (deletes the account cookies while signing in is not
+        # allowed, also those it loads now)
+        self.cookie_manager = CookieManager(self._profile, self, signin_allowed=signin_allowed)
+        # Set by MainWindow to the configured cookie-file path; when set and
+        # signing in is allowed, the format probe exports and uses the
+        # browser cookies
         self.probe_cookie_file: str = ""
         # Set by MainWindow to its settings: the format badge names the
         # resolution that their download limits let a conversion take
@@ -518,15 +563,18 @@ class BrowserTab(QWidget):
         # button globally; re-asserted to the page on every navigation)
         self._provider_ready: bool = False
 
-        # Media interceptor — passively captures audio stream URLs
-        self.media_interceptor = MediaInterceptor(self)
+        # Media interceptor — passively captures audio stream URLs (and
+        # blocks the sign-in pages while signing in is not allowed)
+        self.media_interceptor = MediaInterceptor(self, signin_allowed=signin_allowed)
         self._profile.setUrlRequestInterceptor(self.media_interceptor)
         # Running format probes: (thread, worker)
         self._probes: list[tuple[threading.Thread, _FormatProbeWorker]] = []
 
         # Web page + view
-        self._page = UltraSingerWebPage(self._profile, self)
+        self._page = UltraSingerWebPage(self._profile, self, signin_allowed=signin_allowed)
         self._page.convert_requested.connect(self._on_convert_with_title)
+        self._page.signin_blocked.connect(self._on_signin_blocked)
+        self.media_interceptor.signin_blocked.connect(self._on_signin_blocked)
 
         self._view = QWebEngineView(self)
         self._view.setPage(self._page)
@@ -579,10 +627,28 @@ class BrowserTab(QWidget):
         self._cookie_dot = QLabel("\u25CF")
         self._cookie_dot.setObjectName("statusDot")
         self._cookie_dot.setStyleSheet("color: #605848; font-size: 14px;")
-        self._cookie_dot.setToolTip("Not logged in")
+        self._cookie_dot.setToolTip("Not signed in")
         tb_layout.addWidget(self._cookie_dot)
 
+        # Why a sign-in page was not opened, and where to change it
+        self._signin_notice = QLabel(_SIGNIN_NOTICE)
+        self._signin_notice.setObjectName("signinNotice")
+        self._signin_notice.setWordWrap(True)
+        self._signin_notice.setTextFormat(Qt.TextFormat.RichText)
+        self._signin_notice.setStyleSheet(
+            "QLabel#signinNotice { color: #f49b23; font-size: 12px; padding: 6px 12px;"
+            " background-color: rgba(244, 155, 35, 0.10);"
+            " border-bottom: 1px solid rgba(244, 155, 35, 0.30); }"
+        )
+        self._signin_notice.linkActivated.connect(self._on_signin_notice_link)
+        self._signin_notice.setVisible(False)
+        self._signin_notice_timer = QTimer(self)
+        self._signin_notice_timer.setSingleShot(True)
+        self._signin_notice_timer.setInterval(self._SIGNIN_NOTICE_MS)
+        self._signin_notice_timer.timeout.connect(self._signin_notice.hide)
+
         layout.addWidget(toolbar)
+        layout.addWidget(self._signin_notice)
         layout.addWidget(self._view, 1)
 
         # Track URL changes — also assigns intercepted streams to video IDs
@@ -598,8 +664,21 @@ class BrowserTab(QWidget):
         self.cookie_manager.cookies_changed.connect(self._update_cookie_status)
         self._update_cookie_status()
 
+        # When the browser has deleted account cookies (those of an earlier
+        # session at start, maybe after the first page loaded with them, or
+        # those of a sign-in when it is switched off), the page is loaded again
+        # so that it shows the signed-out state: once for a burst of deletions,
+        # and once only (at start, and after each switching off), whatever
+        # might set such cookies again
+        self._signout_reload_timer = QTimer(self)
+        self._signout_reload_timer.setSingleShot(True)
+        self._signout_reload_timer.setInterval(500)
+        self._signout_reload_timer.timeout.connect(self._reload_signed_out)
+        self._signout_reload_armed = not signin_allowed
+        self.cookie_manager.account_cookies_removed.connect(self._on_account_cookies_removed)
+
         # Load default video platform
-        self._view.setUrl(QUrl("https://www.youtube.com"))
+        self._view.setUrl(QUrl(_HOME_URL))
 
     # ── URL bar ──────────────────────────────────────────────────────────
 
@@ -694,11 +773,11 @@ class BrowserTab(QWidget):
                 "})();"
             )
 
-        # Export fresh browser cookies for the probe so it sees the same
-        # formats as the authenticated download (badge accuracy). The probe
-        # gets its own copy, which its yt-dlp may write back to.
+        # While signing in is allowed, the probe gets fresh browser cookies,
+        # as the download does (badge accuracy): its own copy, which its
+        # yt-dlp may write back to. Otherwise it gets no cookies at all.
         cookie_file = ""
-        if self.probe_cookie_file and self.cookie_manager.has_video_cookies:
+        if self.signin_allowed and self.probe_cookie_file and self.cookie_manager.has_video_cookies:
             try:
                 cookie_file = str(self.cookie_manager.export_private_copy(
                     Path(self.probe_cookie_file).parent))
@@ -789,17 +868,74 @@ class BrowserTab(QWidget):
         self._page.scripts().insert(script)
         logger.debug("Overlay user-script registered")
 
+    # ── Signing in ───────────────────────────────────────────────────────
+
+    @property
+    def signin_allowed(self) -> bool:
+        """Whether signing in to the video platform is allowed."""
+        return self._signin_allowed
+
+    def set_signin_allowed(self, allowed: bool):
+        """Allow signing in, or stop it at once: the sign-in pages are no longer
+        opened, the account cookies are deleted (the page is then loaded again,
+        signed out), and the format probe gets no cookies."""
+        self._signin_allowed = allowed
+        if self._page:
+            self._page.signin_allowed = allowed
+        self.media_interceptor.signin_allowed = allowed
+        self._signout_reload_armed = not allowed
+        self.cookie_manager.set_signin_allowed(allowed)
+        if allowed:
+            self._signout_reload_timer.stop()
+            self._signin_notice_timer.stop()
+            self._signin_notice.hide()
+        elif self._page and is_signin_host(self._page.url().host()):
+            self._signout_reload_timer.start()  # leave a sign-in page that is open
+        self._update_cookie_status()
+
+    def _on_account_cookies_removed(self):
+        if self._signout_reload_armed:
+            self._signout_reload_timer.start()
+
+    def _reload_signed_out(self):
+        """Load the page again after account cookies were deleted, signed out
+        (a sign-in page is left for the start page)."""
+        if self._signin_allowed or not self._view or not self._page:
+            return
+        self._signout_reload_armed = False
+        url = self._page.url()
+        if url.scheme() not in ("http", "https") or is_signin_host(url.host()):
+            url = QUrl(_HOME_URL)
+        logger.info("Loading the page again without the account cookies")
+        self._view.setUrl(url)
+
+    def _on_signin_blocked(self, _host: str):
+        """A sign-in page was not opened: show why, and where to change it."""
+        if self._signin_allowed:
+            return  # allowed since (the interceptor's signal is queued)
+        self._signin_notice.show()
+        self._signin_notice_timer.start()
+
+    def _on_signin_notice_link(self, _link: str):
+        self._signin_notice_timer.stop()
+        self._signin_notice.hide()
+        self.settings_requested.emit()
+
     # ── Cookie status ────────────────────────────────────────────────────
 
     def _update_cookie_status(self):
-        if self.cookie_manager.has_video_cookies:
+        if self.cookie_manager.is_signed_in:
             self._cookie_dot.setStyleSheet("color: #4caf50; font-size: 14px;")
             self._cookie_dot.setToolTip(
-                f"Logged in ({self.cookie_manager.video_cookie_count} cookies)"
+                f"Signed in ({self.cookie_manager.video_cookie_count} cookies)"
             )
         else:
             self._cookie_dot.setStyleSheet("color: #605848; font-size: 14px;")
-            self._cookie_dot.setToolTip("Not logged in")
+            self._cookie_dot.setToolTip(
+                "Not signed in" if self._signin_allowed else
+                "Not signed in: signing in is off (Settings → Video Platform Sign-in). "
+                "Downloads work without it."
+            )
 
     def _on_convert_with_title(self, url: str):
         """Extract the page title asynchronously, then emit convert_requested."""

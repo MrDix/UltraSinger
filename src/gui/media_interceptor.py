@@ -7,6 +7,10 @@ normal user watching a video.
 
 The captured URLs can be passed to ffmpeg for direct download, avoiding
 bot detection that yt-dlp triggers.
+
+While signing in to the video platform is not allowed, it also blocks the
+sign-in pages (main frame and frames): a second line behind the page's own
+navigation check (``UltraSingerWebPage.acceptNavigationRequest``).
 """
 
 from __future__ import annotations
@@ -23,7 +27,15 @@ from PySide6.QtWebEngineCore import (
     QWebEngineUrlRequestInterceptor,
 )
 
+from .platform_signin import is_signin_host
+
 logger = logging.getLogger(__name__)
+
+# Requests that load a page: the sign-in pages are blocked as these
+_FRAME_TYPES = (
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame,
+    QWebEngineUrlRequestInfo.ResourceType.ResourceTypeSubFrame,
+)
 
 # Known audio-only itags (https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/youtube/_video.py)
 _AUDIO_ITAGS = {
@@ -130,21 +142,27 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
     """Intercepts googlevideo.com media requests to capture audio URLs.
 
     Install on a QWebEngineProfile to passively capture audio stream
-    URLs as the user browses the platform.  The interceptor does NOT block
-    or modify any requests — it only reads the URL.
+    URLs as the user browses the platform.  The interceptor does not
+    modify any requests — it only reads the URL — and blocks only the
+    sign-in pages while signing in is not allowed.
 
     Signals:
         audio_captured(video_id, url): Emitted when a new audio stream
             URL is captured for a video.
+        signin_blocked(host): Emitted when a sign-in page was blocked in
+            the main frame.
     """
 
     # Signal must be on a QObject, not directly on the interceptor
     # (QWebEngineUrlRequestInterceptor IS a QObject in PySide6)
     audio_captured = Signal(object)  # CapturedAudioStream
     po_token_captured = Signal(str)  # GVS Proof-of-Origin token
+    signin_blocked = Signal(str)  # host of the sign-in page
 
-    def __init__(self, parent: QObject | None = None):
+    def __init__(self, parent: QObject | None = None, signin_allowed: bool = False):
         super().__init__(parent)
+        # While False, the sign-in pages are blocked (set by BrowserTab)
+        self.signin_allowed = signin_allowed
         # Streams keyed by video platform video ID (set externally by BrowserTab)
         self._streams: dict[str, CapturedAudioStream] = {}
         # Diagnostics: log unclassified googlevideo requests (deduplicated,
@@ -165,6 +183,15 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
         url = info.requestUrl()
         host = url.host()
         path = url.path()
+
+        if not self.signin_allowed and is_signin_host(host):
+            resource_type = info.resourceType()
+            if resource_type in _FRAME_TYPES:
+                info.block(True)
+                logger.info("Sign-in page blocked (signing in is off): %s", host)
+                if resource_type == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame:
+                    self.signin_blocked.emit(host)
+            return
 
         # Media traffic can come from *.googlevideo.com (classic) or be
         # proxied through other hosts (e.g. *.youtube.com/videoplayback).
