@@ -84,6 +84,8 @@ class PreferencesTab(QWidget):
     training_requested = Signal()
     # "Allow signing in to the video platform" was switched (and saved); MainWindow applies it
     signin_allowed_changed = Signal(bool)
+    # The settings were saved (with "Save Settings"); MainWindow updates what follows them
+    settings_saved = Signal()
 
     def __init__(self, config: dict, cookie_manager=None, parent=None):
         super().__init__(parent)
@@ -607,6 +609,7 @@ class PreferencesTab(QWidget):
 
         self._config.update(self.collect_all())
         save_config(self._config)
+        self.settings_saved.emit()
 
     def collect_all(self) -> dict:
         """Return all settings: conversion + providers + output + cookies."""

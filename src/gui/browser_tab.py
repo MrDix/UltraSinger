@@ -52,6 +52,39 @@ _SIGNIN_NOTICE = (
 )
 
 
+class _QualityBadge:
+    """What the quality badge shows of a probed video. Its video line names the
+    resolution that a conversion downloads within the download limits, so a
+    change of the limits only needs the formats that were probed, no new probe."""
+
+    def __init__(self, info: dict, best_height: int, video_codec: str, other_lines: list[str]):
+        self._info = info
+        self._best_height = best_height
+        self._video_codec = video_codec
+        self._other_lines = other_lines
+
+    def text(self, max_resolution: int, max_fps: int) -> str:
+        """The badge text for these download limits (0 = none)."""
+        lines = list(self._other_lines)
+        if self._best_height:
+            downloaded = self._downloaded_height(max_resolution, max_fps)
+            limited = f" (downloads {downloaded}p)" if 0 < downloaded < self._best_height else ""
+            lines.insert(0, f"\U0001f4f9 {self._best_height}p {self._video_codec}{limited}")
+        return "\n".join(lines)
+
+    def _downloaded_height(self, max_resolution: int, max_fps: int) -> int:
+        """The height of the video that a conversion downloads of the probed
+        formats, within the limits; 0 when unknown. It sends no request."""
+        try:
+            from modules.Audio.video_platform import DownloadLimits, video_format_of_download
+            video = video_format_of_download(
+                self._info, DownloadLimits(max_resolution=max_resolution, max_fps=max_fps))
+        except Exception:  # noqa: BLE001 - the badge goes on without it
+            logger.debug("The format of the download is unknown", exc_info=True)
+            return 0
+        return int((video or {}).get("height") or 0)
+
+
 class _FormatProbeWorker(QObject):
     """Probe available download formats for a video via yt-dlp.
 
@@ -64,11 +97,14 @@ class _FormatProbeWorker(QObject):
     file, and removes both files itself.
     """
 
-    finished = Signal(str, str, str)  # video_id, info_text (HTML), yt_language
+    # Both carry the probe's number last: a result of a probe that a newer one
+    # replaced can still be queued
+    finished = Signal(str, str, str, int)  # video_id, info_text (HTML), yt_language, probe number
+    badge_ready = Signal(str, object, int)  # video_id, _QualityBadge (just before finished), probe number
 
     def __init__(self, video_id: str, cookie_file: str = "",
                  options_file: str = "", parent: QObject | None = None, *,
-                 max_resolution: int = 0, max_fps: int = 0):
+                 max_resolution: int = 0, max_fps: int = 0, probe_number: int = 0):
         """``cookie_file`` (a private copy) and ``options_file`` (a private
         yt-dlp option file with the PO token) are for this probe only; it
         removes them. ``max_resolution`` and ``max_fps`` are the limits of a
@@ -80,6 +116,7 @@ class _FormatProbeWorker(QObject):
         self._options_file = options_file
         self._max_resolution = max_resolution
         self._max_fps = max_fps
+        self._probe_number = probe_number
         self._process: subprocess.Popen | None = None
         self._cancelled = False
 
@@ -149,7 +186,7 @@ class _FormatProbeWorker(QObject):
                 if private_file:
                     remove_cookie_file(private_file)
         if output is None:
-            self.finished.emit(self._video_id, "", "")
+            self.finished.emit(self._video_id, "", "", self._probe_number)
             return
 
         try:
@@ -195,11 +232,6 @@ class _FormatProbeWorker(QObject):
             }
 
             parts = []
-            if best_height:
-                vname = codec_names.get(best_vcodec, best_vcodec)
-                downloaded = self._downloaded_height(info)
-                limited = f" (downloads {downloaded}p)" if 0 < downloaded < best_height else ""
-                parts.append(f"\U0001f4f9 {best_height}p {vname}{limited}")
             if best_abr:
                 aname = codec_names.get(best_acodec, best_acodec)
                 parts.append(f"\U0001f50a {best_abr:.0f}k {aname}")
@@ -209,24 +241,15 @@ class _FormatProbeWorker(QObject):
                 parts.append(f"\U0001f310 {yt_language.upper()}")
             parts.append(lyrics_status)
 
+            badge = _QualityBadge(info, best_height,
+                                  codec_names.get(best_vcodec, best_vcodec), parts)
+            self.badge_ready.emit(self._video_id, badge, self._probe_number)
             self.finished.emit(
-                self._video_id, "\n".join(parts), yt_language
+                self._video_id, badge.text(self._max_resolution, self._max_fps), yt_language, self._probe_number
             )
 
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
-            self.finished.emit(self._video_id, "", "")
-
-    def _downloaded_height(self, info: dict) -> int:
-        """The height of the video that a conversion downloads of the formats in
-        ``info``, within the limits; 0 when unknown. It sends no request."""
-        try:
-            from modules.Audio.video_platform import DownloadLimits, video_format_of_download
-            video = video_format_of_download(
-                info, DownloadLimits(max_resolution=self._max_resolution, max_fps=self._max_fps))
-        except Exception:  # noqa: BLE001 - the badge goes on without it
-            logger.debug("The format of the download is unknown", exc_info=True)
-            return 0
-        return int((video or {}).get("height") or 0)
+            self.finished.emit(self._video_id, "", "", self._probe_number)
 
     def _check_lrclib(self, info: dict, duration: float | None = None) -> str:
         """Which lyrics a conversion of the video finds.
@@ -763,6 +786,7 @@ class BrowserTab(QWidget):
         for _thread, worker in self._probes:
             worker.cancel()
         self._probe_video_id = video_id
+        self._badge = None
 
         # Hide badge while loading
         if self._page:
@@ -797,10 +821,13 @@ class BrowserTab(QWidget):
             except OSError as e:
                 logger.warning("PO token file for format probe failed: %s", e)
 
+        self._active_probe = getattr(self, "_active_probe", 0) + 1
         worker = _FormatProbeWorker(
             video_id, cookie_file, options_file,
             max_resolution=limit_setting(self.probe_config, "max_video_resolution"),
-            max_fps=limit_setting(self.probe_config, "max_video_fps"))
+            max_fps=limit_setting(self.probe_config, "max_video_fps"),
+            probe_number=self._active_probe)
+        worker.badge_ready.connect(self._on_badge_ready)
         worker.finished.connect(self._on_format_probed)
         # A daemon thread, not a QThread: closing the window must not wait for
         # a slow lyrics lookup, and a QThread destroyed while running aborts
@@ -810,13 +837,42 @@ class BrowserTab(QWidget):
         self._probes.append((thread, worker))
         thread.start()
 
-    def _on_format_probed(self, video_id: str, info_text: str, _yt_language: str):
+    def _probe_limits(self) -> tuple[int, int]:
+        """The saved download limits that the badge names: resolution, frame rate."""
+        return (limit_setting(self.probe_config, "max_video_resolution"),
+                limit_setting(self.probe_config, "max_video_fps"))
+
+    def _from_earlier_probe(self, probe: int | None) -> bool:
+        """Whether a result comes from a probe that a newer one replaced: it can
+        still be queued when a probe of the same video starts again (e.g. once
+        the PO token provider is ready). ``probe`` is the number of the probe,
+        None for the badge shown again without a probe."""
+        return probe is not None and probe != getattr(self, "_active_probe", 0)
+
+    def _on_badge_ready(self, video_id: str, badge: "_QualityBadge", probe: int | None = None):
+        """Keep what the badge of the current video shows, for a change of the limits."""
+        if self._probe_video_id == video_id and not self._from_earlier_probe(probe):
+            self._badge = badge
+
+    def refresh_quality_badge(self):
+        """Show the badge of the current video with the saved download limits
+        (after they were saved), from the formats probed before: no new probe."""
+        badge = getattr(self, "_badge", None)
+        if badge is not None:
+            self._on_format_probed(self._probe_video_id, badge.text(*self._probe_limits()), "")
+
+    def _on_format_probed(self, video_id: str, info_text: str, _yt_language: str,
+                          probe: int | None = None):
         """Show the format info badge in the browser overlay."""
         if not info_text or not self._page:
             return
-        # Only update if still on the same video
-        if self._probe_video_id != video_id:
+        # Only update if still on the same video, from its newest probe
+        if self._probe_video_id != video_id or self._from_earlier_probe(probe):
             return
+        # The limits may have been saved while the probe ran
+        badge = getattr(self, "_badge", None)
+        if badge is not None:
+            info_text = badge.text(*self._probe_limits())
 
         # Escape for JS string literal (backslash, quotes, control chars)
         safe_text = (

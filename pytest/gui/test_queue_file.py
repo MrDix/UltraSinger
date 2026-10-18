@@ -609,6 +609,7 @@ class _FakeBrowserTab(QWidget):
         self.media_interceptor = MagicMock()
         self.probe_cookie_file = ""
         self.set_signin_allowed = MagicMock()
+        self.refresh_quality_badge = MagicMock()
         self.shutdown = MagicMock()
         self._view = MagicMock()
 
@@ -864,6 +865,51 @@ class TestMainWindow:
         args = win.conversion_start.call_args.args[0]
         assert args[args.index("-i") + 1] == _URL
         assert args[args.index("--language") + 1] == "de"
+
+    def test_all_failed_and_cancelled_songs_can_be_converted_again(self, settings_dir, open_window):
+        """☰ → Retry Failed and Cancelled does what ↻ does for each of them, in queue order."""
+        _write_raw(settings_dir / "queue.json", [
+            {"input_type": "url", "input_source": _URL, "title": "Failed", "status": "failed",
+             "settings_overrides": {"language_mode": "manual", "language": "de"}},
+            {"input_type": "url", "input_source": "https://video.invalid/watch?v=2", "title": "Waiting"},
+            {"input_type": "url", "input_source": "https://video.invalid/watch?v=3", "title": "Cancelled"},
+            {"input_type": "url", "input_source": "https://video.invalid/watch?v=4", "title": "Done"},
+        ])
+        win = open_window()
+        failed, waiting, cancelled, done = win._queue_mgr.items
+        for item, status in ((cancelled, "cancelled"), (done, "done")):  # as after Cancel All
+            item.status = status
+            item.exit_code = -2 if status == "cancelled" else 0
+            item.result_info = {"stage": "Separation"}
+            win._queue_mgr.item_status_changed.emit(item.id, status)
+        action = win._sidebar._retry_all_action
+        assert action.isEnabled()
+
+        retried = []
+        retry_item = win._queue_mgr.retry_item
+        with patch.object(win._queue_mgr, "retry_item",
+                          side_effect=lambda item_id: retried.append(item_id) or retry_item(item_id)):
+            action.trigger()
+
+        assert retried == [failed.id, cancelled.id]
+        assert [item.status for item in win._queue_mgr.items] == ["pending", "pending", "pending", "done"]
+        assert failed.settings_overrides == {"language_mode": "manual", "language": "de"}
+        assert cancelled.exit_code is None and cancelled.result_info == {}
+        assert done.result_info == {"stage": "Separation"}
+        for item in (failed, cancelled):
+            widget = win._sidebar.queue_list._item_widgets[item.id]
+            assert widget._retry_btn.isHidden() and not widget._gear_btn.isHidden()
+        assert not action.isEnabled()  # nothing more to retry
+        assert win._sidebar._start_btn.isEnabled()
+        assert _process_events_until(lambda: _saved(settings_dir) == [
+            (_URL, "pending"), ("https://video.invalid/watch?v=2", "pending"),
+            ("https://video.invalid/watch?v=3", "pending")])
+
+    def test_retry_all_is_off_without_failed_or_cancelled_songs(self, settings_dir, open_window):
+        _write_raw(settings_dir / "queue.json", [
+            {"input_type": "url", "input_source": _URL, "title": "Waiting"}])
+        win = open_window()
+        assert not win._sidebar._retry_all_action.isEnabled()
 
     @staticmethod
     def _open_on_a_locked_queue_file(settings_dir, open_window, monkeypatch):

@@ -187,6 +187,7 @@ class MainWindow(QMainWindow):
         )
         self._settings_tab.log_message.connect(self._queue_tab.append_log)
         self._settings_tab.signin_allowed_changed.connect(self._on_signin_allowed_changed)
+        self._settings_tab.settings_saved.connect(self._on_settings_saved)
         self._browser_tab.settings_requested.connect(self._show_signin_setting)
 
         self._stack.addWidget(self._browser_tab)
@@ -232,6 +233,7 @@ class MainWindow(QMainWindow):
         self._sidebar.queue_list.retry_requested.connect(
             self._on_retry_item
         )
+        self._sidebar.retry_all_requested.connect(self._on_retry_all)
         # Wire clone button
         self._sidebar.queue_list.clone_requested.connect(
             self._on_clone_item
@@ -607,6 +609,12 @@ class MainWindow(QMainWindow):
         self._queue_mgr.retry_item(item_id)
         self._update_queue_buttons()
 
+    def _on_retry_all(self):
+        """Let all failed and cancelled items wait again, in queue order, as \u21BB does for each."""
+        for item in list(self._queue_mgr.items):
+            if item.status in ("failed", "cancelled"):
+                self._on_retry_item(item.id)
+
     def _on_start_all(self):
         """Start processing all pending queue items."""
         if self._queue_mgr.pending_count() == 0:
@@ -621,6 +629,7 @@ class MainWindow(QMainWindow):
         all_settings = self._settings_tab.collect_all()
         self._config.update(all_settings)
         save_config(self._config)
+        self._on_settings_saved()
 
         # Auto-export cookies
         self._auto_export_cookies()
@@ -655,7 +664,9 @@ class MainWindow(QMainWindow):
         """Sync Start All / Clear button states with queue state."""
         has_pending = self._queue_mgr.pending_count() > 0
         is_running = self._queue_mgr.is_running
-        self._sidebar.update_queue_buttons(has_pending, is_running)
+        has_retryable = any(item.status in ("failed", "cancelled")
+                            for item in self._queue_mgr.items)
+        self._sidebar.update_queue_buttons(has_pending, is_running, has_retryable)
 
     # ── Queue file (kept between sessions, export / import) ───────────
 
@@ -895,6 +906,11 @@ class MainWindow(QMainWindow):
             exists = True  # let the removal report it
         if exists and remove_cookie_file(cookie_path):
             logger.info("Deleted cookie file (signing in is off): %s", cookie_path)
+
+    def _on_settings_saved(self):
+        """The saved settings may have new download limits: the quality badge
+        of the video shown names the resolution that is downloaded now."""
+        self._browser_tab.refresh_quality_badge()
 
     def _on_signin_allowed_changed(self, allowed: bool):
         """Apply "Allow signing in to the video platform" at once (the settings

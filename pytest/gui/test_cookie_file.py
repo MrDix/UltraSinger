@@ -178,6 +178,9 @@ class _ProbeHost:
     def _on_format_probed(self, *args):
         self.results.append(args)
 
+    def _on_badge_ready(self, *args):
+        pass
+
 
 def test_probe_uses_a_private_copy_and_removes_it(tmp_path):
     host = _ProbeHost(tmp_path)

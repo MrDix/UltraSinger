@@ -33,6 +33,15 @@ from src.UltraSinger import init_settings
 _app = QApplication.instance() or QApplication([])
 
 _KEYS = ("download_rate_limit", "max_video_resolution", "max_video_fps")
+
+
+@pytest.fixture(autouse=True)
+def _limit_warnings_anew():
+    """Each test sees the warnings about stored limits that are no limit (given once a run)."""
+    from src.gui import config as config_module
+    config_module._warned_limits.clear()
+    yield
+    config_module._warned_limits.clear()
 _URL = "https://video.invalid/watch?v=x"
 
 
@@ -151,6 +160,20 @@ class TestLimitValues:
             assert limit_setting({"max_video_fps": -1}, "max_video_fps") == 60
         assert "'max_video_fps'" in caplog.text
 
+    def test_the_warning_comes_once_for_each_value(self, caplog):
+        """The badge and each queued song read the setting: the same bad value warns once."""
+        with caplog.at_level(logging.WARNING):
+            for _ in range(3):
+                assert limit_setting({"max_video_fps": -1}, "max_video_fps") == 60
+            assert limit_setting({"max_video_resolution": -1}, "max_video_resolution") == 1080
+            assert limit_setting({"max_video_fps": [60]}, "max_video_fps") == 60
+            assert limit_setting({"max_video_fps": [60]}, "max_video_fps") == 60
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 3
+        assert "'max_video_fps': -1" in warnings[0]
+        assert "'max_video_resolution': -1" in warnings[1]
+        assert "'max_video_fps': [60]" in warnings[2]
+
     @pytest.mark.parametrize("imported", [False, True])
     def test_a_queue_file_keeps_only_limits(self, tmp_path, imported):
         """The saved queue and an imported file alike: a value the command line refuses ends the song."""
@@ -206,7 +229,7 @@ class TestQualityBadge:
         tab = SimpleNamespace(_probes=[], _page=None, probe_cookie_file="", signin_allowed=False,
                               cookie_manager=MagicMock(has_video_cookies=False),
                               media_interceptor=MagicMock(get_po_token=MagicMock(return_value="")),
-                              _on_format_probed=MagicMock())
+                              _on_format_probed=MagicMock(), _on_badge_ready=MagicMock())
         for config, expected in (({}, {"max_resolution": 1080, "max_fps": 60}),
                                  ({"max_video_resolution": 720, "max_video_fps": 0}, {"max_resolution": 720, "max_fps": 0}),
                                  ({"max_video_resolution": -5}, {"max_resolution": 1080, "max_fps": 60})):
@@ -214,7 +237,105 @@ class TestQualityBadge:
             with patch.object(browser_tab, "_FormatProbeWorker") as worker, \
                     patch.object(browser_tab.threading, "Thread"):
                 browser_tab.BrowserTab._probe_formats(tab, "vid")
-            assert worker.call_args.kwargs == expected
+            assert {key: worker.call_args.kwargs[key] for key in expected} == expected
+
+
+class _BadgeHost:
+    """The badge part of BrowserTab, on a page that records its scripts."""
+
+    _on_badge_ready = browser_tab.BrowserTab._on_badge_ready
+    _on_format_probed = browser_tab.BrowserTab._on_format_probed
+    _from_earlier_probe = browser_tab.BrowserTab._from_earlier_probe
+    _probe_limits = browser_tab.BrowserTab._probe_limits
+    refresh_quality_badge = browser_tab.BrowserTab.refresh_quality_badge
+
+    def __init__(self, config):
+        self.probe_config = config
+        self._page = MagicMock()
+        self._probe_video_id = "vid"
+        self._badge = None
+
+    def shown(self):
+        """The video line of the badge that the page shows last."""
+        script = self._page.runJavaScript.call_args.args[0]
+        return script.split("b.textContent = '")[1].split("\\n")[0]
+
+
+def _probed_badge(config):
+    """A host with the badge of a probe made with the limits of ``config``."""
+    host = _BadgeHost(config)
+    worker = browser_tab._FormatProbeWorker(
+        "vid", max_resolution=limit_setting(config, "max_video_resolution"),
+        max_fps=limit_setting(config, "max_video_fps"))
+    worker.badge_ready.connect(host._on_badge_ready)
+    worker.finished.connect(host._on_format_probed)
+    host._active_probe = 0  # the worker's default number
+    info = {"title": "Artist - Title", "duration": 200, "formats": _FORMATS}
+    with patch.object(browser_tab._FormatProbeWorker, "_dump_json", return_value=json.dumps(info)), \
+            patch.object(browser_tab._FormatProbeWorker, "_check_lrclib", return_value="lyrics"):
+        worker.run()
+    return host
+
+
+class TestBadgeAfterSavedLimits:
+    def test_saved_limits_update_the_badge_without_a_new_probe(self):
+        config = {"max_video_resolution": 1080, "max_video_fps": 60}
+        host = _probed_badge(config)
+        assert host.shown() == "\U0001f4f9 2160p VP9 (downloads 1080p)"
+        config["max_video_resolution"] = 0  # saved in place, as the window does
+        with patch.object(browser_tab, "_FormatProbeWorker") as worker, \
+                patch.object(browser_tab.subprocess, "Popen") as popen:
+            host.refresh_quality_badge()
+        assert not worker.called and not popen.called
+        assert host.shown() == "\U0001f4f9 2160p VP9"
+        config["max_video_resolution"] = 1080
+        host.refresh_quality_badge()
+        assert host.shown() == "\U0001f4f9 2160p VP9 (downloads 1080p)"
+
+    def test_a_probe_that_finishes_after_a_save_shows_the_saved_limits(self):
+        host = _BadgeHost({"max_video_resolution": 0, "max_video_fps": 0})
+        badge = browser_tab._QualityBadge({"formats": _FORMATS}, 2160, "VP9", ["lyrics"])
+        host._on_badge_ready("vid", badge)
+        host._on_format_probed("vid", badge.text(1080, 60), "")  # started with the old limits
+        assert host.shown() == "\U0001f4f9 2160p VP9"
+
+    def test_nothing_is_shown_without_a_probed_badge(self):
+        host = _BadgeHost({})
+        host.refresh_quality_badge()
+        host._on_badge_ready("other", browser_tab._QualityBadge({"formats": _FORMATS}, 2160, "VP9", []))
+        host.refresh_quality_badge()  # the badge of another video is not kept
+        assert not host._page.runJavaScript.called
+
+
+def test_the_result_of_a_replaced_probe_of_the_same_video_is_not_taken():
+    """A second probe of the same video (e.g. once the PO token provider is ready)
+    replaces the first. A result of the first that is still queued is not shown
+    or kept: each result names its probe (the worker may be gone by then)."""
+    host = _BadgeHost({"max_video_resolution": 0, "max_video_fps": 0})
+    earlier, newer = 1, 2
+    host._active_probe = newer
+    host._on_badge_ready("vid", browser_tab._QualityBadge({"formats": _FORMATS}, 2160, "VP9", []), earlier)
+    host._on_format_probed("vid", "old text", "", earlier)
+    assert host._badge is None
+    assert not host._page.runJavaScript.called
+    badge = browser_tab._QualityBadge({"formats": _FORMATS[2:]}, 1080, "AV1", [])
+    host._on_badge_ready("vid", badge, newer)
+    host._on_format_probed("vid", badge.text(0, 0), "", newer)
+    assert host._badge is badge
+    assert host._page.runJavaScript.call_count == 1
+    assert "1080p AV1" in host._page.runJavaScript.call_args.args[0]
+
+
+def test_a_probe_result_names_its_probe():
+    """The worker sends its number with both results, so that a replaced probe's can be told apart."""
+    worker = browser_tab._FormatProbeWorker("vid", probe_number=7)
+    got = []
+    worker.badge_ready.connect(lambda *args: got.append(("badge", args[-1])))
+    worker.finished.connect(lambda *args: got.append(("finished", args[-1])))
+    info = {"title": "Artist - Title", "duration": 200, "formats": _FORMATS}
+    with patch.object(browser_tab._FormatProbeWorker, "_dump_json", return_value=json.dumps(info)),             patch.object(browser_tab._FormatProbeWorker, "_check_lrclib", return_value="lyrics"):
+        worker.run()
+    assert got == [("badge", 7), ("finished", 7)]
 
 
 class _FakeBrowserTab(QWidget):
@@ -226,6 +347,7 @@ class _FakeBrowserTab(QWidget):
         self.cookie_manager = MagicMock(has_video_cookies=False)
         self.media_interceptor = MagicMock()
         self.probe_cookie_file = ""
+        self.refresh_quality_badge = MagicMock()
         self.shutdown = MagicMock()
         self._view = MagicMock()
 
@@ -243,6 +365,9 @@ def test_the_window_gives_the_browser_tab_its_saved_settings(tmp_path, monkeypat
             patch.object(main_window.MainWindow, "_start_ytdlp_update_check", lambda self: None):
         win = main_window.MainWindow({**_DEFAULTS, "cookie_file": ""})
     assert win._browser_tab.probe_config is win._config
+    # "Save Settings" shows the badge with the saved limits
+    win._settings_tab._save()
+    assert win._browser_tab.refresh_quality_badge.called
 
 
 if __name__ == "__main__":
