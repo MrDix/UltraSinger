@@ -107,7 +107,8 @@ def words_override_tag(from_words: str | None, tag: str | None) -> bool:
     words (all Cyrillic ones, es/pt, sv/da/no, zh/yue): the tag is the finer
     guess. A script tells its language from any other, but function words
     only judge a tagged language that has a profile of its own: Vietnamese
-    lyrics are full of "em", a Portuguese function word.
+    lyrics are full of "em", a Portuguese function word, and Japanese in
+    Latin letters has "no" and "to".
     """
     if from_words is None:
         return False
@@ -118,7 +119,8 @@ def words_override_tag(from_words: str | None, tag: str | None) -> bool:
     if from_words == "zh" and tag == "ja":
         # Japanese written mostly in kanji reads as Chinese
         return False
-    return from_words not in _FUNCTION_WORDS or tag in _KNOWN_LANGUAGES
+    # A language known by its script (Japanese, Russian, ...) may be sung in Latin letters
+    return from_words not in _FUNCTION_WORDS or tag in _FUNCTION_WORDS
 
 
 def _same_language(a: str, b: str) -> bool:

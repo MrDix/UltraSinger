@@ -146,6 +146,12 @@ class TestLanguage(unittest.TestCase):
         czech = " ".join(["to je na co se tak za po by mi ty jsi moje láska"] * 5)
         self.assertEqual(transcribed_language([piece(text=czech, language="Czech")] * 3), "cs")
 
+    def test_function_words_do_not_override_a_language_known_by_its_script(self):
+        piece = types.SimpleNamespace
+        # Japanese in Latin letters: "no", "to", "a", "i" are function words elsewhere
+        romaji = " ".join(["kimi no koe to boku no yume a i no uta to kaze no oto"] * 5)
+        self.assertEqual(transcribed_language([piece(text=romaji, language="Japanese")] * 3), "ja")
+
     def test_the_words_decide_without_known_tags(self):
         piece = types.SimpleNamespace
         german = " ".join(["ich bin nicht mehr da und du bist nicht hier aber ich denke an dich"] * 3)
