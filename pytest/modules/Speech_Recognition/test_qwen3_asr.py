@@ -95,6 +95,7 @@ class TestLanguage(unittest.TestCase):
         self.assertEqual(majority_language(["german", "Klingon"]), "de")
         self.assertEqual(majority_language(["Filipino"]), "tl")
         self.assertEqual(majority_language([]), "en")
+        self.assertIsNone(majority_language(["Klingon"], default=None))
 
     def test_majority_language_counts_each_language_of_a_piece(self):
         # a piece decoded in several chunks has the chunks' languages joined by commas
@@ -129,7 +130,25 @@ class TestLanguage(unittest.TestCase):
         with patch("builtins.print") as printed:
             self.assertEqual(transcribed_language(results), "ja")
         # the log tells that the words overrode the tags
-        self.assertIn("tags say en, its words say ja", printed.call_args.args[0])
+        self.assertIn("its words say", printed.call_args.args[0])
+        self.assertIn("— taking ja", printed.call_args.args[0])
+
+    def test_function_words_do_not_override_a_language_without_a_profile(self):
+        piece = types.SimpleNamespace
+        # Vietnamese "em" is a Portuguese function word, Czech shares many with Polish
+        vietnamese = " ".join(["em yêu anh em nhớ anh em đợi anh em thương anh mãi mãi"] * 5)
+        self.assertEqual(transcribed_language([piece(text=vietnamese, language="Vietnamese")] * 3), "vi")
+        czech = " ".join(["to je na co se tak za po by mi ty jsi moje láska"] * 5)
+        self.assertEqual(transcribed_language([piece(text=czech, language="Czech")] * 3), "cs")
+
+    def test_the_words_decide_without_known_tags(self):
+        piece = types.SimpleNamespace
+        german = " ".join(["ich bin nicht mehr da und du bist nicht hier aber ich denke an dich"] * 3)
+        with patch("builtins.print") as printed:
+            self.assertEqual(transcribed_language([piece(text=german, language="")] * 2), "de")
+        self.assertIn("name no known language", printed.call_args.args[0])
+        # nothing known at all: English
+        self.assertEqual(transcribed_language([piece(text="oh", language=None)]), "en")
 
     def test_the_tags_decide_when_the_words_leave_it_open(self):
         piece = types.SimpleNamespace

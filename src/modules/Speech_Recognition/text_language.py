@@ -99,10 +99,23 @@ def detect_text_language(text: str) -> str | None:
     return best
 
 
-def same_language(a: str, b: str) -> bool:
-    """Whether ``a`` and ``b`` are the same language or too close to be told
-    apart from their words (all Cyrillic ones, es/pt, sv/da/no, zh/yue)."""
-    return _same_language(a, b)
+def words_override_tag(from_words: str | None, tag: str | None) -> bool:
+    """Whether the language ``detect_text_language`` read from a text should
+    replace ``tag``, the language a transcriber tagged it with.
+
+    Not when the two are the same or too close to be told apart from their
+    words (all Cyrillic ones, es/pt, sv/da/no, zh/yue): the tag is the finer
+    guess. A script tells its language from any other, but function words
+    only judge a tagged language that has a profile of its own: Vietnamese
+    lyrics are full of "em", a Portuguese function word.
+    """
+    if from_words is None:
+        return False
+    if tag is None:
+        return True
+    if _same_language(from_words, tag):
+        return False
+    return from_words not in _FUNCTION_WORDS or tag in _KNOWN_LANGUAGES
 
 
 def _same_language(a: str, b: str) -> bool:
