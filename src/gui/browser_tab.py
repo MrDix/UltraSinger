@@ -162,7 +162,7 @@ class _FormatProbeWorker(QObject):
 
             if self._cancelled:  # the window is closing, or another video is probed
                 return
-            lyrics_status = self._check_lrclib(info)
+            lyrics_status = self._check_lrclib(info, duration or None)
             if self._cancelled:
                 return
 
@@ -194,24 +194,25 @@ class _FormatProbeWorker(QObject):
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
             self.finished.emit(self._video_id, "", "")
 
-    def _check_lrclib(self, info: dict) -> str:
+    def _check_lrclib(self, info: dict, duration: float | None = None) -> str:
         """Which lyrics a conversion of the video finds.
 
         The conversion's lookup from the video's yt-dlp ``info``: artist and
-        title from the video title, named as the song database names them,
-        searched with the video's length. Silent (no console output), and
-        without the song's year, genres and cover.
+        title from the video title, named as the song database names them
+        and searched for lyrics, both with the video's length (``duration``,
+        in seconds). Silent (no console output), and without the song's
+        year, genres and cover.
         """
         try:
             from modules.Audio.video_platform import find_song, video_title_from_info
             from modules.lrclib_client import find_lyrics
             artist, title, video_title, _language = video_title_from_info(info, verbose=False)
-            song = find_song(artist, title, video_title, quick=True)
+            song = find_song(artist, title, video_title, quick=True, duration=duration)
             if self._cancelled:  # no lyrics lookup any more
                 return ""
             if not song.artist or not song.title:
                 return "\U0001f4dd No metadata"
-            result = find_lyrics(song.artist, song.title, info.get("duration") or None)
+            result = find_lyrics(song.artist, song.title, duration)
             if result is None:
                 return "\U0001f4dd No lyrics"
             if result.synced_lyrics:

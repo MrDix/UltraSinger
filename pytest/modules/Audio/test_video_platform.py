@@ -993,8 +993,8 @@ class TestDownloadedFile(unittest.TestCase):
                 open(video, "wb").close()
                 return {"requested_downloads": [{"filepath": video}]}
 
-            with patch.object(video_platform, "get_video_title",
-                              return_value=("Artist", "Title", "Artist - Title", "en")), \
+            with patch.object(video_platform, "get_video_info",
+                              return_value={"title": "Artist - Title", "language": "en"}), \
                     patch.object(video_platform, "search_musicbrainz",
                                  return_value=SongInfo(title="Title", artist="Artist")), \
                     patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl, \
@@ -1023,8 +1023,8 @@ class TestFailedDownloadFolder(unittest.TestCase):
         """The video's song is "Artist - Title"; ``download`` and ``separate`` stand in
         for the download and for the separation of audio and video. Yields the console."""
         with ExitStack() as stack:
-            stack.enter_context(patch.object(video_platform, "get_video_title",
-                                             return_value=("Artist", "Title", "Artist - Title", "en")))
+            stack.enter_context(patch.object(video_platform, "get_video_info",
+                                             return_value={"title": "Artist - Title", "language": "en"}))
             stack.enter_context(patch.object(video_platform, "search_musicbrainz",
                                              return_value=SongInfo(title="Title", artist="Artist")))
             if download:
@@ -1143,6 +1143,39 @@ class TestFailedDownloadFolder(unittest.TestCase):
                 video_platform.download_from_video_platform(f"{base}/watch", out)
             left = os.listdir(out)
         self.assertEqual(left, [])
+
+
+class TestSongLookup(unittest.TestCase):
+    """The song database is asked with the length of the video, which comes with its title."""
+
+    def _lookup(self, info):
+        """The song lookup and the info extraction of a download of the video of ``info``."""
+        with tempfile.TemporaryDirectory() as out, \
+                patch.object(video_platform.yt_dlp, "YoutubeDL") as ydl, \
+                patch.object(video_platform, "search_musicbrainz",
+                             return_value=SongInfo(title="Title", artist="Artist")) as lookup, \
+                patch.object(video_platform, "__download_video_with_audio",
+                             side_effect=TestFailedDownloadFolder._downloaded), \
+                patch.object(video_platform, "separate_audio_video",
+                             return_value=("a.ogg", "v.mp4", "ogg", "mp4")), \
+                patch.object(video_platform, "__download_thumbnail", return_value=""), \
+                redirect_stdout(io.StringIO()):
+            ydl.return_value.__enter__.return_value.extract_info.return_value = info
+            video_platform.download_from_video_platform("https://fakeUrl", out)
+        return lookup, ydl.return_value.__enter__.return_value.extract_info
+
+    def test_the_length_of_the_video(self):
+        lookup, extract_info = self._lookup({"title": "Artist - Title - Chapter 2", "duration": 238})
+        lookup.assert_called_once_with("Title - Chapter 2", "Artist", quick=False, duration=238)
+        # The title and the length come from one extraction
+        extract_info.assert_called_once_with("https://fakeUrl", download=False)
+
+    def test_an_unknown_length(self):
+        for info in ({"title": "Artist - Title"}, {"title": "Artist - Title", "duration": None},
+                     {"title": "Artist - Title", "duration": 0}):
+            with self.subTest(info=info):
+                lookup, _ = self._lookup(info)
+                self.assertIsNone(lookup.call_args.kwargs["duration"])
 
 
 if __name__ == "__main__":

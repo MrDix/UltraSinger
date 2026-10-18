@@ -20,6 +20,7 @@ from modules.ffmpeg_helper import (
     convert_to_ultrastar_format,
     extract_audio,
     get_audio_codec_and_extension,
+    get_duration,
     is_video_file,
 )
 
@@ -77,6 +78,46 @@ class TestIsVideoFile:
 
     def test_missing_file(self, tmp_path):
         assert is_video_file(str(tmp_path / "missing.mp4")) is False
+
+
+class TestDuration:
+    """The length of an input file, of a video too, for the song lookup."""
+
+    @needs_ffmpeg
+    def test_audio_and_video(self, tmp_path):
+        audio = tmp_path / "song.mp3"
+        _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=2", str(audio))
+        video = tmp_path / "clip.mp4"
+        _ffmpeg("-f", "lavfi", "-i", "color=c=blue:s=64x64:d=2", "-f", "lavfi",
+                "-i", "sine=frequency=440:duration=2", "-shortest", "-pix_fmt", "yuv420p", str(video))
+        for path in (audio, video):
+            assert get_duration(str(path)) == pytest.approx(2.0, abs=0.1)
+
+    @needs_ffmpeg
+    def test_a_vbr_mp3_without_a_xing_header(self, tmp_path):
+        # Without the header, the length would be estimated from the bitrate at the start: the
+        # silence of the first 2 s has a far lower one than the noise after it
+        mp3 = tmp_path / "song.mp3"
+        _ffmpeg("-f", "lavfi", "-i", "aevalsrc=0:s=44100:d=2", "-f", "lavfi", "-i", "anoisesrc=r=44100:d=8:a=0.5",
+                "-filter_complex", "[0][1]concat=n=2:v=0:a=1", "-c:a", "libmp3lame", "-q:a", "0",
+                "-write_xing", "0", str(mp3))
+        assert get_duration(str(mp3)) == pytest.approx(10.0, abs=0.1)
+
+    @needs_ffmpeg
+    @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+    def test_a_file_without_a_length(self, tmp_path, capfd):
+        # Nothing is printed, also for a name that the console code page cannot decode
+        for name in ("song.mp3", "Song Title Á.mp3"):
+            no_audio = tmp_path / name
+            no_audio.write_bytes(b"audio")
+            assert get_duration(str(no_audio)) is None
+        assert get_duration(str(tmp_path / "missing.mp3")) is None
+        assert capfd.readouterr() == ("", "")
+
+    def test_without_ffmpeg(self):
+        with patch.object(ffmpeg_helper, "get_ffmpeg_and_ffprobe_paths",
+                          side_effect=FileNotFoundError("FFmpeg executable not found in the system path.")):
+            assert get_duration("song.mp3") is None
 
 
 @needs_ffmpeg

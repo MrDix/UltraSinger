@@ -13,6 +13,7 @@ from Settings import Settings
 from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted, red_highlighted
 from modules.name_matching import (
     MIN_MATCH_SIMILARITY,
+    SAME_RECORDING_S,
     bracketed_parts,
     similarity,
     strip_title_additions,
@@ -141,12 +142,16 @@ def __musicbrainz_request(func, verbose: bool = True):
     return None
 
 
-def search_musicbrainz(title: str, artist, quick: bool = False) -> SongInfo:
+def search_musicbrainz(title: str, artist, quick: bool = False, duration: float | None = None) -> SongInfo:
     """The song in the song database: its artist, title, year, genres and cover.
 
     When nothing matches a title with a description after a dash ("Title -
     Singer Name live in the studio"), the title before the dash is searched
-    (see ``title_before_dash``). ``quick`` only looks up the artist and the
+    (see ``title_before_dash``). Last, with a known ``duration`` (the length
+    of the audio, in seconds), the title before a dash whatever follows it
+    ("Title - Chapter 2") is searched: then only a recording of about the
+    length of the audio (see ``SAME_RECORDING_S``) names the song, which all
+    recordings of its title date. ``quick`` only looks up the artist and the
     title, and reports nothing (for the GUI's lyrics badge, which names the
     song as a conversion does).
     """
@@ -169,6 +174,7 @@ def search_musicbrainz(title: str, artist, quick: bool = False) -> SongInfo:
         recordings = [r for r in [__single_line_search(title, not quick)] if r is not None]
     else:
         recordings = __multi_line_search(artist, title, not quick)
+        searched = {_search_key(title)}
         # "Title - Singer Name live in the studio": the song is "Title"
         shorter = title_before_dash(origin_title)
         if not recordings and shorter:
@@ -176,6 +182,16 @@ def search_musicbrainz(title: str, artist, quick: bool = False) -> SongInfo:
                 print(f"{ULTRASINGER_HEAD} Searching again with the title before the dash: "
                       f"{blue_highlighted(shorter)}")
             recordings = __multi_line_search(artist, shorter, not quick)
+            searched.add(_search_key(shorter))
+        # "Title - Chapter 2": "Title - Part 2" can be another song than
+        # "Title", so only a recording of the length of the audio shows that
+        # the song is "Title"
+        before_dash = title_before_dash(origin_title, any_rest=True) if duration else ""
+        if not recordings and before_dash and _search_key(before_dash) not in searched:
+            if not quick:
+                print(f"{ULTRASINGER_HEAD} Searching again with the title before the dash, for a recording "
+                      f"of the length of the audio: {blue_highlighted(before_dash)}")
+            recordings = __multi_line_search(artist, before_dash, not quick, length=duration)
 
     if not recordings:
         if not quick:
@@ -268,12 +284,20 @@ def __filter_words(search_string):
     return search_string
 
 
-def __multi_line_search(artist: str, title: str, verbose: bool = True) -> list:
+def _search_key(title: str) -> str:
+    """The title that a search asks for (see __multi_line_search), to tell
+    titles already searched: case and spaces aside."""
+    return " ".join(strip_title_additions(title).split()).casefold()
+
+
+def __multi_line_search(artist: str, title: str, verbose: bool = True, length: float | None = None) -> list:
     """The recordings that match the artist and the title, the best first.
 
     The title is searched without its additions (see strip_title_additions):
     with "(US Version)" or "- Live" in the search, a version of the song was
-    found first, or no recording at all.
+    found first, or no recording at all. With ``length`` (in seconds), one
+    of that length comes first, and none count without one (see
+    _matching_recordings).
     """
     title = strip_title_additions(title)
     # Try both combinations since we don't know which one is the artist and which one is the title
@@ -300,13 +324,13 @@ def __multi_line_search(artist: str, title: str, verbose: bool = True) -> list:
     # recording does, the title is compared without it, as all titles were
     # before: video titles carry more additions than any list knows. Not
     # when such a part holds a part or volume number (a year is fine).
-    recordings = _matching_recordings(searches, strict=True)
+    recordings = _matching_recordings(searches, strict=True, length=length)
     if recordings or any(_NUMBER_RE.search(part) for part in bracketed_parts(title1) + bracketed_parts(title2)):
         return recordings
-    return _matching_recordings(searches, strict=False)
+    return _matching_recordings(searches, strict=False, length=length)
 
 
-def _matching_recordings(searches, strict: bool) -> list:
+def _matching_recordings(searches, strict: bool, length: float | None = None) -> list:
     """The recordings of the search results whose artist AND title match what
     we searched for, the best-matching first.
 
@@ -316,7 +340,9 @@ def _matching_recordings(searches, strict: bool) -> list:
     without additions comes first: "Title" rather than "Title (Live)".
     The titles are compared with ``titles_match``; unless ``strict``, the
     wanted title without its bracketed parts (the recording's title keeps
-    them: "Title (Part 2)" still is another song than "Title").
+    them: "Title (Part 2)" still is another song than "Title"). With
+    ``length`` (in seconds), the best one of that length comes first, and
+    there are none without one.
     """
     matches = []
     for result, wanted_artist, wanted_title in searches:
@@ -337,7 +363,26 @@ def _matching_recordings(searches, strict: bool) -> list:
         if key not in seen:
             seen.add(key)
             recordings.append(record)
+    if length is not None:
+        # The length only chooses the recording that names the song: the
+        # others of its title, of any length (the album version of a longer
+        # video), still date it
+        chosen = next((record for record in recordings if _has_length(record, length)), None)
+        if chosen is None:
+            return []
+        recordings = [chosen] + [record for record in recordings if record is not chosen]
     return recordings
+
+
+def _has_length(recording, length: float) -> bool:
+    """Whether the recording is at most SAME_RECORDING_S off ``length``
+    seconds long. The song database gives the length in milliseconds, when
+    it knows it; a recording without a length is not of that length."""
+    try:
+        seconds = float(recording.get('length')) / 1000
+    except (TypeError, ValueError):
+        return False
+    return seconds > 0 and abs(seconds - length) <= SAME_RECORDING_S
 
 
 def _same_song(recordings) -> list:

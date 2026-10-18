@@ -162,6 +162,38 @@ def get_audio_codec_and_extension(video_file_path: str) -> str:
         return "wav"
 
 
+def get_duration(file_path: str) -> float | None:
+    """The length of the audio of a file (also of a video) in seconds, or
+    None when it cannot be read.
+
+    The audio is decoded, about 0.3 s for a song of 4 minutes: for a VBR MP3
+    without a Xing header, ffprobe only estimates the length from the bitrate
+    at its start (34 s for 10 s that start with silence).
+    """
+    try:
+        ffmpeg_path, _ = get_ffmpeg_and_ffprobe_paths()
+        # Only the progress is read: the messages would be decoded with the
+        # console code page, which fails for some file names
+        result = subprocess.run(
+            [ffmpeg_path, "-nostdin", "-v", "error", "-progress", "pipe:1", "-i", file_path,
+             "-map", "0:a:0", "-f", "null", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+    except OSError:  # no ffmpeg
+        return None
+    if result.returncode != 0:  # no file with audio that ffmpeg reads
+        return None
+    # The last progress gives the end of the decoded audio, in microseconds;
+    # "out_time_ms" (microseconds too) only where an older ffmpeg lacks "out_time_us"
+    lines = result.stdout.splitlines()
+    times = [line.split("=", 1)[1] for line in lines if line.startswith("out_time_us=")] or \
+        [line.split("=", 1)[1] for line in lines if line.startswith("out_time_ms=")]
+    try:
+        duration = int(times[-1]) / 1_000_000
+    except (IndexError, ValueError):  # none, or "N/A"
+        return None
+    return duration if duration > 0 else None
+
+
 def convert_to_ultrastar_format(audio_file_path: str, basename_without_ext: str, output_folder: str, audio_ext: str) -> tuple[str, str]:
     """
     Convert audio to an UltraStar-compatible format (ogg) if needed.

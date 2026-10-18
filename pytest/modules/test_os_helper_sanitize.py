@@ -102,7 +102,8 @@ class TestLongInputFileName:
             targets.append(target)
             copy(original, target)
         monkeypatch.setattr(os_helper, "copy", recorded_copy)
-        monkeypatch.setattr(us, "search_musicbrainz", lambda title, artist: SongInfo(title="Title", artist="Artist"))
+        monkeypatch.setattr(us, "search_musicbrainz",
+                            lambda title, artist, duration=None: SongInfo(title="Title", artist="Artist"))
         monkeypatch.setattr(us, "is_video_file", lambda path: False)
         monkeypatch.setattr(us.settings, "input_file_path", str(source))
         monkeypatch.setattr(us.settings, "output_folder_path", str(tmp_path / "out"))
