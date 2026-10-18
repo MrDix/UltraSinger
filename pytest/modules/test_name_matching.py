@@ -172,6 +172,26 @@ class TestTitlesMatch(unittest.TestCase):
                 self.assertTrue(titles_match(a, b))
                 self.assertEqual(title_key(a), title_key(b))
 
+    def test_part_numbers_do_not_make_titles_alike(self):
+        # the titles are compared without their part numbers: short ones stay apart, and a number
+        # after a word like "No." or "Act" is no part number
+        for a, b in (("Go 2", "So 2"), ("Me 2", "We 2"), ("Up 2", "Us 2"), ("Go (2)", "So (2)"),
+                     ("Song Title No. 2", "Song Title 2"), ("Song Title (Act 2)", "Song Title 2"),
+                     ("Song Title (Chapter 2)", "Song Title 2"), ("Song Title Vol. 2", "Song Title 2"),
+                     ("Song Title Op. 2", "Song Title 2"), ("Track 7", "Track 8"), ("Intro", "Intro (Part 2)")):
+            with self.subTest(a=a, b=b):
+                self.assertFalse(titles_match(a, b))
+        for a, b in (("Song Title", "Song Title 2"), ("Blink 182", "Blink 182"), ("Catch 22", "Catch 22"),
+                     ("Summer of 69", "Summer of 69"), ("Area 51", "Area 51"), ("Room 101", "Room 101")):
+            with self.subTest(a=a, b=b):
+                self.assertTrue(titles_match(a, b))
+
+    def test_part_number_before_punctuation(self):
+        for title in ("Song Title 2!", "Song Title 2?", "Song Title #2", "Song Title (2)"):
+            with self.subTest(title=title):
+                self.assertEqual(title_key(title), title_key("Song Title 2"))
+                self.assertTrue(titles_match(title, "Song Title 2"))
+
     def test_bare_numbers_at_the_end(self):
         # a sequel number without a part word is the part number after a dash
         for a, b in (("Song Title - II", "Song Title II"), ("Song Title - 2", "Song Title 2"),

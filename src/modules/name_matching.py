@@ -119,9 +119,12 @@ _PART_DESIGNATION_RE = re.compile(rf"\b(?:part|pt)\b\.?\s*({_PART_NUMBER})", re.
 _DASHED_PART_NUMBER_RE = re.compile(rf"\s+[-–—]\s+({_PART_NUMBER})\s*$", re.IGNORECASE)
 # A number at the end of a title, after its last word (group 2): digits up
 # to ten or a Roman number of two letters or more ("I", "V" and "X" alone are
-# words or names: "Me & I", "Generation X"), also in brackets
+# words or names: "Me & I", "Generation X"), also in brackets, after "#" or
+# before closing punctuation ("Title #2", "Title 2!")
 _BARE_END_NUMBER_RE = re.compile(
-    r"\s+(\(\s*|\[\s*|\{\s*)?\b(10|0?[1-9]|viii|vii|iii|vi|iv|ix|ii)\b(?(1)\s*[)\]}])\s*$", re.IGNORECASE)
+    r"\s+(\(\s*|\[\s*|\{\s*)?#?\b(10|0?[1-9]|viii|vii|iii|vi|iv|ix|ii)\b(?(1)\s*[)\]}])[.!?…]*\s*$", re.IGNORECASE)
+# A part number as _same_part_numbers writes it
+_PART_TOKEN_RE = re.compile(r"\bpart (10|[1-9])\b")
 # Words a number after them belongs to, as no part number
 _NUMBER_WORDS = frozenset("part pt vol volume no nr number chapter act movement episode book op opus".split())
 # A part designation with its separator or brackets, to search without it
@@ -296,17 +299,23 @@ def titles_match(a: str, b: str) -> bool:
     any other word, except at the start of a title. Numbers left in both
     titles must be the same: "Intro (Part 1)" is not "Intro (Part 2)".
     Part numbers are compared however they are written ("Title - I" is
-    "Title, Part I", see _same_part_numbers); titles that are alike as
-    written match too, unless their part numbers differ ("Title - I" is
-    "Title I", where "I" alone is no part number).
+    "Title, Part I", see _same_part_numbers): when both titles name one,
+    they must be the same, and the titles are compared without them. Else
+    the titles are compared as written ("Title - I" is "Title I", where "I"
+    alone is no part number; "Intro" is not "Intro (Part 2)").
     """
     same_a, same_b = _title_words(a), _title_words(b)
-    numbers_a, numbers_b = sorted(re.findall(r"\d+", same_a)), sorted(re.findall(r"\d+", same_b))
-    if numbers_a and numbers_b and numbers_a != numbers_b:
-        return False
-    if similarity(same_a, same_b) >= MIN_MATCH_SIMILARITY:
-        return True
-    a, b = _title_words(a, same_part_numbers=False), _title_words(b, same_part_numbers=False)
+    parts_a, parts_b = sorted(_PART_TOKEN_RE.findall(same_a)), sorted(_PART_TOKEN_RE.findall(same_b))
+    if parts_a and parts_b:
+        if parts_a != parts_b:
+            return False
+        return _words_match(_PART_TOKEN_RE.sub(" ", same_a), _PART_TOKEN_RE.sub(" ", same_b))
+    return _words_match(_title_words(a, same_part_numbers=False), _title_words(b, same_part_numbers=False))
+
+
+def _words_match(a: str, b: str) -> bool:
+    """Whether two titles as _title_words gives them match: by ``similarity``,
+    and with the same numbers where both have some."""
     numbers_a, numbers_b = sorted(re.findall(r"\d+", a)), sorted(re.findall(r"\d+", b))
     if numbers_a and numbers_b and numbers_a != numbers_b:
         return False
