@@ -66,6 +66,8 @@ class MediaDownloadWorker(QObject):
         what = "video" if self._keep_video else "audio"
         self.progress.emit(f"[Download] Downloading {what} via browser stream...")
 
+        # No download rate limit here, unlike a video link: the stream is the
+        # audio alone or the small 360p progressive stream
         cmd = [
             str(ffmpeg),
             "-y",                    # Overwrite output

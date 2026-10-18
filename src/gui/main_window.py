@@ -167,6 +167,8 @@ class MainWindow(QMainWindow):
         # Create tabs (Video, Console, Settings)
         self._browser_tab = BrowserTab()
         self._browser_tab.probe_cookie_file = self._config.get("cookie_file", "")
+        # The settings as saved (updated in place): the badge's download limits
+        self._browser_tab.probe_config = self._config
         # Private cookie copies and yt-dlp option files of yt-dlp runs that a
         # crash left behind
         stale_dirs = {config_dir()}

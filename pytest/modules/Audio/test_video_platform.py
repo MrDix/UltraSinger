@@ -470,12 +470,19 @@ _PLATFORM_AUDIO = [
 _GENTLE = video_platform.DownloadLimits(2000, 1080, 60)  # the defaults of the command line
 
 
-def _platform_video(format_id, height, fps=30, vcodec="av01.0.08M.08", width=None, **fields):
-    """A video-only mp4 format as the video platform's extractor gives it (16:9 unless ``width``)."""
+def _platform_video(format_id, height, fps=30, vcodec="av01.0.08M.08", width=None, label=None, **fields):
+    """A video-only mp4 format as the video platform's extractor gives it: 16:9 unless
+    ``width``, with the quality of its ``label`` (1080 for "1080p"; by default its shorter side)."""
     width = width or height * 16 // 9
     return {"format_id": format_id, "ext": "mp4", "vcodec": vcodec, "acodec": "none", "height": height,
-            "width": width, "fps": fps, "quality": _PLATFORM_QUALITY[min(width, height)],
+            "width": width, "fps": fps, "quality": _PLATFORM_QUALITY[label or min(width, height)],
             "source_preference": -1, "protocol": "https", "url": f"https://video.invalid/{format_id}", **fields}
+
+
+def _sized(ladder):
+    """Formats named by their size, of (width, height, label) as the video platform names them."""
+    return [_platform_video(f"{width}x{height}", height, width=width, label=label)
+            for width, height, label in ladder]
 
 
 def _picked(options, formats):
@@ -495,6 +502,14 @@ class TestDownloadLimits(unittest.TestCase):
 
     _UP_TO_2160P = [_platform_video("398", 720), _platform_video("399", 1080), _platform_video("400", 1440),
                     _platform_video("401", 2160)]
+    # Videos of other shapes, as the video platform offers them: (width, height, label)
+    _SHAPES = {
+        "16:9": [(1280, 720, 720), (1920, 1080, 1080), (2560, 1440, 1440), (3840, 2160, 2160)],
+        "wide (2.39:1)": [(1280, 534, 720), (1920, 800, 1080), (2560, 1066, 1440), (3840, 1600, 2160)],
+        "4:3": [(960, 720, 720), (1440, 1080, 1080), (1920, 1440, 1440), (2880, 2160, 2160)],
+        "portrait": [(720, 1280, 720), (1080, 1920, 1080), (1440, 2560, 1440), (2160, 3840, 2160)],
+        "square": [(720, 720, 720), (1080, 1080, 1080), (1440, 1440, 1440)],
+    }
 
     @staticmethod
     def _options(limits):
@@ -511,12 +526,21 @@ class TestDownloadLimits(unittest.TestCase):
 
     def _pick(self, formats, limits=_GENTLE, left_out=()):
         """The format ids that the download within ``limits`` picks."""
-        return _picked({**self._options(limits)[0], "format": video_platform._video_format(left_out)}, formats)
+        options = self._options(limits)[0]
+        return _picked({**options, "format": video_platform._video_format(left_out, limits.long_side())}, formats)
+
+    def _pick_size(self, ladder, limits=_GENTLE):
+        """The size of the video that the download within ``limits`` picks of ``ladder``."""
+        return self._pick(_sized(ladder) + _PLATFORM_AUDIO, limits)[0]
 
     def test_the_options_of_the_limits(self):
         options, log = self._options(_GENTLE)
         self.assertEqual(options["ratelimit"], 2000 * 1024)  # bytes per second
         self.assertEqual(options["format_sort"], ["res:1080", "fps:60"])
+        # First the formats that fit the 16:9 frame of 1080p on their long side
+        self.assertEqual(options["format"], video_platform._video_format((), 1928))
+        self.assertEqual(options["format"], "bestvideo[ext=mp4][format_note!*=?Premium][width<=?1928][height<=?1928]"
+                                            "+bestaudio/" + video_platform._VIDEO_FORMAT)
         self.assertIn("Downloading Video with Audio (up to 1080p, 60 fps, 2000 KiB/s)\n", log)
 
     def test_without_limits_the_options_leave_yt_dlp_as_it_is(self):
@@ -524,7 +548,14 @@ class TestDownloadLimits(unittest.TestCase):
         options, log = self._options(video_platform.DownloadLimits())
         self.assertIsNone(options["ratelimit"])
         self.assertEqual(options["format_sort"], [])
+        self.assertEqual(options["format"], video_platform._VIDEO_FORMAT)
         self.assertIn("Downloading Video with Audio\n", log)
+
+    def test_the_long_side_of_the_frame(self):
+        limits = video_platform.DownloadLimits
+        self.assertEqual(limits(max_resolution=1080).long_side(), 1928)  # 1920 and the margin
+        self.assertEqual(limits(max_resolution=480).long_side(), 862)  # 853.3 up to 854: 856 fits too
+        self.assertEqual(limits(rate_limit=500, max_fps=30).long_side(), 0)
 
     def test_one_limit_alone(self):
         limits = video_platform.DownloadLimits
@@ -581,11 +612,40 @@ class TestDownloadLimits(unittest.TestCase):
         self.assertEqual(self._pick([_platform_video("399", 1080), premium, *_PLATFORM_AUDIO]), ["399", "251"])
         self.assertEqual(self._pick([premium, *_PLATFORM_AUDIO]), ["616", "251"])
 
-    def test_the_shorter_side_counts_for_a_portrait_video(self):
-        """As the video platform names it: 1080x1920 is 1080p."""
-        formats = [_platform_video("720p", 1280, width=720), _platform_video("1080p", 1920, width=1080),
-                   _platform_video("1440p", 2560, width=1440), *_PLATFORM_AUDIO]
-        self.assertEqual(self._pick(formats), ["1080p", "251"])
+    def test_1080p_of_videos_of_each_shape(self):
+        """As the video platform names it. By the shorter side alone, the 1440p of the wide
+        video (2560x1066) passed for 1080p; by the width first, 4:3, portrait and square
+        videos came in 1440p."""
+        expected = {"16:9": "1920x1080", "wide (2.39:1)": "1920x800", "4:3": "1440x1080",
+                    "portrait": "1080x1920", "square": "1080x1080"}
+        for shape, ladder in self._SHAPES.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(self._pick_size(ladder), expected[shape])
+
+    def test_480p_of_a_rounded_width(self):
+        """853.3 pixels are 854, or 856 in some videos: still 480p, also of a portrait video."""
+        limits = video_platform.DownloadLimits(2000, 480, 60)
+        self.assertEqual(self._pick_size([(640, 360, 360), (856, 480, 480), (1280, 720, 720)], limits), "856x480")
+        self.assertEqual(self._pick_size([(360, 640, 360), (480, 854, 480), (720, 1280, 720)], limits), "480x854")
+
+    def test_the_smallest_resolution_above_also_for_other_shapes(self):
+        self.assertEqual(self._pick_size([(2560, 1066, 1440), (3840, 1600, 2160)]), "2560x1066")
+        self.assertEqual(self._pick_size([(1920, 1440, 1440), (2880, 2160, 2160)]), "1920x1440")
+        self.assertEqual(self._pick_size([(1440, 2560, 1440), (2160, 3840, 2160)]), "1440x2560")
+
+    def test_the_format_of_the_download_without_a_request(self):
+        """For the GUI's quality badge: of the same formats, the video the download takes."""
+        for limits in (_GENTLE, video_platform.DownloadLimits(), video_platform.DownloadLimits(0, 720, 30)):
+            for shape, ladder in self._SHAPES.items():
+                formats = _sized(ladder) + _PLATFORM_AUDIO
+                with self.subTest(limits=limits, shape=shape), redirect_stdout(io.StringIO()) as out, \
+                        contextlib.redirect_stderr(io.StringIO()) as err:
+                    video = video_platform.video_format_of_download(
+                        {"formats": formats, "_format_sort_fields": _PLATFORM_SORT}, limits)
+                    self.assertEqual(video["format_id"], self._pick(formats, limits)[0])
+                    self.assertEqual((out.getvalue(), err.getvalue()), ("", ""))
+        self.assertIsNone(video_platform.video_format_of_download({"formats": []}, _GENTLE))
+        self.assertIsNone(video_platform.video_format_of_download({"formats": _PLATFORM_AUDIO}, _GENTLE))
 
     def test_the_download_keeps_to_the_rate_limit(self):
         """With yt-dlp and a local server: 48 KiB at 32 KiB/s take 1.5 s."""

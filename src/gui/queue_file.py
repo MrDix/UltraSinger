@@ -28,7 +28,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from .config import _DEFAULTS, _INVALID, _back_up_file, _fit_type, _is_secret_key, config_dir
+from .config import (
+    _DEFAULTS, _INVALID, LIMIT_SETTINGS, _back_up_file, _fit_type, _is_secret_key, config_dir, is_limit,
+)
 from .cookie_file import _replace
 from .models import QueueItem
 
@@ -130,6 +132,9 @@ def _checked_setting(key, value, imported: bool):
     fitted = _fit_type(value, _DEFAULTS.get(key, ""))
     if fitted is _INVALID:
         return None, "ignored (wrong type)"
+    if key in LIMIT_SETTINGS and not is_limit(fitted):
+        # The command line refuses it, so the song's conversion would end
+        return None, "ignored (no whole number of 0 or more)"
     allowed = _IMPORT_VALUES.get(key) if imported else None
     if allowed is not None and not (allowed.fullmatch(fitted) if isinstance(allowed, re.Pattern)
                                     else fitted in allowed):

@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 import importlib.metadata
 from pathlib import Path
 
-from .config import _DEFAULTS, octave_consistency_choice
+from .config import _DEFAULTS, limit_setting, octave_consistency_choice
 from .models import LLMProvider
 from .widgets import SettingsCard, ToggleSwitch
 from .widgets.llm_provider_list import _ModelFetcher, filter_stt_models, start_model_fetch
@@ -131,6 +131,8 @@ _MAX_VIDEO_FPS_CHOICES = (
     ("60 fps", 60),
     ("No limit", 0),
 )
+# How another value of a download limit is shown, e.g. "900p"
+_LIMIT_UNITS = {"download_rate_limit": " KiB/s", "max_video_resolution": "p", "max_video_fps": " fps"}
 
 
 class ConversionSettingsForm(QWidget):
@@ -1371,7 +1373,7 @@ class ConversionSettingsForm(QWidget):
                                _DEFAULTS["keep_audio_in_video"]))
 
         # The download of a video link, kept gentle by default
-        self._download_rate_limit = self._choice_combo(
+        self._download_rate_limit = self._limit_combo(
             _DOWNLOAD_RATE_LIMIT_CHOICES, "download_rate_limit")
         card.add_row("Download Rate Limit", self._download_rate_limit,
                      "The highest speed at which the video of a video link is downloaded. "
@@ -1379,28 +1381,29 @@ class ConversionSettingsForm(QWidget):
                      "a lot, and then also for watching videos on the other devices of your "
                      "network: a limited speed keeps the downloads gentle. 'No limit' "
                      "downloads at full speed.",
-                     reset_callback=lambda: self._set_choice(
+                     reset_callback=lambda: self._set_limit(
                          self._download_rate_limit, "download_rate_limit",
                          _DEFAULTS["download_rate_limit"]))
 
-        self._max_video_resolution = self._choice_combo(
+        self._max_video_resolution = self._limit_combo(
             _MAX_VIDEO_RESOLUTION_CHOICES, "max_video_resolution")
         card.add_row("Max Video Resolution", self._max_video_resolution,
-                     "The highest resolution of the downloaded video. 4K videos are large "
+                     "The highest resolution of the downloaded video: 1080p is up to "
+                     "1920x1080, or 1080x1920 for a portrait video. 4K videos are large "
                      "(often over 100 MB for a song) and take long to download. A soft "
                      "limit: the best format at or below it is taken, else the smallest one "
                      "above, so that no video fails for it. 'No limit' takes the best "
                      "resolution.",
-                     reset_callback=lambda: self._set_choice(
+                     reset_callback=lambda: self._set_limit(
                          self._max_video_resolution, "max_video_resolution",
                          _DEFAULTS["max_video_resolution"]))
 
-        self._max_video_fps = self._choice_combo(_MAX_VIDEO_FPS_CHOICES, "max_video_fps")
+        self._max_video_fps = self._limit_combo(_MAX_VIDEO_FPS_CHOICES, "max_video_fps")
         card.add_row("Max Video Frame Rate", self._max_video_fps,
                      "The highest frame rate of the downloaded video. The resolution comes "
                      "first: when a video has that resolution only at a higher frame rate, "
                      "that one is taken. 'No limit' takes the highest frame rate.",
-                     reset_callback=lambda: self._set_choice(
+                     reset_callback=lambda: self._set_limit(
                          self._max_video_fps, "max_video_fps", _DEFAULTS["max_video_fps"]))
 
         self._write_settings_info = ToggleSwitch(
@@ -1690,24 +1693,26 @@ class ConversionSettingsForm(QWidget):
             value = default
         combo.setCurrentText(str(value))
 
-    def _choice_combo(self, choices, key: str) -> QComboBox:
-        """A combo of ``choices`` (shown text, config value) with the configured value of ``key``."""
+    def _limit_combo(self, choices, key: str) -> QComboBox:
+        """A combo of the download limit ``key``: its ``choices`` (shown text,
+        value), with the configured value selected."""
         combo = _NoScrollComboBox()
         for text, value in choices:
             combo.addItem(text, value)
-        self._set_choice(combo, key)
+        # A value that is no limit (e.g. -1) shows the default, which the conversion gets too
+        self._set_limit(combo, key, limit_setting(self._config, key))
         return combo
 
-    def _set_choice(self, combo: QComboBox, key: str, value=None) -> None:
-        """Select the configured value of ``key`` (or ``value``) in a combo of
-        config values; a value it does not offer, e.g. from a hand-edited
-        config, selects the default."""
-        if value is None:
-            value = self._config.get(key, _DEFAULTS[key])
+    def _set_limit(self, combo: QComboBox, key: str, value: int) -> None:
+        """Select the download limit ``value`` in its ``combo``. A value that is
+        none of the choices, e.g. of a hand-edited config or a queue file, is
+        added to them: it is shown as the conversion uses it."""
         index = combo.findData(value)
         if index < 0:
-            logger.warning("Unknown value %r for the setting '%s', using %r", value, key, _DEFAULTS[key])
-            index = combo.findData(_DEFAULTS[key])
+            # Before the first larger choice, or before "No limit" (0), the last
+            index = next((i for i in range(combo.count())
+                          if not combo.itemData(i) or combo.itemData(i) > value), combo.count())
+            combo.insertItem(index, f"{value}{_LIMIT_UNITS[key]}", value)
         combo.setCurrentIndex(index)
 
     def _set_transcriber(self, value) -> None:
