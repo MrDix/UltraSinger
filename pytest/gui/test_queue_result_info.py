@@ -180,6 +180,14 @@ class TestParseOutputLine:
         queue_manager._parse_output_line("[UltraSinger] Remote STT transcription aligned locally")
         assert item.result_info["pipeline"] == "remote"
 
+    def test_remote_text_aligned_after_language_correction(self, queue_manager):
+        item = _make_item()
+        queue_manager._current_item = item
+        queue_manager._parse_output_line("[UltraSinger] Falling back to standard pipeline")
+        queue_manager._parse_output_line("[UltraSinger] Remote STT transcription aligned locally")
+        assert item.result_info["pipeline"] == "remote"
+        assert "whisper_fallback" not in item.result_info
+
     def test_output_folder_parsed(self, queue_manager):
         item = _make_item()
         queue_manager._current_item = item
