@@ -265,6 +265,16 @@ class TestFindLyrics(unittest.TestCase):
         # the search for the parts of "Song Title" finds none with lyrics
         self.assertEqual(len(requests), 3)
 
+    def test_the_same_search_is_sent_once(self):
+        """The title before the part number and the title before any dash are the same search:
+        LRCLIB's answer to it is filtered again by the length, not fetched again."""
+        for title in ("Song Title - Part 2", "Song Title - I"):
+            with self.subTest(title=title):
+                result, requests = self._find(lambda params: [], title=title, duration=238.0)
+                self.assertIsNone(result)
+                self.assertEqual([p.get("track_name") or p.get("q") for p in requests],
+                                 [title, f"Some Artist {title}", "Song Title", "Some Artist Song Title"])
+
     def test_the_part_under_another_name(self):
         """"Song Title - I" is listed as "Song Title, Part I", found by the title before its part number."""
         def answer(params):

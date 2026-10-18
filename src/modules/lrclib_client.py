@@ -140,6 +140,7 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
             seen.add(key)
             titles.append((wanted, song, how, max_off))
     found = None
+    answers = {}  # LRCLIB's answer to each search URL: a later step may search the same again
     for wanted, song, how, max_off in titles:
         if max_off is not None and found is not None:
             # The song was found, as instrumental: the title before the dash
@@ -147,10 +148,11 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
             break
         if how and verbose:
             print(f"{ULTRASINGER_HEAD} Searching LRCLIB again {how}: {blue_highlighted(wanted)}")
-        searches = [_search_by_fields(artist, wanted, duration, max_off, song=song)]
+        searches = [_search_by_fields(artist, wanted, duration, max_off, song=song, answers=answers)]
         if song == wanted:
             # The parts of a title are found by its name alone: one search is enough
-            searches.append(_search_by_query(f"{artist} {wanted}", artist, wanted, duration, max_off))
+            searches.append(_search_by_query(f"{artist} {wanted}", artist, wanted, duration, max_off,
+                                             answers=answers))
         results = [result for result in searches if result is not None]
         with_lyrics = [result for result in results if result.has_lyrics]
         if with_lyrics:
@@ -168,7 +170,8 @@ def _best_result(results: list[LyricsInfo], duration: Optional[float]) -> Lyrics
 
 
 def _search_by_fields(artist: str, title: str, duration: Optional[float] = None,
-                      max_off: Optional[float] = None, song: Optional[str] = None) -> Optional[LyricsInfo]:
+                      max_off: Optional[float] = None, song: Optional[str] = None,
+                      answers: Optional[dict] = None) -> Optional[LyricsInfo]:
     """Search LRCLIB using separate artist_name and track_name parameters;
     the results must be of the title ``song``, if given, else of ``title``."""
     params = urllib.parse.urlencode({
@@ -176,27 +179,35 @@ def _search_by_fields(artist: str, title: str, duration: Optional[float] = None,
         "track_name": title,
     })
     return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=song or title, duration=duration,
-                      max_off=max_off)
+                      max_off=max_off, answers=answers)
 
 
 def _search_by_query(query: str, artist: str = "", title: str = "",
-                     duration: Optional[float] = None, max_off: Optional[float] = None) -> Optional[LyricsInfo]:
+                     duration: Optional[float] = None, max_off: Optional[float] = None,
+                     answers: Optional[dict] = None) -> Optional[LyricsInfo]:
     """Search LRCLIB using a combined query string."""
     params = urllib.parse.urlencode({"q": query})
     return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=title, duration=duration,
-                      max_off=max_off)
+                      max_off=max_off, answers=answers)
 
 
 def _do_search(url: str, artist: str = "", title: str = "",
-               duration: Optional[float] = None, max_off: Optional[float] = None) -> Optional[LyricsInfo]:
+               duration: Optional[float] = None, max_off: Optional[float] = None,
+               answers: Optional[dict] = None) -> Optional[LyricsInfo]:
     """Execute a search request and return the best result with lyrics.
 
     With ``artist`` and ``title`` given, only results of that song count
     (see ``_names_match``); with ``max_off`` and a known ``duration``, only
     those at most that many seconds off the length of the audio. A song that
     LRCLIB only knows as instrumental is returned as such, without lyrics.
+    ``answers`` keeps the answer to each URL, so that one is not fetched twice.
     """
-    data = _get_json(url)
+    if answers is not None and url in answers:
+        data = answers[url]
+    else:
+        data = _get_json(url)
+        if answers is not None:
+            answers[url] = data
     if not isinstance(data, list):
         return None
 
