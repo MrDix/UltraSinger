@@ -113,6 +113,24 @@ class TestLanguage(unittest.TestCase):
                    piece(text=" ".join(words[24:]), language="English")]
         self.assertEqual(transcribed_language(results), "es")
 
+    def test_the_tags_name_a_language_the_words_cannot_tell_apart(self):
+        piece = types.SimpleNamespace
+        # Cyrillic words are read as "ru"; the tags tell Macedonian from it
+        macedonian = " ".join(["Јас те сакам многу и секогаш ќе бидам со тебе"] * 5)
+        self.assertEqual(transcribed_language([piece(text=macedonian, language="Macedonian")] * 3), "mk")
+        # Han script is read as "zh"; the tags tell Cantonese from it
+        cantonese = "我哋今晚一齊去睇戲好唔好" * 5
+        self.assertEqual(transcribed_language([piece(text=cantonese, language="Cantonese")] * 3), "yue")
+
+    def test_the_words_win_over_tags_of_another_script(self):
+        piece = types.SimpleNamespace
+        japanese = "わたしはあなたをずっとまっていますこころのなかで" * 5
+        results = [piece(text=japanese, language="English")] * 3
+        with patch("builtins.print") as printed:
+            self.assertEqual(transcribed_language(results), "ja")
+        # the log tells that the words overrode the tags
+        self.assertIn("tags say en, its words say ja", printed.call_args.args[0])
+
     def test_the_tags_decide_when_the_words_leave_it_open(self):
         piece = types.SimpleNamespace
         # too few words to tell the language

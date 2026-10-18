@@ -179,12 +179,20 @@ def transcribed_language(results) -> str:
     The model's language tag of a piece is unreliable: it tagged most pieces
     of a clearly Spanish transcription "English". So the words decide, and
     the tags only when the words leave the language open (too few of them,
-    or no clear margin between two languages).
+    or no clear margin between two languages) or name a language the words
+    cannot tell from the tagged one (all Cyrillic ones read as "ru", es/pt,
+    sv/da/no, zh/yue): there the tag is the finer guess.
     """
-    from modules.Speech_Recognition.text_language import detect_text_language
+    from modules.Speech_Recognition.text_language import detect_text_language, same_language
 
     text = " ".join(r.text.strip() for r in results if r.text and r.text.strip())
-    return detect_text_language(text) or majority_language([r.language for r in results])
+    from_tags = majority_language([r.language for r in results])
+    from_words = detect_text_language(text)
+    if from_words is None or same_language(from_words, from_tags):
+        return from_tags
+    print(f"{ULTRASINGER_HEAD} The transcription's language tags say {from_tags}, its words say {from_words}"
+          f" — taking {from_words}")
+    return from_words
 
 
 def majority_language(names: list[str | None]) -> str:

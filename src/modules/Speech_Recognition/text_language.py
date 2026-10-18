@@ -43,7 +43,7 @@ _FUNCTION_WORDS: dict[str, frozenset[str]] = {
 
 # Languages that share too many function words to be told apart reliably;
 # a mismatch between members of one group is never reported.
-_GROUPS = [frozenset({"es", "pt"}), frozenset({"sv", "da", "no"})]
+_GROUPS = [frozenset({"es", "pt"}), frozenset({"sv", "da", "no"}), frozenset({"zh", "yue"})]
 
 # Languages we can judge: a function-word profile or a recognisable script.
 _KNOWN_LANGUAGES = frozenset(_FUNCTION_WORDS) | {"ja", "zh", "ko", "ru", "uk", "bg", "sr", "be"}
@@ -99,10 +99,16 @@ def detect_text_language(text: str) -> str | None:
     return best
 
 
+def same_language(a: str, b: str) -> bool:
+    """Whether ``a`` and ``b`` are the same language or too close to be told
+    apart from their words (all Cyrillic ones, es/pt, sv/da/no, zh/yue)."""
+    return _same_language(a, b)
+
+
 def _same_language(a: str, b: str) -> bool:
     if a == b:
         return True
-    cyrillic = {"ru", "uk", "bg", "sr", "be"}
+    cyrillic = {"ru", "uk", "bg", "sr", "be", "mk"}
     if a in cyrillic and b in cyrillic:
         return True
     return any(a in g and b in g for g in _GROUPS)
