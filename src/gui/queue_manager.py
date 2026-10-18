@@ -566,6 +566,7 @@ class QueueManager(QObject):
             return
         if "Remote STT transcription aligned locally" in clean:
             info["pipeline"] = "remote"
+            info.pop("whisper_fallback", None)
             return
 
         # Output folder — derive from "Creating UltraStar file <path>".

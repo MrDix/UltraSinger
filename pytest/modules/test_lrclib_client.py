@@ -240,7 +240,9 @@ class TestFindLyrics(unittest.TestCase):
             return [_version(239.0)] if params.get("track_name") == "Song Title" else []
         result, requests = self._find(answer, title="Song Title - Part 2")
         self.assertIsNone(result)
-        self.assertEqual(len(requests), 2)
+        # the title before its part number is searched for that part only
+        self.assertEqual([p.get("track_name") or p.get("q") for p in requests],
+                         ["Song Title - Part 2", "Some Artist Song Title - Part 2", "Song Title"])
 
     def test_up_to_5_s_off_the_length_of_the_audio(self):
         for length, taken in ((243.0, True), (243.01, False), (None, False)):
@@ -260,7 +262,32 @@ class TestFindLyrics(unittest.TestCase):
             return [_version(236.0)]
         result, requests = self._find(answer, title="Song Title - Part 2", duration=238.0)
         self.assertTrue(result.instrumental)
-        self.assertEqual(len(requests), 2)
+        # the search for the parts of "Song Title" finds none with lyrics
+        self.assertEqual(len(requests), 3)
+
+    def test_the_same_search_is_sent_once(self):
+        """The title before the part number and the title before any dash are the same search:
+        LRCLIB's answer to it is filtered again by the length, not fetched again."""
+        for title in ("Song Title - Part 2", "Song Title - I"):
+            with self.subTest(title=title):
+                result, requests = self._find(lambda params: [], title=title, duration=238.0)
+                self.assertIsNone(result)
+                self.assertEqual([p.get("track_name") or p.get("q") for p in requests],
+                                 [title, f"Some Artist {title}", "Song Title", "Some Artist Song Title"])
+
+    def test_the_part_under_another_name(self):
+        """"Song Title - I" is listed as "Song Title, Part I", found by the title before its part number."""
+        def answer(params):
+            if params.get("track_name") != "Song Title":
+                return []
+            return [_version(200.0), _version(210.0, track="Song Title, Part II"),
+                    _version(220.0, track="Song Title, Part I")]
+        for title in ("Song Title - I", "Song Title, Pt. 1", "Song Title (Part 1)", "Song Title Part One"):
+            with self.subTest(title=title):
+                result, requests = self._find(answer, title=title)
+                self.assertEqual(result.track_name, "Song Title, Part I")
+                self.assertEqual([p.get("track_name") or p.get("q") for p in requests],
+                                 [title, f"Some Artist {title}", "Song Title"])
 
     def test_a_description_is_searched_without_the_length(self):
         """The title before a description takes a version of any length, as before."""

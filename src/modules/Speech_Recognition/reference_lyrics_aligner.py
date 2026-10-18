@@ -97,6 +97,8 @@ _BARE_LABEL_RE = re.compile(rf"{_LABEL}(?:\s*\d+)?(?:\s*{_REPEAT})?", re.IGNOREC
 _TRAILING_REPEAT_RE = re.compile(
     r"\s+(?:[x×]\s*\d+|\d+\s*[x×])(?=[.,;:!?…\"'”’]*(?:\s*[\(\[\{][^)\]\}]*[\)\]\}])*$)", re.IGNORECASE)
 _BRACKET_CHAR_RE = re.compile(r"[\[\]\(\)\{\}]")
+# Decoration around a label: "=== Chorus ===", "# Verse 2", "** Bridge **", "~ Intro ~", "• Chorus •"
+_DECORATION_RE = re.compile(r"^[\s=#*~\-_•·+|–—]+|[\s=#*~\-_•·+|–—]+$")
 # A letter or a digit, as in sung_text
 _WORD_CHAR_RE = re.compile(r"[^\W_]")
 _REPEAT_IN_TEXT_RE = re.compile(_REPEAT, re.IGNORECASE)
@@ -116,7 +118,8 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
     (``"(x2)"``) or backing vocals. Repeat marks are not sung wherever they
     are, and neither is a line that is only a section label in other
     brackets (``"(Chorus)"``), with a colon (``"Chorus:"``) or alone
-    (``"Chorus"``, ``"Verse 2"``, ``"2x Refrain"``, ``"1. Strophe"``; not
+    (``"Chorus"``, ``"Verse 2"``, ``"2x Refrain"``, ``"1. Strophe"``, also with
+    decoration: ``"=== Chorus ==="``, ``"# Verse 2"``; not
     ``"Break"``, which may be shouted), or only a repeat mark without
     brackets (``"x2"``, ``"Repeat chorus"``), nor ``"x2"`` at the end of a
     line. Word times of enhanced LRC (``"<00:12.50>"``) are left out. The
@@ -149,17 +152,20 @@ def _lyrics_line(raw_line: str) -> tuple[list[float], str]:
         text = ""
     # A repeat mark without brackets at the end: "Hello world x2", "Chorus 2x"
     text = _TRAILING_REPEAT_RE.sub("", text)
+    # A label is also one with decoration around it: "=== Chorus ===", "# [Verse 2]", "-- Outro: --"
+    label = _DECORATION_RE.sub("", text)
     # Only a label: "(Chorus)", "{Verse 2}", "((Chorus))", "Chorus:" (but "(Break) it down" is sung)
-    inner = text.strip(" ({})")
-    in_brackets = text[:1] in ("(", "{") and text[-1:] in (")", "}") and not _BRACKET_CHAR_RE.search(inner)
+    inner = label.strip(" ({}[])")
+    in_brackets = (label[:1] in ("(", "{", "[") and label[-1:] in (")", "}", "]")
+                   and not _BRACKET_CHAR_RE.search(inner))
     if ((in_brackets and _LRC_SECTION_RE.fullmatch(inner))
-            or (text.endswith(":") and ":" not in text[:-1] and _LRC_SECTION_RE.fullmatch(text[:-1].rstrip()))):
+            or (label.endswith(":") and ":" not in label[:-1] and _LRC_SECTION_RE.fullmatch(label[:-1].rstrip()))):
         text = ""
     # Labels and repeat marks without brackets: a line that is only "Chorus",
     # "Verse 2", "x2" or "Repeat chorus" (also "x2,"); and a line without a
     # letter or a digit: punctuation (the "," left of "(x2),") or a separator
     # ("=====", "+++", "♥ ♥ ♥"). A symbol is sung only among words (is_sung).
-    if (_BARE_LABEL_RE.fullmatch(text) or _REPEAT_RE.fullmatch(text.rstrip(".,;:!?…"))
+    if (_BARE_LABEL_RE.fullmatch(label) or _REPEAT_RE.fullmatch(label.rstrip(".,;:!?…"))
             or not _WORD_CHAR_RE.search(text)):
         text = ""
     return times, _mark_bracketed_words(text)

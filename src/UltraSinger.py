@@ -506,9 +506,6 @@ def run() -> tuple[str, Score, Score]:
         # for synced lyrics found before it that failed to align
         if not reference_first_used and process_data.plain_lyrics and not settings.disable_reference_lyrics:
             try:
-                from modules.Speech_Recognition.reference_lyrics_aligner import (
-                    create_midi_segments_from_plain_lyrics,
-                )
                 ref_language = process_data.media_info.language
                 if not ref_language:
                     ref_language = "en"
@@ -516,37 +513,15 @@ def run() -> tuple[str, Score, Score]:
                         f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
                         f"Language unknown — falling back to English alignment model"
                     )
-                heard_words, remote_words = process_data.transcription_words, False
-                if not heard_words and remote_transcription is not None:
-                    heard_words, remote_words = remote_transcription.words, True
-                plain_segments, plain_placement = create_midi_segments_from_plain_lyrics(
-                    plain_lyrics=process_data.plain_lyrics,
-                    audio_path=process_data.process_data_paths.whisper_audio_path,
-                    language=ref_language,
-                    pitched_data=process_data.pitched_data,
-                    device=settings.pytorch_device,
-                    allowed_notes=allowed_notes_for_key,
-                    melisma_split=settings.pitch_change_split,
-                    align_model_name=settings.whisper_align_model,
-                    transcription_words=heard_words,
-                    words_from="remote transcription" if remote_words else "transcription",
-                )
+                plain_segments, plain_placement, remote_words = _align_plain_lyrics(
+                    process_data, ref_language, allowed_notes_for_key, remote_transcription)
                 if plain_segments:
                     process_data.midi_segments = plain_segments
                     reference_first_used = True
                     _plain_lyrics_used = True
                     _plain_lyrics_placement = plain_placement
                     _remote_stt_words_used = remote_words and plain_placement.line_by_line
-                    process_data.transcribed_data = [
-                        TranscribedData(
-                            word=seg.word,
-                            start=seg.start,
-                            end=seg.end,
-                            confidence=1.0,
-                            is_word_end=not seg.word.strip().startswith("~"),
-                        )
-                        for seg in process_data.midi_segments
-                    ]
+                    process_data.transcribed_data = _transcribed_data_of(process_data.midi_segments)
             except Exception as e:
                 print(f"{ULTRASINGER_HEAD} Plain lyrics alignment failed: {e}")
                 print(f"{ULTRASINGER_HEAD} Falling back to standard pipeline")
@@ -560,36 +535,14 @@ def run() -> tuple[str, Score, Score]:
         if not reference_first_used and remote_first:
             try:
                 if remote_transcription is not None:
-                    from modules.Speech_Recognition.reference_lyrics_aligner import (
-                        create_midi_segments_from_plain_lyrics,
-                    )
-                    ref_language = process_data.media_info.language or "en"
-                    remote_segments, _ = create_midi_segments_from_plain_lyrics(
-                        plain_lyrics=remote_transcription.lines(),
-                        audio_path=process_data.process_data_paths.whisper_audio_path,
-                        language=ref_language,
-                        pitched_data=process_data.pitched_data,
-                        device=settings.pytorch_device,
-                        allowed_notes=allowed_notes_for_key,
-                        melisma_split=settings.pitch_change_split,
-                        align_model_name=settings.whisper_align_model,
-                        transcription_words=remote_transcription.words,
-                        words_from="remote transcription",
-                    )
+                    remote_segments = _align_remote_text(
+                        process_data, process_data.media_info.language or "en", allowed_notes_for_key,
+                        remote_transcription)
                     if remote_segments:
                         process_data.midi_segments = remote_segments
                         reference_first_used = True
                         _remote_stt_used = True
-                        process_data.transcribed_data = [
-                            TranscribedData(
-                                word=seg.word,
-                                start=seg.start,
-                                end=seg.end,
-                                confidence=1.0,
-                                is_word_end=not seg.word.strip().startswith("~"),
-                            )
-                            for seg in process_data.midi_segments
-                        ]
+                        process_data.transcribed_data = _transcribed_data_of(process_data.midi_segments)
                         print(
                             f"{ULTRASINGER_HEAD} "
                             f"{cyan_highlighted('Remote STT transcription aligned locally')}"
@@ -663,6 +616,51 @@ def run() -> tuple[str, Score, Score]:
                             )
                     except Exception as e:
                         print(f"{ULTRASINGER_HEAD} Reference retry also failed: {e}")
+
+                # The plain lyrics, else the text of remote speech-to-text, aligned
+                # again in the corrected language: the plain lyrics now with the
+                # words of the transcription; the remote answer is reused, the
+                # audio is not sent again
+                if (not reference_first_used
+                        and not settings.disable_reference_lyrics
+                        and corrected_language
+                        and corrected_language != initial_language
+                        and (process_data.plain_lyrics or remote_transcription is not None)):
+                    print(
+                        f"{ULTRASINGER_HEAD} Aligning the "
+                        f"{'plain lyrics' if process_data.plain_lyrics else 'remote text'} in the corrected "
+                        f"language ({blue_highlighted(corrected_language)})"
+                    )
+                    try:
+                        if process_data.plain_lyrics:
+                            plain_segments, plain_placement, remote_words = _align_plain_lyrics(
+                                process_data, corrected_language, allowed_notes_for_key, remote_transcription)
+                            if plain_segments:
+                                process_data.midi_segments = plain_segments
+                                reference_first_used = True
+                                _plain_lyrics_used = True
+                                _plain_lyrics_placement = plain_placement
+                                _remote_stt_words_used = remote_words and plain_placement.line_by_line
+                        if not reference_first_used and remote_transcription is not None:
+                            remote_segments = _align_remote_text(
+                                process_data, corrected_language, allowed_notes_for_key, remote_transcription)
+                            if remote_segments:
+                                process_data.midi_segments = remote_segments
+                                reference_first_used = True
+                                _remote_stt_used = True
+                                print(
+                                    f"{ULTRASINGER_HEAD} "
+                                    f"{cyan_highlighted('Remote STT transcription aligned locally')}"
+                                )
+                        if reference_first_used:
+                            process_data.transcribed_data = _transcribed_data_of(process_data.midi_segments)
+                            _reference_recovered = True
+                            print(
+                                f"{ULTRASINGER_HEAD} "
+                                f"{cyan_highlighted('Lyrics alignment recovered after language correction')}"
+                            )
+                    except Exception as e:
+                        print(f"{ULTRASINGER_HEAD} Lyrics alignment retry also failed: {e}")
 
                 # Run the intermediate steps we skipped (not for the notes of a
                 # recovered reference pipeline: they are final, as in its first try)
@@ -1249,7 +1247,7 @@ def _write_settings_info_file(
                         if has_synced_lyrics else synced_line)
                 f.write("  Transcription:            full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
-            elif reference_first_used and reference_recovered:
+            elif reference_first_used and reference_recovered and not (remote_stt_used or plain_lyrics_used):
                 f.write("  Pipeline:                 Reference-Lyrics-First (recovered after language correction)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
                 f.write("  Transcription:            full (for language correction)\n")
@@ -1257,7 +1255,8 @@ def _write_settings_info_file(
             elif reference_first_used and remote_stt_used:
                 f.write("  Pipeline:                 Remote STT (text) + local alignment\n")
                 f.write(synced_line)
-                f.write("  Transcription:            skipped\n")
+                f.write("  Transcription:            skipped\n" if whisper_skipped
+                        else "  Transcription:            full (for language correction)\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and plain_lyrics_used:
                 f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
@@ -1896,6 +1895,63 @@ def InitProcessData():
             process_data.media_info.video_url = settings.video_url
 
     return process_data
+
+
+def _align_plain_lyrics(process_data, language: str, allowed_notes, remote_transcription):
+    """The notes of the plain lyrics aligned in ``language``, how their lines
+    were placed, and whether the words of remote speech-to-text placed them:
+    the words of the transcription, else those of the remote answer, give
+    the lines their times."""
+    from modules.Speech_Recognition.reference_lyrics_aligner import create_midi_segments_from_plain_lyrics
+    heard_words, remote_words = process_data.transcription_words, False
+    if not heard_words and remote_transcription is not None:
+        heard_words, remote_words = remote_transcription.words, True
+    segments, placement = create_midi_segments_from_plain_lyrics(
+        plain_lyrics=process_data.plain_lyrics,
+        audio_path=process_data.process_data_paths.whisper_audio_path,
+        language=language,
+        pitched_data=process_data.pitched_data,
+        device=settings.pytorch_device,
+        allowed_notes=allowed_notes,
+        melisma_split=settings.pitch_change_split,
+        align_model_name=settings.whisper_align_model,
+        transcription_words=heard_words,
+        words_from="remote transcription" if remote_words else "transcription",
+    )
+    return segments, placement, remote_words
+
+
+def _align_remote_text(process_data, language: str, allowed_notes, remote_transcription) -> list:
+    """The notes of the text of remote speech-to-text aligned in ``language``:
+    each segment it heard is a line, its words give the lines their times."""
+    from modules.Speech_Recognition.reference_lyrics_aligner import create_midi_segments_from_plain_lyrics
+    segments, _ = create_midi_segments_from_plain_lyrics(
+        plain_lyrics=remote_transcription.lines(),
+        audio_path=process_data.process_data_paths.whisper_audio_path,
+        language=language,
+        pitched_data=process_data.pitched_data,
+        device=settings.pytorch_device,
+        allowed_notes=allowed_notes,
+        melisma_split=settings.pitch_change_split,
+        align_model_name=settings.whisper_align_model,
+        transcription_words=remote_transcription.words,
+        words_from="remote transcription",
+    )
+    return segments
+
+
+def _transcribed_data_of(midi_segments) -> list:
+    """The words of aligned notes, one per note, as the transcription's data."""
+    return [
+        TranscribedData(
+            word=seg.word,
+            start=seg.start,
+            end=seg.end,
+            confidence=1.0,
+            is_word_end=not seg.word.strip().startswith("~"),
+        )
+        for seg in midi_segments
+    ]
 
 
 def _transcribe_remote(process_data, lang_source: str) -> tuple["RemoteTranscription | None", str]:

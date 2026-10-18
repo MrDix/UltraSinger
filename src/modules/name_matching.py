@@ -104,6 +104,63 @@ _PART_NUMBER_RE = re.compile(rf"^\s*{_ROMAN}\b|\b(?:\d{{1,3}}|ii|iii|iv|vi|vii|v
                              re.IGNORECASE)
 # A dashed part that is only a part number ("3", "I", "IV")
 _BARE_PART_NUMBER_RE = re.compile(rf"\s*(?:\d{{1,3}}|{_ROMAN})\s*", re.IGNORECASE)
+# The number of a part, to compare "Part I", "Pt. 1" and "Part One" as one
+_PART_NUMBERS = {name: number for number, names in enumerate(
+    (("1", "i", "one"), ("2", "ii", "two"), ("3", "iii", "three"), ("4", "iv", "four"), ("5", "v", "five"),
+     ("6", "vi", "six"), ("7", "vii", "seven"), ("8", "viii", "eight"), ("9", "ix", "nine"), ("10", "x", "ten")),
+    start=1) for name in names}
+# "I" and a number word are a part number only before the end or a mark,
+# not before another word: "Part One of the Story", "The Part I Played"
+_PART_NUMBER = (r"(?:10|0?[1-9]|viii|vii|iii|vi|iv|ix|ii|v|x)\b"
+                r"|(?:i|one|two|three|four|five|six|seven|eight|nine|ten)\b(?!['’]|\s+[^\W\d_])")
+# A part designation: "Part I", "Pt. 2", "(Part One)", ", Part 1"
+_PART_DESIGNATION_RE = re.compile(rf"\b(?:part|pt)\b\.?\s*({_PART_NUMBER})", re.IGNORECASE)
+# A part number alone after a dash at the end of a title: "Title - I", "Title - 2"
+_DASHED_PART_NUMBER_RE = re.compile(rf"\s+[-–—]\s+({_PART_NUMBER})\s*$", re.IGNORECASE)
+# A number at the end of a title, after its last word (group 2): digits up
+# to ten or a Roman number of two letters or more ("I", "V" and "X" alone are
+# words or names: "Me & I", "Generation X"), also in brackets, after "#" or
+# before closing punctuation ("Title #2", "Title 2!")
+_BARE_END_NUMBER_RE = re.compile(
+    r"\s+(\(\s*|\[\s*|\{\s*)?#?\b(10|0?[1-9]|viii|vii|iii|vi|iv|ix|ii)\b(?(1)\s*[)\]}])[.!?…]*\s*$", re.IGNORECASE)
+# A part number as _same_part_numbers writes it
+_PART_TOKEN_RE = re.compile(r"\bpart (10|[1-9])\b")
+# Words a number after them belongs to, as no part number
+_NUMBER_WORDS = frozenset("part pt vol volume no nr number chapter act movement episode book op opus".split())
+# A part designation with its separator or brackets, to search without it
+_PART_SUFFIX_RE = re.compile(
+    rf"\s*[,:;\-–—]?\s*[(\[{{]?\s*\b(?:part|pt)\b\.?\s*(?:{_PART_NUMBER})\s*[)\]}}]?\s*$", re.IGNORECASE)
+
+
+def _part_number(name: str) -> str:
+    return f"part {_PART_NUMBERS[name.lower().lstrip('0')]}"
+
+
+def _same_part_numbers(title: str) -> str:
+    """The title with its part designations written one way: "Title - I",
+    "Title, Part I", "Title (Pt. 1)" and "Title Part One" all name "part 1"."""
+    title = _DASHED_PART_NUMBER_RE.sub(lambda m: " " + _part_number(m.group(1)), title)
+    title = _PART_DESIGNATION_RE.sub(lambda m: _part_number(m.group(1)), title)
+    # A number alone at the end, also in brackets: "Title 2", "Title II",
+    # "Title (2)" are "Title - 2" (not after a word that names a number
+    # itself: "Vol. 2", "No. 2", "Number 2", nor "Part 2", written above)
+    m = _BARE_END_NUMBER_RE.search(title)
+    words_before = re.findall(r"\w+", title[:m.start()]) if m else []
+    if words_before and words_before[-1].lower() not in _NUMBER_WORDS:
+        title = f"{title[:m.start()]} {_part_number(m.group(2))}"
+    return title
+
+
+def title_without_part(title: str) -> str:
+    """The title (without its additions) before a part designation at its
+    end ("Title" of "Title, Part I", "Title (Pt. 2)" or "Title - I"), to
+    search for all its parts with; "" when it ends with none."""
+    s = strip_title_additions(title)
+    shorter = _DASHED_PART_NUMBER_RE.sub("", s)
+    if shorter == s:
+        shorter = _PART_SUFFIX_RE.sub("", s)
+    shorter = shorter.strip(" ,:;-–—")
+    return shorter if shorter and shorter != s else ""
 
 
 def _clean(s: str) -> str:
@@ -220,13 +277,17 @@ def title_before_dash(title: str, any_rest: bool = False) -> str:
     return strip_title_additions(before)
 
 
-def _title_words(title: str) -> str:
+def _title_words(title: str, same_part_numbers: bool = True) -> str:
     """The title for comparing songs: without its additions and without a
     bracketed part it starts with (often left out: "(Some Words) Title" is
     also called "Title"); other bracketed parts stay, as plain words, since
-    "Title (Part 2)" or "Title (Reprise)" is another song than "Title"."""
+    "Title (Part 2)" or "Title (Reprise)" is another song than "Title".
+    Part designations are written one way (see _same_part_numbers), unless
+    not ``same_part_numbers``."""
     s = strip_title_additions(title)
     s = _LEADING_BRACKETS_RE.sub("", s) or s
+    if same_part_numbers:
+        s = _same_part_numbers(s)
     return " ".join(re.sub(r"[()\[\]{}]", " ", s).split())
 
 
@@ -237,8 +298,25 @@ def titles_match(a: str, b: str) -> bool:
     by ``similarity``; a bracketed part that is not an addition counts like
     any other word, except at the start of a title. Numbers left in both
     titles must be the same: "Intro (Part 1)" is not "Intro (Part 2)".
+    Part numbers are compared however they are written ("Title - I" is
+    "Title, Part I", see _same_part_numbers): when both titles name one,
+    they must be the same, and the titles are compared without them. Else
+    the titles are compared as written ("Title - I" is "Title I", where "I"
+    alone is no part number; "Intro" is not "Intro (Part 2)").
     """
-    a, b = _title_words(a), _title_words(b)
+    same_a, same_b = _title_words(a), _title_words(b)
+    parts_a, parts_b = sorted(_PART_TOKEN_RE.findall(same_a)), sorted(_PART_TOKEN_RE.findall(same_b))
+    if parts_a and parts_b:
+        # all numbers, not only the part numbers: "Title 2" is not "Title 1 & 2"
+        if parts_a != parts_b or sorted(re.findall(r"\d+", same_a)) != sorted(re.findall(r"\d+", same_b)):
+            return False
+        return _words_match(_PART_TOKEN_RE.sub(" ", same_a), _PART_TOKEN_RE.sub(" ", same_b))
+    return _words_match(_title_words(a, same_part_numbers=False), _title_words(b, same_part_numbers=False))
+
+
+def _words_match(a: str, b: str) -> bool:
+    """Whether two titles as _title_words gives them match: by ``similarity``,
+    and with the same numbers where both have some."""
     numbers_a, numbers_b = sorted(re.findall(r"\d+", a)), sorted(re.findall(r"\d+", b))
     if numbers_a and numbers_b and numbers_a != numbers_b:
         return False

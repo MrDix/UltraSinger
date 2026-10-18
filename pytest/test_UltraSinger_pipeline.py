@@ -428,6 +428,77 @@ class TestPlainLyricsAfterFailedSyncedAlignment(unittest.TestCase):
         self.assertIn("Transcription:            skipped", info)
 
 
+class TestLyricsAlignedAgainAfterLanguageCorrection(unittest.TestCase):
+    """Nothing aligned in the quickly detected language: after the transcription corrected it, the
+    plain lyrics (with its words) or the remote text are aligned again, without asking the remote
+    service again."""
+
+    _HEARD_LOCALLY = [("hello ", 1.0, 1.4), ("world ", 1.5, 2.0)]
+
+    def _transcribe(self, process_data):
+        process_data.transcription_words = list(self._HEARD_LOCALLY)
+        process_data.transcribed_data = [_syllable(*word) for word in self._HEARD_LOCALLY]
+        process_data.media_info.language = "en"
+        return None, None
+
+    @staticmethod
+    def _plain_align(calls):
+        def align(**kwargs):
+            calls.append(kwargs)
+            return _aligned(**kwargs) if kwargs["language"] == "en" else ([], PlainLyricsPlacement())
+        return align
+
+    def test_plain_lyrics_with_the_words_of_the_transcription(self):
+        calls, mocks = [], {}
+        lyrics = SimpleNamespace(synced_lyrics="[00:01.00] hello world", plain_lyrics="hello world")
+        notes, out, files = _run(
+            _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5), self._transcribe,
+            early_lyrics=lyrics, fast_language=("cy", 0.95), align=lambda **kwargs: [],
+            plain_align=self._plain_align(calls), mocks=mocks, write_settings_info=True,
+        )
+        mocks["TranscribeAudio"].assert_called_once()
+        self.assertEqual([(c["language"], c["transcription_words"]) for c in calls],
+                         [("cy", []), ("en", self._HEARD_LOCALLY)])
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("Lyrics alignment recovered after language correction", out)
+        # one "Language corrected" line, from the synced retry
+        self.assertEqual(out.count("Language corrected"), 1)
+        self.assertIn("Aligning the plain lyrics in the corrected language", out)
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
+        self.assertIn("Reference recovery:        yes (retried with corrected language)", info)
+
+    def test_remote_text_without_a_second_upload(self):
+        calls, mocks = [], {}
+        notes, out, files = _run(
+            _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5), self._transcribe,
+            fast_language=("cy", 0.95), plain_align=self._plain_align(calls), remote=lambda **kwargs: _HEARD,
+            mocks=mocks, remote_stt=True, write_settings_info=True,
+        )
+        mocks["remote"].assert_called_once()
+        mocks["TranscribeAudio"].assert_called_once()
+        self.assertEqual([(c["plain_lyrics"], c["language"], c["transcription_words"]) for c in calls],
+                         [("other words\nhere", "cy", _HEARD.words), ("other words\nhere", "en", _HEARD.words)])
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Pipeline:                 Remote STT (text) + local alignment", info)
+        self.assertIn("Transcription:            full (for language correction)", info)
+        self.assertIn("Used this run:            yes (its text made the notes)", info)
+
+    def test_same_language_stays_on_the_transcription(self):
+        calls = []
+        lyrics = SimpleNamespace(synced_lyrics="[00:01.00] hello world", plain_lyrics="hello world")
+        notes, out, _ = _run(
+            _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5), self._transcribe,
+            early_lyrics=lyrics, fast_language=("en", 0.95), align=lambda **kwargs: [],
+            plain_align=lambda **kwargs: (calls.append(kwargs), ([], PlainLyricsPlacement()))[1],
+            bpm_override=60.0,
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("Aligning the plain lyrics in the corrected language", out)
+        self.assertEqual([n[0] for n in notes], ["hello ", "world "])
+
+
 class TestPlainLyricsLineTimes(unittest.TestCase):
     """The transcription's words, as it placed them, give the lines of the plain lyrics their times."""
 
