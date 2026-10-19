@@ -23,6 +23,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     end_row,
     line_times_from_words,
     lyrics_tokens,
+    passages_without_lyrics,
     trellis,
     with_wildcard,
 )
@@ -757,3 +758,65 @@ class TestLineTimesFromWords:
         times, anchored = line_times_from_words(lines, heard(("...", 1.0), ("go", 2.0)))
         assert anchored == 1
         assert times == pytest.approx([2.0 - 2 * WORD_S])
+
+
+class TestPassagesWithoutLyrics:
+    """The passages of a transcription that the lyrics do not have, and the lines it has."""
+
+    LINES = [["hello", "dear", "world"], ["come", "on", "now"], ["never", "heard", "here"]]
+
+    def test_a_passage_between_lines(self):
+        words = heard(("hello", 1.0), ("dear", 1.4), ("world", 1.8),
+                      *[(w, 5.0 + 0.5 * n) for n, w in enumerate("x1 x2 x3 x4 x5 x6 x7 x8 x9 x10".split())],
+                      ("come", 12.0), ("on", 12.4), ("now", 12.8))
+        passages, sung = passages_without_lyrics(self.LINES, words)
+        # x3 to x8 are more than two words from a sure pair: six make a passage, which reaches
+        # up to the sure pairs around it
+        assert passages == [(3, 13)]
+        assert sung == {0, 1}
+
+    def test_a_word_alone_pairs_by_chance(self):
+        # "dear" amid other words pairs with the lyrics, but no neighbour does: no sure pair
+        foreign = [f"a{n}" for n in range(12)] + ["dear"] + [f"b{n}" for n in range(12)]
+        words = heard(*[(w, 1.0 + 0.5 * n) for n, w in enumerate(foreign)])
+        passages, sung = passages_without_lyrics(self.LINES, words)
+        assert passages == [(0, 25)]
+        assert sung == set()
+
+    def test_lines_heard_badly_are_no_passage(self):
+        # the lyrics have six words between "world" and "never" for the ten heard there: the
+        # transcriber heard that line badly, the lyrics do not lack it
+        lines = self.LINES[:1] + [["so", "much", "more", "to", "say", "today"], ["never", "heard", "here"]]
+        words = heard(("hello", 1.0), ("dear", 1.4), ("world", 1.8),
+                      *[(w, 5.0 + 0.5 * n) for n, w in enumerate("x1 x2 x3 x4 x5 x6 x7 x8 x9 x10".split())],
+                      ("never", 12.0), ("heard", 12.4), ("here", 12.8))
+        assert passages_without_lyrics(lines, words) == ([], {0, 2})
+        # with a short line there, the words are a passage
+        assert passages_without_lyrics(self.LINES[:1] + [["oh"]] + self.LINES[2:], words) == ([(3, 13)], {0, 2})
+
+    def test_too_few_words(self):
+        words = heard(("hello", 1.0), ("dear", 1.4), ("world", 1.8),
+                      *[(w, 5.0 + 0.5 * n) for n, w in enumerate("x1 x2 x3 x4 x5 x6 x7".split())],
+                      ("come", 12.0), ("on", 12.4), ("now", 12.8))
+        # x3 to x5 are more than two words from a sure pair: three are no passage
+        assert passages_without_lyrics(self.LINES, words) == ([], {0, 1})
+        assert passages_without_lyrics(self.LINES, words, min_words=3) == ([(3, 10)], {0, 1})
+
+    def test_words_without_text_or_times_are_skipped(self):
+        words = heard(("hello", 1.0), ("dear", 1.4), ("world", 1.8),
+                      *[(w, 5.0 + 0.5 * n) for n, w in enumerate("x1 x2 x3 ... x4 x5 x6 x7 x8".split())])
+        words.insert(7, ("x9", None, None))
+        passages, _ = passages_without_lyrics(self.LINES[:1], words)
+        # indices into the given words: from x1 to the end
+        assert passages == [(3, len(words))]
+
+    def test_chance_pairs_belong_to_the_passage(self):
+        # "on" pairs with the lyrics, but alone: it is part of the passage
+        foreign = "x1 x2 x3 x4 on x5 x6 x7 x8".split()
+        words = heard(("hello", 1.0), ("dear", 1.4), ("world", 1.8),
+                      *[(w, 5.0 + 0.5 * n) for n, w in enumerate(foreign)])
+        assert passages_without_lyrics(self.LINES[:1] + [["on"]], words) == ([(3, 12)], {0})
+
+    def test_lyrics_sung_in_full(self):
+        words = heard(*[(w, 1.0 + 0.4 * n) for n, w in enumerate(w for line in self.LINES for w in line)])
+        assert passages_without_lyrics(self.LINES, words) == ([], {0, 1, 2})

@@ -36,6 +36,13 @@ _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 # Found versions of a song at most this much further off the length of the
 # audio than the closest one count as just as close (see _best_version)
 _SAME_LENGTH_S = 5.0
+# A found version at least this much longer or shorter than the audio, in
+# seconds and as a share of the audio's length, may be of another recording
+# (a live version with an extra part, a radio edit): see other_recording
+OTHER_RECORDING_S = 20.0
+OTHER_RECORDING_SHARE = 0.10
+# Time tags of LRC lines ("[01:23.45]") and of enhanced LRC words ("<01:23.45>")
+_LRC_TIME_TAG_RE = re.compile(r"\[\d+:\d+(?:\.\d+)?\]|<\d+:\d+(?:\.\d+)?>")
 # What separates the artists of one credit: "A & B", "A, B", "A / B", "A and B",
 # "A feat. B" - not a slash or a comma inside a name ("A/B", "A,B")
 _CREDIT_SEPARATOR_RE = re.compile(
@@ -329,6 +336,28 @@ def _best_version(entries: list[dict], duration: Optional[float]) -> dict:
               for index, (entry, off) in enumerate(zip(entries, offs))
               if off <= closest + _SAME_LENGTH_S]
     return entries[min(ranked)[2]]
+
+
+def other_recording(length: Optional[float], duration: Optional[float]) -> bool:
+    """Whether found lyrics of a version ``length`` seconds long may be of
+    another recording than the audio (``duration`` seconds): the lengths
+    differ by more than ``OTHER_RECORDING_S`` and by more than
+    ``OTHER_RECORDING_SHARE`` of the audio. False when a length is unknown.
+
+    The LRC times of such lyrics only fit the audio when the recordings
+    differ at the end (an audio that is cut short, a longer fade-out); a
+    live version with an extra part moves all lines after it.
+    """
+    if not (isinstance(length, (int, float)) and length > 0 and duration):
+        return False
+    off = abs(length - duration)
+    return off > OTHER_RECORDING_S and off > OTHER_RECORDING_SHARE * duration
+
+
+def lrc_text(synced_lyrics: str) -> str:
+    """The text of synced lyrics without their time tags, one line per line."""
+    lines = (" ".join(_LRC_TIME_TAG_RE.sub(" ", line).split()) for line in synced_lyrics.splitlines())
+    return "\n".join(line for line in lines if line)
 
 
 def _length_off(entry: dict, duration: Optional[float]) -> float:

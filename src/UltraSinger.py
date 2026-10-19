@@ -369,6 +369,7 @@ def run() -> tuple[str, Score, Score]:
                             f"set the language with --language"
                         )
                     process_data.synced_lyrics = early_synced
+                    process_data.synced_lyrics_length = early_lyrics_info.duration
                     whisper_skipped = True
                     print(
                         f"{ULTRASINGER_HEAD} "
@@ -453,9 +454,6 @@ def run() -> tuple[str, Score, Score]:
         # when available (produces dramatically better lyrics coverage and timing)
         if process_data.synced_lyrics and not settings.disable_reference_lyrics:
             try:
-                from modules.Speech_Recognition.reference_lyrics_aligner import (
-                    create_midi_segments_from_reference_lyrics,
-                )
                 ref_language = process_data.media_info.language
                 if not ref_language:
                     ref_language = "en"
@@ -463,16 +461,7 @@ def run() -> tuple[str, Score, Score]:
                         f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} "
                         f"Language unknown — falling back to English alignment model"
                     )
-                ref_segments = create_midi_segments_from_reference_lyrics(
-                    synced_lyrics=process_data.synced_lyrics,
-                    audio_path=process_data.process_data_paths.whisper_audio_path,
-                    language=ref_language,
-                    pitched_data=process_data.pitched_data,
-                    device=settings.pytorch_device,
-                    allowed_notes=allowed_notes_for_key,
-                    melisma_split=settings.pitch_change_split,
-                    align_model_name=settings.whisper_align_model,
-                )
+                ref_segments = _align_synced_lyrics(process_data, ref_language, allowed_notes_for_key)
                 if ref_segments:
                     process_data.midi_segments = ref_segments
                     reference_first_used = True
@@ -503,8 +492,12 @@ def run() -> tuple[str, Score, Score]:
         # Fallback: Plain lyrics alignment when no synced lyrics available.
         # The words of the transcription, or of remote speech-to-text, give
         # their lines times; there are none when the transcription was skipped
-        # for synced lyrics found before it that failed to align
-        if not reference_first_used and process_data.plain_lyrics and not settings.disable_reference_lyrics:
+        # for synced lyrics found before it that failed to align. The text of
+        # synced lyrics of another recording waits for these words: they place
+        # its lines, and sing what it does not have
+        if (not reference_first_used and process_data.plain_lyrics and not settings.disable_reference_lyrics
+                and not (process_data.synced_lyrics_other_recording and not process_data.transcription_words
+                         and remote_transcription is None)):
             try:
                 ref_language = process_data.media_info.language
                 if not ref_language:
@@ -583,19 +576,7 @@ def run() -> tuple[str, Score, Score]:
                     )
                     try:
                         # (the synced lyrics may only have been found by the transcription's lookup)
-                        from modules.Speech_Recognition.reference_lyrics_aligner import (
-                            create_midi_segments_from_reference_lyrics,
-                        )
-                        ref_segments = create_midi_segments_from_reference_lyrics(
-                            synced_lyrics=process_data.synced_lyrics,
-                            audio_path=process_data.process_data_paths.whisper_audio_path,
-                            language=corrected_language,
-                            pitched_data=process_data.pitched_data,
-                            device=settings.pytorch_device,
-                            allowed_notes=allowed_notes_for_key,
-                            melisma_split=settings.pitch_change_split,
-                            align_model_name=settings.whisper_align_model,
-                        )
+                        ref_segments = _align_synced_lyrics(process_data, corrected_language, allowed_notes_for_key)
                         if ref_segments:
                             process_data.midi_segments = ref_segments
                             reference_first_used = True
@@ -620,21 +601,27 @@ def run() -> tuple[str, Score, Score]:
                 # The plain lyrics, else the text of remote speech-to-text, aligned
                 # again in the corrected language: the plain lyrics now with the
                 # words of the transcription; the remote answer is reused, the
-                # audio is not sent again
+                # audio is not sent again. The text of synced lyrics of another
+                # recording waited for these words (also without a new language)
+                language_corrected = bool(corrected_language) and corrected_language != initial_language
+                other_recording_text = bool(process_data.synced_lyrics_other_recording and process_data.plain_lyrics)
                 if (not reference_first_used
                         and not settings.disable_reference_lyrics
-                        and corrected_language
-                        and corrected_language != initial_language
+                        and (language_corrected or other_recording_text)
                         and (process_data.plain_lyrics or remote_transcription is not None)):
-                    print(
-                        f"{ULTRASINGER_HEAD} Aligning the "
-                        f"{'plain lyrics' if process_data.plain_lyrics else 'remote text'} in the corrected "
-                        f"language ({blue_highlighted(corrected_language)})"
-                    )
+                    plain_language = corrected_language or "en"
+                    if language_corrected:
+                        print(
+                            f"{ULTRASINGER_HEAD} Aligning the "
+                            f"{'plain lyrics' if process_data.plain_lyrics else 'remote text'} in the corrected "
+                            f"language ({blue_highlighted(corrected_language)})"
+                        )
+                    else:
+                        print(f"{ULTRASINGER_HEAD} Aligning the text of the lyrics with the words of the transcription")
                     try:
                         if process_data.plain_lyrics:
                             plain_segments, plain_placement, remote_words = _align_plain_lyrics(
-                                process_data, corrected_language, allowed_notes_for_key, remote_transcription)
+                                process_data, plain_language, allowed_notes_for_key, remote_transcription)
                             if plain_segments:
                                 process_data.midi_segments = plain_segments
                                 reference_first_used = True
@@ -643,7 +630,7 @@ def run() -> tuple[str, Score, Score]:
                                 _remote_stt_words_used = remote_words and plain_placement.line_by_line
                         if not reference_first_used and remote_transcription is not None:
                             remote_segments = _align_remote_text(
-                                process_data, corrected_language, allowed_notes_for_key, remote_transcription)
+                                process_data, plain_language, allowed_notes_for_key, remote_transcription)
                             if remote_segments:
                                 process_data.midi_segments = remote_segments
                                 reference_first_used = True
@@ -654,11 +641,12 @@ def run() -> tuple[str, Score, Score]:
                                 )
                         if reference_first_used:
                             process_data.transcribed_data = _transcribed_data_of(process_data.midi_segments)
-                            _reference_recovered = True
-                            print(
-                                f"{ULTRASINGER_HEAD} "
-                                f"{cyan_highlighted('Lyrics alignment recovered after language correction')}"
-                            )
+                            if language_corrected:
+                                _reference_recovered = True
+                                print(
+                                    f"{ULTRASINGER_HEAD} "
+                                    f"{cyan_highlighted('Lyrics alignment recovered after language correction')}"
+                                )
                     except Exception as e:
                         print(f"{ULTRASINGER_HEAD} Lyrics alignment retry also failed: {e}")
 
@@ -1038,6 +1026,8 @@ def run() -> tuple[str, Score, Score]:
             plain_lyrics_used=_plain_lyrics_used,
             plain_lyrics_placement=_plain_lyrics_placement,
             rejected_synced_language=process_data.synced_lyrics_other_language,
+            synced_of_other_recording=process_data.synced_lyrics_other_recording,
+            plain_from_synced=process_data.plain_lyrics_from_synced,
             model_segmentation_used=model_segmentation_used,
         )
 
@@ -1177,6 +1167,8 @@ def _write_settings_info_file(
         plain_lyrics_used: bool = False,
         plain_lyrics_placement: "PlainLyricsPlacement | None" = None,
         rejected_synced_language: str | None = None,
+        synced_of_other_recording: str | None = None,
+        plain_from_synced: bool = False,
         model_segmentation_used: bool = False,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
@@ -1236,6 +1228,9 @@ def _write_settings_info_file(
             elif rejected_synced_language:
                 synced_line = (f"  LRCLIB synced lyrics:     found but rejected (in {rejected_synced_language}, "
                                "another language than the singing)\n")
+            elif synced_of_other_recording:
+                synced_line = (f"  LRCLIB synced lyrics:     found, of another recording ({synced_of_other_recording}): "
+                               "their times were not used\n")
             else:
                 synced_line = "  LRCLIB synced lyrics:     not found\n"
             if settings.ignore_audio:
@@ -1261,7 +1256,8 @@ def _write_settings_info_file(
             elif reference_first_used and plain_lyrics_used:
                 f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
                 f.write(synced_line)
-                f.write("  LRCLIB plain lyrics:      found\n")
+                f.write("  LRCLIB plain lyrics:      the text of the synced lyrics\n" if plain_from_synced
+                        else "  LRCLIB plain lyrics:      found\n")
                 if plain_lyrics_placement is not None:
                     f.write(f"  Plain lyrics placed:      {plain_lyrics_placement}\n")
                 f.write("  Transcription:            skipped\n" if whisper_skipped
@@ -1897,6 +1893,49 @@ def InitProcessData():
     return process_data
 
 
+def _align_synced_lyrics(process_data, language: str, allowed_notes) -> list:
+    """The notes of the synced lyrics aligned in ``language`` (none when they
+    could not be aligned).
+
+    Synced lyrics of a recording much longer or shorter than the audio may be
+    of another recording (see ``other_recording``): when their lines then
+    mostly miss their LRC times, these times are not used. The synced lyrics
+    are dropped, and their text becomes the plain lyrics (unless LRCLIB had
+    plain lyrics): the words of the transcription place its lines and sing
+    the passages it does not have.
+    """
+    from modules.lrclib_client import lrc_text, other_recording
+    from modules.Speech_Recognition.reference_lyrics_aligner import (
+        LyricsOfOtherRecording,
+        create_midi_segments_from_reference_lyrics,
+    )
+    audio_s = audio_length(process_data.process_data_paths.whisper_audio_path)
+    try:
+        return create_midi_segments_from_reference_lyrics(
+            synced_lyrics=process_data.synced_lyrics,
+            audio_path=process_data.process_data_paths.whisper_audio_path,
+            language=language,
+            pitched_data=process_data.pitched_data,
+            device=settings.pytorch_device,
+            allowed_notes=allowed_notes,
+            melisma_split=settings.pitch_change_split,
+            align_model_name=settings.whisper_align_model,
+            other_recording=other_recording(process_data.synced_lyrics_length, audio_s),
+        )
+    except LyricsOfOtherRecording as e:
+        lengths = f"{process_data.synced_lyrics_length:.0f} s long, the audio {audio_s:.0f} s"
+        process_data.synced_lyrics_other_recording = f"{lengths}, {e}"
+        print(
+            f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the found synced lyrics are of another recording "
+            f"({lengths}, {e}): their times are not used, transcribed words place their lines"
+        )
+        if not process_data.plain_lyrics:
+            process_data.plain_lyrics = lrc_text(process_data.synced_lyrics)
+            process_data.plain_lyrics_from_synced = True
+        process_data.synced_lyrics = None
+        return []
+
+
 def _align_plain_lyrics(process_data, language: str, allowed_notes, remote_transcription):
     """The notes of the plain lyrics aligned in ``language``, how their lines
     were placed, and whether the words of remote speech-to-text placed them:
@@ -1936,6 +1975,7 @@ def _align_remote_text(process_data, language: str, allowed_notes, remote_transc
         align_model_name=settings.whisper_align_model,
         transcription_words=remote_transcription.words,
         words_from="remote transcription",
+        passages_from_words=False,
     )
     return segments
 
@@ -2059,14 +2099,21 @@ def TranscribeAudio(process_data):
                         synced_lyrics = None
                         process_data.synced_lyrics = None
                         process_data.synced_lyrics_other_language = lyrics_language
+                        # nor their text, kept as plain lyrics when they were taken for another recording's
+                        if process_data.plain_lyrics_from_synced:
+                            process_data.plain_lyrics = None
+                            process_data.plain_lyrics_from_synced = False
                     else:
                         plain_lyrics = None
                         process_data.plain_lyrics = None
-            # Save synced lyrics for reference-first pipeline (independent of plain lyrics)
-            if synced_lyrics:
+            # Save synced lyrics for reference-first pipeline (independent of plain
+            # lyrics); not the ones found again that were taken for another recording's
+            if synced_lyrics and not process_data.synced_lyrics_other_recording:
                 process_data.synced_lyrics = synced_lyrics
+                process_data.synced_lyrics_length = lyrics_info.duration
             if plain_lyrics:
                 process_data.plain_lyrics = plain_lyrics
+                process_data.plain_lyrics_from_synced = False
                 process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
                     process_data.transcribed_data, plain_lyrics
                 )

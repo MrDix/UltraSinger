@@ -79,6 +79,8 @@ _OFFICIAL_RE = re.compile(
     r"\s+official(?:\s+(?:music|lyrics?|hd|hq|4k|video|audio|visuali[sz]er|clip|videoclip))*\s*$",
     re.IGNORECASE,
 )
+# The word that marks a live recording in an addition to a video title
+_LIVE_RE = re.compile(r"\blive\b", re.IGNORECASE)
 # A trailing quality mark: "HD", "HQ", "4K", "1080p"
 _QUALITY_RE = re.compile(r"(?:\s+(?:hd|hq|4k|8k|\d{3,4}p))+\s*$", re.IGNORECASE)
 # What a video title puts after a dash is a description of the video, not a
@@ -251,6 +253,32 @@ def strip_title_additions(title: str) -> str:
     s = _OFFICIAL_RE.sub("", s)
     s = _QUALITY_RE.sub("", s)
     return " ".join(s.split()) or (title or "").strip()
+
+
+def is_live_title(video_title: str) -> bool:
+    """Whether a video title marks the video as a live recording: an addition
+    to the title (see strip_title_additions) says "live" - "(Live)", "[Live
+    at Some Place]", "(Official Live Video)", "Title - Live from the Studio".
+    The word in the song title ("Live Forever", "Title (Live Forever)") or
+    in the part before the first dash (the artist, in "Artist - Title")
+    marks nothing.
+    """
+    video_title = video_title or ""
+    for bracket in _BRACKETS_RE.finditer(video_title):
+        part = bracket.group(0)[1:-1]
+        if _LIVE_RE.search(part) and _is_addition(part, in_brackets=True):
+            return True
+    parts = _SEPARATOR_RE.split(_BRACKETS_RE.sub(" ", video_title))
+    # (the split keeps the separators: every second part)
+    return any(_LIVE_RE.search(part) and _is_addition(part) for part in parts[2::2])
+
+
+def with_live_mark(title: str, video_title: str) -> str:
+    """The song ``title`` with " (Live)" added when the video title marks a
+    live recording (see is_live_title) and the title has no "live" yet."""
+    if title and is_live_title(video_title) and not _LIVE_RE.search(title):
+        return f"{title} (Live)"
+    return title
 
 
 def title_before_dash(title: str, any_rest: bool = False) -> str:

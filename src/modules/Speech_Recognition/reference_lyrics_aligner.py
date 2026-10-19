@@ -53,11 +53,13 @@ from modules.Speech_Recognition.lyrics_alignment import (
     PIECE_S,
     RELIABLE_LINES,
     SAMPLE_RATE,
+    UNUSABLE_TOKEN,
     align_lyrics,
     blank_index,
     emission_in_pieces,
     line_times_from_words,
     lyrics_tokens,
+    passages_without_lyrics,
 )
 from modules.Speech_Recognition.sung_text import is_closing_punctuation, is_sung
 
@@ -316,6 +318,22 @@ _GPU_CACHE_FACTOR = 1.4
 _MODEL_WINDOW = 400
 
 
+# Synced lyrics that may be of another recording (see other_recording) are
+# only aligned by their times when at least this share of their lines lands
+# at its LRC time
+MIN_FIT_SHARE = 0.5
+
+
+class LyricsOfOtherRecording(Exception):
+    """Synced lyrics whose lines mostly do not land at their LRC times: of
+    another recording than the audio, whose times do not fit it."""
+
+    def __init__(self, fit: int, lines: int):
+        super().__init__(f"only {fit} of {lines} lines at their LRC time")
+        self.fit = fit
+        self.lines = lines
+
+
 def align_lyrics_to_audio(
     segments: list[dict],
     audio_path: str,
@@ -323,6 +341,8 @@ def align_lyrics_to_audio(
     device: str = "cpu",
     align_model_name: Optional[str] = None,
     line_time: Optional[str] = "LRC time",
+    min_fit_share: Optional[float] = None,
+    silent_spans: Optional[list[tuple[float, float]]] = None,
 ) -> list[dict]:
     """Align LRC line segments to audio using wav2vec2 forced alignment.
 
@@ -345,6 +365,10 @@ def align_lyrics_to_audio(
             names it: ``"LRC time"`` for synced lyrics, ``"time from the
             transcription"`` for plain lyrics with line times from its words.
             None: the segments have no times.
+        min_fit_share: With times, the share of the lines that must land at
+            their time; ``LyricsOfOtherRecording`` is raised for fewer.
+        silent_spans: Parts of the audio (start s, end s) where no words
+            are placed: the model hears nothing there.
 
     Returns:
         List of ``{"word", "start", "end", "backing", "line_end"}`` dicts,
@@ -423,6 +447,9 @@ def align_lyrics_to_audio(
     result = None
     if emissions:
         frame_s = n_samples / SAMPLE_RATE / len(emissions[0][1])
+        if silent_spans:
+            emissions = [(label, _silenced(log_probs, silent_spans, frame_s, blank_index(dictionary)))
+                         for label, log_probs in emissions]
         result = align_lyrics(
             tokens, emissions, blank_index(dictionary), frame_s, line_times if timed else None,
         )
@@ -431,6 +458,9 @@ def align_lyrics_to_audio(
     if result is not None:
         if timed:
             _print_line_check(result, line_time)
+            if (min_fit_share is not None and result.fit is not None
+                    and result.fit < min_fit_share * result.lines):
+                raise LyricsOfOtherRecording(result.fit, result.lines)
         last_of_line = {}  # line -> index of its last word
         for w, start, end in result.words:
             last_of_line[int(tokens.word_line[w])] = len(words)
@@ -451,6 +481,17 @@ def align_lyrics_to_audio(
     )
 
     return words
+
+
+def _silenced(log_probs: np.ndarray, spans: list[tuple[float, float]], frame_s: float,
+              blank_id: int) -> np.ndarray:
+    """The emission with nothing but the blank on the frames within ``spans`` (start s, end s)."""
+    log_probs = log_probs.copy()
+    for start, end in spans:
+        f0, f1 = max(0, int(start / frame_s)), max(0, int(math.ceil(end / frame_s)))
+        log_probs[f0:f1] = UNUSABLE_TOKEN
+        log_probs[f0:f1, blank_id] = 0.0
+    return log_probs
 
 
 def _alignment_emissions(model, model_type: str, audio: np.ndarray, device: str,
@@ -1055,6 +1096,7 @@ def create_midi_segments_from_reference_lyrics(
     threshold_st: float = 2.0,
     min_note_ms: float = 80.0,
     align_model_name: Optional[str] = None,
+    other_recording: bool = False,
 ) -> list[MidiSegment]:
     """Create MidiSegments from LRCLIB synced lyrics + forced alignment + pitch.
 
@@ -1071,6 +1113,10 @@ def create_midi_segments_from_reference_lyrics(
         threshold_st: Semitone threshold for melisma detection.
         min_note_ms: Minimum note duration for melisma splits.
         align_model_name: Optional custom alignment model name.
+        other_recording: Whether the lyrics may be of another recording
+            (see ``lrclib_client.other_recording``): then fewer than
+            ``MIN_FIT_SHARE`` of their lines at their LRC time raise
+            ``LyricsOfOtherRecording``.
 
     Returns:
         List of MidiSegments with lyrics and pitch.
@@ -1086,6 +1132,7 @@ def create_midi_segments_from_reference_lyrics(
     # Step 2: Forced alignment -> word-level timing
     words = align_lyrics_to_audio(
         segments, audio_path, language, device, align_model_name,
+        min_fit_share=MIN_FIT_SHARE if other_recording else None,
     )
     if not words:
         print(f"{ULTRASINGER_HEAD} Forced alignment returned no words -- "
@@ -1222,6 +1269,14 @@ def _notes_from_words(
     return midi_segments
 
 
+# A passage of the transcription that the lyrics do not have (see
+# passages_without_lyrics) is sung with its words when they have a voiced
+# pitch on PASSAGE_VOICED_SHARE of their frames (no words of the transcriber
+# in a pause). In a passage, a pause of LINE_PAUSE_S ends a line.
+PASSAGE_VOICED_SHARE = 0.25
+LINE_PAUSE_S = 1.0
+
+
 @dataclass
 class PlainLyricsPlacement:
     """How the lines of plain lyrics were placed in time."""
@@ -1230,15 +1285,93 @@ class PlainLyricsPlacement:
     with_words: bool = False    # whether there were words of a transcription
     line_by_line: bool = False  # aligned with these line times, as synced lyrics are
     words_from: str = "transcription"  # what transcribed the words
+    passages: int = 0           # sung passages without lyrics, sung with the transcribed words
+    passage_words: int = 0      # the words of these passages
+    left_out: int = 0           # lines of the lyrics left out: not sung where their time fell into a passage
+
+    def placed(self) -> str:
+        """How the lines were placed, without the passages."""
+        if self.line_by_line:
+            placed = (f"line by line ({self.anchored} of {self.lines} lines anchored by the "
+                      f"{self.words_from}'s words)")
+        elif not self.with_words:
+            placed = f"as one block (no {self.words_from} words)"
+        else:
+            placed = (f"as one block ({self.anchored} of {self.lines} lines anchored by the "
+                      f"{self.words_from}'s words, too few)")
+        return placed
 
     def __str__(self) -> str:
-        if self.line_by_line:
-            return (f"line by line ({self.anchored} of {self.lines} lines anchored by the "
-                    f"{self.words_from}'s words)")
-        if not self.with_words:
-            return f"as one block (no {self.words_from} words)"
-        return (f"as one block ({self.anchored} of {self.lines} lines anchored by the {self.words_from}'s words, "
-                f"too few)")
+        placed = self.placed()
+        if self.passages:
+            placed += (f", {self.passages} sung {'passage' if self.passages == 1 else 'passages'} without "
+                       f"lyrics with the {self.words_from}'s words ({self.passage_words} words")
+            placed += (f", {self.left_out} {'line' if self.left_out == 1 else 'lines'} of the lyrics left out "
+                       f"there)" if self.left_out else ")")
+        return placed
+
+
+def _voiced_share(spans: list[tuple[float, float]], pitched_data: PitchedData) -> float:
+    """The share of the pitch frames within ``spans`` (start s, end s) that are voiced."""
+    times = np.asarray(pitched_data.times)
+    inside = np.zeros(len(times), dtype=bool)
+    for start, end in spans:
+        inside |= (times >= start) & (times <= end)
+    if not inside.any():
+        return 0.0
+    voiced = ((np.asarray(pitched_data.frequencies) > _VOICED_MIN_FREQ)
+              & (np.asarray(pitched_data.confidence) > _VOICED_CONFIDENCE))
+    return float(voiced[inside].mean())
+
+
+def _sung_passages(
+    lines: list[list[str]],
+    heard_words: list[tuple[str, float, float]],
+    pitched_data: PitchedData,
+) -> tuple[list[list[dict]], set[int]]:
+    """The passages of the transcription (``heard_words``: text, start s, end
+    s) that the ``lines`` of the lyrics do not have and that are sung, as
+    words in the form of ``align_lyrics_to_audio``, and the lines that the
+    transcription has (see ``passages_without_lyrics``)."""
+    runs, sung_lines = passages_without_lyrics(lines, heard_words)
+    passages = []
+    for first, end in runs:
+        run = [(text.strip(), start, stop) for text, start, stop in heard_words[first:end]
+               if start is not None and stop is not None and is_sung(text.strip())]
+        if not run or _voiced_share([(start, stop) for _, start, stop in run], pitched_data) < PASSAGE_VOICED_SHARE:
+            continue
+        passages.append([
+            {"word": text, "start": start, "end": stop, "backing": False,
+             "line_end": k == len(run) - 1 or run[k + 1][1] - stop >= LINE_PAUSE_S}
+            for k, (text, start, stop) in enumerate(run)
+        ])
+    return passages, sung_lines
+
+
+def _span(passage: list[dict]) -> tuple[float, float]:
+    return passage[0]["start"], passage[-1]["end"]
+
+
+def _with_passages(words: list[dict], passages: list[list[dict]]) -> list[dict]:
+    """The aligned ``words`` of the lyrics with the words of the ``passages``
+    in their place: words of the lyrics that start within a passage are left
+    out, a word that runs into one ends where it starts (the path puts the
+    end of a word at the next word boundary it finds, which may be after the
+    passage), each passage follows the words that start before it, and the
+    word before a passage ends a line."""
+    spans = [_span(passage) for passage in passages]
+    out = []
+    for w in words:
+        if any(start <= w["start"] < end for start, end in spans):
+            continue
+        ends = [start for start, _ in spans if w["start"] < start < w["end"]]
+        out.append({**w, "end": min(ends)} if ends else w)
+    for passage in sorted(passages, key=lambda p: p[0]["start"], reverse=True):
+        at = sum(1 for w in out if w["start"] < passage[0]["start"])
+        if at:
+            out[at - 1] = {**out[at - 1], "line_end": True}
+        out[at:at] = passage
+    return out
 
 
 def create_midi_segments_from_plain_lyrics(
@@ -1254,6 +1387,7 @@ def create_midi_segments_from_plain_lyrics(
     align_model_name: Optional[str] = None,
     transcription_words: Optional[list[tuple[str, float, float]]] = None,
     words_from: str = "transcription",
+    passages_from_words: bool = True,
 ) -> tuple[list[MidiSegment], PlainLyricsPlacement]:
     """Create MidiSegments from plain lyrics (no timestamps) + forced alignment.
 
@@ -1264,6 +1398,12 @@ def create_midi_segments_from_plain_lyrics(
     lines, and at least ``RELIABLE_LINES``, got one, the lines are aligned
     with these times as synced lyrics are; otherwise all of them on one path
     over the whole song, as WhisperX aligns one segment.
+
+    With ``passages_from_words``, the passages of the transcription that the
+    lyrics do not have (``passages_without_lyrics``: an extra part of a live
+    version, a chorus sung more often than written) are sung with its words.
+    Lines of the lyrics that the transcription does not have are left out
+    when their time falls into such a passage: they are not sung there.
 
     Args:
         plain_lyrics: Raw plain text lyrics (line breaks separate lines).
@@ -1280,6 +1420,8 @@ def create_midi_segments_from_plain_lyrics(
             ``(text, start s, end s)``, where the transcriber placed them.
         words_from: What transcribed them, as the report names it
             (``"remote transcription"`` for remote speech-to-text).
+        passages_from_words: Whether passages without lyrics get the
+            transcribed words (not when the lyrics are these words).
 
     Returns:
         The MidiSegments with lyrics and pitch (none when the lyrics could
@@ -1300,19 +1442,34 @@ def create_midi_segments_from_plain_lyrics(
     placement.lines = len(lines)
     placement.line_by_line = (times is not None and placement.anchored >= RELIABLE_LINES
                               and placement.anchored >= ANCHORED_SHARE * len(lines))
+    # Only when the transcription's words could place the lines: with too few
+    # of them they are no measure of what the lyrics do not have
+    passages = []
+    if passages_from_words and placement.line_by_line:
+        passages, sung_lines = _sung_passages(lines, transcription_words, pitched_data)
+        spans = [_span(passage) for passage in passages]
+        kept = [i for i in range(len(lines))
+                if i in sung_lines or not any(start <= times[i] <= end for start, end in spans)]
+        placement.left_out = len(lines) - len(kept)
+        texts, lines = [texts[i] for i in kept], [lines[i] for i in kept]
+        times = [times[i] for i in kept] if times is not None else None
     print(
         f"{ULTRASINGER_HEAD} Plain lyrics alignment: "
         f"{blue_highlighted(str(sum(len(line) for line in lines)))} words in "
         f"{blue_highlighted(str(len(lines)))} lines to align"
     )
-    print(f"{ULTRASINGER_HEAD} Plain lyrics are placed {placement}")
+    print(f"{ULTRASINGER_HEAD} Plain lyrics are placed {placement.placed()}")
+    if not lines:
+        return [], placement
 
     # Without line times, the start of the segments is not used
     segments = [{"text": text, "start": times[i] if placement.line_by_line else 0.0}
                 for i, text in enumerate(texts)]
+    # The passages are sung with other words: no words of the lyrics go there
     words = align_lyrics_to_audio(
         segments, audio_path, language, device, align_model_name,
         line_time="time from the transcription" if placement.line_by_line else None,
+        silent_spans=[_span(passage) for passage in passages],
     )
     if not words:
         print(f"{ULTRASINGER_HEAD} Plain lyrics alignment returned no words -- "
@@ -1322,5 +1479,13 @@ def create_midi_segments_from_plain_lyrics(
     # The end of the lyrics is no line break: lyrics in one line (such as the
     # text of remote speech-to-text) leave the line breaks to the pauses
     words[-1]["line_end"] = False
+    if passages:
+        words = _with_passages(words, passages)
+        placement.passages = len(passages)
+        placement.passage_words = sum(len(passage) for passage in passages)
+        print(f"{ULTRASINGER_HEAD} Sung passages without lyrics: {blue_highlighted(str(placement.passages))}, "
+              f"sung with {blue_highlighted(str(placement.passage_words))} words of the {words_from}"
+              + (f"; {placement.left_out} {'line' if placement.left_out == 1 else 'lines'} of the lyrics "
+                 f"left out there" if placement.left_out else ""))
     return _notes_from_words(words, pitched_data, allowed_notes, melisma_split, threshold_st, min_note_ms,
                              "Plain lyrics pipeline", "lyrics linebreaks"), placement

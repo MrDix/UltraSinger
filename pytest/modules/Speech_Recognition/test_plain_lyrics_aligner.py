@@ -9,6 +9,10 @@ from src.modules.Speech_Recognition.reference_lyrics_aligner import (
 )
 
 
+def _word(text, start, end, line_end=False):
+    return {"word": text, "start": start, "end": end, "backing": False, "line_end": line_end}
+
+
 def _make_pitched_data(duration: float = 10.0, step: float = 0.016) -> PitchedData:
     """Create synthetic PitchedData with A4 pitch throughout."""
     n = int(duration / step)
@@ -127,3 +131,104 @@ class TestCreateMidiSegmentsFromPlainLyrics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _line(i, start):
+    """The three words of line ``i``, 0.5 s apart from ``start`` on, as (text, start s, end s)."""
+    return [(f"w{i}{part}", start + 0.5 * k, start + 0.5 * k + 0.4) for k, part in enumerate("abc")]
+
+
+class TestPassagesWithoutLyrics(unittest.TestCase):
+    """The passages of the transcription that the lyrics do not have are sung with its words; lines of
+    the lyrics that it does not have are left out where their time falls into such a passage."""
+
+    # eight sung lines, four before and four after a passage; the line "never sung here" is not
+    # sung: its time from the words falls between them, into the passage
+    SUNG = [_line(i, 1.0 + 2.0 * i) for i in range(4)] + [_line(i, 25.0 + 2.0 * (i - 4)) for i in range(4, 8)]
+    LYRICS = "\n".join([" ".join(w for w, _, _ in line) for line in SUNG[:4]] + ["never sung here"]
+                       + [" ".join(w for w, _, _ in line) for line in SUNG[4:]])
+    ALIGNED = [_word(w, start, end, k == 2) for line in SUNG for k, (w, start, end) in enumerate(line)]
+    FOREIGN = [("la", 12.0, 12.4), ("di", 12.5, 12.9), ("da,", 13.0, 13.4), ("doo", 13.5, 13.9),
+               ("sing", 15.0, 15.4), ("it", 15.5, 15.9), ("so", 18.0, 18.3), ("long", 18.4, 18.7),
+               ("my", 18.8, 19.0), ("friend", 19.1, 19.6)]
+    HEARD = [w for line in SUNG[:4] for w in line] + FOREIGN + [w for line in SUNG[4:] for w in line]
+    LYRIC_WORDS = [w for line in SUNG for w, _, _ in line]
+
+    @staticmethod
+    def _sung(duration=40.0):
+        """Voiced throughout."""
+        pd = _make_pitched_data(duration)
+        pd.confidence = [0.95] * len(pd.times)
+        return pd
+
+    def _run(self, heard, pd=None, aligned=None, **kwargs):
+        with patch("src.modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio",
+                   return_value=[dict(w) for w in (aligned or self.ALIGNED)]) as align:
+            result, placement = create_midi_segments_from_plain_lyrics(
+                self.LYRICS, "audio.wav", "en", pd or self._sung(), melisma_split=False,
+                transcription_words=heard, **kwargs)
+        return result, placement, align
+
+    def test_words_of_the_passage_between_the_lyrics(self):
+        result, placement, align = self._run(self.HEARD)
+        foreign = [w for w, _, _ in self.FOREIGN]
+        self.assertEqual([s.word.strip() for s in result], self.LYRIC_WORDS[:12] + foreign + self.LYRIC_WORDS[12:])
+        self.assertTrue(placement.line_by_line)
+        self.assertEqual((placement.passages, placement.passage_words, placement.left_out), (1, 10, 1))
+        self.assertIn("1 sung passage without lyrics with the transcription's words (10 words, 1 line of the "
+                      "lyrics left out there)", str(placement))
+        # the line that is not sung is not aligned, and nothing of the lyrics goes into the passage
+        self.assertEqual(len(align.call_args[0][0]), 8)
+        self.assertNotIn("never sung here", [seg["text"] for seg in align.call_args[0][0]])
+        self.assertEqual(align.call_args.kwargs["silent_spans"], [(12.0, 19.6)])
+        # line breaks: after the lyrics line before the passage, at the passage's pauses and its end
+        breaks = [s.word.strip() for s in result if s.line_break_after]
+        self.assertEqual(breaks[3:7], ["w3c", "doo", "it", "friend"])
+
+    def test_words_of_the_lyrics_in_a_passage(self):
+        # a word starting in the passage is left out; one that runs into it ends where it starts
+        aligned = [dict(w) for w in self.ALIGNED]
+        aligned[11]["end"] = 24.0
+        aligned.insert(12, _word("stray", 13.0, 13.4))
+        result, _, _ = self._run(self.HEARD, aligned=aligned)
+        words = [s.word.strip() for s in result]
+        self.assertNotIn("stray", words)
+        self.assertEqual(result[words.index("w3c")].end, 12.0)
+
+    def test_few_words_are_no_passage(self):
+        heard = [w for w in self.HEARD if not 13.0 <= w[1] < 20.0]
+        result, placement, align = self._run(heard)
+        self.assertEqual([s.word.strip() for s in result], self.LYRIC_WORDS)
+        self.assertEqual((placement.passages, placement.left_out), (0, 0))
+        self.assertEqual(len(align.call_args[0][0]), 9)
+        self.assertEqual(align.call_args.kwargs["silent_spans"], [])
+
+    def test_words_in_a_pause_are_no_passage(self):
+        pd = self._sung()
+        # nothing voiced from 11 to 21 s: the transcriber heard words in a pause
+        pd.confidence = [0.0 if 11.0 <= t <= 21.0 else 0.95 for t in pd.times]
+        result, placement, _ = self._run(self.HEARD, pd)
+        self.assertEqual(len(result), 24)
+        self.assertEqual((placement.passages, placement.left_out), (0, 0))
+
+    def test_not_for_the_text_of_these_words(self):
+        result, placement, align = self._run(self.HEARD, passages_from_words=False)
+        self.assertEqual(len(result), 24)
+        self.assertEqual(placement.passages, 0)
+        self.assertEqual(len(align.call_args[0][0]), 9)
+
+    def test_not_when_the_words_place_too_few_lines(self):
+        # the transcription has one line of the lyrics and other words: no measure of what they lack
+        heard = self.SUNG[0] + [(f"x{n}", 10.0 + 0.5 * n, 10.4 + 0.5 * n) for n in range(12)]
+        result, placement, align = self._run(heard)
+        self.assertFalse(placement.line_by_line)
+        self.assertEqual((placement.passages, placement.left_out), (0, 0))
+        self.assertEqual(len(result), 24)
+        self.assertEqual(len(align.call_args[0][0]), 9)
+
+    def test_after_the_end_of_the_lyrics(self):
+        tail = [("and", 34.0, 34.3), ("then", 34.4, 34.7), ("it", 34.8, 35.0), ("ends", 35.1, 35.6),
+                ("right", 35.7, 35.9), ("here", 36.0, 36.4), ("for", 36.5, 36.7), ("good", 36.8, 37.2)]
+        result, placement, _ = self._run(self.HEARD + tail)
+        self.assertEqual([s.word.strip() for s in result][-8:], [w for w, _, _ in tail])
+        self.assertEqual(placement.passages, 2)

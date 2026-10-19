@@ -9,6 +9,8 @@ from unittest.mock import patch, MagicMock
 from src.modules.lrclib_client import (
     LyricsInfo,
     find_lyrics,
+    lrc_text,
+    other_recording,
     search_lyrics,
     _do_search,
     _search_by_fields,
@@ -441,3 +443,28 @@ class TestSearchLyricsReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOtherRecording(unittest.TestCase):
+    """Found lyrics of a version much longer or shorter than the audio may be of another recording."""
+
+    def test_both_limits(self):
+        # a live version with an extra part: 236 s of lyrics for 391 s of audio
+        self.assertTrue(other_recording(236.0, 391.0))
+        self.assertTrue(other_recording(391.0, 236.0))
+        # 21 s off, but not 10 % of the audio
+        self.assertFalse(other_recording(379.0, 400.0))
+        # 10 % of the audio, but not 20 s off
+        self.assertFalse(other_recording(80.0, 100.0))
+        self.assertFalse(other_recording(200.0, 205.0))
+
+    def test_unknown_length(self):
+        self.assertFalse(other_recording(None, 391.0))
+        self.assertFalse(other_recording(0, 391.0))
+        self.assertFalse(other_recording(236.0, None))
+
+
+class TestLrcText(unittest.TestCase):
+    def test_time_tags_are_left_out(self):
+        synced = "[ar:Artist]\n[00:01.00] Hello <00:01.50>world\n[00:03.00]\n[00:04.00][00:20.00] Again\n"
+        self.assertEqual(lrc_text(synced), "[ar:Artist]\nHello world\nAgain")
