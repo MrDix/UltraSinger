@@ -270,7 +270,8 @@ class TestLiveTitle(unittest.TestCase):
                 self.assertTrue(is_live_title(title))
 
     def test_no_live_mark(self):
-        for title in ("Artist - Live Forever", "Artist - Song (Live Forever)", "Live Band - Song (Lyrics)",
+        for title in ("Artist - Live Among Lanterns", "Artist - Song (Live Among Lanterns)",
+                      "Live Band - Song (Lyrics)",
                       "Artist - Song (Official Video)", "Artist - Song | Live Nation", '"Song" - Artist', ""):
             with self.subTest(title=title):
                 self.assertFalse(is_live_title(title))
@@ -280,3 +281,18 @@ class TestLiveTitle(unittest.TestCase):
         self.assertEqual(with_live_mark("Song (live)", "Artist - Song (Live)"), "Song (live)")
         self.assertEqual(with_live_mark("Song", "Artist - Song (Official Video)"), "Song")
         self.assertEqual(with_live_mark("", "Artist - Song (Live)"), "")
+        self.assertEqual(with_live_mark("Song - Live", "Artist - Song - Live (Official Video)"), "Song - Live")
+
+    def test_live_in_the_song_title(self):
+        # the song is called so: no addition to it
+        song = "Live in the Paper Hours"
+        for video_title in (f"Artist - {song}", f"Artist - {song} (Official Video)", f"Artist - {song} ft. Guest",
+                            f"Artist - {song} Official Video", f"Artist - {song} HD", f"Artist - {song.upper()}!"):
+            with self.subTest(video_title=video_title):
+                self.assertFalse(is_live_title(video_title, song))
+                self.assertEqual(with_live_mark(song, video_title), song)
+        # another live addition is one
+        self.assertTrue(is_live_title(f"Artist - {song} - Live at Some Place", song))
+        # a song with the word in its title, sung live
+        self.assertEqual(with_live_mark("Live Among Lanterns", "Artist - Live Among Lanterns (Live)"),
+                         "Live Among Lanterns (Live)")

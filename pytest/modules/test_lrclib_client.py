@@ -467,4 +467,8 @@ class TestOtherRecording(unittest.TestCase):
 class TestLrcText(unittest.TestCase):
     def test_time_tags_are_left_out(self):
         synced = "[ar:Artist]\n[00:01.00] Hello <00:01.50>world\n[00:03.00]\n[00:04.00][00:20.00] Again\n"
-        self.assertEqual(lrc_text(synced), "[ar:Artist]\nHello world\nAgain")
+        self.assertEqual(lrc_text(synced), "Hello world\nAgain\nAgain")
+
+    def test_lines_in_the_order_they_are_sung(self):
+        synced = "[00:04.00][00:20.00] Again\n[00:10.00] Between\n[00:01.00] First\n"
+        self.assertEqual(lrc_text(synced), "First\nAgain\nBetween\nAgain")

@@ -43,6 +43,9 @@ OTHER_RECORDING_S = 20.0
 OTHER_RECORDING_SHARE = 0.10
 # Time tags of LRC lines ("[01:23.45]") and of enhanced LRC words ("<01:23.45>")
 _LRC_TIME_TAG_RE = re.compile(r"\[\d+:\d+(?:\.\d+)?\]|<\d+:\d+(?:\.\d+)?>")
+# The time tags at the start of an LRC line, and one of them
+_LRC_LINE_TAGS_RE = re.compile(r"\s*(?:\[\d+:\d+(?:\.\d+)?\]\s*)+")
+_LRC_LINE_TAG_RE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
 # What separates the artists of one credit: "A & B", "A, B", "A / B", "A and B",
 # "A feat. B" - not a slash or a comma inside a name ("A/B", "A,B")
 _CREDIT_SEPARATOR_RE = re.compile(
@@ -355,9 +358,19 @@ def other_recording(length: Optional[float], duration: Optional[float]) -> bool:
 
 
 def lrc_text(synced_lyrics: str) -> str:
-    """The text of synced lyrics without their time tags, one line per line."""
-    lines = (" ".join(_LRC_TIME_TAG_RE.sub(" ", line).split()) for line in synced_lyrics.splitlines())
-    return "\n".join(line for line in lines if line)
+    """The text of synced lyrics without their time tags, in the order it is
+    sung: a line with several time tags ("[00:04.00][00:20.00] Again") comes
+    once per tag. Lines without a time tag (ID tags such as "[ar:Artist]")
+    are left out."""
+    timed = []
+    for n, line in enumerate(synced_lyrics.splitlines()):
+        tags = _LRC_LINE_TAGS_RE.match(line)
+        text = " ".join(_LRC_TIME_TAG_RE.sub(" ", line).split())
+        if not tags or not text:
+            continue
+        for minutes, seconds in _LRC_LINE_TAG_RE.findall(tags.group(0)):
+            timed.append((int(minutes) * 60 + float(seconds), n, text))
+    return "\n".join(text for _, _, text in sorted(timed))
 
 
 def _length_off(entry: dict, duration: Optional[float]) -> float:
