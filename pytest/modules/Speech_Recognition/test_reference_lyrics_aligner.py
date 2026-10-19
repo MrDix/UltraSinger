@@ -19,6 +19,7 @@ from modules.Speech_Recognition.reference_lyrics_aligner import (
     create_midi_segments_from_plain_lyrics,
     create_midi_segments_from_reference_lyrics,
     align_lyrics_to_audio,
+    LyricsOfOtherRecording,
 )
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Midi.MidiSegment import MidiSegment
@@ -705,6 +706,33 @@ class TestAlignLyricsToAudio:
 
         assert model.inputs[-1] == len(audio) and len(model.inputs) > 1  # the pieces, then the whole song
         assert "lines at their time from the transcription (whole song, free end)" in capsys.readouterr().out
+
+    def test_lyrics_of_another_recording(self, capsys):
+        segments = lrc_segments(20)
+        # only the first 5 lines are sung, at their times: the others are of another recording
+        sung = [s["start"] if i < 5 else None for i, s in enumerate(segments)]
+        model, audio = fake_song(segments, sung, 64.0)
+
+        with pytest.raises(LyricsOfOtherRecording) as raised:
+            align_with(model, audio, segments, min_fit_share=0.5)
+        assert raised.value.lines == 20 and raised.value.fit < 10
+        assert str(raised.value) == f"only {raised.value.fit} of 20 lines at their LRC time"
+
+    def test_lyrics_that_fit_are_aligned_with_a_minimum_fit(self):
+        segments = lrc_segments(20)
+        model, audio = fake_song(segments, [s["start"] for s in segments], 64.0)
+        words, _ = align_with(model, audio, segments, min_fit_share=0.5)
+        assert len(words) == 40
+
+    def test_no_words_in_silent_spans(self):
+        segments = [{"text": "aa aaa bb bbb", "start": 0.0, "end": 10.0}]
+        model, audio = fake_song(segments, [1.0], 10.0)
+
+        words, _ = align_with(model, audio, segments, line_time=None, silent_spans=[(0.5, 2.0)])
+
+        # the words sung at 1 s cannot go there
+        assert all(not 0.5 <= w["start"] < 2.0 for w in words)
+        assert len(words) == 4
 
     def test_whole_song_out_of_memory_uses_the_pieces(self, capsys):
         segments = lrc_segments(20)

@@ -23,7 +23,7 @@ from modules.Audio.bpm import get_bpm_from_file
 from modules.console_colors import ULTRASINGER_HEAD, gold_highlighted, red_highlighted
 from modules.Image.image_helper import save_image
 from modules.musicbrainz_client import SongInfo, search_musicbrainz
-from modules.name_matching import artist_from_channel
+from modules.name_matching import artist_from_channel, with_live_mark
 from modules.ffmpeg_helper import separate_audio_video
 
 
@@ -394,13 +394,21 @@ def find_song(artist: str, title: str, video_title: str, quick: bool = False,
     """The song of a video, from the ``artist`` and ``title`` of
     ``video_title_from_info`` as the song database names them (``quick`` and
     ``duration``, the length of the video in seconds: see
-    ``search_musicbrainz``)."""
+    ``search_musicbrainz``). The title of a live recording gets " (Live)"
+    (see ``with_live_mark``)."""
     song_info = search_musicbrainz(title, artist, quick=quick, duration=duration)
 
     # The song database may re-introduce suffixes that were already stripped
     # from the yt-dlp metadata (e.g. "(live)" when the video is not actually
     # live). Cross-check its title against the video title as well.
     song_info.title = strip_unmatched_suffixes(song_info.title, video_title, verbose=not quick)
+    # A live recording keeps its mark: its notes and lyrics are not those of the
+    # studio version, and its song folder is another one
+    live_title = with_live_mark(song_info.title, video_title)
+    if live_title != song_info.title:
+        if not quick:
+            print(f"{ULTRASINGER_HEAD} The video is a live recording: {gold_highlighted(live_title)}")
+        song_info.title = live_title
     return song_info
 
 

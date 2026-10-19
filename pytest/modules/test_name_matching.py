@@ -3,12 +3,14 @@
 import unittest
 
 from src.modules.name_matching import (
+    is_live_title,
     similarity,
     strip_title_additions,
     title_before_dash,
     title_key,
     title_without_part,
     titles_match,
+    with_live_mark,
 )
 
 
@@ -255,3 +257,42 @@ class TestTitlesMatch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLiveTitle(unittest.TestCase):
+    """A video title marks a live recording in an addition to the song title."""
+
+    def test_live_additions(self):
+        for title in ("Artist - Song (Live)", "Artist - Song [Live at Some Arena 2019]", "Artist - Song (LIVE)",
+                      "Artist - Song (Official Live Video)", "Artist - Song - Live from the Studio",
+                      "Artist - Song (Live Session)", "Artist - Song - Live"):
+            with self.subTest(title=title):
+                self.assertTrue(is_live_title(title))
+
+    def test_no_live_mark(self):
+        for title in ("Artist - Live Among Lanterns", "Artist - Song (Live Among Lanterns)",
+                      "Live Band - Song (Lyrics)",
+                      "Artist - Song (Official Video)", "Artist - Song | Live Nation", '"Song" - Artist', ""):
+            with self.subTest(title=title):
+                self.assertFalse(is_live_title(title))
+
+    def test_mark_added_once(self):
+        self.assertEqual(with_live_mark("Song", "Artist - Song (Live)"), "Song (Live)")
+        self.assertEqual(with_live_mark("Song (live)", "Artist - Song (Live)"), "Song (live)")
+        self.assertEqual(with_live_mark("Song", "Artist - Song (Official Video)"), "Song")
+        self.assertEqual(with_live_mark("", "Artist - Song (Live)"), "")
+        self.assertEqual(with_live_mark("Song - Live", "Artist - Song - Live (Official Video)"), "Song - Live")
+
+    def test_live_in_the_song_title(self):
+        # the song is called so: no addition to it
+        song = "Live in the Paper Hours"
+        for video_title in (f"Artist - {song}", f"Artist - {song} (Official Video)", f"Artist - {song} ft. Guest",
+                            f"Artist - {song} Official Video", f"Artist - {song} HD", f"Artist - {song.upper()}!"):
+            with self.subTest(video_title=video_title):
+                self.assertFalse(is_live_title(video_title, song))
+                self.assertEqual(with_live_mark(song, video_title), song)
+        # another live addition is one
+        self.assertTrue(is_live_title(f"Artist - {song} - Live at Some Place", song))
+        # a song with the word in its title, sung live
+        self.assertEqual(with_live_mark("Live Among Lanterns", "Artist - Live Among Lanterns (Live)"),
+                         "Live Among Lanterns (Live)")

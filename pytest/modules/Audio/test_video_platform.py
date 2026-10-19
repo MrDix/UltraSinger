@@ -1384,5 +1384,28 @@ class TestSongLookup(unittest.TestCase):
                 self.assertIsNone(lookup.call_args.kwargs["duration"])
 
 
+class TestLiveMark(unittest.TestCase):
+    """The song of a video marked as a live recording keeps " (Live)" in its title."""
+
+    def _find(self, video_title, found_title="Title", quick=False):
+        out = io.StringIO()
+        with patch.object(video_platform, "search_musicbrainz",
+                          return_value=SongInfo(title=found_title, artist="Artist")), redirect_stdout(out):
+            song = video_platform.find_song("Artist", "Title", video_title, quick=quick)
+        return song.title, out.getvalue()
+
+    def test_live_video(self):
+        title, out = self._find("Artist - Title (Live at Some Arena)")
+        self.assertEqual(title, "Title (Live)")
+        self.assertIn("The video is a live recording", out)
+
+    def test_quick_lookup_is_silent(self):
+        self.assertEqual(self._find("Artist - Title (Live)", quick=True), ("Title (Live)", ""))
+
+    def test_studio_video_and_marked_title(self):
+        self.assertEqual(self._find("Artist - Title (Official Video)")[0], "Title")
+        self.assertEqual(self._find("Artist - Title (Live)", found_title="Title (Live)")[0], "Title (Live)")
+
+
 if __name__ == "__main__":
     unittest.main()

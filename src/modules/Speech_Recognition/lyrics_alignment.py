@@ -87,6 +87,16 @@ LONG_WORD_S = 3.0
 # Plain lyrics are aligned with these line times when at least this share of
 # their lines, and at least RELIABLE_LINES lines, got one from a word
 ANCHORED_SHARE = 0.5
+# Passages of a transcription that the lyrics do not have: a pair of a word of
+# the lyrics and a transcribed word is sure when the next or the previous
+# words of both are paired too (a single word pairs by chance: "you", "I").
+# Transcribed words more than SURE_REACH words from a sure pair are not sung
+# from the lyrics; PASSAGE_MIN_WORDS of them in a row make a passage, unless
+# the lyrics have more than PASSAGE_LYRICS_SHARE as many words between the sure
+# pairs around them: then they are lines of the lyrics heard badly.
+SURE_REACH = 2
+PASSAGE_MIN_WORDS = 6
+PASSAGE_LYRICS_SHARE = 0.4
 
 
 # ---------------------------------------------------------------------------
@@ -628,3 +638,55 @@ def line_times_from_words(
                 t = anchor[prev] + (first_word[i] - first_word[prev]) * word_s
         times.append(float(t))
     return times, len(anchor)
+
+
+def passages_without_lyrics(
+    lines: list[list[str]],
+    words: list[tuple[str, float, float]],
+    min_words: int = PASSAGE_MIN_WORDS,
+) -> tuple[list[tuple[int, int]], set[int]]:
+    """The passages of a transcription that the lyrics do not have (an extra
+    part of a live version, a chorus sung more often than written), and the
+    lines of the lyrics that it has.
+
+    ``lines`` holds the words of each line, ``words`` the transcribed words
+    as (text, start s, end s), in the order of the transcription. The words
+    are paired as in line_times_from_words. A pair is sure when the next or
+    the previous words of both are paired with each other too. A transcribed
+    word more than SURE_REACH words away from a sure pair is not sung from
+    the lyrics, and ``min_words`` such words in a row make a passage, which
+    reaches up to the words in sure pairs around it. Where the lyrics have
+    more than PASSAGE_LYRICS_SHARE as many words as the passage between these
+    pairs, the transcriber heard their lines badly, and it is no passage.
+
+    Returns the passages as (first, end) indices into ``words`` (without
+    words that have no text or no times), and the lines with a sure pair.
+    """
+    lyric = [(i, _word_key(w)) for i, line in enumerate(lines) for w in line]
+    keyed = [k for k, (_, key) in enumerate(lyric) if key]
+    heard = [j for j, (w, s, e) in enumerate(words) if _word_key(w) and s is not None and e is not None]
+    pairs = set(_common_words([lyric[k][1] for k in keyed], [_word_key(words[j][0]) for j in heard]))
+    sure = [(a, b) for a, b in pairs if (a + 1, b + 1) in pairs or (a - 1, b - 1) in pairs]
+    sung_lines = {lyric[keyed[a]][0] for a, _ in sure}
+    from_lyrics = np.zeros(len(heard), dtype=bool)
+    for _, b in sure:
+        from_lyrics[max(0, b - SURE_REACH):b + SURE_REACH + 1] = True
+    sure_heard = {b: a for a, b in sure}
+    passages, start = [], None
+    for b in range(len(heard) + 1):
+        if b < len(heard) and not from_lyrics[b]:
+            start = b if start is None else start
+            continue
+        if start is not None and b - start >= min_words:
+            # The passage reaches up to the sure pairs around it
+            first, end = start, b
+            while first > 0 and first - 1 not in sure_heard:
+                first -= 1
+            while end < len(heard) and end not in sure_heard:
+                end += 1
+            lyrics_between = ((sure_heard[end] if end < len(heard) else len(keyed))
+                              - (sure_heard[first - 1] + 1 if first > 0 else 0))
+            if lyrics_between <= PASSAGE_LYRICS_SHARE * (end - first):
+                passages.append((heard[first], heard[end - 1] + 1))
+        start = None
+    return passages, sung_lines

@@ -408,7 +408,7 @@ class TestTranscribeAudioLyricsLanguage(unittest.TestCase):
                "are not alone, and it is good that you are here, and we stay until the night comes and "
                "it is dark, and then we go home to the place where we are from")
 
-    def _run(self, synced, plain):
+    def _run(self, synced, plain, other_recording=None, plain_from_synced=None):
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -417,10 +417,13 @@ class TestTranscribeAudioLyricsLanguage(unittest.TestCase):
         process_data = SimpleNamespace(
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Title", language=None),
-            transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None, synced_lyrics_other_recording=None,
         )
+        process_data.synced_lyrics_other_recording = other_recording
+        if plain_from_synced:
+            process_data.plain_lyrics, process_data.plain_lyrics_from_synced = plain_from_synced, True
         transcription = SimpleNamespace(detected_language="de", transcribed_data=[])
-        lyrics = SimpleNamespace(synced_lyrics=synced, plain_lyrics=plain)
+        lyrics = SimpleNamespace(duration=236.0, synced_lyrics=synced, plain_lyrics=plain)
         with patch.object(us, "transcribe_audio", return_value=transcription), \
                 patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data), \
                 patch("modules.lrclib_client.search_lyrics", return_value=lyrics), \
@@ -442,8 +445,28 @@ class TestTranscribeAudioLyricsLanguage(unittest.TestCase):
     def test_matching_lyrics_are_used(self):
         plain = self.GERMAN.replace("[00:01.00] ", "")
         process_data, correct = self._run(self.GERMAN, plain)
+        self.assertEqual(process_data.synced_lyrics, self.GERMAN)
+        self.assertEqual(process_data.synced_lyrics_length, 236.0)
         self.assertEqual(process_data.plain_lyrics, plain)
+        self.assertFalse(process_data.plain_lyrics_from_synced)
         correct.assert_called_once()
+
+    def test_text_of_rejected_synced_lyrics_is_dropped_too(self):
+        # the text of synced lyrics taken for another recording's was kept as plain lyrics: when the
+        # transcription finds them in another language than the singing, it goes too
+        english = "[00:01.00] " + self.ENGLISH
+        process_data, correct = self._run(english, None, other_recording="236 s long, the audio 391 s",
+                                          plain_from_synced=self.ENGLISH)
+        self.assertIsNone(process_data.plain_lyrics)
+        self.assertFalse(process_data.plain_lyrics_from_synced)
+        self.assertEqual(process_data.synced_lyrics_other_language, "en")
+        correct.assert_not_called()
+
+    def test_synced_lyrics_of_another_recording_are_not_taken_again(self):
+        plain = self.GERMAN.replace("[00:01.00] ", "")
+        process_data, _ = self._run(self.GERMAN, plain, other_recording="236 s long, the audio 391 s")
+        self.assertIsNone(process_data.synced_lyrics)
+        self.assertEqual(process_data.plain_lyrics, plain)
 
 
 class TestAudioLength(unittest.TestCase):

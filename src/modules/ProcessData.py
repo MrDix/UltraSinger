@@ -46,3 +46,7 @@ class ProcessData:
     synced_lyrics: Optional[str] = None  # Synced LRC lyrics from LRCLIB (for reference-first pipeline)
     plain_lyrics: Optional[str] = None  # Plain text lyrics from LRCLIB (for plain-lyrics alignment and pitch_notes overlay)
     synced_lyrics_other_language: Optional[str] = None  # Language of found synced lyrics not used: another one than the singing
+    synced_lyrics_length: Optional[float] = None  # Length (s) of the recording of the synced lyrics, when LRCLIB knows it
+    # Why found synced lyrics were taken for another recording's: their times were not used
+    synced_lyrics_other_recording: Optional[str] = None
+    plain_lyrics_from_synced: bool = False  # Whether the plain lyrics are the text of such synced lyrics
