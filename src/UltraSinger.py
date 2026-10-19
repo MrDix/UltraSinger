@@ -53,6 +53,7 @@ from modules.Audio.video_platform import (
     strip_unmatched_suffixes,
 )
 from modules.Audio.bpm import get_bpm_from_file
+from modules.name_matching import with_live_mark
 
 from modules.console_colors import (
     ULTRASINGER_HEAD,
@@ -2401,8 +2402,9 @@ def infos_from_audio_video_input_file(
                                    duration=duration or get_duration(settings.input_file_path))
     if video_title:
         # As for a video URL input (-i): the song lookup may re-introduce
-        # suffixes that the video title does not have
-        song_info.title = strip_unmatched_suffixes(song_info.title, video_title)
+        # suffixes that the video title does not have; a live recording is
+        # marked as such
+        song_info.title = with_live_mark(strip_unmatched_suffixes(song_info.title, video_title), video_title)
     # Metadata titles may contain characters that are invalid in paths (e.g. "?" or "/")
     basename_without_ext = os_helper.sanitize_filename(f"{song_info.artist} - {song_info.title}")
 

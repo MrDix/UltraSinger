@@ -112,6 +112,27 @@ class TestLongInputFileName:
         assert os.listdir(folder) == ["Artist - Title.mp3"]
 
 
+class TestLiveMarkOfLocalFile:
+    """A local file with the video title of a live recording is named as the
+    download of that video would be: with the live mark."""
+
+    def test_live_mark_from_the_video_title(self, tmp_path, monkeypatch):
+        import src.UltraSinger as us
+        from src.modules.musicbrainz_client import SongInfo
+
+        source = tmp_path / "audio.mp3"
+        source.write_bytes(b"ID3")
+        monkeypatch.setattr(us, "search_musicbrainz",
+                            lambda title, artist, duration=None: SongInfo(title="Title", artist="Artist"))
+        monkeypatch.setattr(us, "is_video_file", lambda path: False)
+        monkeypatch.setattr(us.settings, "input_file_path", str(source))
+        monkeypatch.setattr(us.settings, "output_folder_path", str(tmp_path / "out"))
+        _, folder, _, media_info = us.infos_from_audio_video_input_file(
+            "Artist", "Title", video_title="Artist - Title (Live at Some Place)", duration=200.0)
+        assert media_info.title == "Title (Live)"
+        assert os.path.basename(folder) == "Artist - Title (Live)"
+
+
 class TestUnusedSongOutputDir:
     def test_unused_folder_is_kept(self, tmp_path):
         assert get_unused_song_output_dir(str(tmp_path / "Artist - Title")) == str(tmp_path / "Artist - Title")
