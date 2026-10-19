@@ -154,7 +154,7 @@ def transcribe_with_qwen3(audio_path: str, choice: TranscriberChoice, device: st
         model = None
         release_gpu_memory()
 
-    detected = language or majority_language([r.language for r in results])
+    detected = language or transcribed_language(results)
     print(f"{ULTRASINGER_HEAD} Detected language: {blue_highlighted(detected)}")
     segments = [{"text": r.text.strip(), "start": offset, "end": offset + len(wav) / SAMPLE_RATE}
                 for (wav, offset), r in zip(pieces, results) if r.text and r.text.strip()]
@@ -173,10 +173,35 @@ def audio_pieces(audio) -> list:
             if len(wav) >= MIN_PIECE_SECONDS * SAMPLE_RATE]
 
 
-def majority_language(names: list[str | None]) -> str:
-    """The ISO code of the language most pieces were in ("en" when none is known)."""
-    codes = [_ISO_OF[name.lower()] for name in names if name and name.lower() in _ISO_OF]
-    return Counter(codes).most_common(1)[0][0] if codes else "en"
+def transcribed_language(results) -> str:
+    """The ISO code of the language the pieces were transcribed in.
+
+    The model's language tag of a piece is unreliable: it tagged most pieces
+    of a clearly Spanish transcription "English". So the words decide where
+    they can (see ``words_override_tag``), else the tags, else "en".
+    """
+    from modules.Speech_Recognition.text_language import detect_text_language, words_override_tag
+
+    text = " ".join(r.text.strip() for r in results if r.text and r.text.strip())
+    from_tags = majority_language([r.language for r in results], default=None)
+    from_words = detect_text_language(text)
+    if not words_override_tag(from_words, from_tags):
+        return from_tags or "en"
+    tags = f"say {blue_highlighted(from_tags)}" if from_tags else "name no known language"
+    print(f"{ULTRASINGER_HEAD} The transcription's language tags {tags}, its words say "
+          f"{blue_highlighted(from_words)} — taking {from_words}")
+    return from_words
+
+
+def majority_language(names: list[str | None], default: str | None = "en") -> str | None:
+    """The ISO code of the language most pieces were in (``default`` when none is known).
+
+    A piece the model decoded in several chunks has the languages of the
+    chunks joined by commas ("Spanish,English"); each of them counts.
+    """
+    codes = [_ISO_OF[part.strip().lower()] for name in names if name
+             for part in name.split(",") if part.strip().lower() in _ISO_OF]
+    return Counter(codes).most_common(1)[0][0] if codes else default
 
 
 def _error_summary(error: BaseException) -> str:

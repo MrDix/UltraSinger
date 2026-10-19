@@ -2258,8 +2258,10 @@ def transcribe_audio(cache_folder_path: str, audio_path: str) -> TranscriptionRe
     if settings.transcriber != "whisper":
         # A cached Qwen3-ASR transcription needs no GPU: reused whatever memory is free now
         # "kn": numbers are written as words unless --keep_numbers, before the result is cached
+        # "tl": the language was found from the transcribed words (earlier results took the
+        # model's language tags, which can name the wrong language, and are not reused)
         qwen3_path = os.path.join(cache_folder_path, f"qwen3_{QWEN3_SIZE}_{whisper_align_model_string}_"
-                                                     f"{settings.language}_p{QWEN3_PIECE_SECONDS}_"
+                                                     f"{settings.language}_p{QWEN3_PIECE_SECONDS}_tl_"
                                                      f"kn{int(settings.keep_numbers)}_aligned_{audio_key}.json")
         if not settings.skip_cache_transcription and check_file_exists(qwen3_path):
             settings.transcriber_used = f"qwen3 ({QWEN3_MODEL})"

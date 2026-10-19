@@ -43,7 +43,7 @@ _FUNCTION_WORDS: dict[str, frozenset[str]] = {
 
 # Languages that share too many function words to be told apart reliably;
 # a mismatch between members of one group is never reported.
-_GROUPS = [frozenset({"es", "pt"}), frozenset({"sv", "da", "no"})]
+_GROUPS = [frozenset({"es", "pt"}), frozenset({"sv", "da", "no"}), frozenset({"zh", "yue"})]
 
 # Languages we can judge: a function-word profile or a recognisable script.
 _KNOWN_LANGUAGES = frozenset(_FUNCTION_WORDS) | {"ja", "zh", "ko", "ru", "uk", "bg", "sr", "be"}
@@ -99,10 +99,34 @@ def detect_text_language(text: str) -> str | None:
     return best
 
 
+def words_override_tag(from_words: str | None, tag: str | None) -> bool:
+    """Whether the language ``detect_text_language`` read from a text should
+    replace ``tag``, the language a transcriber tagged it with.
+
+    Not when the two are the same or too close to be told apart from their
+    words (all Cyrillic ones, es/pt, sv/da/no, zh/yue): the tag is the finer
+    guess. A script tells its language from any other, but function words
+    only judge a tagged language that has a profile of its own: Vietnamese
+    lyrics are full of "em", a Portuguese function word, and Japanese in
+    Latin letters has "no" and "to".
+    """
+    if from_words is None:
+        return False
+    if tag is None:
+        return True
+    if _same_language(from_words, tag):
+        return False
+    if from_words == "zh" and tag == "ja":
+        # Japanese written mostly in kanji reads as Chinese
+        return False
+    # A language known by its script (Japanese, Russian, ...) may be sung in Latin letters
+    return from_words not in _FUNCTION_WORDS or tag in _FUNCTION_WORDS
+
+
 def _same_language(a: str, b: str) -> bool:
     if a == b:
         return True
-    cyrillic = {"ru", "uk", "bg", "sr", "be"}
+    cyrillic = {"ru", "uk", "bg", "sr", "be", "mk"}
     if a in cyrillic and b in cyrillic:
         return True
     return any(a in g and b in g for g in _GROUPS)
