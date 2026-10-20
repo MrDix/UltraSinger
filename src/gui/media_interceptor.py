@@ -240,7 +240,7 @@ class MediaInterceptor(QWebEngineUrlRequestInterceptor):
                 )
                 if sig not in self._diag_seen:
                     self._diag_seen.add(sig)
-                    logger.info(
+                    logger.debug(
                         "media-ish request NOT classified as audio: %s", sig
                     )
             return

@@ -109,8 +109,10 @@ class Sidebar(QWidget):
         # queue as a file (also while it runs)
         self._queue_menu_btn = QPushButton("\u2630")
         self._queue_menu_btn.setObjectName("ghostButton")
-        # Selector: the menu is a child of the button and keeps the menu style
-        self._queue_menu_btn.setStyleSheet("QPushButton { font-size: 18px; padding: 0px 10px; }")
+        # Selector: the menu is a child of the button and keeps the menu style.
+        # In points (18 px at 96 dpi): with a pixel size, Qt warns on every paint
+        # of a button with a menu ("QFont::setPointSize: Point size <= 0")
+        self._queue_menu_btn.setStyleSheet("QPushButton { font-size: 13.5pt; padding: 0px 10px; }")
         self._queue_menu_btn.setMinimumHeight(34)
         self._queue_menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._queue_menu_btn.setToolTip(
