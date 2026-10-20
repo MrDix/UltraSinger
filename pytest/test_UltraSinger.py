@@ -561,6 +561,37 @@ class TestOctaveInfoLines(unittest.TestCase):
         self.assertIn("Octave consistency:       True\n", self._info(True))
 
 
+class TestPhonemeWordStartsInfoLine(unittest.TestCase):
+    """The info file tells whether the phoneme word starts ran and what they did."""
+
+    def _info(self, enabled=True, **kwargs):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        import src.UltraSinger as us
+        with tempfile.TemporaryDirectory() as d, \
+                patch.object(us.settings, "phoneme_word_starts", enabled):
+            us._write_settings_info_file(d, None, None, **kwargs)
+            with open(os.path.join(d, "ultrasinger_parameter.info"), encoding="utf-8") as f:
+                return f.read()
+
+    def test_result(self):
+        text = self._info(phoneme_word_starts_result="3 words start earlier")
+        self.assertIn("Phoneme word starts:      True (3 words start earlier)\n", text)
+
+    def test_not_run(self):
+        self.assertIn("Phoneme word starts:      True\n", self._info())
+
+    def test_disabled(self):
+        self.assertIn("Phoneme word starts:      False\n", self._info(False))
+
+    def test_cli_flag(self):
+        from src.UltraSinger import init_settings
+        self.assertFalse(init_settings(["-i", "test.mp3", "--disable_phoneme_word_starts"]).phoneme_word_starts)
+        self.assertTrue(init_settings(["-i", "test.mp3"]).phoneme_word_starts)
+
+
 class TestDownloadLimitInfoLines(unittest.TestCase):
     """The info file names the limits of a video download."""
 
