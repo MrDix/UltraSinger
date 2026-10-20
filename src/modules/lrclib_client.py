@@ -100,7 +100,7 @@ def search_lyrics(artist: str, title: str, duration: Optional[float] = None) -> 
     info_str = ", ".join(parts) if parts else "no lyrics content"
     length = ""
     if isinstance(result.duration, (int, float)) and result.duration > 0 and duration:
-        length = f", {result.duration:.0f} s long (the audio: {duration:.0f} s)"
+        length = f", {result.duration:.1f} s long (the audio: {duration:.1f} s)"
     print(f"{ULTRASINGER_HEAD} Found lyrics on LRCLIB: "
           f"{blue_highlighted(result.artist_name)} - {blue_highlighted(result.track_name)} "
           f"[{info_str}]{length}")

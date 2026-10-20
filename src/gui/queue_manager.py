@@ -20,6 +20,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _other_version(info: dict) -> bool:
+    """Whether the found lyrics, by the lengths their lookup printed, may be
+    of another recording than the audio (see ``other_recording``)."""
+    try:
+        from modules.lrclib_client import other_recording
+    except ImportError:  # the queue must go on without the label
+        logger.debug("Lyrics lengths not compared", exc_info=True)
+        return False
+    return other_recording(info.get("lyrics_length_s"), info.get("audio_length_s"))
+
+
 class QueueManager(QObject):
     """Manages a queue of conversion items and runs them sequentially."""
 
@@ -515,9 +526,18 @@ class QueueManager(QObject):
             return
 
         # LRCLIB lyrics found — parse what types are available
-        m = re.search(r"Found lyrics on LRCLIB:.*\[(.*?)\]", clean)
+        m = re.search(r"Found lyrics on LRCLIB:.*\[(.*?)\]"
+                      r"(?:, (\d+(?:\.\d+)?) s long \(the audio: (\d+(?:\.\d+)?) s\))?", clean)
         if m:
             details = m.group(1).lower()
+            # The lengths of the found version and of the audio, when both
+            # are known (a later lookup's lyrics replace an earlier one's)
+            if m.group(2):
+                info["lyrics_length_s"] = float(m.group(2))
+                info["audio_length_s"] = float(m.group(3))
+            else:
+                info.pop("lyrics_length_s", None)
+                info.pop("audio_length_s", None)
             if "synced" in details:
                 info["lrclib_result"] = "synced"
             elif "plain" in details:
@@ -631,6 +651,11 @@ class QueueManager(QObject):
                 # The transcription made the notes (also when no line above told more)
                 info["lyrics_source"] = "transcribed"
                 info.setdefault("pipeline", "whisper")
+            # Found lyrics that made the notes but are of a version much longer
+            # or shorter than the audio (a live one with an extra part): they
+            # miss passages, and their times may not have fitted
+            if info["lyrics_source"] in ("synced", "plain") and _other_version(info):
+                info["lyrics_source"] = "other version"
 
         if exit_code == 0 and info:
             self.item_result_info.emit(item.id, dict(info))
