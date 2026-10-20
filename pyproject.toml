@@ -43,7 +43,7 @@ dependencies = [
     "qwen-asr==0.0.6",
     # Phonemes of the lyrics for the phoneme word starts (eSpeak NG library
     # and data come with espeakng-loader, no system install)
-    "phonemizer>=3.3",
+    "phonemizer>=3.4",
     "espeakng-loader>=0.2.4",
     # Phoneme recognizer for the phoneme word starts
     "transformers",

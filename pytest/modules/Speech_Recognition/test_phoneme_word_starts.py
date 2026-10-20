@@ -273,6 +273,21 @@ class TestCorrectWordStarts:
         assert out is segments
         assert result.startswith("skipped after an error")
 
+    def test_failing_voice_lookup_keeps_the_segments(self):
+        segments = held_note_line()
+        with patch.object(pws, "espeak_voice", side_effect=AttributeError("set_data_path")):
+            out, result = correct_word_starts(segments, "vocals.wav", "en")
+        assert out is segments
+        assert result.startswith("skipped after an error")
+
+    def test_too_long_data_path_is_not_used(self):
+        espeakng_loader = pytest.importorskip("espeakng_loader")
+        pytest.importorskip("phonemizer")
+        long_path = "D:/" + "x" * pws.MAX_DATA_PATH_BYTES + "/espeak-ng-data"
+        with patch.object(espeakng_loader, "get_data_path", return_value=long_path), \
+                pytest.raises(ValueError, match="longer than"):
+            pws.espeak_voice("en")
+
     def test_moves_from_the_aligner(self):
         segments = held_note_line()
         with patch.object(pws, "espeak_voice", return_value="en-us"), \

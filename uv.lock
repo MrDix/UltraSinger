@@ -3924,7 +3924,7 @@ requires-dist = [
     { name = "musicbrainzngs" },
     { name = "num2words" },
     { name = "packaging" },
-    { name = "phonemizer", specifier = ">=3.3" },
+    { name = "phonemizer", specifier = ">=3.4" },
     { name = "pretty-midi" },
     { name = "pydub" },
     { name = "pyhyphen" },

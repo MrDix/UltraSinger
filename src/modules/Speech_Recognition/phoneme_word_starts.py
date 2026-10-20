@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import numpy as np
 
@@ -69,6 +70,10 @@ VOWEL_WEIGHT = float(np.log(0.05))
 _VOICES = {"en": "en-us", "fr": "fr-fr", "pt": "pt-br", "zh": "cmn", "nb": "nb", "no": "nb"}
 # A language switch mark in eSpeak NG phonemes: "(en)"
 _LANGUAGE_FLAG = re.compile(r"\([a-z-]+\)")
+# Longest data path (bytes, resolved) used with the bundled eSpeak NG library:
+# its buffer for the path holds 229 bytes, and with a longer path it misses
+# its data and ends the whole process. Kept below that, for other builds.
+MAX_DATA_PATH_BYTES = 200
 
 
 @dataclass
@@ -221,32 +226,43 @@ def ctc_path(scores: np.ndarray) -> list[int]:
     return path
 
 
-def _espeak_backend(voice: str):
+def _use_bundled_espeak() -> None:
+    """Point phonemizer at the eSpeak NG library and data of espeakng-loader.
+
+    Raises ValueError when the data path is too long for the library, which
+    would otherwise end the process.
+    """
     import espeakng_loader
-    from phonemizer.backend import EspeakBackend
     from phonemizer.backend.espeak.wrapper import EspeakWrapper
 
+    data_path = espeakng_loader.get_data_path()
+    # phonemizer hands the library the resolved path (no short names)
+    if len(str(Path(data_path).resolve()).encode()) > MAX_DATA_PATH_BYTES:
+        raise ValueError(f"eSpeak NG data path longer than {MAX_DATA_PATH_BYTES} bytes: {data_path}")
     EspeakWrapper.set_library(espeakng_loader.get_library_path())
-    EspeakWrapper.set_data_path(espeakng_loader.get_data_path())
+    EspeakWrapper.set_data_path(data_path)
+
+
+def _espeak_backend(voice: str):
+    from phonemizer.backend import EspeakBackend
+
+    _use_bundled_espeak()
     # A word eSpeak NG reads in another language (an English word in German
     # lyrics) comes without the "(en)...(de)" marks of the switch
     return EspeakBackend(voice, preserve_punctuation=False, with_stress=False, language_switch="remove-flags")
 
 
 def espeak_voice(language: str | None) -> str | None:
-    """The eSpeak NG voice of a language code, None when it has none."""
+    """The eSpeak NG voice of a language code, None when it has none.
+
+    Raises when eSpeak NG cannot be used (see ``_use_bundled_espeak``).
+    """
     if not language:
         return None
-    try:
-        import espeakng_loader
-        from phonemizer.backend import EspeakBackend
-        from phonemizer.backend.espeak.wrapper import EspeakWrapper
+    from phonemizer.backend import EspeakBackend
 
-        EspeakWrapper.set_library(espeakng_loader.get_library_path())
-        EspeakWrapper.set_data_path(espeakng_loader.get_data_path())
-        supported = EspeakBackend.supported_languages()
-    except (ImportError, OSError, RuntimeError):
-        return None
+    _use_bundled_espeak()
+    supported = EspeakBackend.supported_languages()
     code = language.lower()
     for voice in (_VOICES.get(code), code):
         if voice and voice in supported:
@@ -372,7 +388,11 @@ def correct_word_starts(segments: list[MidiSegment], vocals_path: str, language:
     Fails open: without a voice for the language, or on any problem, the
     segments come back unchanged.
     """
-    voice = espeak_voice(language)
+    try:
+        voice = espeak_voice(language)
+    except Exception as e:  # noqa: BLE001 - an optional refinement must never stop the conversion
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} phoneme word starts skipped: {e!r}")
+        return segments, f"skipped after an error: {e!r}"
     if voice is None:
         print(f"{ULTRASINGER_HEAD} Phoneme word starts: no phonemes for language "
               f"{blue_highlighted(str(language))} - skipped")
