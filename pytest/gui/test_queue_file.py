@@ -978,12 +978,14 @@ def test_running_and_finished_songs_are_not_removed_one_by_one():
 
 
 def test_the_queue_menu_keeps_the_menu_style():
-    """The bigger font of the menu button must not reach its menu, a child of the button."""
+    """The bigger font of the menu button must not reach its menu, a child of the button. The
+    size is in points: with a pixel size, Qt warns on every paint of a button with a menu."""
     from src.gui.widgets.sidebar import Sidebar
 
     sidebar = Sidebar()
     button = sidebar._queue_menu_btn
     button.ensurePolished()
     button.menu().ensurePolished()
-    assert button.font().pixelSize() == 18
-    assert button.menu().font().pixelSize() != 18
+    assert button.font().pixelSize() == -1
+    assert button.font().pointSizeF() == 13.5
+    assert button.menu().font().pointSizeF() != 13.5
