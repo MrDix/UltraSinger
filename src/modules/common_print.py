@@ -101,6 +101,11 @@ def print_help() -> None:
     --disable_separation    Disable track separation. Track separation is enabled by default.
     --disable_karaoke       Disable creation of karaoke style txt file. Karaoke is enabled by default.
     --disable_onset_correction  Disable onset-based timing correction. Enabled by default.
+    --disable_phoneme_word_starts  Do not move word starts by their sounds. Enabled by default: a word sung
+                            on the held vowel of the word before ("your" for a moment, then "eyes" held)
+                            starts where a phoneme recognizer hears its sounds begin, not at the end of
+                            the held note. Needs the separated vocal and found lyrics; downloads a
+                            phoneme model (about 1.3 GB) on first use.
     --disable_quantization  Disable key quantization. Key quantization is enabled by default and removes slides and out-of-key notes.
     --disable_vocal_center  Disable vocal-centre octave correction. Enabled by default.
     --octave_snap           Fold isolated single-note octave spikes back onto the melody line

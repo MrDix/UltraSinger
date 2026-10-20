@@ -505,6 +505,21 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._onset_correction.setChecked(
                                not _DEFAULTS["disable_onset_correction"]))
 
+        # Phoneme word starts
+        self._phoneme_word_starts = ToggleSwitch(
+            checked=not self._config.get("disable_phoneme_word_starts", False)
+        )
+        card.add_toggle_row("Phoneme Word Starts", self._phoneme_word_starts,
+                           "A singer often changes the word on a held note: \"your\" "
+                           "for a moment, then \"eyes\" held on the same vowel. "
+                           "A phoneme recognizer hears where the sounds of the "
+                           "next word begin, and the word starts there instead of "
+                           "at the end of the held note. Works with found lyrics "
+                           "and the separated vocal; downloads a phoneme model "
+                           "(about 1.3 GB) on first use.",
+                           reset_callback=lambda: self._phoneme_word_starts.setChecked(
+                               not _DEFAULTS["disable_phoneme_word_starts"]))
+
         # Lyrics lookup
         self._lyrics_lookup = ToggleSwitch(
             checked=not self._config.get("disable_lyrics_lookup", False)
@@ -1752,6 +1767,7 @@ class ConversionSettingsForm(QWidget):
             "octave_snap": self._octave_snap.isChecked(),
             "octave_consistency": self._octave_consistency.currentData(),
             "disable_onset_correction": not self._onset_correction.isChecked(),
+            "disable_phoneme_word_starts": not self._phoneme_word_starts.isChecked(),
             "disable_denoise_track_noise": not self._denoise.isChecked(),
             "denoise_nr": self._denoise_nr.value(),
             "denoise_nf": self._denoise_nf.value(),

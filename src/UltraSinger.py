@@ -727,6 +727,38 @@ def run() -> tuple[str, Score, Score]:
         finish_cache_folder(process_data.process_data_paths.cache_folder_path)
         sys.exit(1)
 
+    # Word starts from the sounds of the words: a word sung on a vowel held
+    # from the word before starts where its sounds begin, not at the end of
+    # the held note (see phoneme_word_starts). Before the note segmentation,
+    # so the model's notes get the words at their new starts.
+    phoneme_word_starts_result = None
+    if (
+        settings.phoneme_word_starts
+        and reference_first_used
+        and not settings.ignore_audio
+        and settings.use_separated_vocal
+        and process_data.process_data_paths.vocals_audio_file_path
+        and process_data.midi_segments
+    ):
+        from modules.Speech_Recognition.phoneme_word_starts import correct_word_starts
+
+        corrected, phoneme_word_starts_result = correct_word_starts(
+            process_data.midi_segments,
+            process_data.process_data_paths.vocals_audio_file_path,
+            process_data.media_info.language,
+            device=settings.pytorch_device,
+        )
+        if corrected is not process_data.midi_segments:
+            process_data.midi_segments = corrected
+            process_data.transcribed_data = _transcribed_data_of(process_data.midi_segments)
+    elif settings.phoneme_word_starts:
+        if settings.ignore_audio:
+            phoneme_word_starts_result = "not run, the audio was not analysed"
+        elif not reference_first_used:
+            phoneme_word_starts_result = "not run, the words were not placed from reference lyrics"
+        else:
+            phoneme_word_starts_result = "not run, it needs the separated vocal"
+
     # Create audio chunks after transcribed_data is finalized
     if settings.create_audio_chunks:
         create_audio_chunks(process_data)
@@ -1034,6 +1066,7 @@ def run() -> tuple[str, Score, Score]:
             synced_of_other_recording=process_data.synced_lyrics_other_recording,
             plain_from_synced=process_data.plain_lyrics_from_synced,
             model_segmentation_used=model_segmentation_used,
+            phoneme_word_starts_result=phoneme_word_starts_result,
         )
 
     # Cleanup
@@ -1214,6 +1247,7 @@ def _write_settings_info_file(
         synced_of_other_recording: str | None = None,
         plain_from_synced: bool = False,
         model_segmentation_used: bool = False,
+        phoneme_word_starts_result: str | None = None,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results."""
     from datetime import datetime, timezone
@@ -1357,6 +1391,8 @@ def _write_settings_info_file(
             f.write(f"  Quantize to key:          {settings.quantize_to_key}\n")
             f.write(f"  Vocal center correction:  {settings.vocal_center_correction}\n")
             f.write(f"  Onset correction:         {settings.onset_correction}\n")
+            phoneme_note = f" ({phoneme_word_starts_result})" if phoneme_word_starts_result else ""
+            f.write(f"  Phoneme word starts:      {settings.phoneme_word_starts}{phoneme_note}\n")
             f.write(f"  Syllable split:           {settings.syllable_split}\n")
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
@@ -2856,6 +2892,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.octave_consistency = False
         elif opt in ("--disable_onset_correction"):
             settings.onset_correction = False
+        elif opt in ("--disable_phoneme_word_starts"):
+            settings.phoneme_word_starts = False
         elif opt in ("--syllable_split"):
             settings.syllable_split = True
         elif opt in ("--vocal_gap_fill"):
@@ -3091,6 +3129,7 @@ def arg_options():
         "octave_consistency",
         "disable_octave_consistency",
         "disable_onset_correction",
+        "disable_phoneme_word_starts",
         "syllable_split",
         "vocal_gap_fill",
         "pitch_change_split",

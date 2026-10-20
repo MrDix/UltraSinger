@@ -41,6 +41,13 @@ dependencies = [
     "audio-separator>=0.25",
     # Qwen3-ASR transcriber (--transcriber)
     "qwen-asr==0.0.6",
+    # Phonemes of the lyrics for the phoneme word starts (eSpeak NG library
+    # and data come with espeakng-loader, no system install)
+    "phonemizer>=3.3",
+    "espeakng-loader>=0.2.4",
+    # Phoneme recognizer for the phoneme word starts
+    "transformers",
+    "huggingface_hub",
     # chardet 6+/7+ breaks an implicit dependency of requests and can prevent
     # UltraSinger from starting (upstream fix, rakuri255/UltraSinger#324)
     "chardet<6.0.0",
