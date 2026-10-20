@@ -115,7 +115,8 @@ def _badge(info):
 
 def _status(found, duration):
     """The badge line for the lyrics that the conversion found for audio of ``duration`` seconds."""
-    if found is not None and (found.synced_lyrics or found.plain_lyrics)             and lrclib_client.other_recording(found.duration, duration):
+    if (found is not None and (found.synced_lyrics or found.plain_lyrics)
+            and lrclib_client.other_recording(found.duration, duration)):
         kind = "Synced" if found.synced_lyrics else "Plain"
         return f"⚠️ {kind} lyrics of a {round(found.duration) // 60}:{round(found.duration) % 60:02d} version"
     if found is not None and found.synced_lyrics:

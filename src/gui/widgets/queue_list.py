@@ -311,7 +311,8 @@ class QueueItemWidget(QWidget):
         source_text = _SOURCE_LABELS.get(source, source)
         lyrics_length = info.get("lyrics_length_s")
         if source == "other version" and lyrics_length:
-            source_text = f"Lyrics of a {lyrics_length // 60}:{lyrics_length % 60:02d} version"
+            seconds = round(lyrics_length)
+            source_text = f"Lyrics of a {seconds // 60}:{seconds % 60:02d} version"
         # The game score stays OUT of the visible line (it would crowd out
         # the action buttons) — a small marker indicates it, the values
         # live in a readable rich-text tooltip.
@@ -361,8 +362,8 @@ class QueueItemWidget(QWidget):
             if info.get("whisper_fallback"):
                 tooltip += "\nReference pipeline fell back to the transcription"
             if source == "other version" and lyrics_length and info.get("audio_length_s"):
-                tooltip += (f"\nThe found lyrics are {lyrics_length} s long, the audio "
-                            f"{info['audio_length_s']} s: they may miss passages")
+                tooltip += (f"\nThe found lyrics are {lyrics_length:.0f} s long, the audio "
+                            f"{info['audio_length_s']:.0f} s: they may miss passages")
             self._lang_badge.setToolTip(tooltip)
             self._lang_badge.setVisible(True)
 

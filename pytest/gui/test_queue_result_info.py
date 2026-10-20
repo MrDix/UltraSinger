@@ -112,6 +112,29 @@ class TestParseOutputLine:
         )
         assert "lyrics_length_s" not in item.result_info
 
+    def test_lrclib_lengths_parsed_from_the_conversions_line(self, queue_manager, capsys):
+        """The line as the lookup prints it: colored, a title with brackets, lengths to a tenth of a second."""
+        from modules import lrclib_client
+
+        found = lrclib_client.LyricsInfo(track_name="Title [Live] (Extended)", artist_name="Artist [Band]",
+                                         plain_lyrics="first line", synced_lyrics="[00:12.00] first line",
+                                         duration=210.4)
+        with patch.object(lrclib_client, "find_lyrics", return_value=found):
+            lrclib_client.search_lyrics("Artist", "Title", duration=190.0)
+        item = _make_item()
+        queue_manager._current_item = item
+        for line in capsys.readouterr().out.splitlines():
+            queue_manager._parse_output_line(line)
+        assert item.result_info["lrclib_result"] == "synced"
+        assert item.result_info["lyrics_length_s"] == 210.4
+        assert item.result_info["audio_length_s"] == 190.0
+        # 20.4 s longer: another recording for the conversion and for the label
+        item.result_info["pipeline"] = "reference"
+        queue_manager._items = [item]
+        queue_manager._running = True
+        queue_manager._on_item_finished(0)
+        assert item.result_info["lyrics_source"] == "other version"
+
     def test_lrclib_plain_only(self, queue_manager):
         item = _make_item()
         queue_manager._current_item = item

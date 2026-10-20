@@ -429,7 +429,7 @@ class TestSearchLyricsReport(unittest.TestCase):
                 patch("builtins.print") as mock_print:
             search_lyrics("Some Artist", "Song Title", duration=235.2)
         report = " ".join(str(call.args[0]) for call in mock_print.call_args_list)
-        self.assertIn("[plain (3 words), synced], 234 s long (the audio: 235 s)", report)
+        self.assertIn("[plain (3 words), synced], 234.0 s long (the audio: 235.2 s)", report)
 
     def test_reports_synced_lyrics_alone(self):
         found = LyricsInfo(track_name="Song Title", artist_name="Some Artist",
