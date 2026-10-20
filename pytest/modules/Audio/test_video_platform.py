@@ -340,6 +340,18 @@ class TestGetVideoTitle(unittest.TestCase):
         mock_yt_dl.return_value.__enter__.return_value.extract_info.assert_called_once_with(url, download=False)
         mock_yt_dl.return_value.__enter__.return_value.urlopen.assert_called_once_with("test_thumbnail_url")
 
+    @patch("src.modules.Audio.video_platform.yt_dlp.YoutubeDL")
+    @patch("src.modules.Audio.video_platform.save_image")
+    def test_known_thumbnail_url_needs_no_info_extraction(self, mock_save_image, mock_downloader):
+        ydl = mock_downloader.return_value.__enter__.return_value
+        ydl.urlopen.return_value.read.return_value = b"image"
+        self.assertEqual(download_and_convert_thumbnail({}, "https://fakeUrl", "test", "/out",
+                                                        "https://thumb.example/t.jpg"),
+                         "https://thumb.example/t.jpg")
+        ydl.extract_info.assert_not_called()
+        ydl.urlopen.assert_called_once_with("https://thumb.example/t.jpg")
+        mock_save_image.assert_called_once_with(b"image", "test", "/out")
+
 
 class TestDownloadRetries(unittest.TestCase):
     """A stalled connection is retried instead of ending the download."""
@@ -1405,6 +1417,131 @@ class TestLiveMark(unittest.TestCase):
     def test_studio_video_and_marked_title(self):
         self.assertEqual(self._find("Artist - Title (Official Video)")[0], "Title")
         self.assertEqual(self._find("Artist - Title (Live)", found_title="Title (Live)")[0], "Title (Live)")
+
+    def test_live_by_the_description(self):
+        with patch.object(video_platform, "search_musicbrainz", return_value=SongInfo(title="Title", artist="Artist")):
+            self.assertEqual(video_platform.find_song("Artist", "Title", "Artist - Title", quick=True,
+                                                      description="Recorded live at Some Hall.").title,
+                             "Title (Live)")
+            self.assertEqual(video_platform.find_song("Artist", "Title", "Artist - Title", quick=True,
+                                                      description="See me live on tour!").title, "Title")
+
+
+class TestCoverOfLiveRecording(unittest.TestCase):
+    """The cover from the song database shows the studio release: a live recording gets the
+    video's thumbnail, and the cover from the song database only when there is no thumbnail."""
+
+    _SONG = SongInfo(title="Title", artist="Artist", cover_url="https://cover.example/c.jpg",
+                     cover_image_data=b"cover")
+    _THUMBNAIL = "https://thumb.example/t.jpg"
+
+    def _download(self, info, song=_SONG, thumbnail=_THUMBNAIL):
+        """A download of the video of ``info``, whose song is ``song``; ``thumbnail``: the URL of the
+        thumbnail the download gets, or the error of its download. Returns the media info, the
+        covers saved from the song database, the thumbnail download and the console."""
+        saved = []
+        with tempfile.TemporaryDirectory() as out, ExitStack() as stack:
+            for name, kwargs in (
+                    ("get_video_info", {"return_value": info}),
+                    ("search_musicbrainz", {"return_value": copy.copy(song)}),
+                    ("__download_video_with_audio", {"side_effect": TestFailedDownloadFolder._downloaded}),
+                    ("separate_audio_video", {"return_value": ("a.ogg", "v.mp4", "ogg", "mp4")}),
+                    ("save_image", {"side_effect": lambda data, name, folder: saved.append(data)})):
+                stack.enter_context(patch.object(video_platform, name, **kwargs))
+            if isinstance(thumbnail, Exception):
+                stack.enter_context(patch.object(video_platform, "download_and_convert_thumbnail",
+                                                 side_effect=thumbnail))
+            else:
+                stack.enter_context(patch.object(video_platform, "download_and_convert_thumbnail",
+                                                 return_value=thumbnail))
+            thumbnail_download = stack.enter_context(
+                patch.object(video_platform, "__download_thumbnail",
+                             side_effect=getattr(video_platform, "__download_thumbnail")))
+            log = stack.enter_context(redirect_stdout(io.StringIO()))
+            *_, media_info = video_platform.download_from_video_platform("https://fakeUrl", out)
+        return media_info, saved, thumbnail_download, log.getvalue()
+
+    def test_live_by_the_video_title(self):
+        media_info, saved, _, _ = self._download({"title": "Artist - Title (Live at Some Arena)"})
+        self.assertEqual(media_info.title, "Title (Live)")
+        self.assertEqual((media_info.cover_url, media_info.cover_from_video), (self._THUMBNAIL, True))
+        self.assertEqual(saved, [])
+
+    def test_live_by_the_description(self):
+        media_info, saved, _, _ = self._download(
+            {"title": "Artist - Title (Official Video)", "description": "Performed live on 2/24/26 from Some Theater."})
+        self.assertEqual(media_info.title, "Title (Live)")
+        self.assertEqual((media_info.cover_url, media_info.cover_from_video), (self._THUMBNAIL, True))
+        self.assertEqual(saved, [])
+
+    def test_the_cover_from_the_song_database_without_a_thumbnail(self):
+        for thumbnail in ("", OSError("HTTP Error 404: Not Found")):
+            with self.subTest(thumbnail=thumbnail):
+                media_info, saved, thumbnail_download, log = self._download(
+                    {"title": "Artist - Title (Live)"}, thumbnail=thumbnail)
+                self.assertEqual((media_info.cover_url, media_info.cover_from_video),
+                                 ("https://cover.example/c.jpg", False))
+                self.assertEqual(saved, [b"cover"])
+                # tried once, not again after the cover from the song database
+                thumbnail_download.assert_called_once()
+        self.assertIn("the thumbnail could not be downloaded (HTTP Error 404: Not Found) - the cover from "
+                      "the song database is taken instead", log)
+
+    def test_a_live_recording_without_any_cover(self):
+        media_info, saved, thumbnail_download, log = self._download(
+            {"title": "Artist - Title (Live)"}, song=SongInfo(title="Title", artist="Artist"),
+            thumbnail=OSError("HTTP Error 404: Not Found"))
+        self.assertEqual((media_info.cover_url, media_info.cover_from_video), ("", False))
+        thumbnail_download.assert_called_once()
+        self.assertIn("- the song gets no cover", log)
+
+    def test_studio_recording(self):
+        media_info, saved, thumbnail_download, _ = self._download(
+            {"title": "Artist - Title (Official Video)", "description": "See me live on tour!"})
+        self.assertEqual(media_info.title, "Title")
+        self.assertEqual((media_info.cover_url, media_info.cover_from_video), ("https://cover.example/c.jpg", False))
+        self.assertEqual(saved, [b"cover"])
+        thumbnail_download.assert_not_called()
+
+    def test_studio_recording_without_a_cover_from_the_song_database(self):
+        media_info, saved, _, _ = self._download({"title": "Artist - Title"},
+                                                 song=SongInfo(title="Title", artist="Artist"))
+        self.assertEqual((media_info.cover_url, media_info.cover_from_video), (self._THUMBNAIL, True))
+        self.assertEqual(saved, [])
+
+    def test_the_thumbnail_is_tried_once(self):
+        """The media info tells whether the thumbnail was tried: a later cover swap does not try again."""
+        for info, song, thumbnail, tried in (
+                ({"title": "Artist - Title (Live)"}, self._SONG, "", True),
+                ({"title": "Artist - Title"}, SongInfo(title="Title", artist="Artist"), "", True),
+                ({"title": "Artist - Title"}, self._SONG, self._THUMBNAIL, False)):
+            with self.subTest(info=info, song=song):
+                media_info, *_ = self._download(info, song=song, thumbnail=thumbnail)
+                self.assertEqual(media_info.video_thumbnail_tried, tried)
+
+    def test_the_thumbnail_url_of_the_video_info(self):
+        """The info of the video names its thumbnail: only the image is requested, the video's
+        info is not extracted again (each request counts towards the bot detection)."""
+        info = {"title": "Artist - Title (Live)", "thumbnail": "https://thumb.example/info.jpg"}
+        saved = []
+        with tempfile.TemporaryDirectory() as out, ExitStack() as stack:
+            for name, kwargs in (
+                    ("get_video_info", {"return_value": info}),
+                    ("search_musicbrainz", {"return_value": copy.copy(self._SONG)}),
+                    ("__download_video_with_audio", {"side_effect": TestFailedDownloadFolder._downloaded}),
+                    ("separate_audio_video", {"return_value": ("a.ogg", "v.mp4", "ogg", "mp4")}),
+                    ("save_image", {"side_effect": lambda data, name, folder: saved.append(data)})):
+                stack.enter_context(patch.object(video_platform, name, **kwargs))
+            downloader_cls = stack.enter_context(patch.object(video_platform.yt_dlp, "YoutubeDL"))
+            ydl = downloader_cls.return_value.__enter__.return_value
+            ydl.urlopen.return_value.read.return_value = b"thumbnail"
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            *_, media_info = video_platform.download_from_video_platform("https://fakeUrl", out)
+        ydl.extract_info.assert_not_called()
+        ydl.urlopen.assert_called_once_with("https://thumb.example/info.jpg")
+        self.assertEqual(saved, [b"thumbnail"])
+        self.assertEqual((media_info.cover_url, media_info.cover_from_video, media_info.video_thumbnail_url),
+                         ("https://thumb.example/info.jpg", True, "https://thumb.example/info.jpg"))
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from modules.Audio.bpm import get_bpm_from_file
 from modules.console_colors import ULTRASINGER_HEAD, gold_highlighted, red_highlighted
 from modules.Image.image_helper import save_image
 from modules.musicbrainz_client import SongInfo, search_musicbrainz
-from modules.name_matching import artist_from_channel, with_live_mark
+from modules.name_matching import artist_from_channel, is_live_video, with_live_mark
 from modules.ffmpeg_helper import separate_audio_video
 
 
@@ -390,12 +390,13 @@ def video_title_from_info(info: dict, verbose: bool = True) -> tuple[str, str, s
 
 
 def find_song(artist: str, title: str, video_title: str, quick: bool = False,
-              duration: float | None = None) -> SongInfo:
+              duration: float | None = None, description: str = "") -> SongInfo:
     """The song of a video, from the ``artist`` and ``title`` of
     ``video_title_from_info`` as the song database names them (``quick`` and
     ``duration``, the length of the video in seconds: see
-    ``search_musicbrainz``). The title of a live recording gets " (Live)"
-    (see ``with_live_mark``)."""
+    ``search_musicbrainz``). The title of a live recording, by the video
+    title or the video's ``description``, gets " (Live)" (see
+    ``with_live_mark``)."""
     song_info = search_musicbrainz(title, artist, quick=quick, duration=duration)
 
     # The song database may re-introduce suffixes that were already stripped
@@ -404,7 +405,7 @@ def find_song(artist: str, title: str, video_title: str, quick: bool = False,
     song_info.title = strip_unmatched_suffixes(song_info.title, video_title, verbose=not quick)
     # A live recording keeps its mark: its notes and lyrics are not those of the
     # studio version, and its song folder is another one
-    live_title = with_live_mark(song_info.title, video_title)
+    live_title = with_live_mark(song_info.title, video_title, description)
     if live_title != song_info.title:
         if not quick:
             print(f"{ULTRASINGER_HEAD} The video is a live recording: {gold_highlighted(live_title)}")
@@ -509,8 +510,12 @@ def __download_video_with_audio(url: str, clear_filename: str, output_path: str,
 
 
 def __download_thumbnail(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
-                          po_token: str = None) -> str:
-    """Download thumbnail from the video platform; its URL, or "" without one"""
+                          po_token: str = None, without: str = "the song gets no cover",
+                          thumbnail_url: str | None = None) -> str:
+    """Download thumbnail from the video platform; its URL, or "" without one
+    (``without`` tells what the song gets then). With its ``thumbnail_url``
+    (from the info of the video) only the image is requested, the video's
+    info is not extracted once more."""
 
     print(f"{ULTRASINGER_HEAD} Downloading thumbnail")
     ydl_opts = _apply_po_token({
@@ -521,21 +526,36 @@ def __download_thumbnail(url: str, clear_filename: str, output_path: str, cookie
     }, po_token)
 
     try:
-        thumbnail_url = download_and_convert_thumbnail(ydl_opts, url, clear_filename, output_path)
+        thumbnail_url = download_and_convert_thumbnail(ydl_opts, url, clear_filename, output_path, thumbnail_url)
     except Exception as e:  # noqa: BLE001 - the cover is optional, the downloaded song is kept
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the thumbnail could not be downloaded "
-              f"({e}) - the song gets no cover")
+              f"({e}) - {without}")
         return ""
     return thumbnail_url
 
 
-def download_and_convert_thumbnail(ydl_opts, url: str, clear_filename: str, output_path: str) -> str:
-    """Download and convert thumbnail from the video platform"""
+def download_thumbnail(url: str, clear_filename: str, output_path: str, cookiefile: str = None,
+                       po_token: str = None, without: str = "the song gets no cover",
+                       thumbnail_url: str | None = None) -> str:
+    """The thumbnail of the video at ``url`` as the cover of the song
+    ``clear_filename`` in ``output_path`` (it replaces a cover there); its
+    URL, or "" when it could not be had (``without`` tells what the song
+    gets then). With its ``thumbnail_url`` (from the info of the video)
+    only the image is requested."""
+    return __download_thumbnail(url, clear_filename, output_path, cookiefile, po_token, without, thumbnail_url)
+
+
+def download_and_convert_thumbnail(ydl_opts, url: str, clear_filename: str, output_path: str,
+                                   thumbnail_url: str | None = None) -> str:
+    """Download and convert thumbnail from the video platform. With its
+    ``thumbnail_url`` known, the video's info is not extracted again: each
+    request to the platform counts towards its bot detection."""
 
     ydl_opts.setdefault("logger", _FilteredLogger())
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(url, download=False)
-        thumbnail_url = info_dict.get("thumbnail")
+        if not thumbnail_url:
+            info_dict = ydl.extract_info(url, download=False)
+            thumbnail_url = info_dict.get("thumbnail")
         if thumbnail_url:
             response = ydl.urlopen(thumbnail_url)
             image_data = response.read()
@@ -633,9 +653,11 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
     """Download from the video platform"""
     info = get_video_info(input_url, cookiefile, po_token)
     (artist, title, video_title, yt_language) = video_title_from_info(info)
+    description = info.get("description") or ""
 
     # Get additional data for song, with the length of the video (see search_musicbrainz)
-    song_info = find_song(artist, title, video_title, duration=info.get("duration") or None)
+    song_info = find_song(artist, title, video_title, duration=info.get("duration") or None,
+                          description=description)
 
     basename_without_ext = sanitize_filename(f"{song_info.artist} - {song_info.title}")
     song_output = os.path.join(output_folder_path, basename_without_ext)
@@ -662,18 +684,35 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
         _remove_failed_song_folder(song_output, basename_without_ext)
         raise error
 
+    # The cover from the song database shows the studio release: a live
+    # recording gets the video's thumbnail, and the cover from the song
+    # database only when there is no thumbnail
+    has_database_cover = song_info.cover_url is not None and song_info.cover_image_data is not None
+    live = is_live_video(video_title, song_info.title, description)
+    thumbnail_url = info.get("thumbnail") or None
     cover_url = None
-    if song_info.cover_url is not None and song_info.cover_image_data is not None:
+    if live:
+        cover_url = __download_thumbnail(
+            input_url, basename_without_ext, song_output, cookiefile, po_token,
+            without="the cover from the song database is taken instead" if has_database_cover
+            else "the song gets no cover",
+            thumbnail_url=thumbnail_url,
+        ) or None
+    cover_from_video = cover_url is not None
+    if cover_url is None and has_database_cover:
         try:
             save_image(song_info.cover_image_data, basename_without_ext, song_output)
             cover_url = song_info.cover_url
         except Exception as e:  # noqa: BLE001 - the cover is optional: the video's thumbnail stands in
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the cover from the song database could "
-                  f"not be saved ({e}) - the video's thumbnail is taken instead")
-    if cover_url is None:
+                  f"not be saved ({e})" + ("" if live else " - the video's thumbnail is taken instead"))
+    thumbnail_tried = live
+    if cover_url is None and not live:
+        thumbnail_tried = True
         cover_url = __download_thumbnail(
-            input_url, basename_without_ext, song_output, cookiefile, po_token
+            input_url, basename_without_ext, song_output, cookiefile, po_token, thumbnail_url=thumbnail_url
         )
+        cover_from_video = bool(cover_url)
 
     return (
         basename_without_ext,
@@ -685,7 +724,11 @@ def download_from_video_platform(input_url: str, output_folder_path: str, cookie
             year=song_info.year,
             genre=song_info.genres,
             language=yt_language or None,
-            cover_url=cover_url,
+            cover_url=cover_url or "",
+            cover_from_video=cover_from_video,
+            # (tried once: a failed thumbnail is not asked for again)
+            video_thumbnail_tried=thumbnail_tried,
+            video_thumbnail_url=thumbnail_url,
             video_url=input_url,
             audio_extension=audio_ext,
             video_extension=video_ext

@@ -255,8 +255,9 @@ class _FormatProbeWorker(QObject):
         """Which lyrics a conversion of the video finds.
 
         The conversion's lookup from the video's yt-dlp ``info``: artist and
-        title from the video title, named as the song database names them
-        and searched for lyrics, both with the video's length (``duration``,
+        title from the video title (a live recording marked as such, also by its
+        description), named as the song database names them and searched
+        for lyrics, both with the video's length (``duration``,
         in seconds). Silent (no console output), and without the song's
         year, genres and cover.
         """
@@ -264,7 +265,8 @@ class _FormatProbeWorker(QObject):
             from modules.Audio.video_platform import find_song, video_title_from_info
             from modules.lrclib_client import find_lyrics
             artist, title, video_title, _language = video_title_from_info(info, verbose=False)
-            song = find_song(artist, title, video_title, quick=True, duration=duration)
+            song = find_song(artist, title, video_title, quick=True, duration=duration,
+                             description=info.get("description") or "")
             if self._cancelled:  # no lyrics lookup any more
                 return ""
             if not song.artist or not song.title:
