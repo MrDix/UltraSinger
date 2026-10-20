@@ -53,7 +53,7 @@ from modules.Audio.video_platform import (
     strip_unmatched_suffixes,
 )
 from modules.Audio.bpm import get_bpm_from_file
-from modules.name_matching import with_live_mark
+from modules.name_matching import is_live_video, with_live_mark
 
 from modules.console_colors import (
     ULTRASINGER_HEAD,
@@ -958,6 +958,10 @@ def run() -> tuple[str, Score, Score]:
     if settings.create_plot:
         create_plots(process_data, settings.output_folder_path)
 
+    # The lyrics are settled: a special version gets the video's thumbnail as
+    # its cover before the cover goes into the tags and the chart
+    _cover_of_special_version(process_data)
+
     # Create Ultrastar txt
     accurate_score, simple_score, ultrastar_file_output = CreateUltraStarTxt(process_data)
 
@@ -1038,6 +1042,45 @@ def run() -> tuple[str, Score, Score]:
     # Print Support
     print_support()
     return ultrastar_file_output, simple_score, accurate_score
+
+
+def _cover_of_special_version(process_data: ProcessData) -> None:
+    """The video's thumbnail as the cover when the used synced lyrics are of
+    a version whose length does not fit the audio (see ``other_recording``):
+    the audio is a special version of the song (a live one, an extended
+    one), which the cover from the song database does not show. Also when
+    their text was used without their times (taken for another recording's).
+
+    Only with a video (its URL), and once per run: not when the thumbnail
+    was taken or tried already. The cover from the song database stays when
+    the thumbnail cannot be had. With the thumbnail's URL from the video's
+    info, only the image is requested.
+    """
+    from modules.lrclib_client import other_recording
+    media = process_data.media_info
+    lyrics_used = process_data.synced_lyrics or (process_data.synced_lyrics_other_recording
+                                                 and process_data.plain_lyrics)
+    if (settings.input_file_is_ultrastar_txt or media is None or not media.video_url or media.cover_from_video
+            or media.video_thumbnail_tried or not lyrics_used or not process_data.basename):
+        return
+    audio_s = audio_length(process_data.process_data_paths.whisper_audio_path)
+    if not other_recording(process_data.synced_lyrics_length, audio_s):
+        return
+    from modules.Audio.video_platform import download_thumbnail
+    media.video_thumbnail_tried = True
+    thumbnail_url = download_thumbnail(
+        media.video_url, process_data.basename, settings.output_folder_path, settings.cookiefile,
+        settings.yt_po_token, without="the cover from the song database stays",
+        thumbnail_url=media.video_thumbnail_url,
+    )
+    if not thumbnail_url:
+        return
+    media.cover_url, media.cover_from_video = thumbnail_url, True
+    print(
+        f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the synced lyrics are "
+        f"{process_data.synced_lyrics_length:.0f} s long, the audio {audio_s:.0f} s: a special version, "
+        f"the video's thumbnail is its cover"
+    )
 
 
 def _write_metadata_tags(process_data: ProcessData) -> None:
@@ -1862,6 +1905,7 @@ def InitProcessData():
         # named, by the video's artist/title instead of the temporary
         # intercepted filename.
         yt_artist, yt_title, yt_video_title, yt_language, yt_duration = None, None, None, None, None
+        video_description, video_thumbnail_url = "", None
         if settings.video_url:
             try:
                 from modules.Audio.video_platform import get_video_info, video_title_from_info
@@ -1869,6 +1913,8 @@ def InitProcessData():
                 info = get_video_info(settings.video_url, settings.cookiefile, settings.yt_po_token)
                 yt_artist, yt_title, yt_video_title, yt_language = video_title_from_info(info)
                 yt_duration = info.get("duration") or None
+                video_description = info.get("description") or ""
+                video_thumbnail_url = info.get("thumbnail") or None
                 print(
                     f"{ULTRASINGER_HEAD} Video platform metadata: "
                     f"{yt_artist} - {yt_title}"
@@ -1884,7 +1930,8 @@ def InitProcessData():
             settings.output_folder_path,
             process_data.process_data_paths.audio_output_file_path,
             process_data.media_info,
-        ) = infos_from_audio_video_input_file(yt_artist, yt_title, yt_video_title, yt_duration)
+        ) = infos_from_audio_video_input_file(yt_artist, yt_title, yt_video_title, yt_duration,
+                                              video_description, video_thumbnail_url)
 
         if yt_language and not process_data.media_info.language:
             process_data.media_info.language = yt_language
@@ -2378,15 +2425,19 @@ def infos_from_audio_video_input_file(
         title: str | None = None,
         video_title: str | None = None,
         duration: float | None = None,
+        description: str = "",
+        thumbnail_url: str | None = None,
 ) -> tuple[str, str, str, MediaInfo]:
     """Infos from audio/video input file
 
     The song is looked up by ``artist`` and ``title`` when a title is given
     (the metadata of the --video_url video, whose raw title is
-    ``video_title``), else by the file name. The song folder and its files
-    are named after what the lookup finds. The lookup gets the length of
-    the audio: ``duration``, the length of the --video_url video, or else
-    the length of the file.
+    ``video_title`` and whose description is ``description``), else by the
+    file name. The song folder and its files are named after what the
+    lookup finds. The lookup gets the length of the audio: ``duration``,
+    the length of the --video_url video, or else the length of the file.
+    The cover of a live recording is the video's thumbnail (at
+    ``thumbnail_url``, from the video's info), as for a video URL input.
     """
     basename = os.path.basename(settings.input_file_path)
     basename_without_ext = os.path.splitext(basename)[0]
@@ -2404,7 +2455,8 @@ def infos_from_audio_video_input_file(
         # As for a video URL input (-i): the song lookup may re-introduce
         # suffixes that the video title does not have; a live recording is
         # marked as such
-        song_info.title = with_live_mark(strip_unmatched_suffixes(song_info.title, video_title), video_title)
+        song_info.title = with_live_mark(strip_unmatched_suffixes(song_info.title, video_title), video_title,
+                                         description)
     # Metadata titles may contain characters that are invalid in paths (e.g. "?" or "/")
     basename_without_ext = os_helper.sanitize_filename(f"{song_info.artist} - {song_info.title}")
 
@@ -2441,7 +2493,22 @@ def infos_from_audio_video_input_file(
         )
 
     # Todo: Read ID3 tags
-    if song_info.cover_image_data is not None:
+    # As for a video URL input: a live recording's cover is the video's
+    # thumbnail, the song database's only when there is no thumbnail
+    cover_url, cover_from_video, thumbnail_tried = song_info.cover_url, False, False
+    if settings.video_url and video_title and is_live_video(video_title, song_info.title, description):
+        from modules.Audio.video_platform import download_thumbnail
+        thumbnail_tried = True
+        downloaded_url = download_thumbnail(
+            settings.video_url, basename_without_ext, song_folder_output_path, settings.cookiefile,
+            settings.yt_po_token,
+            without="the cover from the song database is taken instead" if song_info.cover_image_data is not None
+            else "the song gets no cover",
+            thumbnail_url=thumbnail_url,
+        )
+        if downloaded_url:
+            cover_url, cover_from_video = downloaded_url, True
+    if song_info.cover_image_data is not None and not cover_from_video:
         save_image(song_info.cover_image_data, basename_without_ext, song_folder_output_path)
 
     return (
@@ -2453,7 +2520,10 @@ def infos_from_audio_video_input_file(
             title=song_info.title,
             year=song_info.year,
             genre=song_info.genres,
-            cover_url=song_info.cover_url,
+            cover_url=cover_url,
+            cover_from_video=cover_from_video,
+            video_thumbnail_tried=thumbnail_tried,
+            video_thumbnail_url=thumbnail_url,
             audio_extension=audio_ext,
             video_extension=video_ext
         ),

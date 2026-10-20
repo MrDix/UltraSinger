@@ -3,7 +3,9 @@
 import unittest
 
 from src.modules.name_matching import (
+    is_live_description,
     is_live_title,
+    is_live_video,
     similarity,
     strip_title_additions,
     title_before_dash,
@@ -296,3 +298,69 @@ class TestLiveTitle(unittest.TestCase):
         # a song with the word in its title, sung live
         self.assertEqual(with_live_mark("Live Among Lanterns", "Artist - Live Among Lanterns (Live)"),
                          "Live Among Lanterns (Live)")
+
+
+class TestLiveDescription(unittest.TestCase):
+    """The first sentence of a video description can say that the video is a live recording."""
+
+    def test_live_descriptions(self):
+        for description in ("Performed live on 2/24/26 from Some Theater.\nStream the album now",
+                            "Recorded live at Some Hall", "Filmed live in Some City, 2019.",
+                            "Live at Some Arena 2019", "Live from the Studio\n\nFollow us",
+                            "This song was captured live at our last show!", "\n  LIVE AT SOME CLUB",
+                            '"Live in Some City" - the full show soon', "Recorded live at St. Some Church",
+                            # dots that end no sentence: after an abbreviation, in a date, in a web address
+                            "Vol. 2 recorded live at Some Hall", "Feat. Guest, performed live at Some Hall",
+                            "Artist Jr. performed live at Some Hall", "Recorded on 24.02.2026, live at Some Hall",
+                            "www.example.com\nRecorded live at Some Hall",
+                            "https://example.com/artist\n\nPerformed live from the Studio",
+                            # the "?" of a web address ends no sentence
+                            "Watch the full show at https://example.com/?x - recorded live at Some Hall",
+                            # in brackets or quotes, after the song title
+                            "Artist: Song (Live at Some Hall)", "Artist: Song [Live from Some Club]",
+                            "Artist - 'Live at Some Hall' out now",
+                            # a recorded year with a place
+                            "Live at Some Hall 2019", "Live in Some City 2019",
+                            # a first line of hashtags only
+                            "#Artist #LiveMusic\nRecorded live at Some Hall",
+                            # tickets after the first paragraph
+                            "Live at Some Hall\n\nTickets for the tour: example.com",
+                            # a verb tells of the recording itself, whatever else is announced
+                            "Performed live on 2/24/26 from Some Theater.\nTickets for the tour at example.com",
+                            "Recorded live at Some Hall - tickets for the next show at example.com"):
+            with self.subTest(description=description):
+                self.assertTrue(is_live_description(description))
+
+    def test_negated_or_announced(self):
+        for description in ("Never performed live before, here is the studio demo",
+                            "This song has never been played live", "It wasn't recorded live",
+                            "Live in concert this summer! Tickets on sale now", "Live on stage this fall",
+                            "Live in Some City on June 5 - tickets at example.com",
+                            "Live on our streaming channel March 5", "Live at the show tonight",
+                            # a year alone is announced; "Live at ..." with tickets in the first paragraph
+                            "Live in 2026! Tour dates below", "Live in 2026",
+                            "Live at Some Hall\nTickets for the tour: example.com",
+                            "#Artist\nLive at Some Hall. Get your tickets now"):
+            with self.subTest(description=description):
+                self.assertFalse(is_live_description(description))
+
+    def test_no_live_recording(self):
+        for description in ("See me live on tour!", "Get tickets for the live show", "Live Forever is out now",
+                            "Stream it now. Recorded live in 2019.", "Out now!\nRecorded live at Some Hall",
+                            "Live on tour this fall", "Official video of the song", "Live", "", None):
+            with self.subTest(description=description):
+                self.assertFalse(is_live_description(description))
+
+    def test_live_video(self):
+        self.assertTrue(is_live_video("Artist - Song", "Song", "Recorded live at Some Hall"))
+        self.assertTrue(is_live_video("Artist - Song (Live)", "Song"))
+        self.assertFalse(is_live_video("Artist - Song", "Song", "See me live on tour!"))
+
+    def test_mark_from_the_description(self):
+        self.assertEqual(with_live_mark("Song", "Artist - Song", "Performed live on 2/24/26 from Some Theater."),
+                         "Song (Live)")
+        # once: a title marked already keeps its own mark, as with a live video title
+        self.assertEqual(with_live_mark("Song (Live)", "Artist - Song (Live)", "Recorded live at Some Hall"),
+                         "Song (Live)")
+        self.assertEqual(with_live_mark("Song", "Artist - Song", "Get tickets for the live show"), "Song")
+        self.assertEqual(with_live_mark("", "Artist - Song", "Recorded live at Some Hall"), "")

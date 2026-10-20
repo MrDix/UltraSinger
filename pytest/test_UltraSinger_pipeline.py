@@ -849,6 +849,204 @@ class TestVideoUrlNaming(unittest.TestCase):
                 lookup.assert_called_once_with("Title - Chapter 2", "Artist", duration=238.5)
 
 
+class TestCoverOfLiveVideoUrl(unittest.TestCase):
+    """--video_url of a live recording: as for its download, the cover is the video's thumbnail,
+    and the cover from the song database only when there is no thumbnail."""
+
+    _URL = "https://example.invalid/watch?v=abc"
+    _THUMBNAIL = "https://thumb.example/t.jpg"
+
+    def _init(self, info, thumbnail=_THUMBNAIL):
+        """InitProcessData for a local file and the --video_url video of ``info``, whose song has a
+        cover in the song database; ``thumbnail``: what the thumbnail download gives. Returns the
+        process data, the covers saved from the song database and the thumbnail download."""
+        from modules.musicbrainz_client import SongInfo
+
+        saved = []
+        with tempfile.TemporaryDirectory() as folder:
+            source = os.path.join(folder, "_intercepted_abc.mp3")
+            with open(source, "wb") as file:
+                file.write(b"audio")
+            with patch.object(us.settings, "input_file_path", source), \
+                    patch.object(us.settings, "output_folder_path", folder), \
+                    patch.object(us.settings, "ignore_audio", False), \
+                    patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                    patch.object(us.settings, "video_url", self._URL), \
+                    patch("modules.Audio.video_platform.get_video_info", return_value=info), \
+                    patch.object(us, "search_musicbrainz", return_value=SongInfo(
+                        title="Title", artist="Artist", cover_url="https://cover.example/c.jpg",
+                        cover_image_data=b"cover")), \
+                    patch.object(us, "save_image", side_effect=lambda data, name, folder: saved.append(data)), \
+                    patch("modules.Audio.video_platform.download_thumbnail", return_value=thumbnail) as download, \
+                    patch.object(us, "is_video_file", return_value=False), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                process_data = us.InitProcessData()
+                song_folder = us.settings.output_folder_path
+        return process_data, saved, download, song_folder
+
+    def test_live_by_the_description(self):
+        process_data, saved, download, song_folder = self._init(
+            {"title": "Artist - Title", "description": "Recorded live at Some Hall.", "duration": 200,
+             "thumbnail": "https://thumb.example/info.jpg"})
+        media = process_data.media_info
+        self.assertEqual(media.title, "Title (Live)")
+        self.assertEqual((media.cover_url, media.cover_from_video), (self._THUMBNAIL, True))
+        self.assertEqual(saved, [])
+        self.assertEqual(download.call_args.args[:3], (self._URL, "Artist - Title (Live)", song_folder))
+        # the thumbnail of the video's info: the video's info is not extracted again
+        self.assertEqual(download.call_args.kwargs["thumbnail_url"], "https://thumb.example/info.jpg")
+        self.assertEqual((media.video_thumbnail_url, media.video_thumbnail_tried),
+                         ("https://thumb.example/info.jpg", True))
+
+    def test_the_cover_from_the_song_database_without_a_thumbnail(self):
+        process_data, saved, download, _ = self._init({"title": "Artist - Title (Live)", "duration": 200},
+                                                      thumbnail="")
+        media = process_data.media_info
+        self.assertEqual((media.cover_url, media.cover_from_video), ("https://cover.example/c.jpg", False))
+        self.assertEqual(saved, [b"cover"])
+        download.assert_called_once()
+
+    def test_studio_recording(self):
+        process_data, saved, download, _ = self._init(
+            {"title": "Artist - Title", "description": "See me live on tour!", "duration": 200})
+        media = process_data.media_info
+        self.assertEqual(media.title, "Title")
+        self.assertEqual((media.cover_url, media.cover_from_video), ("https://cover.example/c.jpg", False))
+        self.assertEqual(saved, [b"cover"])
+        download.assert_not_called()
+        self.assertFalse(process_data.media_info.video_thumbnail_tried)
+
+
+class TestCoverOfSpecialVersion(unittest.TestCase):
+    """Synced lyrics whose length does not fit the audio: the audio is a special version of the
+    song, whose cover is the video's thumbnail instead of the cover from the song database."""
+
+    _URL = "https://example.invalid/watch?v=abc"
+    _THUMBNAIL = "https://thumb.example/t.jpg"
+
+    def _swap(self, lyrics_length=236.0, audio_s=391.0, video_url=_URL, cover_from_video=False,
+              thumbnail=_THUMBNAIL, synced="[00:01.00] hello world", **data):
+        """_cover_of_special_version for synced lyrics of ``lyrics_length`` s and audio of
+        ``audio_s`` s. Returns the media info, the thumbnail download and the console."""
+        process_data = _process_data()
+        process_data.media_info.cover_url = "https://cover.example/c.jpg"
+        process_data.media_info.video_url = video_url
+        process_data.media_info.cover_from_video = cover_from_video
+        process_data.synced_lyrics = synced
+        process_data.synced_lyrics_length = lyrics_length
+        for name, value in data.items():
+            setattr(process_data, name, value)
+        out = io.StringIO()
+        with patch.object(us.settings, "output_folder_path", "song folder"), \
+                patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                patch.object(us, "audio_length", return_value=audio_s), \
+                patch("modules.Audio.video_platform.download_thumbnail", return_value=thumbnail) as download, \
+                contextlib.redirect_stdout(out):
+            us._cover_of_special_version(process_data)
+        return process_data.media_info, download, out.getvalue()
+
+    def test_the_thumbnail_replaces_the_cover(self):
+        media, download, out = self._swap()
+        self.assertEqual((media.cover_url, media.cover_from_video), (self._THUMBNAIL, True))
+        self.assertEqual(download.call_args.args[:3], (self._URL, "Artist - Song Title", "song folder"))
+        self.assertIn("the synced lyrics are 236 s long, the audio 391 s: a special version, "
+                      "the video's thumbnail is its cover", out)
+
+    def test_also_when_their_text_was_used_without_their_times(self):
+        media, download, _ = self._swap(synced=None, synced_lyrics_other_recording="only 7 of 62 lines",
+                                        plain_lyrics="hello world")
+        self.assertEqual((media.cover_url, media.cover_from_video), (self._THUMBNAIL, True))
+
+    def test_lengths_that_fit(self):
+        for lyrics_length, audio_s in ((380.0, 391.0), (None, 391.0), (236.0, None)):
+            with self.subTest(lyrics_length=lyrics_length, audio_s=audio_s):
+                media, download, out = self._swap(lyrics_length, audio_s)
+                self.assertEqual((media.cover_url, media.cover_from_video), ("https://cover.example/c.jpg", False))
+                download.assert_not_called()
+                self.assertEqual(out, "")
+
+    def test_no_synced_lyrics_used(self):
+        media, download, _ = self._swap(synced=None)
+        self.assertFalse(media.cover_from_video)
+        download.assert_not_called()
+
+    def test_without_a_video(self):
+        media, download, _ = self._swap(video_url=None)
+        self.assertEqual(media.cover_url, "https://cover.example/c.jpg")
+        download.assert_not_called()
+
+    def test_the_cover_is_the_thumbnail_already(self):
+        _, download, _ = self._swap(cover_from_video=True)
+        download.assert_not_called()
+
+    def test_the_thumbnail_is_tried_once(self):
+        """A song without any cover: the download tried the thumbnail already, it is not asked for again."""
+        process_data = _process_data()
+        process_data.media_info.video_url = self._URL
+        process_data.media_info.video_thumbnail_tried = True
+        process_data.synced_lyrics, process_data.synced_lyrics_length = "[00:01.00] hello world", 236.0
+        with patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                patch.object(us, "audio_length", return_value=391.0), \
+                patch("modules.Audio.video_platform.download_thumbnail") as download:
+            us._cover_of_special_version(process_data)
+        download.assert_not_called()
+        # and the swap itself tries once
+        media, download, _ = self._swap(thumbnail="")
+        self.assertTrue(media.video_thumbnail_tried)
+
+    def test_only_the_image_of_a_known_thumbnail_url(self):
+        """The thumbnail's URL from the video's info: the image is requested, the video's info is
+        not extracted again."""
+        from modules.Audio import video_platform
+
+        process_data = _process_data()
+        process_data.media_info.video_url = self._URL
+        process_data.media_info.video_thumbnail_url = "https://thumb.example/info.jpg"
+        process_data.synced_lyrics, process_data.synced_lyrics_length = "[00:01.00] hello world", 236.0
+        with patch.object(us.settings, "output_folder_path", "song folder"), \
+                patch.object(us.settings, "input_file_is_ultrastar_txt", False), \
+                patch.object(us, "audio_length", return_value=391.0), \
+                patch.object(video_platform.yt_dlp, "YoutubeDL") as downloader_cls, \
+                patch.object(video_platform, "save_image") as save, \
+                contextlib.redirect_stdout(io.StringIO()):
+            ydl = downloader_cls.return_value.__enter__.return_value
+            ydl.urlopen.return_value.read.return_value = b"thumbnail"
+            us._cover_of_special_version(process_data)
+        ydl.extract_info.assert_not_called()
+        ydl.urlopen.assert_called_once_with("https://thumb.example/info.jpg")
+        save.assert_called_once_with(b"thumbnail", "Artist - Song Title", "song folder")
+        self.assertEqual((process_data.media_info.cover_url, process_data.media_info.cover_from_video),
+                         ("https://thumb.example/info.jpg", True))
+
+    def test_the_cover_from_the_song_database_stays_without_a_thumbnail(self):
+        media, download, out = self._swap(thumbnail="")
+        self.assertEqual((media.cover_url, media.cover_from_video), ("https://cover.example/c.jpg", False))
+        download.assert_called_once()
+        self.assertEqual(download.call_args.kwargs["without"], "the cover from the song database stays")
+        self.assertNotIn("a special version", out)
+
+    def test_run_swaps_the_cover_before_the_chart_is_written(self):
+        """In run(): once the lyrics are settled, before the cover goes into the tags and the chart."""
+        process_data = _process_data()
+        process_data.media_info.video_url = self._URL
+        lyrics = SimpleNamespace(duration=236.0, synced_lyrics="[00:01.00] hello world", plain_lyrics="hello world")
+        mocks, chart_written = {}, []
+
+        def thumbnail(*args, **kwargs):
+            chart_written.append(mocks["CreateUltraStarTxt"].called)
+            return self._THUMBNAIL
+
+        with patch.object(us, "audio_length", return_value=391.0), \
+                patch("modules.Audio.video_platform.download_thumbnail", side_effect=thumbnail):
+            _, out, _ = _run(process_data, _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5),
+                             TestSyncedLyricsOfAnotherRecording()._transcribe, early_lyrics=lyrics,
+                             align=TestSyncedLyricsOfAnotherRecording._align([]), plain_align=_aligned, mocks=mocks)
+        self.assertEqual(chart_written, [False])
+        self.assertEqual((process_data.media_info.cover_url, process_data.media_info.cover_from_video),
+                         (self._THUMBNAIL, True))
+        self.assertIn("a special version, the video's thumbnail is its cover", out)
+
+
 class TestLocalFileLookup(unittest.TestCase):
     """A local file is looked up by its name and with its length."""
 

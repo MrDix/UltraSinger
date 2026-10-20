@@ -25,6 +25,9 @@ class MediaInfo:
     genre: Optional[str] = None
     language: Optional[str] = None
     cover_url: Optional[str] = None
+    cover_from_video: bool = False  # Whether the cover is the video's thumbnail (not the song database's)
+    video_thumbnail_tried: bool = False  # Whether the video's thumbnail was downloaded or tried (once per run)
+    video_thumbnail_url: Optional[str] = None  # The URL of the video's thumbnail, from the video's info
     video_url: Optional[str] = None
     music_key: Optional[str] = None  # (e.g., "C major", "A minor")
     video_extension: Optional[str] = None  # (e.g., "mp4", "mkv")

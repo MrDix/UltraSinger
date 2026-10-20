@@ -144,6 +144,11 @@ _CASES = {
         {"title": "Band - Song Title [OFFICIAL VIDEO] - Chapter 2", "channel": "Band", "duration": 238,
          "formats": []},
         _recording("Band", "Song Title", 239), _lyrics("Band", "Song Title", 239), SYNCED),
+    # Only the description says that the video is a live recording
+    "live video by its description": (
+        {"title": "Band - Song Title", "description": "Performed live on 2/24/26 from Some Theater.\nTickets now",
+         "channel": "Band", "duration": 251, "formats": []},
+        _recording("Band", "Song Title"), _lyrics("Band", "Song Title (Live)", 250), SYNCED),
 }
 
 
@@ -178,6 +183,20 @@ def test_the_song_database_names_the_song_by_the_title_before_any_dash(tmp_path)
     searched = [asked[2]["recording"] for asked in badge_asked if asked[0] == "song database"]
     # Each title is searched as the title and, swapped, as the artist
     assert searched[::2] == ["song title - chapter 2", "Song Title"]
+    assert badge_asked == conversion_asked
+
+
+def test_the_live_mark_from_the_description(tmp_path):
+    """The badge searches the lyrics of the live recording, as the conversion does."""
+    info, recording, lyrics, _ = _CASES["live video by its description"]
+    with _Services(recording, lyrics) as services:
+        _conversion(info, str(tmp_path))
+        conversion_asked = services.take()
+        _badge(info)
+        badge_asked = services.take()
+    assert (tmp_path / "Band - Song Title (Live)").is_dir()
+    searched = [asked[1].get("track_name") for asked in badge_asked if asked[0] == "lyrics"]
+    assert "Song Title (Live)" in searched
     assert badge_asked == conversion_asked
 
 

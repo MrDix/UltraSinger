@@ -81,6 +81,36 @@ _OFFICIAL_RE = re.compile(
 )
 # The word that marks a live recording in an addition to a video title
 _LIVE_RE = re.compile(r"\blive\b", re.IGNORECASE)
+# The end of a sentence in a line of a video description: "!", "?", or "."
+# before a space or the end of the line - not the dots of "24.02.2026" (see
+# _first_sentence for those of web addresses and after an abbreviation)
+_SENTENCE_END_RE = re.compile(r"[!?]|\.(?=\s|$)")
+# Words a "." after them abbreviates: no end of a sentence ("Vol. 2", "St. Some Church")
+_ABBREVIATIONS = frozenset("feat ft vol jr sr st no pt mr dr mrs".split())
+# A web address, which says nothing about the video ("www.example.com")
+_WEB_ADDRESS_RE = re.compile(r"(?:https?://|www\.)\S*", re.IGNORECASE)
+# A hashtag ("#LiveMusic"): a line of them only is no sentence
+_HASHTAG_RE = re.compile(r"#\w+")
+# A verb that says the video was made live: "Recorded live at Some Hall",
+# "This song was filmed live in ..."
+_LIVE_VERB_RE = re.compile(r"\b(?:performed|recorded|filmed|captured|shot|taped|sung|played)\s+live\b",
+                           re.IGNORECASE)
+# What negates such a verb, up to two words before it: "never performed live",
+# "has never been played live", "wasn't recorded live"
+_NEGATION_RE = re.compile(r"\b(?:never|not|\w+n['’]t)\s+(?:\w+\s+){0,2}$", re.IGNORECASE)
+# A first sentence (or a part of it after a comma, a dash, a bracket or a
+# quote) that starts with where the video was made: "Live at Some Arena
+# 2019", "Live from the Studio", "Recorded on 24.02.2026, live at Some Hall",
+# "Artist: Song (Live at Some Hall)" - not what is announced: "Live in
+# concert this summer", "Live on tour", "Live on our streaming channel",
+# "Live in 2026!" (a year alone, no place)
+_LIVE_PLACE_RE = re.compile(
+    r"(?:^|[,;:\-–—(\[\"“'‘]\s*)live\s+(?:at|from|in|on)\b"
+    r"(?!\s+concert\b)(?!(?:\s+\S+){0,2}?\s+(?:tour|stage|stream\w*|show\w*)\b)(?!\s+\d{4}\s*$)",
+    re.IGNORECASE)
+# Tickets in the first paragraph: a show is announced by "Live at ...", the
+# video is none of it
+_TICKETS_RE = re.compile(r"\btickets?\b", re.IGNORECASE)
 # A trailing quality mark: "HD", "HQ", "4K", "1080p"
 _QUALITY_RE = re.compile(r"(?:\s+(?:hd|hq|4k|8k|\d{3,4}p))+\s*$", re.IGNORECASE)
 # What a video title puts after a dash is a description of the video, not a
@@ -278,11 +308,65 @@ def is_live_title(video_title: str, title: str = "") -> bool:
                for part in parts[2::2])
 
 
-def with_live_mark(title: str, video_title: str) -> str:
-    """The song ``title`` with " (Live)" added when the video title marks a
-    live recording (see is_live_title) and the title has no live mark yet
-    ("Live Among Lanterns" gets one, "Song (Live)" keeps its own)."""
-    if title and is_live_title(video_title, title) and not is_live_title(title):
+def is_live_description(description: str) -> bool:
+    """Whether the description of a video says that the video is a live
+    recording, in its first sentence: "Performed live on 2/24/26 from Some
+    Theater.", "Recorded live at Some Hall", "Live at Some Arena 2019". What
+    a later sentence says, or a first one that tells of something else ("See
+    me live on tour!", "Get tickets for the live show", "Live Forever is out
+    now", "Live in concert this summer! Tickets on sale now"), or one that
+    negates it ("Never performed live before"), marks nothing: descriptions
+    advertise shows and other videos. Only English phrasing is recognised.
+    """
+    paragraph = _first_paragraph(description or "")
+    sentence = _first_sentence(paragraph[0] if paragraph else "")
+    # (a verb tells of the recording itself, "Live at ..." alone can announce a show)
+    if _LIVE_PLACE_RE.search(sentence) and not _TICKETS_RE.search(" ".join(paragraph)):
+        return True
+    return any(not _NEGATION_RE.search(sentence[:verb.start()]) for verb in _LIVE_VERB_RE.finditer(sentence))
+
+
+def _first_paragraph(text: str) -> list[str]:
+    """The lines of the first paragraph of a video description, up to the
+    first blank line: from its first line with words beside web addresses
+    and hashtags."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines)
+                  if re.search(r"[^\W\d_]", _HASHTAG_RE.sub("", _WEB_ADDRESS_RE.sub("", line)))), len(lines))
+    paragraph = []
+    for line in lines[start:]:
+        if not line.strip():
+            break
+        paragraph.append(line)
+    return paragraph
+
+
+def _first_sentence(line: str) -> str:
+    """The first sentence of a line of a video description: without its web
+    addresses (their "?" or "." ends nothing), up to the first end of a
+    sentence (see _SENTENCE_END_RE; a "." after an abbreviation is none),
+    without what comes before its first word (quotes, symbols)."""
+    line = re.sub(r"^[\W_]+", "", " ".join(_WEB_ADDRESS_RE.sub(" ", line).split()))
+    for end in _SENTENCE_END_RE.finditer(line):
+        word = re.search(r"(\w+)$", line[:end.start()])
+        if end.group(0) != "." or not word or word.group(1).casefold() not in _ABBREVIATIONS:
+            return line[:end.start()]
+    return line
+
+
+def is_live_video(video_title: str, title: str = "", description: str = "") -> bool:
+    """Whether a video is a live recording: its title (see is_live_title,
+    with the song ``title``) or its description (see is_live_description)
+    says so."""
+    return is_live_title(video_title, title) or is_live_description(description)
+
+
+def with_live_mark(title: str, video_title: str, description: str = "") -> str:
+    """The song ``title`` with " (Live)" added when the video is a live
+    recording (see is_live_video: by its title or its ``description``) and
+    the title has no live mark yet ("Live Among Lanterns" gets one, "Song
+    (Live)" keeps its own)."""
+    if title and is_live_video(video_title, title, description) and not is_live_title(title):
         return f"{title} (Live)"
     return title
 
