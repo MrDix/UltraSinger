@@ -52,6 +52,12 @@ _SIGNIN_NOTICE = (
 )
 
 
+def _minutes(seconds: float) -> str:
+    """A length in seconds as minutes and seconds ("4:05")."""
+    seconds = round(seconds)
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
 class _QualityBadge:
     """What the quality badge shows of a probed video. Its video line names the
     resolution that a conversion downloads within the download limits, so a
@@ -263,7 +269,7 @@ class _FormatProbeWorker(QObject):
         """
         try:
             from modules.Audio.video_platform import find_song, video_title_from_info
-            from modules.lrclib_client import find_lyrics
+            from modules.lrclib_client import find_lyrics, other_recording
             artist, title, video_title, _language = video_title_from_info(info, verbose=False)
             song = find_song(artist, title, video_title, quick=True, duration=duration,
                              description=info.get("description") or "")
@@ -274,6 +280,11 @@ class _FormatProbeWorker(QObject):
             result = find_lyrics(song.artist, song.title, duration)
             if result is None:
                 return "\U0001f4dd No lyrics"
+            # Lyrics of a version much longer or shorter than the video (a live
+            # one with an extra part) miss passages, and their times do not fit
+            if (result.synced_lyrics or result.plain_lyrics) and other_recording(result.duration, duration):
+                kind = "Synced" if result.synced_lyrics else "Plain"
+                return f"\u26a0\ufe0f {kind} lyrics of a {_minutes(result.duration)} version"
             if result.synced_lyrics:
                 return "\u2705 Synced lyrics"
             if result.plain_lyrics:

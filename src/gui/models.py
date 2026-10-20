@@ -62,7 +62,7 @@ class QueueItem:
     result_info: dict = field(default_factory=dict)
     # result_info keys (populated during/after conversion):
     #   language: str          — detected language code (e.g. "en", "de")
-    #   lyrics_source: str     — "synced" | "plain" | "transcribed"
+    #   lyrics_source: str     — "synced" | "plain" | "other version" | "transcribed"
     #   pipeline: str          — "reference" | "plain" | "remote" | "whisper"
     #   whisper_fallback: bool — True if reference pipeline failed
     #   output_folder: str     — path to the song output folder

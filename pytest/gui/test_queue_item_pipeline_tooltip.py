@@ -32,5 +32,18 @@ class TestPipelineInLanguageBadge(unittest.TestCase):
                 self.assertIn(f"Pipeline: {name}", self._tooltip(pipeline))
 
 
+class TestLyricsOfAnotherVersion(unittest.TestCase):
+    """Lyrics of a version much shorter than the audio (a live one) get their own label."""
+
+    def test_label_and_tooltip_name_the_lengths(self):
+        item = QueueItem(input_source="https://example.com/video", input_type="url",
+                         title="Song Title", status="done")
+        widget = QueueItemWidget(item)
+        widget.set_result_info({"language": "en", "pipeline": "reference", "lyrics_source": "other version",
+                                "lyrics_length_s": 245, "audio_length_s": 391})
+        self.assertEqual(widget._lyrics_label.text(), "Lyrics of a 4:05 version")
+        self.assertIn("245 s long, the audio 391 s", widget._lang_badge.toolTip())
+
+
 if __name__ == "__main__":
     unittest.main()

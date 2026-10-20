@@ -295,6 +295,7 @@ class QueueItemWidget(QWidget):
             "synced": "#4caf50",              # green — best
             "synced (fallback)": "#ffa726",   # orange — had synced but fell back
             "plain": "#ffa726",               # orange — medium
+            "other version": "#ffa726",       # orange — lyrics miss passages of the audio
             "transcribed": "#ef5350",         # red — lowest
             "instrumental": "#7e57c2",        # purple — no vocals
         }
@@ -302,11 +303,15 @@ class QueueItemWidget(QWidget):
             "synced": "Synced lyrics",
             "synced (fallback)": "Synced lyrics (transcription fallback)",
             "plain": "Plain lyrics",
+            "other version": "Lyrics of another version",
             "transcribed": "Transcribed",
             "instrumental": "Instrumental",
         }
         badge_bg = _SOURCE_COLORS.get(source, "#a09888")
         source_text = _SOURCE_LABELS.get(source, source)
+        lyrics_length = info.get("lyrics_length_s")
+        if source == "other version" and lyrics_length:
+            source_text = f"Lyrics of a {lyrics_length // 60}:{lyrics_length % 60:02d} version"
         # The game score stays OUT of the visible line (it would crowd out
         # the action buttons) — a small marker indicates it, the values
         # live in a readable rich-text tooltip.
@@ -355,6 +360,9 @@ class QueueItemWidget(QWidget):
                 tooltip += "\nReference pipeline recovered after correction"
             if info.get("whisper_fallback"):
                 tooltip += "\nReference pipeline fell back to the transcription"
+            if source == "other version" and lyrics_length and info.get("audio_length_s"):
+                tooltip += (f"\nThe found lyrics are {lyrics_length} s long, the audio "
+                            f"{info['audio_length_s']} s: they may miss passages")
             self._lang_badge.setToolTip(tooltip)
             self._lang_badge.setVisible(True)
 

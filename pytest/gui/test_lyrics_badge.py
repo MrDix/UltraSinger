@@ -113,8 +113,11 @@ def _badge(info):
     return shown[0].splitlines()[-1]
 
 
-def _status(found):
-    """The badge line for the lyrics that the conversion found."""
+def _status(found, duration):
+    """The badge line for the lyrics that the conversion found for audio of ``duration`` seconds."""
+    if found is not None and (found.synced_lyrics or found.plain_lyrics)             and lrclib_client.other_recording(found.duration, duration):
+        kind = "Synced" if found.synced_lyrics else "Plain"
+        return f"⚠️ {kind} lyrics of a {round(found.duration) // 60}:{round(found.duration) % 60:02d} version"
     if found is not None and found.synced_lyrics:
         return SYNCED
     if found is not None and found.plain_lyrics:
@@ -149,6 +152,10 @@ _CASES = {
         {"title": "Band - Song Title", "description": "Performed live on 2/24/26 from Some Theater.\nTickets now",
          "channel": "Band", "duration": 251, "formats": []},
         _recording("Band", "Song Title"), _lyrics("Band", "Song Title (Live)", 250), SYNCED),
+    # A live version with an extra part, much longer than the only version with lyrics
+    "live version longer than the lyrics": (
+        {"title": "Band - Song Title (Live)", "channel": "Band", "duration": 391, "formats": []},
+        _recording("Band", "Song Title"), _lyrics("Band", "Song Title", 245), "⚠️ Synced lyrics of a 4:05 version"),
 }
 
 
@@ -163,7 +170,7 @@ def test_badge_shows_what_the_conversion_finds(case, tmp_path, capsys):
         badge_asked = services.take()
     # The same song-database searches and the same lyrics queries
     assert badge_asked == conversion_asked
-    assert badge == _status(found)
+    assert badge == _status(found, info["duration"])
     if expected is not None:
         assert badge == expected
     # The badge runs in the GUI: it prints nothing
