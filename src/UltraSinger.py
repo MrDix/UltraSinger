@@ -375,6 +375,8 @@ def run() -> tuple[str, Score, Score]:
                     print(
                         f"{ULTRASINGER_HEAD} "
                         f"{cyan_highlighted('Synced lyrics found — skipping the transcription')}"
+                        + (" (it may run to check their times)"
+                           if settings.check_synced_lyrics and not remote_first else "")
                     )
             if early_plain and (whisper_skipped or remote_first):
                 use_lyrics, lyrics_language = check_lyrics_language(
@@ -1064,6 +1066,7 @@ def run() -> tuple[str, Score, Score]:
             plain_lyrics_placement=_plain_lyrics_placement,
             rejected_synced_language=process_data.synced_lyrics_other_language,
             synced_of_other_recording=process_data.synced_lyrics_other_recording,
+            synced_lyrics_check=process_data.synced_lyrics_check,
             plain_from_synced=process_data.plain_lyrics_from_synced,
             model_segmentation_used=model_segmentation_used,
             phoneme_word_starts_result=phoneme_word_starts_result,
@@ -1245,6 +1248,7 @@ def _write_settings_info_file(
         plain_lyrics_placement: "PlainLyricsPlacement | None" = None,
         rejected_synced_language: str | None = None,
         synced_of_other_recording: str | None = None,
+        synced_lyrics_check: "SyncedLyricsCheck | str | None" = None,
         plain_from_synced: bool = False,
         model_segmentation_used: bool = False,
         phoneme_word_starts_result: str | None = None,
@@ -1323,6 +1327,8 @@ def _write_settings_info_file(
             elif reference_first_used and reference_recovered and not (remote_stt_used or plain_lyrics_used):
                 f.write("  Pipeline:                 Reference-Lyrics-First (recovered after language correction)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
+                if synced_lyrics_check is not None:
+                    f.write(f"  Synced lyrics checked:    {synced_lyrics_check}\n")
                 f.write("  Transcription:            full (for language correction)\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and remote_stt_used:
@@ -1338,12 +1344,22 @@ def _write_settings_info_file(
                         else "  LRCLIB plain lyrics:      found\n")
                 if plain_lyrics_placement is not None:
                     f.write(f"  Plain lyrics placed:      {plain_lyrics_placement}\n")
-                f.write("  Transcription:            skipped\n" if whisper_skipped
-                        else "  Transcription:            full (its text replaced by the plain lyrics)\n")
+                if not whisper_skipped:
+                    f.write("  Transcription:            full (its text replaced by the plain lyrics)\n")
+                elif (plain_lyrics_placement is not None and plain_lyrics_placement.with_words
+                      and plain_lyrics_placement.words_from == "transcription"):
+                    # it ran to check the synced lyrics, which then failed to align
+                    f.write("  Transcription:            for the check of the synced lyrics only\n")
+                else:
+                    f.write("  Transcription:            skipped\n")
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and has_synced_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
                 f.write("  LRCLIB synced lyrics:     found\n")
+                if synced_lyrics_check is not None:
+                    f.write(f"  Synced lyrics checked:    {synced_lyrics_check}\n")
+                    if whisper_skipped and not isinstance(synced_lyrics_check, str):
+                        f.write("  Transcription:            for the check only (its words check the line times)\n")
             elif has_synced_lyrics:
                 f.write("  Pipeline:                 Transcription (reference-first failed, fell back)\n")
                 f.write(synced_line)
@@ -1991,9 +2007,28 @@ def _align_synced_lyrics(process_data, language: str, allowed_notes) -> list:
     from modules.lrclib_client import lrc_text, other_recording
     from modules.Speech_Recognition.reference_lyrics_aligner import (
         LyricsOfOtherRecording,
+        create_midi_segments_from_checked_synced_lyrics,
         create_midi_segments_from_reference_lyrics,
     )
     audio_s = audio_length(process_data.process_data_paths.whisper_audio_path)
+    of_other_recording = other_recording(process_data.synced_lyrics_length, audio_s)
+    # Synced lyrics of this recording are checked by the words of the
+    # transcription (lyrics of another recording go their own way: below)
+    heard_words = None if of_other_recording else _words_to_check_synced_lyrics(process_data)
+    if heard_words:
+        segments, check = create_midi_segments_from_checked_synced_lyrics(
+            synced_lyrics=process_data.synced_lyrics,
+            audio_path=process_data.process_data_paths.whisper_audio_path,
+            language=language,
+            pitched_data=process_data.pitched_data,
+            transcription_words=heard_words,
+            device=settings.pytorch_device,
+            allowed_notes=allowed_notes,
+            melisma_split=settings.pitch_change_split,
+            align_model_name=settings.whisper_align_model,
+        )
+        process_data.synced_lyrics_check = check
+        return segments
     try:
         return create_midi_segments_from_reference_lyrics(
             synced_lyrics=process_data.synced_lyrics,
@@ -2004,7 +2039,7 @@ def _align_synced_lyrics(process_data, language: str, allowed_notes) -> list:
             allowed_notes=allowed_notes,
             melisma_split=settings.pitch_change_split,
             align_model_name=settings.whisper_align_model,
-            other_recording=other_recording(process_data.synced_lyrics_length, audio_s),
+            other_recording=of_other_recording,
         )
     except LyricsOfOtherRecording as e:
         lengths = f"{process_data.synced_lyrics_length:.0f} s long, the audio {audio_s:.0f} s"
@@ -2018,6 +2053,36 @@ def _align_synced_lyrics(process_data, language: str, allowed_notes) -> list:
             process_data.plain_lyrics_from_synced = True
         process_data.synced_lyrics = None
         return []
+
+
+def _words_to_check_synced_lyrics(process_data) -> list:
+    """The transcribed words that check the times of synced lyrics: those of
+    the transcription when it ran, else of one made now (from the cache when
+    there is one; the transcription itself stays skipped). None when the
+    check is off, with remote speech-to-text when the transcription did not
+    run (it is not run for the check then), or when the transcription fails:
+    the lyrics keep their times."""
+    if not settings.check_synced_lyrics:
+        process_data.synced_lyrics_check = "no (--disable_synced_lyrics_check)"
+        return None
+    if process_data.transcription_words:
+        return process_data.transcription_words
+    if settings.remote_stt:
+        process_data.synced_lyrics_check = "no (not with --remote_stt)"
+        return None
+    print(f"{ULTRASINGER_HEAD} Transcribing the song to check the times of the synced lyrics")
+    try:
+        result = transcribe_audio(process_data.process_data_paths.cache_folder_path,
+                                  process_data.process_data_paths.whisper_audio_path)
+    except Exception as e:
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the transcription failed ({e}): "
+              f"the synced lyrics keep their times")
+        process_data.synced_lyrics_check = "no (the transcription failed)"
+        release_gpu_memory()
+        return None
+    process_data.check_transcription = result
+    process_data.transcription_words = [(w.word, w.start, w.end) for w in sung_words(result.transcribed_data)]
+    return process_data.transcription_words
 
 
 def _align_plain_lyrics(process_data, language: str, allowed_notes, remote_transcription):
@@ -2121,8 +2186,9 @@ def _transcribe_remote(process_data, lang_source: str) -> tuple["RemoteTranscrip
 def TranscribeAudio(process_data):
     # Use un-muted audio for Whisper — muted audio causes WhisperX's wav2vec2
     # forced alignment to lose sync at zero→audio transitions
-    transcription_result = transcribe_audio(process_data.process_data_paths.cache_folder_path,
-                                            process_data.process_data_paths.whisper_audio_path)
+    # (the transcription made to check synced lyrics, when there is one: it is not made twice)
+    transcription_result = process_data.check_transcription or transcribe_audio(
+        process_data.process_data_paths.cache_folder_path, process_data.process_data_paths.whisper_audio_path)
 
     # The full transcription settles the language (Whisper large-v2's detection,
     # or the language Qwen3-ASR transcribed in): it replaces Whisper tiny
@@ -2894,6 +2960,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.onset_correction = False
         elif opt in ("--disable_phoneme_word_starts"):
             settings.phoneme_word_starts = False
+        elif opt in ("--disable_synced_lyrics_check"):
+            settings.check_synced_lyrics = False
         elif opt in ("--syllable_split"):
             settings.syllable_split = True
         elif opt in ("--vocal_gap_fill"):
@@ -3130,6 +3198,7 @@ def arg_options():
         "disable_octave_consistency",
         "disable_onset_correction",
         "disable_phoneme_word_starts",
+        "disable_synced_lyrics_check",
         "syllable_split",
         "vocal_gap_fill",
         "pitch_change_split",

@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 
 from src.modules.Pitcher.pitched_data import PitchedData
 from src.modules.Speech_Recognition.reference_lyrics_aligner import (
+    create_midi_segments_from_checked_synced_lyrics,
     create_midi_segments_from_plain_lyrics,
 )
 
@@ -232,3 +233,82 @@ class TestPassagesWithoutLyrics(unittest.TestCase):
         result, placement, _ = self._run(self.HEARD + tail)
         self.assertEqual([s.word.strip() for s in result][-8:], [w for w, _, _ in tail])
         self.assertEqual(placement.passages, 2)
+
+
+def _lrc(lines):
+    """LRC text of (time s, text) lines."""
+    return "\n".join(f"[{int(t // 60):02d}:{t % 60:05.2f}] {text}" for t, text in lines)
+
+
+class TestCheckedSyncedLyrics(unittest.TestCase):
+    """Synced lyrics whose times the transcription's words check: a line sung elsewhere moves there,
+    a passage the lyrics lack is sung with the transcribed words, a line not sung there is left out."""
+
+    SUNG = TestPassagesWithoutLyrics.SUNG
+    HEARD = TestPassagesWithoutLyrics.HEARD
+    ALIGNED = TestPassagesWithoutLyrics.ALIGNED
+    FOREIGN = TestPassagesWithoutLyrics.FOREIGN
+    LYRIC_WORDS = TestPassagesWithoutLyrics.LYRIC_WORDS
+
+    def _lines(self, early=0.0):
+        """The sung lines at their times; "never sung here" at 15 s, in the passage; the line after the
+        passage ``early`` s early."""
+        lines = [(line[0][1] - (early if i == 4 else 0.0), " ".join(w for w, _, _ in line))
+                 for i, line in enumerate(self.SUNG)]
+        return lines[:4] + [(15.0, "never sung here")] + lines[4:]
+
+    def _run(self, lrc_lines, heard):
+        with patch("src.modules.Speech_Recognition.reference_lyrics_aligner.librosa") as librosa, \
+                patch("src.modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio",
+                      return_value=[dict(w) for w in self.ALIGNED]) as align:
+            librosa.get_duration.return_value = 40.0
+            result, check = create_midi_segments_from_checked_synced_lyrics(
+                _lrc(lrc_lines), "audio.wav", "en", TestPassagesWithoutLyrics._sung(), heard,
+                melisma_split=False)
+        return result, check, align
+
+    def test_line_moves_and_passage_is_sung(self):
+        result, check, align = self._run(self._lines(early=6.0), self.HEARD)
+        self.assertTrue(check.checked)
+        self.assertEqual((check.lines, check.confirmed, check.moved), (9, 8, 1))
+        self.assertEqual((check.passages, check.passage_words, check.left_out), (1, 10, 1))
+        self.assertEqual(str(check), "8 of 9 lines confirmed by the transcription's words; 1 moved to where they "
+                                     "are sung, 1 sung passage without lyrics with the transcription's words "
+                                     "(10 words), 1 line of the lyrics left out there")
+        segments = align.call_args[0][0]
+        self.assertNotIn("never sung here", [seg["text"] for seg in segments])
+        # the line after the passage at the time it is sung, not 6 s earlier
+        self.assertAlmostEqual(segments[4]["start"], self.SUNG[4][0][1])
+        self.assertEqual(align.call_args.kwargs["silent_spans"], [(12.0, 19.6)])
+        foreign = [w for w, _, _ in self.FOREIGN]
+        self.assertEqual([s.word.strip() for s in result], self.LYRIC_WORDS[:12] + foreign + self.LYRIC_WORDS[12:])
+
+    def test_too_few_confirmed_lines_keep_their_times(self):
+        heard = [w for line in self.SUNG[:4] for w in line]  # four lines: too few
+        lrc_lines = self._lines(early=6.0)
+        result, check, align = self._run(lrc_lines, heard)
+        self.assertFalse(check.checked)
+        self.assertEqual(str(check), "not checked (too few of the 9 lines confirmed by the transcription's words)")
+        segments = align.call_args[0][0]
+        self.assertEqual([seg["start"] for seg in segments], [t for t, _ in lrc_lines])
+        self.assertEqual(align.call_args.kwargs["silent_spans"], [])
+        self.assertEqual(len(result), 24)
+
+    def test_failed_alignment(self):
+        with patch("src.modules.Speech_Recognition.reference_lyrics_aligner.librosa") as librosa, \
+                patch("src.modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio",
+                      return_value=[]):
+            librosa.get_duration.return_value = 40.0
+            result, check = create_midi_segments_from_checked_synced_lyrics(
+                _lrc(self._lines()), "audio.wav", "en", TestPassagesWithoutLyrics._sung(), self.HEARD)
+        self.assertEqual(result, [])
+        self.assertTrue(check.checked)
+
+    def test_nothing_to_align(self):
+        with patch("src.modules.Speech_Recognition.reference_lyrics_aligner.librosa") as librosa, \
+                patch("src.modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio") as align:
+            librosa.get_duration.return_value = 40.0
+            result, check = create_midi_segments_from_checked_synced_lyrics(
+                "[00:01.00] (x2)", "audio.wav", "en", TestPassagesWithoutLyrics._sung(), self.HEARD)
+        self.assertEqual((result, check.lines), ([], 0))
+        align.assert_not_called()

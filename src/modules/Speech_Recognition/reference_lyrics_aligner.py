@@ -21,6 +21,11 @@ Plain lyrics (without timestamps) get their line times from the words of a
 transcription and then go the same way; without enough of these times, their
 lines are aligned on one path over the whole song.
 
+With the words of a transcription, the LRC times of synced lyrics are
+checked by them first (create_midi_segments_from_checked_synced_lyrics): a
+line sung far from its time moves there, and passages the lyrics do not
+have are sung with the transcribed words.
+
 This produces MidiSegments where every word from the reference lyrics has
 a note with accurate timing and pitch -- solving the lyrics coverage and
 timing accuracy problems of the Whisper-only pipeline.
@@ -56,6 +61,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     UNUSABLE_TOKEN,
     align_lyrics,
     blank_index,
+    checked_line_times,
     emission_in_pieces,
     line_times_from_words,
     lyrics_tokens,
@@ -1489,3 +1495,120 @@ def create_midi_segments_from_plain_lyrics(
                  f"left out there" if placement.left_out else ""))
     return _notes_from_words(words, pitched_data, allowed_notes, melisma_split, threshold_st, min_note_ms,
                              "Plain lyrics pipeline", "lyrics linebreaks"), placement
+
+
+@dataclass
+class SyncedLyricsCheck:
+    """How the words of a transcription checked the lines of synced lyrics."""
+    lines: int = 0              # lines with words
+    checked: bool = False       # whether enough lines were confirmed to check the others
+    confirmed: int = 0          # lines confirmed by the transcription's words
+    moved: int = 0              # of these, the lines moved to the time the words give
+    respread: int = 0           # lines without such words spread anew between the confirmed ones
+    passages: int = 0           # sung passages without lyrics, sung with the transcribed words
+    passage_words: int = 0      # the words of these passages
+    left_out: int = 0           # lines left out: not sung where their time fell into a passage
+
+    def __str__(self) -> str:
+        if not self.checked:
+            return f"not checked (too few of the {self.lines} lines confirmed by the transcription's words)"
+        text = f"{self.confirmed} of {self.lines} lines confirmed by the transcription's words"
+        changes = []
+        if self.moved:
+            changes.append(f"{self.moved} moved to where they are sung")
+        if self.respread:
+            changes.append(f"{self.respread} without such words spread anew between them")
+        if self.passages:
+            changes.append(f"{self.passages} sung {'passage' if self.passages == 1 else 'passages'} without "
+                           f"lyrics with the transcription's words ({self.passage_words} words)")
+        if self.left_out:
+            changes.append(f"{self.left_out} {'line' if self.left_out == 1 else 'lines'} of the lyrics left out "
+                           f"there")
+        return text + (f"; {', '.join(changes)}" if changes else "")
+
+
+def create_midi_segments_from_checked_synced_lyrics(
+    synced_lyrics: str,
+    audio_path: str,
+    language: str,
+    pitched_data: PitchedData,
+    transcription_words: list[tuple[str, float, float]],
+    device: str = "cpu",
+    allowed_notes: Optional[set[str]] = None,
+    melisma_split: bool = True,
+    threshold_st: float = 2.0,
+    min_note_ms: float = 80.0,
+    align_model_name: Optional[str] = None,
+) -> tuple[list[MidiSegment], SyncedLyricsCheck]:
+    """Create MidiSegments from synced lyrics whose times the words of a
+    transcription check (``checked_line_times``).
+
+    Synced lyrics can be wrong: a line at the wrong time, lines that are
+    not sung where they stand, or whole parts of the song missing. The
+    forced alignment puts every word somewhere, also onto what is sung
+    instead. Here a line the transcription's words place far from its LRC
+    time moves there, and the passages of the transcription that the lyrics
+    do not have are sung with its words, as for plain lyrics (lines whose
+    time falls into such a passage and that it does not have are left out).
+    When too few lines are confirmed, the lyrics are aligned with their own
+    times as by :func:`create_midi_segments_from_reference_lyrics`.
+
+    Args:
+        synced_lyrics: Raw LRC synced lyrics from LRCLIB.
+        audio_path: Path to the separated vocals audio file.
+        language: Language code for the alignment model.
+        pitched_data: SwiftF0 pitch data.
+        transcription_words: The words of a transcription of the song as
+            ``(text, start s, end s)``, where the transcriber placed them.
+        device: ``"cpu"`` or ``"cuda"``.
+        allowed_notes: Optional key quantization set.
+        melisma_split: Whether to split notes at pitch changes within words.
+        threshold_st: Semitone threshold for melisma detection.
+        min_note_ms: Minimum note duration for melisma splits.
+        align_model_name: Optional custom alignment model name.
+
+    Returns:
+        The MidiSegments with lyrics and pitch (none when the lyrics could
+        not be aligned), and how the lines were checked.
+    """
+    audio_duration = librosa.get_duration(path=audio_path)
+    segments = [seg for seg in parse_lrc_synced_lyrics(synced_lyrics, audio_duration=audio_duration)
+                if any(w.replace("\x00", "") for w in seg["text"].split())]
+    check = SyncedLyricsCheck(lines=len(segments))
+    if not segments:
+        print(f"{ULTRASINGER_HEAD} No valid LRC segments found -- "
+              f"falling back to standard pipeline")
+        return [], check
+    # the words as align_lyrics_to_audio takes them from the text
+    lines = [[w.replace("\x00", "") for w in seg["text"].split() if w.replace("\x00", "")] for seg in segments]
+    checked = checked_line_times(lines, [seg["start"] for seg in segments], transcription_words)
+    passages = []
+    if checked is not None:
+        check.checked = True
+        check.confirmed, check.moved, check.respread = checked.confirmed, checked.moved, checked.respread
+        passages, sung_lines = _sung_passages(lines, transcription_words, pitched_data)
+        spans = [_span(passage) for passage in passages]
+        kept = [i for i in range(len(segments))
+                if i in sung_lines or not any(start <= checked.times[i] + checked.offset <= end
+                                              for start, end in spans)]
+        check.left_out = len(segments) - len(kept)
+        check.passages = len(passages)
+        check.passage_words = sum(len(passage) for passage in passages)
+        segments = [{"text": segments[i]["text"], "start": checked.times[i]} for i in kept]
+    print(f"{ULTRASINGER_HEAD} Synced lyrics checked by the transcription: {check}")
+    if not segments:
+        return [], check
+
+    # The passages are sung with other words: no words of the lyrics go there
+    words = align_lyrics_to_audio(
+        segments, audio_path, language, device, align_model_name,
+        silent_spans=[_span(passage) for passage in passages],
+    )
+    if not words:
+        print(f"{ULTRASINGER_HEAD} Forced alignment returned no words -- "
+              f"falling back to standard pipeline")
+        return [], check
+    if passages:
+        words = _with_passages(words, passages)
+    return _notes_from_words(words, pitched_data, allowed_notes, melisma_split, threshold_st, min_note_ms,
+                             "Reference-first pipeline", "LRC linebreaks"), check

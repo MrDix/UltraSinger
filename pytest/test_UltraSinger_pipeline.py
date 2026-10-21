@@ -13,7 +13,12 @@ from unittest.mock import patch
 import librosa
 
 import src.UltraSinger as us
-from modules.Speech_Recognition.reference_lyrics_aligner import LyricsOfOtherRecording, PlainLyricsPlacement
+from modules.Speech_Recognition.reference_lyrics_aligner import (
+    LyricsOfOtherRecording,
+    PlainLyricsPlacement,
+    SyncedLyricsCheck,
+)
+from modules.Speech_Recognition.TranscriptionResult import TranscriptionResult
 from modules.Speech_Recognition.remote_stt import RemoteTranscription
 from src.modules.Ultrastar.ultrastar_txt import FormatVersion
 
@@ -81,6 +86,7 @@ def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_lang
         ptakf_refit=False, calculate_score=False, golden_notes=False, create_plot=False, create_midi=False,
         write_settings_info=False, remote_stt=False, llm_correct_lyrics=False, keep_numbers=False,
         cache_folder=None, keep_cache=False, use_separated_vocal=True, create_karaoke=True,
+        check_synced_lyrics=False,
     )
     values.update(settings_values)
     out = io.StringIO()
@@ -428,6 +434,87 @@ class TestPlainLyricsAfterFailedSyncedAlignment(unittest.TestCase):
         self.assertIn("Transcription:            skipped", info)
 
 
+class TestSyncedLyricsCheckedByTranscription(unittest.TestCase):
+    """Synced lyrics found before the transcription: a transcription runs only to check their times
+    (from the cache when there is one); the full transcription stays skipped."""
+
+    _LYRICS = SimpleNamespace(duration=None, synced_lyrics="[00:01.00] hello world", plain_lyrics="hello world")
+    _HEARD = [("hello", 1.0, 1.4), ("world", 1.5, 2.0)]
+
+    def _run_with(self, transcribe=None, checked=None, **kwargs):
+        mocks = {}
+        calls = {"reference": 0}
+
+        def reference(**kw):
+            calls["reference"] += 1
+            return [us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED]
+
+        result = TranscriptionResult([us.TranscribedData(word=w, start=a, end=b) for w, a, b in self._HEARD], "en")
+        check = SyncedLyricsCheck(lines=1, checked=True, confirmed=1, moved=1)
+        aligned = lambda **kw: ([us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED], check)  # noqa: E731
+        with patch.object(us, "transcribe_audio", side_effect=transcribe or (lambda *args: result)) as fake, \
+                patch("modules.Speech_Recognition.reference_lyrics_aligner."
+                      "create_midi_segments_from_checked_synced_lyrics",
+                      side_effect=checked or aligned) as checked_align:
+            notes, out, files = _run(
+                _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5),
+                _transcription([("one ", 1.0, 1.24)], "en"), early_lyrics=self._LYRICS, align=reference,
+                mocks=mocks, write_settings_info=True, **kwargs)
+        return notes, out, files, mocks, fake, checked_align, calls
+
+    def test_the_transcription_checks_the_lines(self):
+        notes, out, files, mocks, transcribe, checked, calls = self._run_with(check_synced_lyrics=True)
+        transcribe.assert_called_once()
+        mocks["TranscribeAudio"].assert_not_called()
+        self.assertEqual(checked.call_args.kwargs["transcription_words"], self._HEARD)
+        self.assertEqual(calls["reference"], 0)
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("it may run to check their times", out)
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Pipeline:                 Reference-Lyrics-First (synced)", info)
+        self.assertIn("Synced lyrics checked:    1 of 1 lines confirmed by the transcription's words; "
+                      "1 moved to where they are sung", info)
+        self.assertIn("Transcription:            for the check only", info)
+
+    def test_check_turned_off(self):
+        notes, _, files, _, transcribe, checked, calls = self._run_with(check_synced_lyrics=False)
+        transcribe.assert_not_called()
+        checked.assert_not_called()
+        self.assertEqual(calls["reference"], 1)
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("Synced lyrics checked:    no (--disable_synced_lyrics_check)", files["ultrasinger_parameter.info"])
+
+    def test_not_with_remote_speech_to_text(self):
+        _, out, files, _, transcribe, checked, calls = self._run_with(check_synced_lyrics=True, remote_stt=True)
+        self.assertIn("Synced lyrics checked:    no (not with --remote_stt)", files["ultrasinger_parameter.info"])
+        transcribe.assert_not_called()
+        checked.assert_not_called()
+        self.assertEqual(calls["reference"], 1)
+        self.assertNotIn("it may run to check their times", out)
+
+    def test_failed_transcription_keeps_the_lyrics_times(self):
+        def fail(*args):
+            raise RuntimeError("CUDA out of memory")
+        notes, out, files, _, _, checked, calls = self._run_with(transcribe=fail, check_synced_lyrics=True)
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Synced lyrics checked:    no (the transcription failed)", info)
+        self.assertNotIn("for the check only", info)
+        checked.assert_not_called()
+        self.assertEqual(calls["reference"], 1)
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("the transcription failed (CUDA out of memory): the synced lyrics keep their times", out)
+
+    def test_failed_alignment_leaves_the_words_to_the_plain_lyrics(self):
+        mocks = {}
+        notes, _, files, mocks, _, _, _ = self._run_with(
+            checked=lambda **kw: ([], SyncedLyricsCheck(lines=1)), check_synced_lyrics=True, plain_align=_aligned)
+        self.assertEqual(mocks["plain_align"].call_args.kwargs["transcription_words"], self._HEARD)
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
+        self.assertIn("Transcription:            for the check of the synced lyrics only", info)
+
+
 class TestSyncedLyricsOfAnotherRecording(unittest.TestCase):
     """Synced lyrics of a recording much longer or shorter than the audio whose lines mostly miss
     their LRC times: their times are not used, the transcription runs, and its words place the
@@ -614,7 +701,7 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
         process_data = SimpleNamespace(
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
-            transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
         )
         heard = [_syllable("helo, ", 1.0, 1.3), _syllable("world ", 1.5, 1.8)]
         transcription = SimpleNamespace(detected_language="en", transcribed_data=heard)
@@ -650,7 +737,7 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
         process_data = SimpleNamespace(
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="fr"),
-            transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
         )
         cached = [_syllable("♪ ", 0.0, 0.1), _syllable("Pourquoi ", 1.0, 1.5), _syllable("? ", 1.6, 1.7),
                   _syllable("- ", 1.8, 1.9), _syllable("toi ", 2.0, 2.4), _syllable("♪ ", 2.5, 2.6)]
@@ -667,6 +754,26 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
         self.assertEqual([w.word for w in process_data.transcribed_data], ["Pourquoi? ", "toi "])
         self.assertEqual(process_data.transcription_words, [("Pourquoi? ", 1.0, 1.5), ("toi ", 2.0, 2.4)])
 
+
+    def test_the_transcription_made_to_check_synced_lyrics_is_reused(self):
+        heard = [_syllable("hello ", 1.0, 1.3)]
+        process_data = SimpleNamespace(
+            process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
+            media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
+            check_transcription=SimpleNamespace(detected_language="en", transcribed_data=heard),
+        )
+        with patch.object(us, "transcribe_audio") as transcribe, \
+                patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data), \
+                patch.object(us.settings, "lyrics_lookup", False), \
+                patch.object(us.settings, "llm_correct_lyrics", False), \
+                patch.object(us.settings, "hyphenation", False), \
+                patch.object(us.settings, "language", None), \
+                contextlib.redirect_stdout(io.StringIO()):
+            us.TranscribeAudio(process_data)
+
+        transcribe.assert_not_called()
+        self.assertEqual(process_data.transcription_words, [("hello ", 1.0, 1.3)])
 
 class TestRejectedSyncedLyricsInRun(unittest.TestCase):
     def test_info_file_says_found_but_rejected(self):
@@ -706,7 +813,7 @@ class TestRejectedSyncedLyricsAreDropped(unittest.TestCase):
         process_data = SimpleNamespace(
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
-            transcribed_data=[], synced_lyrics=synced_lyrics, plain_lyrics=plain_lyrics,
+            transcribed_data=[], synced_lyrics=synced_lyrics, plain_lyrics=plain_lyrics, check_transcription=None,
         )
         transcription = SimpleNamespace(detected_language="de", transcribed_data=[])
         with patch.object(us, "transcribe_audio", return_value=transcription), \

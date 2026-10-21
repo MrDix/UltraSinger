@@ -160,6 +160,11 @@ def print_help() -> None:
                             the same way, with line times from the transcription's words, then a --remote_stt
                             text. When disabled, or when none of them can be aligned, the notes come from the
                             transcription.
+    --disable_synced_lyrics_check  Use the times of synced lyrics as they are. Enabled by default: the
+                            song is transcribed too (also when synced lyrics were found), and its words
+                            check the lines: a line sung far from its time moves there, and a sung part
+                            the lyrics lack (incomplete lyrics) gets the transcribed words. Not with
+                            --remote_stt; turning it off saves the time of the transcription.
 
     [freestyle detection]
     --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle

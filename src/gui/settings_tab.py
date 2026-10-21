@@ -543,6 +543,20 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._reference_lyrics.setChecked(
                                not _DEFAULTS["disable_reference_lyrics"]))
 
+        # Synced lyrics checked by a transcription
+        self._synced_lyrics_check = ToggleSwitch(
+            checked=not self._config.get("disable_synced_lyrics_check", False)
+        )
+        card.add_toggle_row("Check Synced Lyrics", self._synced_lyrics_check,
+                           "Synced lyrics can be wrong: lines at the wrong time, lines that are "
+                           "not sung where they stand, or whole parts of the song missing. The song "
+                           "is transcribed too, and its words check the lines: a line sung elsewhere "
+                           "moves there, and a sung part the lyrics lack gets the transcribed words. "
+                           "Takes the time of a transcription (on a GPU about half a minute, on the "
+                           "CPU several minutes).",
+                           reset_callback=lambda: self._synced_lyrics_check.setChecked(
+                               not _DEFAULTS["disable_synced_lyrics_check"]))
+
         # Freestyle detection (unpitchable passages)
         self._detect_growl = ToggleSwitch(
             checked=self._config.get("detect_growl", _DEFAULTS["detect_growl"])
@@ -1783,6 +1797,7 @@ class ConversionSettingsForm(QWidget):
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),
+            "disable_synced_lyrics_check": not self._synced_lyrics_check.isChecked(),
             "detect_growl": self._detect_growl.isChecked(),
             "freestyle_harmonicity": self._freestyle_harmonicity.value(),
             "freestyle_energy": self._freestyle_energy.value(),

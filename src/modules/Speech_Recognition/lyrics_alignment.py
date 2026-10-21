@@ -25,6 +25,11 @@ as above. On the same benchmark, with the LRC lines without their times as
 plain lyrics, this put 4.8 % of the words more than 1 s off, against 6.5 % for
 one path over all lines.
 
+With a transcription, the LRC times are checked by its words
+(checked_line_times): a line the words place far from its LRC time moves
+there, and the passages it hears that the lyrics do not have
+(passages_without_lyrics) are sung with its words.
+
 The functions work on numpy arrays; the caller runs the model.
 """
 
@@ -97,6 +102,17 @@ ANCHORED_SHARE = 0.5
 SURE_REACH = 2
 PASSAGE_MIN_WORDS = 6
 PASSAGE_LYRICS_SHARE = 0.4
+# LRC times checked by the words of a transcription: a line is confirmed by
+# a sure pair (see above), at the time of its word counted back by the words
+# before it in the line. With at least MIN_OFFSET_LINES confirmed lines
+# (taken in time order) the common offset of the LRC times is their median
+# offset; a confirmed line that is more than CHECKED_MOVE_S off its LRC time
+# plus this offset moves to the confirmed time. A line without a sure pair
+# whose LRC time no longer lies between the confirmed lines around it (give
+# or take FIT_S; after the one before it has had half its words) is spread
+# anew between them by its words (before the first or after the last one:
+# counted from it by its words).
+CHECKED_MOVE_S = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -640,6 +656,103 @@ def line_times_from_words(
     return times, len(anchor)
 
 
+def _sure_pairs(a: list[str], b: list[str]) -> tuple[list[tuple[int, int]], set[tuple[int, int]]]:
+    """The sure pairs of equal words of a and b (see SURE_REACH), and all pairs."""
+    pairs = set(_common_words(a, b))
+    return sorted((i, j) for i, j in pairs if (i + 1, j + 1) in pairs or (i - 1, j - 1) in pairs), pairs
+
+
+@dataclass
+class CheckedLineTimes:
+    """LRC times checked by the words of a transcription (checked_line_times)."""
+    times: list[float]  # the time of each line, in the LRC times (before their common offset)
+    offset: float       # the common offset of the LRC times (s): the audio time is LRC time + offset
+    confirmed: int      # lines confirmed by the transcription's words
+    moved: int          # of these, the lines moved to the time the words give
+    respread: int       # lines without such words spread anew between the confirmed ones
+
+
+def checked_line_times(
+    lines: list[list[str]],
+    line_times: list[float],
+    words: list[tuple[str, float, float]],
+) -> Optional[CheckedLineTimes]:
+    """The LRC times of the lines of synced lyrics, checked by the words of a transcription.
+
+    ``lines`` holds the words of each line, ``line_times`` their LRC times,
+    ``words`` the transcribed words as (text, start s, end s), in order.
+
+    Synced lyrics may have lines at the wrong time (a chorus sung earlier
+    than written) or lines that are not sung where they stand; the forced
+    alignment would put their words onto whatever is sung there. The
+    transcription's words give a time to each line they confirm (a sure
+    pair, see CHECKED_MOVE_S): a confirmed line far off its LRC time moves
+    to this time, and lines without confirmation that then stand out of
+    order are spread anew between the confirmed ones around them.
+
+    Returns None with fewer than MIN_OFFSET_LINES confirmed lines: the
+    transcription then cannot check the lyrics.
+    """
+    lyric = [(i, p, _word_key(w)) for i, line in enumerate(lines) for p, w in enumerate(line)]
+    keyed = [k for k, (_, _, key) in enumerate(lyric) if key]
+    heard = [(key, start, end) for key, start, end in ((_word_key(w), s, e) for w, s, e in words)
+             if key and start is not None and end is not None]
+    sure, pairs = _sure_pairs([lyric[k][2] for k in keyed], [h[0] for h in heard])
+    # The sung seconds per word: steps between sure pairs in the same line
+    steps = [heard[b + 1][1] - heard[b][1] for a, b in sure
+             if (a + 1, b + 1) in pairs and lyric[keyed[a + 1]][0] == lyric[keyed[a]][0]]
+    word_s = float(np.clip(statistics.median(steps), *WORD_S_RANGE)) if len(steps) >= WORD_STEPS else WORD_S
+    confirmed = {}
+    for a, b in sure:
+        i, p, _ = lyric[keyed[a]]
+        _, start, end = heard[b]
+        if i not in confirmed and end - start <= LONG_WORD_S:
+            confirmed[i] = max(0.0, start - p * word_s)
+    order = sorted(confirmed)
+    confirmed = {order[k]: confirmed[order[k]] for k in _longest_in_order([confirmed[i] for i in order])}
+    if len(confirmed) < MIN_OFFSET_LINES:
+        return None
+    offset = statistics.median(confirmed[i] - line_times[i] for i in confirmed)
+    times = list(line_times)
+    for i, t in confirmed.items():
+        if abs(t - offset - line_times[i]) > CHECKED_MOVE_S:
+            times[i] = t - offset
+    # A confirmed line kept at its LRC time may now stand after a later one
+    # that moved: both go to their confirmed times, which are in order,
+    # until all confirmed lines are
+    anchored = sorted(confirmed)
+    reordered = True
+    while reordered:
+        reordered = False
+        for a, b in zip(anchored, anchored[1:]):
+            if times[b] < times[a]:
+                times[a], times[b] = confirmed[a] - offset, confirmed[b] - offset
+                reordered = True
+    moved = sum(times[i] != line_times[i] for i in confirmed)
+    first_word = np.concatenate([[0], np.cumsum([len(line) for line in lines])])[:-1]
+    respread = 0
+    for i in range(len(lines)):
+        if i in confirmed:
+            continue
+        prev = max((a for a in anchored if a < i), default=None)
+        nxt = min((a for a in anchored if a > i), default=None)
+        earliest = times[prev] + len(lines[prev]) * word_s / 2 - FIT_S if prev is not None else -np.inf
+        latest = times[nxt] + FIT_S if nxt is not None else np.inf
+        if earliest <= times[i] <= latest:
+            continue
+        if prev is not None and nxt is not None:
+            times[i] = times[prev] + (times[nxt] - times[prev]) * (
+                first_word[i] - first_word[prev]) / (first_word[nxt] - first_word[prev])
+        elif nxt is not None:
+            # before the first confirmed line: counted back from it by the words between
+            times[i] = times[nxt] - (first_word[nxt] - first_word[i]) * word_s
+        else:
+            # after the last confirmed line: counted on from it
+            times[i] = times[prev] + (first_word[i] - first_word[prev]) * word_s
+        respread += 1
+    return CheckedLineTimes([float(t) for t in times], float(offset), len(confirmed), moved, respread)
+
+
 def passages_without_lyrics(
     lines: list[list[str]],
     words: list[tuple[str, float, float]],
@@ -665,8 +778,7 @@ def passages_without_lyrics(
     lyric = [(i, _word_key(w)) for i, line in enumerate(lines) for w in line]
     keyed = [k for k, (_, key) in enumerate(lyric) if key]
     heard = [j for j, (w, s, e) in enumerate(words) if _word_key(w) and s is not None and e is not None]
-    pairs = set(_common_words([lyric[k][1] for k in keyed], [_word_key(words[j][0]) for j in heard]))
-    sure = [(a, b) for a, b in pairs if (a + 1, b + 1) in pairs or (a - 1, b - 1) in pairs]
+    sure, _ = _sure_pairs([lyric[k][1] for k in keyed], [_word_key(words[j][0]) for j in heard])
     sung_lines = {lyric[keyed[a]][0] for a, _ in sure}
     from_lyrics = np.zeros(len(heard), dtype=bool)
     for _, b in sure:
