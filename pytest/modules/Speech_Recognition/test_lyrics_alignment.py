@@ -25,6 +25,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     checked_line_times,
     emission_in_pieces,
     end_row,
+    heard_share,
     line_times_from_words,
     lyrics_tokens,
     passages_without_lyrics,
@@ -1045,3 +1046,25 @@ class TestCheckedLineTimes:
         assert checked.times[3:5] == pytest.approx(times[3:5])
         assert checked.moved == 2
         assert all(a <= b for a, b in zip(checked.times, checked.times[1:]))
+
+
+class TestHeardShare:
+    """The share of the transcribed words in a sure pair with a word of the lyrics."""
+
+    def test_the_lyrics_of_the_song(self):
+        words = heard(("Hello", 1.0), ("my", 1.4), ("friend,", 1.8), ("hello", 3.0), ("again", 3.4))
+        assert heard_share("hello my friend hello again".split(), words) == (1.0, 5)
+
+    def test_single_common_words_are_no_pairs(self):
+        # "you" and "I" pair by chance: only two consecutive words make sure pairs
+        words = heard(("you", 1.0), ("are", 1.4), ("here", 1.8), ("and", 2.2), ("I", 2.6), ("stay", 3.0))
+        assert heard_share("I miss you so".split(), words) == (0.0, 6)
+
+    def test_lyrics_with_a_part_of_the_song(self):
+        words = heard(*[(f"word{n}", float(n)) for n in range(10)])
+        assert heard_share([f"word{n}" for n in range(4)], words) == (0.4, 10)
+
+    def test_words_without_text_or_times_are_not_counted(self):
+        words = heard(("hello", 1.0), ("world", 1.4), ("...", 1.8)) + [("again", None, None)]
+        assert heard_share(["hello", "world"], words) == (1.0, 2)
+        assert heard_share(["hello"], []) == (0.0, 0)
