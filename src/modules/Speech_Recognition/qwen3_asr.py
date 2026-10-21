@@ -18,6 +18,7 @@ word timings come from the same forced alignment as Whisper's text.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import math
 from collections import Counter
 from dataclasses import dataclass
@@ -40,6 +41,15 @@ MIN_PIECE_SECONDS = 0.5
 # time and at 5.3 with eight, which it takes from BATCH_FREE_GIB on
 MIN_FREE_GIB = 5.0
 BATCH_FREE_GIB = 7.0
+# The model sometimes gives up on a piece after its first words (a vocalise
+# at its start) and leaves the rest of it out. A span of at least
+# RETRY_GAP_S without words, where the voice is audible on RETRY_VOICED_SHARE
+# of its frames of RETRY_FRAME_S (no more than RETRY_LEVEL_DB below the loud
+# parts of the song), is transcribed once more on its own.
+RETRY_GAP_S = 8.0
+RETRY_VOICED_SHARE = 0.5
+RETRY_FRAME_S = 0.05
+RETRY_LEVEL_DB = 25.0
 
 TRANSCRIBERS = ("auto", "qwen3", "whisper")
 
@@ -159,9 +169,85 @@ def transcribe_with_qwen3(audio_path: str, choice: TranscriberChoice, device: st
     segments = [{"text": r.text.strip(), "start": offset, "end": offset + len(wav) / SAMPLE_RATE}
                 for (wav, offset), r in zip(pieces, results) if r.text and r.text.strip()]
     if not segments:
+        # nothing heard at all: the same pieces again would give the same
         return TranscriptionResult([], detected)
     transcribed_data = align_segments(segments, audio, detected, device, alignment_model, keep_numbers)
+    # the model is loaded once more for these (it was released for the alignment)
+    spans = unheard_spans(transcribed_data, audio)
+    if spans:
+        transcribed_data = _with_spans_heard_again(transcribed_data, spans, audio, choice, detected, device,
+                                                   alignment_model, keep_numbers)
     return TranscriptionResult(transcribed_data, detected)
+
+
+def unheard_spans(words: list, audio) -> list[tuple[float, float]]:
+    """The spans (start s, end s) of ``audio`` (16 kHz) of at least
+    RETRY_GAP_S without ``words`` (TranscribedData, in time order) where the
+    voice is audible (see RETRY_GAP_S)."""
+    import numpy as np
+
+    frame = int(RETRY_FRAME_S * SAMPLE_RATE)
+    n_frames = len(audio) // frame
+    if n_frames == 0:
+        return []
+    samples = np.asarray(audio[:n_frames * frame], dtype=np.float64).reshape(n_frames, frame)
+    rms = np.sqrt((samples ** 2).mean(axis=1))
+    loud = float(np.percentile(rms, 95))
+    if loud <= 0:
+        return []
+    voiced = rms >= loud * 10 ** (-RETRY_LEVEL_DB / 20)
+    duration = n_frames * RETRY_FRAME_S
+    times = [(0.0, 0.0)] + [(w.start, w.end) for w in words if w.start is not None and w.end is not None] \
+        + [(duration, duration)]
+    spans = []
+    for (_, start), (end, _) in zip(times, times[1:]):
+        if end - start >= RETRY_GAP_S and voiced[int(start / RETRY_FRAME_S):int(end / RETRY_FRAME_S)].mean() \
+                >= RETRY_VOICED_SHARE:
+            spans.append((start, end))
+    return spans
+
+
+def _with_spans_heard_again(words: list, spans: list[tuple[float, float]], audio, choice: TranscriberChoice,
+                            language: str, device: str, alignment_model: str | None,
+                            keep_numbers: bool) -> list:
+    """The ``words`` with the words of the ``spans`` transcribed once more on
+    their own (see RETRY_GAP_S); the words alone when that fails."""
+    from modules.Speech_Recognition.Whisper import align_segments
+
+    pieces = []  # (samples, offset s) of the spans, in pieces as long as the first ones at most
+    for start, end in spans:
+        first = int(start * SAMPLE_RATE)
+        pieces += [(wav, start + offset) for wav, offset in audio_pieces(audio[first:int(end * SAMPLE_RATE)])]
+    if not pieces:
+        return words
+    model = None
+    try:
+        model = _load_model(choice)
+        results = model.transcribe(audio=[(wav, SAMPLE_RATE) for wav, _ in pieces],
+                                   language=QWEN_LANGUAGES.get(language))
+    except (RuntimeError, OSError, ImportError) as e:
+        print(f"{ULTRASINGER_HEAD} Could not transcribe the parts without words once more ({_error_summary(e)})")
+        return words
+    finally:
+        model = None
+        release_gpu_memory()
+    segments = [{"text": r.text.strip(), "start": offset, "end": offset + len(wav) / SAMPLE_RATE}
+                for (wav, offset), r in zip(pieces, results) if r.text and r.text.strip()]
+    try:
+        found = align_segments(segments, audio, language, device, alignment_model, keep_numbers) if segments else []
+    except (RuntimeError, OSError, ImportError, ValueError) as e:
+        print(f"{ULTRASINGER_HEAD} Could not align the words of the parts without words ({_error_summary(e)})")
+        return words
+    # only words within the spans: the alignment may stretch a word beyond its piece
+    found = [w for w in found if w.start is not None and any(start <= w.start < end for start, end in spans)]
+    print(f"{ULTRASINGER_HEAD} Transcribed {len(spans)} sung {'part' if len(spans) == 1 else 'parts'} without "
+          f"words once more: {blue_highlighted(str(len(found)))} words")
+    # each found word before the first word that starts after it; the order of the others stays
+    out = list(words)
+    for w in sorted(found, key=lambda w: w.start):
+        at = next((k for k, x in enumerate(out) if x.start is not None and x.start > w.start), len(out))
+        out.insert(at, w)
+    return out
 
 
 def audio_pieces(audio) -> list:
@@ -222,6 +308,23 @@ def _load_model(choice: TranscriberChoice):
 
     # GPUs before compute capability 8 only emulate bfloat16, much slower
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported(including_emulation=False) else torch.float16
-    return Qwen3ASRModel.from_pretrained(QWEN3_MODEL, dtype=dtype, device_map="cuda:0",
-                                         max_inference_batch_size=choice.batch_size,
-                                         max_new_tokens=MAX_PIECE_TOKENS)
+    # The generation config of the model sets a temperature without sampling,
+    # which transformers reports as an invalid flag when it loads the model;
+    # the model never samples, so the notice says nothing
+    generation_logger = logging.getLogger(_GENERATION_CONFIG_LOGGER)
+    generation_logger.addFilter(_without_temperature_notice)
+    try:
+        return Qwen3ASRModel.from_pretrained(QWEN3_MODEL, dtype=dtype, device_map="cuda:0",
+                                             max_inference_batch_size=choice.batch_size,
+                                             max_new_tokens=MAX_PIECE_TOKENS)
+    finally:
+        generation_logger.removeFilter(_without_temperature_notice)
+
+
+_GENERATION_CONFIG_LOGGER = "transformers.generation.configuration_utils"
+
+
+def _without_temperature_notice(record: logging.LogRecord) -> bool:
+    """False for the notice of transformers that the temperature is no valid generation flag."""
+    message = record.getMessage()
+    return not ("generation flags are not valid" in message and "['temperature']" in message)

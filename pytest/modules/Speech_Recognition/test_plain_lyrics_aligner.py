@@ -234,6 +234,43 @@ class TestPassagesWithoutLyrics(unittest.TestCase):
         self.assertEqual([s.word.strip() for s in result][-8:], [w for w, _, _ in tail])
         self.assertEqual(placement.passages, 2)
 
+    # a sentence the transcriber made up where nothing is sung: 11 words in 1.1 s
+    MADE_UP = [(f"m{n}", 39.0 + 0.1 * n, 39.06 + 0.1 * n) for n in range(11)]
+
+    def test_made_up_words_are_no_passage(self):
+        result, placement, _ = self._run(self.HEARD + self.MADE_UP)
+        self.assertEqual(placement.passages, 1)
+        self.assertNotIn("m0", [s.word.strip() for s in result])
+
+    def test_made_up_line_of_a_passage_is_left_out(self):
+        # a sung line, a pause, then the made-up words: the sung line stays a passage
+        tail = [(f"t{n}", 34.0 + 0.5 * n, 34.4 + 0.5 * n) for n in range(8)]
+        result, placement, _ = self._run(self.HEARD + tail + self.MADE_UP)
+        words = [s.word.strip() for s in result]
+        self.assertEqual(placement.passages, 2)
+        self.assertEqual(words[-8:], [w for w, _, _ in tail])
+        self.assertNotIn("m0", words)
+
+    def test_rest_of_a_made_up_passage_too_short(self):
+        # four sung words before the made-up words are no passage
+        sung = [(f"s{n}", 34.0 + 0.5 * n, 34.4 + 0.5 * n) for n in range(4)]
+        result, placement, _ = self._run(self.HEARD + sung + self.MADE_UP)
+        self.assertEqual(placement.passages, 1)
+        self.assertNotIn("s3", [s.word.strip() for s in result])
+
+    def test_bracketed_words_the_transcription_has_get_notes(self):
+        # the words of line 5 in brackets: heard, so sung by the lead; "(oh yeah)" is not heard
+        lyrics = self.LYRICS.replace("w5a w5b w5c", "(w5a w5b w5c)").replace("w7c", "w7c (oh yeah)")
+        with patch("src.modules.Speech_Recognition.reference_lyrics_aligner.align_lyrics_to_audio",
+                   return_value=[dict(w) for w in self.ALIGNED]) as align:
+            _, placement = create_midi_segments_from_plain_lyrics(
+                lyrics, "audio.wav", "en", self._sung(), melisma_split=False, transcription_words=self.HEARD)
+        texts = [seg["text"] for seg in align.call_args[0][0]]
+        self.assertIn("w5a w5b w5c", texts)
+        self.assertIn("w7a w7b w7c \x00oh \x00yeah", texts)
+        self.assertEqual(placement.backing_sung, 3)
+        self.assertIn("3 bracketed words heard in the transcription, sung with notes", str(placement))
+
 
 def _lrc(lines):
     """LRC text of (time s, text) lines."""
@@ -282,6 +319,17 @@ class TestCheckedSyncedLyrics(unittest.TestCase):
         self.assertEqual(align.call_args.kwargs["silent_spans"], [(12.0, 19.6)])
         foreign = [w for w, _, _ in self.FOREIGN]
         self.assertEqual([s.word.strip() for s in result], self.LYRIC_WORDS[:12] + foreign + self.LYRIC_WORDS[12:])
+
+    def test_bracketed_line_the_transcription_has_gets_notes(self):
+        lrc_lines = self._lines()
+        lrc_lines[2] = (lrc_lines[2][0], "(" + lrc_lines[2][1] + ")")
+        lrc_lines.append((36.0, "(oh yeah)"))
+        _, check, align = self._run(lrc_lines, self.HEARD)
+        texts = [seg["text"] for seg in align.call_args[0][0]]
+        self.assertEqual(texts[2], "w2a w2b w2c")
+        self.assertEqual(texts[-1], "\x00oh \x00yeah")
+        self.assertEqual(check.backing_sung, 3)
+        self.assertIn("3 bracketed words heard in the transcription, sung with notes", str(check))
 
     def test_too_few_confirmed_lines_keep_their_times(self):
         heard = [w for line in self.SUNG[:4] for w in line]  # four lines: too few

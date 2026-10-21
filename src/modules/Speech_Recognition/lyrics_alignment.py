@@ -78,6 +78,10 @@ MOVE_S = 1.0
 MOVE_GAIN = 0.3
 # Consecutive lines may overlap this much (s)
 OVERLAP_S = 0.3
+# A line that starts more than EARLY_S before its LRC window (its first word
+# stretched over a vocalise before it) moves into the window, whatever it
+# gains there, unless it is placed poorly there
+EARLY_S = 2.0
 # Log-probability of the tokens on a frame without a usable model output
 UNUSABLE_TOKEN = -1e4
 # Line times from the words of a transcription: the sung seconds per word are
@@ -449,7 +453,33 @@ def _check_lines(em: _Emission, ranges: dict, lines: list[int], line_times: list
     else:
         dropped = []
     choice = _moves(keep, placed, local)
-    return {i: local[i] if choice[i] else placed[i] for i in keep}, dropped, sum(choice.values())
+    placements = {i: local[i] if choice[i] else placed[i] for i in keep}
+    early = _early_moves(keep, placements, local, line_times, offset)
+    return placements, dropped, sum(choice.values()) + early
+
+
+def _early_moves(lines: list[int], placements: dict, local: dict, line_times: list[float],
+                 offset: float) -> int:
+    """Moves the lines that start more than EARLY_S before their LRC window to
+    it, where they are not placed poorly (POOR_SCORE) and fit between the
+    lines around them (OVERLAP_S); returns how many moved. A line may fit
+    only after the next one moved: the lines are gone through until none moves."""
+    moved = 0
+    while True:
+        moved_now = 0
+        for n, i in enumerate(lines):
+            l = local[i]
+            if (l is None or l.score < POOR_SCORE or placements[i] is l
+                    or placements[i].start >= line_times[i] + offset - MARGIN_S - EARLY_S):
+                continue
+            prev_end = placements[lines[n - 1]].end if n else -np.inf
+            next_start = placements[lines[n + 1]].start if n + 1 < len(lines) else np.inf
+            if l.start >= prev_end - OVERLAP_S and l.end <= next_start + OVERLAP_S:
+                placements[i] = l
+                moved_now += 1
+        if not moved_now:
+            return moved
+        moved += moved_now
 
 
 def _word_times(tokens: LyricsTokens, ranges: dict, placements: dict,
@@ -660,6 +690,18 @@ def _sure_pairs(a: list[str], b: list[str]) -> tuple[list[tuple[int, int]], set[
     """The sure pairs of equal words of a and b (see SURE_REACH), and all pairs."""
     pairs = set(_common_words(a, b))
     return sorted((i, j) for i, j in pairs if (i + 1, j + 1) in pairs or (i - 1, j - 1) in pairs), pairs
+
+
+def confirmed_words(lines: list[list[str]], words: list[tuple[str, float, float]]) -> set[tuple[int, int]]:
+    """(line, position in the line) of the words of the lyrics in a sure pair
+    (see SURE_REACH) with a word of the transcription (``words``: text,
+    start s, end s, in order)."""
+    lyric = [(i, p, _word_key(w)) for i, line in enumerate(lines) for p, w in enumerate(line)]
+    keyed = [k for k, (_, _, key) in enumerate(lyric) if key]
+    heard = [key for key, start, end in ((_word_key(w), s, e) for w, s, e in words)
+             if key and start is not None and end is not None]
+    sure, _ = _sure_pairs([lyric[k][2] for k in keyed], heard)
+    return {lyric[keyed[a]][:2] for a, _ in sure}
 
 
 @dataclass

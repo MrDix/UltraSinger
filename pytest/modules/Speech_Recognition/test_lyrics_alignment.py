@@ -12,6 +12,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     LANGUAGES_WITHOUT_SPACES,
     OVERLAP_S,
     WORD_S,
+    _early_moves,
     _Emission,
     _local,
     _moves,
@@ -438,6 +439,31 @@ class TestLineCheck:
         assert _moves([0, 1, 2], glob, local) == {0: 0, 1: 1, 2: 0}
         local[2] = placement(20.0, 22.0, -0.5)
         assert _moves([0, 1, 2], glob, local) == {0: 0, 1: 0, 2: 1}
+
+    def test_line_far_before_its_window_moves_into_it(self):
+        # line 1 at 10 s (offset 1 s): its window starts at 9 s; its first word stretched from 2 s on
+        times = [0.0, 10.0, 20.0]
+        placed = {0: placement(1.0, 1.8, -0.1), 1: placement(2.0, 12.0, -0.5), 2: placement(21.0, 23.0, -0.1)}
+        local = {0: None, 1: placement(11.0, 12.0, -0.6), 2: None}
+        assert _early_moves([0, 1, 2], placed, local, times, 1.0) == 1
+        assert placed[1].start == 11.0
+        # within EARLY_S of its window, the line stays
+        placed[1] = placement(7.5, 12.0, -0.5)
+        assert _early_moves([0, 1, 2], placed, local, times, 1.0) == 0
+        # nor does it move where it would overlap the next line
+        placed[1], local[1] = placement(2.0, 12.0, -0.5), placement(11.0, 21.5, -0.6)
+        assert _early_moves([0, 1, 2], placed, local, times, 1.0) == 0
+        # or where it is placed poorly (the LRC time may be wrong)
+        local[1] = placement(11.0, 12.0, -6.0)
+        assert _early_moves([0, 1, 2], placed, local, times, 1.0) == 0
+
+    def test_early_line_fits_after_the_next_one_moved(self):
+        # lines 1 and 2 both stretched over a vocalise; line 1 fits only once line 2 moved
+        times = [0.0, 10.0, 20.0]
+        placed = {0: placement(1.0, 1.8, -0.1), 1: placement(2.0, 3.0, -0.5), 2: placement(3.0, 12.0, -0.5)}
+        local = {0: None, 1: placement(11.0, 12.5, -0.6), 2: placement(21.0, 23.0, -0.6)}
+        assert _early_moves([0, 1, 2], placed, local, times, 1.0) == 2
+        assert (placed[1].start, placed[2].start) == (11.0, 21.0)
 
     def test_no_move_when_the_local_place_is_close_or_not_clearly_better(self):
         glob = {0: placement(0.0, 2.0, -0.1), 1: placement(5.0, 7.0, -3.0), 2: placement(9.0, 10.0, -0.1)}
