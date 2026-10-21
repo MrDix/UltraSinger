@@ -562,6 +562,8 @@ class QueueManager(QObject):
         # Reference-first pipeline produced results
         if "Reference-first pipeline:" in clean:
             info["pipeline"] = "reference"
+            # (also after a failed first try: synced lyrics that replaced the found ones)
+            info.pop("whisper_fallback", None)
             return
 
         # Reference pipeline recovered after language correction

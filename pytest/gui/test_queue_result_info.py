@@ -194,6 +194,21 @@ class TestParseOutputLine:
         assert item.result_info["reference_recovered"] is True
         assert "whisper_fallback" not in item.result_info
 
+    def test_replacing_synced_lyrics_after_fallback(self, queue_manager):
+        item = _make_item()
+        queue_manager._current_item = item
+        for line in ("[UltraSinger] Found lyrics on LRCLIB: Artist - Song [plain (75 words), synced]",
+                     "[UltraSinger] Alignment returned no words -- falling back to standard pipeline",
+                     "[UltraSinger] Running Whisper as fallback",
+                     "[UltraSinger] Found lyrics on music.163.com: Artist - Song [plain (215 words), synced]",
+                     "[UltraSinger] Aligning the synced lyrics that replaced the found ones",
+                     "[UltraSinger] Reference-first pipeline: 316 notes from 233 words"):
+            queue_manager._parse_output_line(line)
+        assert item.result_info["pipeline"] == "reference"
+        assert "whisper_fallback" not in item.result_info
+        queue_manager._on_item_finished(0)
+        assert item.result_info["lyrics_source"] == "synced"
+
     def test_fallback_to_standard(self, queue_manager):
         item = _make_item()
         queue_manager._current_item = item
