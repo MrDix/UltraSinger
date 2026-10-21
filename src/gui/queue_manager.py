@@ -525,8 +525,8 @@ class QueueManager(QObject):
             info["language"] = new_lang
             return
 
-        # LRCLIB lyrics found — parse what types are available
-        m = re.search(r"Found lyrics on LRCLIB:.*\[(.*?)\]"
+        # Lyrics found (on LRCLIB or the second lyrics database) — parse what types are available
+        m = re.search(r"Found lyrics on \S+:.*\[(.*?)\]"
                       r"(?:, (\d+(?:\.\d+)?) s long \(the audio: (\d+(?:\.\d+)?) s\))?", clean)
         if m:
             details = m.group(1).lower()

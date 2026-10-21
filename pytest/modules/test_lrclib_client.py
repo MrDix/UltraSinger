@@ -6,7 +6,13 @@ import urllib.error
 import urllib.parse
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from src.modules.lrclib_client import (
+    _is_credit,
+    _second_db_lyrics,
+    lyric_words,
+    too_few_words,
     LyricsInfo,
     find_lyrics,
     lrc_text,
@@ -16,6 +22,17 @@ from src.modules.lrclib_client import (
     _search_by_fields,
     _search_by_query,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_second_db(request):
+    """The short test lyrics are far too few words for most audio: the
+    second lyrics database is not asked, except by its own tests."""
+    if getattr(request.cls, "asks_second_db", False):
+        yield
+        return
+    with patch("src.modules.lrclib_client._find_on_second_db", return_value=None):
+        yield
 
 
 def _make_response(entries: list[dict]) -> bytes:
@@ -472,3 +489,267 @@ class TestLrcText(unittest.TestCase):
     def test_lines_in_the_order_they_are_sung(self):
         synced = "[00:04.00][00:20.00] Again\n[00:10.00] Between\n[00:01.00] First\n"
         self.assertEqual(lrc_text(synced), "First\nAgain\nBetween\nAgain")
+
+
+def _words(count: int) -> str:
+    return " ".join(f"word{n}" for n in range(count))
+
+
+def _second_db_song(song_id, name="Song Title", artists=("Some Artist",), duration_s=300.0):
+    return {"id": song_id, "name": name, "artists": [{"name": artist} for artist in artists],
+            "duration": int(duration_s * 1000)}
+
+
+def _second_db_lrc(words: int) -> dict:
+    """Its answer with lyrics of ``words`` words, after two credit lines."""
+    lines = ["[00:00.000] 作词 : Some Writer", "[00:01.000] Composer : Someone Else"]
+    lines += [f"[00:{10 + n:02d}.500] {_words(10)}" for n in range(words // 10)]
+    return {"lrc": {"lyric": "\n".join(lines)}, "code": 200}
+
+
+class TestSecondLyricsDatabase(unittest.TestCase):
+    """The second lyrics database, asked when LRCLIB has no lyrics or far too few."""
+    asks_second_db = True
+
+    @staticmethod
+    def _get_json(lrclib, songs, lyrics, asked):
+        """Answers of LRCLIB (``lrclib`` to each search) and of the second
+        database (``songs`` to a search, ``lyrics[id]`` for a song's lyrics)."""
+        def get_json(url, attempts=None):
+            asked.append(url)
+            if url.startswith("https://lrclib.net/"):
+                return lrclib
+            if "/search/get?" in url:
+                searched = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))["s"]
+                return {"result": {"songs": list(songs(searched) if callable(songs) else songs)}, "code": 200}
+            song_id = int(dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))["id"])
+            return (lyrics or {}).get(song_id, {"nolyric": True})
+        return get_json
+
+    def _find(self, lrclib, songs=(), lyrics=None, duration=300.0, title="Song Title"):
+        """find_lyrics with these answers; returns the result and the URLs asked."""
+        asked = []
+        with patch("src.modules.lrclib_client._get_json",
+                   side_effect=self._get_json(lrclib, songs, lyrics, asked)):
+            result = find_lyrics("Some Artist", title, duration)
+        return result, asked
+
+    def test_asked_when_lrclib_has_no_lyrics(self):
+        result, _ = self._find([], songs=[_second_db_song(7)], lyrics={7: _second_db_lrc(100)})
+        self.assertEqual(result.source, "music.163.com")
+        self.assertEqual(result.duration, 300.0)
+        # Its credit lines are no lyrics
+        self.assertNotIn("Writer", result.synced_lyrics)
+        self.assertNotIn("Composer", result.synced_lyrics)
+        self.assertEqual(len(result.plain_lyrics.split()), 100)
+        self.assertTrue(result.synced_lyrics.startswith("[00:10.500] word0"))
+
+    def test_fuller_lyrics_replace_far_too_few(self):
+        # 40 words for 5 minutes: 8 per minute
+        sparse = [_version(300.0, plain=_words(40))]
+        result, _ = self._find(sparse, songs=[_second_db_song(7)], lyrics={7: _second_db_lrc(200)})
+        self.assertEqual(result.source, "music.163.com")
+
+    def test_lyrics_not_fuller_enough_are_not_taken(self):
+        sparse = [_version(300.0, plain=_words(80))]
+        result, _ = self._find(sparse, songs=[_second_db_song(7)], lyrics={7: _second_db_lrc(110)})
+        self.assertEqual(result.source, "LRCLIB")
+
+    def test_fuller_lyrics_of_another_recording_are_not_taken(self):
+        sparse = [_version(300.0, plain=_words(40))]
+        result, _ = self._find(sparse, songs=[_second_db_song(7, duration_s=200.0)],
+                               lyrics={7: _second_db_lrc(200)})
+        self.assertEqual(result.source, "LRCLIB")
+
+    def test_not_asked_for_enough_words(self):
+        result, asked = self._find([_version(300.0, plain=_words(150))])
+        self.assertEqual(result.source, "LRCLIB")
+        self.assertTrue(all(url.startswith("https://lrclib.net/") for url in asked))
+
+    def test_not_asked_for_a_song_known_as_instrumental(self):
+        result, asked = self._find([_lrclib_entry(track="Song Title", artist="Some Artist", plain=None,
+                                                  instrumental=True)])
+        self.assertTrue(result.instrumental)
+        self.assertTrue(all(url.startswith("https://lrclib.net/") for url in asked))
+
+    def test_the_version_closest_in_length_of_the_wanted_song(self):
+        songs = [_second_db_song(1, duration_s=200.0), _second_db_song(2, name="Other Song"),
+                 _second_db_song(3, artists=("Other Artist",)), _second_db_song(4, duration_s=301.0)]
+        lyrics = {n: _second_db_lrc(100 + n * 10) for n in (1, 2, 3, 4)}
+        result, _ = self._find([], songs=songs, lyrics=lyrics)
+        self.assertEqual(len(result.plain_lyrics.split()), 140)
+
+    def test_a_guest_artist_in_its_credit(self):
+        songs = [_second_db_song(5, artists=("Some Artist", "Guest"))]
+        result, _ = self._find([], songs=songs, lyrics={5: _second_db_lrc(100)})
+        self.assertEqual(result.artist_name, "Some Artist, Guest")
+
+    def test_the_next_version_when_one_has_no_lyrics(self):
+        songs = [_second_db_song(1), _second_db_song(2, duration_s=310.0)]
+        result, _ = self._find([], songs=songs, lyrics={2: _second_db_lrc(100)})
+        self.assertEqual(result.duration, 310.0)
+
+    def test_none_of_an_instrumental(self):
+        lyrics = {7: {"lrc": {"lyric": "[00:00.00] 纯音乐，请欣赏"}}}
+        result, _ = self._find([], songs=[_second_db_song(7)], lyrics=lyrics)
+        self.assertIsNone(result)
+
+    def test_none_when_it_finds_nothing(self):
+        result, _ = self._find([], songs=[])
+        self.assertIsNone(result)
+
+    def test_asked_once_when_unreachable(self):
+        asked = []
+
+        def get_json(url, attempts=None):
+            asked.append((url, attempts))
+            return [] if url.startswith("https://lrclib.net/") else None
+
+        with patch("src.modules.lrclib_client._get_json", side_effect=get_json), \
+                patch("builtins.print") as printed:
+            self.assertIsNone(search_lyrics("Some Artist", "Song Title (Official Video)", 300.0))
+        self.assertEqual([attempts for url, attempts in asked if "music.163.com" in url], [1])
+        self.assertIn("No lyrics found on LRCLIB or music.163.com", str(printed.call_args_list[-1].args[0]))
+
+    def test_searched_again_without_the_title_additions(self):
+        def songs(searched):
+            return [] if "Video" in searched else [_second_db_song(7)]
+        result, asked = self._find([], songs=songs, lyrics={7: _second_db_lrc(100)},
+                                   title="Song Title (Official Video)")
+        self.assertEqual(result.source, "music.163.com")
+        searches = [dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))["s"]
+                    for url in asked if "/search/get?" in url]
+        self.assertEqual(searches, ["Some Artist Song Title (Official Video)", "Some Artist Song Title"])
+
+    def test_colon_time_tags_and_id_tags(self):
+        lyrics = {7: {"lrc": {"lyric": "[by:someone]\n[00:12:50] " + _words(10) + "\n[01:02:25] " + _words(10)}}}
+        result, _ = self._find([], songs=[_second_db_song(7)], lyrics=lyrics)
+        self.assertEqual(result.synced_lyrics.splitlines()[0], "[00:12.50] " + _words(10))
+        self.assertNotIn("someone", result.synced_lyrics)
+
+    def test_lyrics_without_times_are_plain(self):
+        lyrics = {7: {"lrc": {"lyric": _words(10) + "\n" + _words(10)}}}
+        result, _ = self._find([], songs=[_second_db_song(7)], lyrics=lyrics)
+        self.assertIsNone(result.synced_lyrics)
+        self.assertEqual(result.plain_lyrics, _words(10) + "\n" + _words(10))
+
+    def test_its_search_reported(self):
+        sparse = [_version(300.0, plain=_words(40))]
+        get_json = self._get_json(sparse, [_second_db_song(7)], {7: _second_db_lrc(200)}, [])
+        with patch("builtins.print") as printed, \
+                patch("src.modules.lrclib_client._get_json", side_effect=get_json):
+            search_lyrics("Some Artist", "Song Title", 300.0)
+        lines = [str(call.args[0]) for call in printed.call_args_list]
+        self.assertTrue(any("Searching music.163.com" in line and "have 40 words, for 5:00 of audio" in line
+                            for line in lines))
+        self.assertTrue(any("Found lyrics on music.163.com" in line for line in lines))
+
+
+class TestTooFewWords(unittest.TestCase):
+    def test_words_per_minute_of_the_audio(self):
+        info = LyricsInfo(track_name="T", artist_name="A", plain_lyrics=_words(99))
+        self.assertTrue(too_few_words(info, 300.0))
+        info.plain_lyrics = _words(100)
+        self.assertFalse(too_few_words(info, 300.0))
+
+    def test_the_length_of_the_version_without_the_audio(self):
+        info = LyricsInfo(track_name="T", artist_name="A", plain_lyrics=_words(10), duration=300.0)
+        self.assertTrue(too_few_words(info, None))
+
+    def test_not_for_short_or_unknown_lengths(self):
+        info = LyricsInfo(track_name="T", artist_name="A", plain_lyrics=_words(5))
+        self.assertFalse(too_few_words(info, 50.0))
+        self.assertFalse(too_few_words(info, None))
+
+    def test_the_synced_or_plain_text_with_more_words(self):
+        info = LyricsInfo(track_name="T", artist_name="A", plain_lyrics=_words(10),
+                          synced_lyrics="[00:01.00][00:30.00] " + _words(60))
+        self.assertEqual(lyric_words(info), 120)
+
+
+class TestIsCredit(unittest.TestCase):
+    def test_credit_lines(self):
+        for line in ("作词 : Some Writer", "制作人：Some Producer",
+                     "Composer : Someone", "Lyrics by: Someone", "PGM : 杨阳"):
+            self.assertTrue(_is_credit(line), line)
+
+    def test_english_roles(self):
+        for line in ("Guitar : Alex Smith", "Mixing Engineer : John Doe", "Backing Vocals : Jane",
+                     "Executive Producer : Someone", "Recording Studio : Some Place"):
+            self.assertTrue(_is_credit(line), line)
+
+    def test_sung_lines(self):
+        for line in ("Listen: this is a song", "Oh baby", "HEY: you there", "Time: three o'clock",
+                     "Music: it's all I need", "Words: they fail me now"):
+            self.assertFalse(_is_credit(line), line)
+
+
+class TestSecondDbLyricsLines(unittest.TestCase):
+    """Which lines of the lyrics of the second database are kept."""
+
+    @staticmethod
+    def _lines(*lines, times=None):
+        version = {"id": 7, "trackName": "Song Title", "artistName": "Some Artist"}
+        times = times or range(len(lines))
+        answer = {"lrc": {"lyric": "\n".join(f"[00:{t:02d}.00] {line}" for t, line in zip(times, lines))}}
+        with patch("src.modules.lrclib_client._get_json", return_value=answer) as get_json:
+            synced, plain = _second_db_lyrics(version)
+        get_json.assert_called_once()
+        assert get_json.call_args.kwargs == {"attempts": 1}
+        return plain.splitlines() if plain else []
+
+    def test_the_title_and_the_artist_before_the_lyrics(self):
+        self.assertEqual(self._lines("作词 : Someone", "Song Title", "Some Artist", "first line", "last line"),
+                         ["first line", "last line"])
+
+    def test_credits_after_the_lyrics(self):
+        self.assertEqual(self._lines("first line", "last line", "Guitar : Alex Smith", "混音 : Someone"),
+                         ["first line", "last line"])
+
+    def test_title_and_artist_in_one_heading_before_the_title_sung(self):
+        self.assertEqual(self._lines("作词 : Someone", "Song Title - Some Artist", "Song Title", "next line",
+                                     times=(0, 0, 18, 21)),
+                         ["Song Title", "next line"])
+
+    def test_the_artist_right_after_the_title(self):
+        self.assertEqual(self._lines("Song Title", "Some Artist", "first line", times=(1, 15, 20)), ["first line"])
+
+    def test_the_title_sung_after_the_heading_of_title_and_artist(self):
+        self.assertEqual(self._lines("Song Title", "Some Artist", "Song Title", "next line", times=(1, 15, 20, 23)),
+                         ["Song Title", "next line"])
+
+    def test_the_title_sung_after_the_artist(self):
+        self.assertEqual(self._lines("Some Artist", "Song Title", "next line", times=(0, 18, 21)),
+                         ["Song Title", "next line"])
+
+    def test_credits_of_other_roles_among_credits(self):
+        # "lyrics", "vocal arrangement", "recording assistant" ... "audio assistant"
+        lines = ("作词 : A", "合声编写：B", "录音助理 : C",
+                 "first line", "last line", "音频助理 : D", "电吉他 : E")
+        self.assertEqual(self._lines(*lines), ["first line", "last line"])
+
+    def test_a_credit_block_that_starts_with_another_role(self):
+        # "planning", then "lyrics"
+        self.assertEqual(self._lines("企划 : X", "作词 : Y", "first line"), ["first line"])
+
+    def test_english_credits_without_a_colon_at_the_end(self):
+        lines = ("first line", "last line", "Producers : Some One", "Lead & Background Vocals : Some One",
+                 "Mixed at Some Studio (London)",
+                 "Published by Some Music Limited", "Mastered at Some Mastering (London)")
+        self.assertEqual(self._lines(*lines), ["first line", "last line"])
+
+    def test_html_entities(self):
+        self.assertEqual(self._lines("let&apos;s go &amp; sing", "a &quot;word&quot;"),
+                         ["let's go & sing", 'a "word"'])
+
+    def test_a_first_sung_line_that_is_the_title(self):
+        self.assertEqual(self._lines("Song Title", "next line", times=(18, 21)), ["Song Title", "next line"])
+
+    def test_a_sung_line_in_chinese_with_a_colon(self):
+        # "I said: goodbye", at the end
+        self.assertEqual(self._lines("first line", "我说：再见"),
+                         ["first line", "我说：再见"])
+
+    def test_lines_like_a_credit_or_the_title_among_the_lyrics_are_sung(self):
+        lines = ("first line", "Song Title", "Music: All I Need", "last line")
+        self.assertEqual(self._lines(*lines), list(lines))

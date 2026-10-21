@@ -228,6 +228,16 @@ class TestPipelineInInfoFile(unittest.TestCase):
     def test_synced(self):
         info = self._info(reference_first_used=True, has_synced_lyrics=True, whisper_skipped=True)
         self.assertIn("Pipeline:                 Reference-Lyrics-First (synced)", info)
+        self.assertIn("  LRCLIB synced lyrics:     found\n", info)
+
+    def test_lyrics_of_the_second_database(self):
+        info = self._info(reference_first_used=True, has_synced_lyrics=True, whisper_skipped=True,
+                          lyrics_source="music.163.com")
+        self.assertIn("  music.163.com synced lyrics: found\n", info)
+        self.assertNotIn("LRCLIB", info)
+        info = self._info(reference_first_used=True, has_synced_lyrics=True, plain_lyrics_used=True,
+                          lyrics_source="music.163.com")
+        self.assertIn("  music.163.com plain lyrics: found\n", info)
 
     def test_reference_lyrics_disabled(self):
         # The lookup after the transcription still finds synced lyrics; they were never aligned

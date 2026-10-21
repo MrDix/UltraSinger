@@ -526,7 +526,9 @@ class ConversionSettingsForm(QWidget):
         )
         card.add_toggle_row("Lyrics Lookup", self._lyrics_lookup,
                            "Fetch verified reference lyrics from LRCLIB and use them to correct "
-                           "Whisper transcription errors. No API key needed. "
+                           "Whisper transcription errors. No API key needed. When LRCLIB has no "
+                           "lyrics of the song or far too few, the lyrics database of music.163.com "
+                           "is asked too. "
                            "This runs before LLM correction and improves word accuracy for known songs.",
                            reset_callback=lambda: self._lyrics_lookup.setChecked(
                                not _DEFAULTS["disable_lyrics_lookup"]))
