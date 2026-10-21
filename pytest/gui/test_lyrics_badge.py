@@ -73,6 +73,8 @@ class _Services:
                                ("musicbrainzngs.get_image_front", {"return_value": None})):
             self._stack.enter_context(patch(target, **kwargs))
         self._stack.enter_context(patch.object(lrclib_client, "_get_json", side_effect=self._get_json))
+        # The short test lyrics are too few words for the second lyrics database to be left out
+        self._stack.enter_context(patch.object(lrclib_client, "_find_on_second_db", return_value=None))
         return self
 
     def __exit__(self, *exc):

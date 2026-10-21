@@ -323,6 +323,8 @@ def run() -> tuple[str, Score, Score]:
                 duration=audio_length(process_data.process_data_paths.whisper_audio_path),
             )
             early_synced = early_lyrics_info.synced_lyrics if early_lyrics_info is not None else None
+            if early_synced or (early_lyrics_info is not None and early_lyrics_info.plain_lyrics):
+                process_data.lyrics_source = getattr(early_lyrics_info, "source", "LRCLIB")
             # Plain lyrics are kept here when they can make the notes before a
             # transcription: when the synced ones fail to align, or instead of
             # the remote text. Otherwise the transcription's own lookup takes them.
@@ -1070,6 +1072,7 @@ def run() -> tuple[str, Score, Score]:
             plain_from_synced=process_data.plain_lyrics_from_synced,
             model_segmentation_used=model_segmentation_used,
             phoneme_word_starts_result=phoneme_word_starts_result,
+            lyrics_source=process_data.lyrics_source,
         )
 
     # Cleanup
@@ -1252,8 +1255,12 @@ def _write_settings_info_file(
         plain_from_synced: bool = False,
         model_segmentation_used: bool = False,
         phoneme_word_starts_result: str | None = None,
+        lyrics_source: str | None = None,
 ) -> None:
-    """Write ultrasinger_parameter.info with all conversion settings and score results."""
+    """Write ultrasinger_parameter.info with all conversion settings and score results.
+
+    ``lyrics_source`` names where the found lyrics come from (LRCLIB when not given).
+    """
     from datetime import datetime, timezone
 
     info_path = os.path.join(output_folder, "ultrasinger_parameter.info")
@@ -1305,28 +1312,31 @@ def _write_settings_info_file(
             # an UltraStar txt never transcribes.
             transcription_ran = not whisper_skipped and not settings.ignore_audio
             f.write("[Pipeline]\n")
+            # "  LRCLIB synced lyrics:     " (or the lyrics' source), the values in one column
+            synced_label = f"  {(lyrics_source or 'LRCLIB') + ' synced lyrics:':<25} "
+            plain_label = f"  {(lyrics_source or 'LRCLIB') + ' plain lyrics:':<25} "
             if has_synced_lyrics:
-                synced_line = "  LRCLIB synced lyrics:     found (but alignment failed)\n"
+                synced_line = f"{synced_label}found (but alignment failed)\n"
             elif rejected_synced_language:
-                synced_line = (f"  LRCLIB synced lyrics:     found but rejected (in {rejected_synced_language}, "
+                synced_line = (f"{synced_label}found but rejected (in {rejected_synced_language}, "
                                "another language than the singing)\n")
             elif synced_of_other_recording:
-                synced_line = (f"  LRCLIB synced lyrics:     found, of another recording ({synced_of_other_recording}): "
+                synced_line = (f"{synced_label}found, of another recording ({synced_of_other_recording}): "
                                "their times were not used\n")
             else:
-                synced_line = "  LRCLIB synced lyrics:     not found\n"
+                synced_line = f"{synced_label}not found\n"
             if settings.ignore_audio:
                 f.write("  Pipeline:                 Re-pitch (notes and lyrics of the UltraStar txt)\n")
                 f.write("  Transcription:            skipped\n")
             elif settings.disable_reference_lyrics:
                 f.write("  Pipeline:                 Standard transcription (reference lyrics disabled)\n")
-                f.write("  LRCLIB synced lyrics:     found (not aligned: reference lyrics disabled)\n"
+                f.write(f"{synced_label}found (not aligned: reference lyrics disabled)\n"
                         if has_synced_lyrics else synced_line)
                 f.write("  Transcription:            full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
             elif reference_first_used and reference_recovered and not (remote_stt_used or plain_lyrics_used):
                 f.write("  Pipeline:                 Reference-Lyrics-First (recovered after language correction)\n")
-                f.write("  LRCLIB synced lyrics:     found\n")
+                f.write(f"{synced_label}found\n")
                 if synced_lyrics_check is not None:
                     f.write(f"  Synced lyrics checked:    {synced_lyrics_check}\n")
                 f.write("  Transcription:            full (for language correction)\n")
@@ -1340,8 +1350,8 @@ def _write_settings_info_file(
             elif reference_first_used and plain_lyrics_used:
                 f.write("  Pipeline:                 Reference-Lyrics-First (plain)\n")
                 f.write(synced_line)
-                f.write("  LRCLIB plain lyrics:      the text of the synced lyrics\n" if plain_from_synced
-                        else "  LRCLIB plain lyrics:      found\n")
+                f.write(f"{plain_label}the text of the synced lyrics\n" if plain_from_synced
+                        else f"{plain_label}found\n")
                 if plain_lyrics_placement is not None:
                     f.write(f"  Plain lyrics placed:      {plain_lyrics_placement}\n")
                 if not whisper_skipped:
@@ -1355,7 +1365,7 @@ def _write_settings_info_file(
                 f.write("  Alignment:                wav2vec2 CTC forced alignment\n")
             elif reference_first_used and has_synced_lyrics:
                 f.write("  Pipeline:                 Reference-Lyrics-First (synced)\n")
-                f.write("  LRCLIB synced lyrics:     found\n")
+                f.write(f"{synced_label}found\n")
                 if synced_lyrics_check is not None:
                     f.write(f"  Synced lyrics checked:    {synced_lyrics_check}\n")
                     if whisper_skipped and not isinstance(synced_lyrics_check, str):
@@ -2222,6 +2232,8 @@ def TranscribeAudio(process_data):
             )
             synced_lyrics = lyrics_info.synced_lyrics if lyrics_info is not None else None
             plain_lyrics = lyrics_info.plain_lyrics if lyrics_info is not None else None
+            if synced_lyrics or plain_lyrics:
+                process_data.lyrics_source = getattr(lyrics_info, "source", "LRCLIB")
             # The language here normally comes from the full transcription (or
             # the user), so lyrics in another language are another version of
             # the song and must not be used for correction or alignment. Without
