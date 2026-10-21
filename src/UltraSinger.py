@@ -560,7 +560,10 @@ def run() -> tuple[str, Score, Score]:
                 print(f"{ULTRASINGER_HEAD} Running Whisper as fallback")
                 initial_language = process_data.media_info.language
                 _initial_language = initial_language
+                instead_before = process_data.lyrics_instead
                 lyrics_lookup_result, llm_result = TranscribeAudio(process_data)
+                # whether its lookup replaced found lyrics that the singing does not have
+                lyrics_replaced = process_data.lyrics_instead is not instead_before
                 whisper_skipped = False
                 if settings.language is None:
                     _lang_source = "transcription"
@@ -607,12 +610,13 @@ def run() -> tuple[str, Score, Score]:
                 # again in the corrected language: the plain lyrics now with the
                 # words of the transcription; the remote answer is reused, the
                 # audio is not sent again. The text of synced lyrics of another
-                # recording waited for these words (also without a new language)
+                # recording waited for these words (also without a new language), as
+                # did lyrics that replaced found ones the singing does not have
                 language_corrected = bool(corrected_language) and corrected_language != initial_language
                 other_recording_text = bool(process_data.synced_lyrics_other_recording and process_data.plain_lyrics)
                 if (not reference_first_used
                         and not settings.disable_reference_lyrics
-                        and (language_corrected or other_recording_text)
+                        and (language_corrected or other_recording_text or lyrics_replaced)
                         and (process_data.plain_lyrics or remote_transcription is not None)):
                     plain_language = corrected_language or "en"
                     if language_corrected:
@@ -621,6 +625,9 @@ def run() -> tuple[str, Score, Score]:
                             f"{'plain lyrics' if process_data.plain_lyrics else 'remote text'} in the corrected "
                             f"language ({blue_highlighted(corrected_language)})"
                         )
+                    elif lyrics_replaced:
+                        print(f"{ULTRASINGER_HEAD} Aligning the lyrics that replaced the found ones with the words "
+                              f"of the transcription")
                     else:
                         print(f"{ULTRASINGER_HEAD} Aligning the text of the lyrics with the words of the transcription")
                     try:
