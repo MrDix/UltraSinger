@@ -714,13 +714,22 @@ def checked_line_times(
         return None
     offset = statistics.median(confirmed[i] - line_times[i] for i in confirmed)
     times = list(line_times)
-    moved = 0
     for i, t in confirmed.items():
         if abs(t - offset - line_times[i]) > CHECKED_MOVE_S:
             times[i] = t - offset
-            moved += 1
-    first_word = np.concatenate([[0], np.cumsum([len(line) for line in lines])])[:-1]
+    # A confirmed line kept at its LRC time may now stand after a later one
+    # that moved: both go to their confirmed times, which are in order,
+    # until all confirmed lines are
     anchored = sorted(confirmed)
+    reordered = True
+    while reordered:
+        reordered = False
+        for a, b in zip(anchored, anchored[1:]):
+            if times[b] < times[a]:
+                times[a], times[b] = confirmed[a] - offset, confirmed[b] - offset
+                reordered = True
+    moved = sum(times[i] != line_times[i] for i in confirmed)
+    first_word = np.concatenate([[0], np.cumsum([len(line) for line in lines])])[:-1]
     respread = 0
     for i in range(len(lines)):
         if i in confirmed:

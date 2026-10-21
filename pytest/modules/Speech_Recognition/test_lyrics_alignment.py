@@ -856,7 +856,7 @@ class TestCheckedLineTimes:
     def test_line_near_its_time_stays(self):
         lines, words, times = self.song()
         lrc = list(times)
-        lrc[4] += CHECKED_MOVE_S - 1.0
+        lrc[-1] += CHECKED_MOVE_S - 1.0  # the last line: no later one it would pass
         checked = checked_line_times(lines, lrc, words)
         assert checked.times == pytest.approx(lrc)
         assert checked.moved == 0
@@ -906,3 +906,15 @@ class TestCheckedLineTimes:
         checked = checked_line_times(lines, lrc, words)
         assert checked.respread == 0
         assert checked.times == pytest.approx(lrc)
+
+    def test_confirmed_lines_stay_in_order(self):
+        lines, words, times = self.song()
+        # line 3 is written 4 s late (kept), line 4 8 s late (moved): line 4 would come before line 3
+        lrc = list(times)
+        lrc[3] += CHECKED_MOVE_S - 1.0
+        lrc[4] += CHECKED_MOVE_S + 3.0
+        checked = checked_line_times(lines, lrc, words)
+        # both go to where they are sung
+        assert checked.times[3:5] == pytest.approx(times[3:5])
+        assert checked.moved == 2
+        assert all(a <= b for a, b in zip(checked.times, checked.times[1:]))
