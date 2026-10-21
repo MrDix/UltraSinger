@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import math
 import re
+import statistics
 from dataclasses import dataclass
 from typing import Optional
 
@@ -55,6 +56,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     ANCHORED_SHARE,
     CONTEXT_S,
     HOP,
+    PASSAGE_MIN_WORDS,
     PIECE_S,
     RELIABLE_LINES,
     SAMPLE_RATE,
@@ -62,6 +64,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     align_lyrics,
     blank_index,
     checked_line_times,
+    confirmed_words,
     emission_in_pieces,
     line_times_from_words,
     lyrics_tokens,
@@ -1281,6 +1284,11 @@ def _notes_from_words(
 # in a pause). In a passage, a pause of LINE_PAUSE_S ends a line.
 PASSAGE_VOICED_SHARE = 0.25
 LINE_PAUSE_S = 1.0
+# A transcriber may make up a sentence where nothing is sung (at the end of a
+# song): its words then come at more than MADE_UP_WORDS_PER_S, most of them
+# shorter than MADE_UP_WORD_S. Sung and spoken passages stay below both.
+MADE_UP_WORDS_PER_S = 7.0
+MADE_UP_WORD_S = 0.1
 
 
 @dataclass
@@ -1294,6 +1302,7 @@ class PlainLyricsPlacement:
     passages: int = 0           # sung passages without lyrics, sung with the transcribed words
     passage_words: int = 0      # the words of these passages
     left_out: int = 0           # lines of the lyrics left out: not sung where their time fell into a passage
+    backing_sung: int = 0       # bracketed words (backing vocals) that the transcription has: sung with notes
 
     def placed(self) -> str:
         """How the lines were placed, without the passages."""
@@ -1314,6 +1323,8 @@ class PlainLyricsPlacement:
                        f"lyrics with the {self.words_from}'s words ({self.passage_words} words")
             placed += (f", {self.left_out} {'line' if self.left_out == 1 else 'lines'} of the lyrics left out "
                        f"there)" if self.left_out else ")")
+        if self.backing_sung:
+            placed += f", {_backing_sung(self.backing_sung, self.words_from)}"
         return placed
 
 
@@ -1342,9 +1353,12 @@ def _sung_passages(
     runs, sung_lines = passages_without_lyrics(lines, heard_words)
     passages = []
     for first, end in runs:
-        run = [(text.strip(), start, stop) for text, start, stop in heard_words[first:end]
-               if start is not None and stop is not None and is_sung(text.strip())]
-        if not run or _voiced_share([(start, stop) for _, start, stop in run], pitched_data) < PASSAGE_VOICED_SHARE:
+        heard = [(text.strip(), start, stop) for text, start, stop in heard_words[first:end]
+                 if start is not None and stop is not None and is_sung(text.strip())]
+        run = _without_made_up(heard)
+        # what is left of a made-up passage is no passage when it is that short
+        if (not run or (len(run) < len(heard) and len(run) < PASSAGE_MIN_WORDS)
+                or _voiced_share([(start, stop) for _, start, stop in run], pitched_data) < PASSAGE_VOICED_SHARE):
             continue
         passages.append([
             {"word": text, "start": start, "end": stop, "backing": False,
@@ -1354,8 +1368,65 @@ def _sung_passages(
     return passages, sung_lines
 
 
+def _without_made_up(run: list[tuple[str, float, float]]) -> list[tuple[str, float, float]]:
+    """The words of a passage (text, start s, end s) without its lines (the
+    parts between pauses of LINE_PAUSE_S) of at least PASSAGE_MIN_WORDS words
+    that come too fast and too short to be sung or spoken (see
+    MADE_UP_WORDS_PER_S)."""
+    pieces: list[list[tuple[str, float, float]]] = []
+    for word in run:
+        if not pieces or word[1] - pieces[-1][-1][2] >= LINE_PAUSE_S:
+            pieces.append([])
+        pieces[-1].append(word)
+    return [word for piece in pieces if not (
+        len(piece) >= PASSAGE_MIN_WORDS
+        and len(piece) > MADE_UP_WORDS_PER_S * (piece[-1][2] - piece[0][1])
+        and statistics.median(stop - start for _, start, stop in piece) < MADE_UP_WORD_S
+    ) for word in piece]
+
+
 def _span(passage: list[dict]) -> tuple[float, float]:
     return passage[0]["start"], passage[-1]["end"]
+
+
+def _backing_sung(words: int, words_from: str) -> str:
+    return (f"{words} bracketed {'word' if words == 1 else 'words'} heard in the {words_from}, "
+            f"sung with notes")
+
+
+def _lead_brackets(texts: list[str], lines: list[list[str]],
+                   heard_words: list[tuple[str, float, float]]) -> tuple[list[str], int]:
+    """The ``texts`` of the lines without the backing-vocal marker on the runs
+    of bracketed words that the transcription has (``heard_words``: text,
+    start s, end s): a word of the run in a sure pair (``confirmed_words``).
+    Lyrics put in brackets what the lead sings too (an echo, a refrain sung
+    alone); bracketed words that are heard this clearly get notes, the others
+    stay freestyle. ``lines`` holds the words of each text, as
+    align_lyrics_to_audio takes them from it.
+
+    Returns the texts and the number of words that lost the marker.
+    """
+    confirmed = confirmed_words(lines, heard_words)
+    out, count = [], 0
+    for i, text in enumerate(texts):
+        tokens = text.split()
+        # the position in the line of each token's word (None: no word)
+        positions, pos = [], 0
+        for token in tokens:
+            positions.append(pos if token.replace("\x00", "") else None)
+            pos += positions[-1] is not None
+        k = 0
+        while k < len(tokens):
+            end = k
+            while end < len(tokens) and tokens[end].startswith("\x00"):
+                end += 1
+            if end > k and any(positions[j] is not None and (i, positions[j]) in confirmed for j in range(k, end)):
+                for j in range(k, end):
+                    tokens[j] = tokens[j].replace("\x00", "")
+                    count += positions[j] is not None
+            k = max(end, k + 1)
+        out.append(" ".join(tokens))
+    return out, count
 
 
 def _with_passages(words: list[dict], passages: list[list[dict]]) -> list[dict]:
@@ -1448,6 +1519,8 @@ def create_midi_segments_from_plain_lyrics(
     placement.lines = len(lines)
     placement.line_by_line = (times is not None and placement.anchored >= RELIABLE_LINES
                               and placement.anchored >= ANCHORED_SHARE * len(lines))
+    if placement.line_by_line:
+        texts, placement.backing_sung = _lead_brackets(texts, lines, transcription_words)
     # Only when the transcription's words could place the lines: with too few
     # of them they are no measure of what the lyrics do not have
     passages = []
@@ -1508,6 +1581,7 @@ class SyncedLyricsCheck:
     passages: int = 0           # sung passages without lyrics, sung with the transcribed words
     passage_words: int = 0      # the words of these passages
     left_out: int = 0           # lines left out: not sung where their time fell into a passage
+    backing_sung: int = 0       # bracketed words (backing vocals) that the transcription has: sung with notes
 
     def __str__(self) -> str:
         if not self.checked:
@@ -1524,6 +1598,8 @@ class SyncedLyricsCheck:
         if self.left_out:
             changes.append(f"{self.left_out} {'line' if self.left_out == 1 else 'lines'} of the lyrics left out "
                            f"there")
+        if self.backing_sung:
+            changes.append(_backing_sung(self.backing_sung, "transcription"))
         return text + (f"; {', '.join(changes)}" if changes else "")
 
 
@@ -1594,7 +1670,8 @@ def create_midi_segments_from_checked_synced_lyrics(
         check.left_out = len(segments) - len(kept)
         check.passages = len(passages)
         check.passage_words = sum(len(passage) for passage in passages)
-        segments = [{"text": segments[i]["text"], "start": checked.times[i]} for i in kept]
+        texts, check.backing_sung = _lead_brackets([seg["text"] for seg in segments], lines, transcription_words)
+        segments = [{"text": texts[i], "start": checked.times[i]} for i in kept]
     print(f"{ULTRASINGER_HEAD} Synced lyrics checked by the transcription: {check}")
     if not segments:
         return [], check
