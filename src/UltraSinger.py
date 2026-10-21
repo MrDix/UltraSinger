@@ -571,17 +571,22 @@ def run() -> tuple[str, Score, Score]:
                 # If Whisper detected a DIFFERENT language, retry the reference
                 # pipeline with the corrected language.  This recovers from
                 # fast-detect misidentification (e.g. "cy" -> "en") and still
-                # delivers maximum quality from synced lyrics.
+                # delivers maximum quality from synced lyrics. Synced lyrics that
+                # replaced found ones the singing does not have are aligned too.
                 corrected_language = process_data.media_info.language
+                language_corrected = bool(corrected_language) and corrected_language != initial_language
                 if (process_data.synced_lyrics
                         and not settings.disable_reference_lyrics
                         and corrected_language
-                        and corrected_language != initial_language):
-                    print(
-                        f"{ULTRASINGER_HEAD} Language corrected: "
-                        f"{blue_highlighted(initial_language)} -> {blue_highlighted(corrected_language)} "
-                        f"— retrying reference pipeline"
-                    )
+                        and (language_corrected or lyrics_replaced)):
+                    if language_corrected:
+                        print(
+                            f"{ULTRASINGER_HEAD} Language corrected: "
+                            f"{blue_highlighted(initial_language)} -> {blue_highlighted(corrected_language)} "
+                            f"— retrying reference pipeline"
+                        )
+                    else:
+                        print(f"{ULTRASINGER_HEAD} Aligning the synced lyrics that replaced the found ones")
                     try:
                         # (the synced lyrics may only have been found by the transcription's lookup)
                         ref_segments = _align_synced_lyrics(process_data, corrected_language, allowed_notes_for_key)
@@ -598,11 +603,12 @@ def run() -> tuple[str, Score, Score]:
                                 )
                                 for seg in process_data.midi_segments
                             ]
-                            _reference_recovered = True
-                            print(
-                                f"{ULTRASINGER_HEAD} "
-                                f"{cyan_highlighted('Reference pipeline recovered after language correction')}"
-                            )
+                            if language_corrected:
+                                _reference_recovered = True
+                                print(
+                                    f"{ULTRASINGER_HEAD} "
+                                    f"{cyan_highlighted('Reference pipeline recovered after language correction')}"
+                                )
                     except Exception as e:
                         print(f"{ULTRASINGER_HEAD} Reference retry also failed: {e}")
 
@@ -612,7 +618,6 @@ def run() -> tuple[str, Score, Score]:
                 # audio is not sent again. The text of synced lyrics of another
                 # recording waited for these words (also without a new language), as
                 # did lyrics that replaced found ones the singing does not have
-                language_corrected = bool(corrected_language) and corrected_language != initial_language
                 other_recording_text = bool(process_data.synced_lyrics_other_recording and process_data.plain_lyrics)
                 if (not reference_first_used
                         and not settings.disable_reference_lyrics

@@ -1484,6 +1484,50 @@ class TestLyricsTheSingingHas(unittest.TestCase):
         self.assertIn("Pipeline:                 Reference-Lyrics-First (plain)", info)
         self.assertIn("  music.163.com plain lyrics: found\n", info)
 
+    def test_synced_lyrics_replacing_them_in_the_fallback(self):
+        # Without the check of the synced lyrics their alignment fails; the fallback transcription's lookup
+        # replaces them by synced lyrics, which are aligned as such (in the same language)
+        found = SimpleNamespace(duration=300.0, synced_lyrics=_lrc(40, first=100), plain_lyrics=None,
+                                source="LRCLIB")
+        other = SimpleNamespace(source="music.163.com", duration=300.0, synced_lyrics=_lrc(40),
+                                plain_lyrics=_numbered(40), artist_name="Artist", track_name="Song Title",
+                                instrumental=False)
+        result = TranscriptionResult([us.TranscribedData(word=w, start=a, end=b) for w, a, b in self._HEARD], "en")
+        real_transcribe = us.TranscribeAudio
+
+        def transcribe(process_data):
+            with patch.object(us, "transcribe_audio", return_value=result), \
+                    patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data), \
+                    patch("modules.Speech_Recognition.lyrics_corrector.correct_transcription_from_lyrics",
+                          side_effect=lambda data, lyrics: (data, None)), \
+                    patch("modules.lrclib_client.search_lyrics", return_value=found), \
+                    patch.object(us.settings, "hyphenation", False):
+                return real_transcribe(process_data)
+
+        aligned = []
+
+        def align(**kwargs):
+            aligned.append(kwargs["synced_lyrics"])
+            if kwargs["synced_lyrics"] == found.synced_lyrics:
+                return []
+            return [us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED]
+
+        mocks = {}
+        with patch.object(us, "audio_length", return_value=300.0), \
+                patch("modules.lrclib_client.find_on_second_db", return_value=other):
+            notes, out, files = _run(
+                _process_data(), _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5), transcribe,
+                early_lyrics=found, align=align, plain_align=_aligned, mocks=mocks, write_settings_info=True,
+                check_synced_lyrics=False)
+        self.assertEqual(aligned, [found.synced_lyrics, other.synced_lyrics])
+        mocks["plain_align"].assert_not_called()
+        self.assertEqual(notes, _ALIGNED_NOTES)
+        self.assertIn("Aligning the synced lyrics that replaced the found ones", out)
+        self.assertNotIn("Language corrected", out)
+        info = files["ultrasinger_parameter.info"]
+        self.assertIn("Pipeline:                 Reference-Lyrics-First (synced)", info)
+        self.assertIn("  music.163.com synced lyrics: found\n", info)
+
     def test_replaced_before_they_correct_the_transcription(self):
         heard = [_syllable(w, a, b) for w, a, b in self._HEARD]
         process_data = SimpleNamespace(
