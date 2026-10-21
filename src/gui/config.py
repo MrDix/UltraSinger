@@ -72,6 +72,7 @@ _DEFAULTS = {
     # Lyrics Lookup
     "disable_lyrics_lookup": False,
     "disable_reference_lyrics": False,
+    "disable_synced_lyrics_check": False,
     # Freestyle detection
     "detect_growl": False,
     "freestyle_harmonicity": 0.40,

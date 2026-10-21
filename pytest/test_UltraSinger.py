@@ -418,6 +418,7 @@ class TestTranscribeAudioLyricsLanguage(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Title", language=None),
             transcribed_data=[], synced_lyrics=None, plain_lyrics=None, synced_lyrics_other_recording=None,
+            check_transcription=None,
         )
         process_data.synced_lyrics_other_recording = other_recording
         if plain_from_synced:

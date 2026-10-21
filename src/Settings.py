@@ -41,6 +41,7 @@ class Settings:
     octave_snap = False  # Fold isolated single-note octave spikes back onto the melody (display polish; off by default)
     octave_consistency = None  # Viterbi octave assignment per note: removes scattered wrong-octave notes/short runs, keeps genuine octave passages (None: segmentation-model notes only, True: all notes, False: none)
     onset_correction = True  # Snap note start times to detected audio onsets
+    check_synced_lyrics = True  # Check the times of synced lyrics by the words of a transcription (runs one)
     phoneme_word_starts = True  # Start a word sung on the held vowel of the word before where its sounds begin (phoneme recognizer)
     syllable_split = False  # Preserve syllable-level note splits at pitch changes
     vocal_gap_fill = False  # Fill un-transcribed vocal gaps with placeholder notes

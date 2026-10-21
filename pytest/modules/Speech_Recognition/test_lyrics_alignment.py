@@ -7,6 +7,7 @@ import pytest
 
 from modules.Speech_Recognition import lyrics_alignment
 from modules.Speech_Recognition.lyrics_alignment import (
+    CHECKED_MOVE_S,
     END_COST,
     LANGUAGES_WITHOUT_SPACES,
     OVERLAP_S,
@@ -19,6 +20,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     align_path,
     backtrack,
     blank_index,
+    checked_line_times,
     emission_in_pieces,
     end_row,
     line_times_from_words,
@@ -820,3 +822,87 @@ class TestPassagesWithoutLyrics:
     def test_lyrics_sung_in_full(self):
         words = heard(*[(w, 1.0 + 0.4 * n) for n, w in enumerate(w for line in self.LINES for w in line)])
         assert passages_without_lyrics(self.LINES, words) == ([], {0, 1, 2})
+
+
+class TestCheckedLineTimes:
+    """LRC times checked by the words of a transcription."""
+
+    @staticmethod
+    def song(n_lines: int = 8):
+        # every word heard 0.5 s after the one before it: line i at 10 + 1.5 i
+        lines, words = steady_song(n_lines, 0.5)
+        return lines, words, [10.0 + 1.5 * i for i in range(n_lines)]
+
+    def test_too_few_confirmed_lines(self):
+        lines, words, times = self.song(4)
+        assert checked_line_times(lines, times, words) is None
+
+    def test_lines_at_their_times_stay(self):
+        lines, words, times = self.song()
+        # the LRC times are 1 s early: the common offset
+        checked = checked_line_times(lines, [t - 1.0 for t in times], words)
+        assert checked.times == pytest.approx([t - 1.0 for t in times])
+        assert checked.offset == pytest.approx(1.0)
+        assert (checked.confirmed, checked.moved, checked.respread) == (8, 0, 0)
+
+    def test_line_far_off_its_time_moves(self):
+        lines, words, times = self.song()
+        lrc = list(times)
+        lrc[4] += 6.0
+        checked = checked_line_times(lines, lrc, words)
+        assert checked.times == pytest.approx(times)
+        assert checked.moved == 1
+
+    def test_line_near_its_time_stays(self):
+        lines, words, times = self.song()
+        lrc = list(times)
+        lrc[4] += CHECKED_MOVE_S - 1.0
+        checked = checked_line_times(lines, lrc, words)
+        assert checked.times == pytest.approx(lrc)
+        assert checked.moved == 0
+
+    def test_unconfirmed_line_out_of_order_is_spread_anew(self):
+        lines, words, times = self.song()
+        # a line that is not sung, written much later than the lines around it
+        lines = lines[:3] + [["zz0", "zz1"]] + lines[3:]
+        lrc = times[:3] + [40.0] + times[3:]
+        checked = checked_line_times(lines, lrc, words)
+        # between its neighbours (13.0 and 14.5) by words: 3 of the 5 words from line 2 to line 4
+        assert checked.times[3] == pytest.approx(13.0 + 1.5 * 3 / 5)
+        assert checked.respread == 1
+
+    def test_unconfirmed_line_in_order_stays(self):
+        lines, words, times = self.song()
+        lines = lines[:3] + [["zz0", "zz1"]] + lines[3:]
+        lrc = times[:3] + [13.8] + times[3:]
+        checked = checked_line_times(lines, lrc, words)
+        assert checked.times[3] == pytest.approx(13.8)
+        assert checked.respread == 0
+
+    def test_a_single_heard_word_confirms_nothing(self):
+        lines, words, times = self.song(6)
+        # "solo" is heard, but none of the words next to it
+        lines.append(["zz0", "solo", "zz1"])
+        words.append(("solo", 50.0, 50.3))
+        checked = checked_line_times(lines, times + [30.0], words)
+        assert checked.confirmed == 6
+        assert checked.times[6] == pytest.approx(30.0)
+
+    def test_unconfirmed_lines_before_and_after_the_confirmed_ones(self):
+        lines, words, times = self.song()
+        # an intro and an outro that are not sung, written long after / before the lines next to them
+        lines = [["zz0", "zz1"]] + lines + [["yy0", "yy1", "yy2"]]
+        lrc = [30.0] + times + [5.0]
+        checked = checked_line_times(lines, lrc, words)
+        # counted back from the first confirmed line and on from the last one, 0.5 s per word
+        assert checked.respread == 2
+        assert checked.times[0] == pytest.approx(10.0 - 2 * 0.5)
+        assert checked.times[-1] == pytest.approx(times[-1] + 3 * 0.5)
+
+    def test_unconfirmed_lines_at_the_ends_in_order_stay(self):
+        lines, words, times = self.song()
+        lines = [["zz0", "zz1"]] + lines + [["yy0", "yy1", "yy2"]]
+        lrc = [8.0] + times + [times[-1] + 3.0]
+        checked = checked_line_times(lines, lrc, words)
+        assert checked.respread == 0
+        assert checked.times == pytest.approx(lrc)

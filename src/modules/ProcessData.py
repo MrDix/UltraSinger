@@ -53,3 +53,8 @@ class ProcessData:
     # Why found synced lyrics were taken for another recording's: their times were not used
     synced_lyrics_other_recording: Optional[str] = None
     plain_lyrics_from_synced: bool = False  # Whether the plain lyrics are the text of such synced lyrics
+    # How the transcription's words checked the times of the synced lyrics (SyncedLyricsCheck), or why
+    # they did not ("no (...)"); None when no check was tried
+    synced_lyrics_check: Optional[object] = None
+    # The transcription made to check them (TranscriptionResult): a later full transcription reuses it
+    check_transcription: Optional[object] = None

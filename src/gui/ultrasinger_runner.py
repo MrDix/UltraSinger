@@ -507,6 +507,8 @@ class UltraSingerRunner(QObject):
             args.append("--disable_lyrics_lookup")
         if config.get("disable_reference_lyrics"):
             args.append("--disable_reference_lyrics")
+        if config.get("disable_synced_lyrics_check"):
+            args.append("--disable_synced_lyrics_check")
         if config.get("detect_growl"):
             args.append("--detect_freestyle")
             harmonicity = config.get("freestyle_harmonicity", 0.40)
