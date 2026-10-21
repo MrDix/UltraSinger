@@ -11,6 +11,10 @@ backtrack as whisperx) is checked against these LRC times:
   whisperx) or with a capped end, which makes it run on over sung frames
   after the last word. The one with the most lines at their LRC time (after a
   common offset) is used.
+- Lines that the path puts far from their LRC time are held in their LRC
+  window and the path is searched again, when the audio fits it nearly as
+  well (in drawn-out singing the tokens fit about as well anywhere, and one
+  word held too long shifts a whole chorus).
 - A line that the path put in a poor place moves to a clearly better place
   near its LRC time. When most lines agree on the offset, poorly placed lines
   at the end that the LRC puts after the end of the audio (lyrics of a longer
@@ -82,6 +86,13 @@ OVERLAP_S = 0.3
 # stretched over a vocalise before it) moves into the window, whatever it
 # gains there, unless it is placed poorly there
 EARLY_S = 2.0
+# Lines that the path puts more than HOLD_S from their LRC time (after the
+# offset) are held in their LRC window, and the path is searched again with
+# them there, when this lowers the log-probability of the frames where lines
+# change by at most HOLD_LOSS per held line. On the benchmark, the share of
+# words more than 1 s off fell from 4.37 % to 4.18 % (the same from 12 to 20).
+HOLD_S = 2.5
+HOLD_LOSS = 15.0
 # Log-probability of the tokens on a frame without a usable model output
 UNUSABLE_TOKEN = -1e4
 # Line times from the words of a transcription: the sung seconds per word are
@@ -117,6 +128,10 @@ PASSAGE_LYRICS_SHARE = 0.4
 # anew between them by its words (before the first or after the last one:
 # counted from it by its words).
 CHECKED_MOVE_S = 5.0
+# A sure pair confirms a line only when the transcribed word of its paired
+# neighbour starts at most SURE_GAP_S after the end of the one before it
+# (with HOLD_S on the benchmark: 4.18 % -> 4.15 % of the words more than 1 s off)
+SURE_GAP_S = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +253,11 @@ def with_wildcard(log_probs: np.ndarray, ids: np.ndarray, blank_id: int) -> tupl
 # CTC path, as whisperx.alignment searches it
 # ---------------------------------------------------------------------------
 
-def trellis(emission: np.ndarray, tokens: np.ndarray, blank_id: int) -> np.ndarray:
-    """whisperx.alignment.get_trellis in numpy, in float32 as there."""
+def trellis(emission: np.ndarray, tokens: np.ndarray, blank_id: int,
+            bounds: Optional[tuple[np.ndarray, np.ndarray]] = None) -> np.ndarray:
+    """whisperx.alignment.get_trellis in numpy, in float32 as there. With
+    ``bounds`` (first and last frame of each token), a token is placed only
+    on the frames between them."""
     n_frames, n_tokens = emission.shape[0], len(tokens)
     blank = emission[:, blank_id]
     tr = np.empty((n_frames + 1, n_tokens + 1), dtype=np.float32)
@@ -248,8 +266,15 @@ def trellis(emission: np.ndarray, tokens: np.ndarray, blank_id: int) -> np.ndarr
     tr[1:, 0] = np.cumsum(blank, dtype=np.float64)
     tr[0, 1:] = -np.inf
     tr[max(0, n_frames + 1 - n_tokens):, 0] = np.inf
-    for t in range(n_frames):
-        np.maximum(tr[t, 1:] + blank[t], tr[t, :-1] + emission[t, tokens], out=tr[t + 1, 1:])
+    # Out of its bounds, a token after the infinite rows of column 0 above
+    # gives NaN; these rows lie past the end of every path (as the infinite
+    # ones do), so neither the last column nor the backtrack reaches them
+    with np.errstate(invalid="ignore"):
+        for t in range(n_frames):
+            e = emission[t, tokens]
+            if bounds is not None:
+                e = np.where((bounds[0] <= t) & (t <= bounds[1]), e, -np.inf)
+            np.maximum(tr[t, 1:] + blank[t], tr[t, :-1] + e, out=tr[t + 1, 1:])
     return tr
 
 
@@ -271,12 +296,16 @@ def end_row(tr: np.ndarray, blank: np.ndarray, end_cost: Optional[float] = None)
 
 def backtrack(
     tr: np.ndarray, emission: np.ndarray, tokens: np.ndarray, blank_id: int, t_end: int,
+    bounds: Optional[tuple[np.ndarray, np.ndarray]] = None,
 ) -> Optional[np.ndarray]:
     """Emission frame of each token on the path that ends at trellis row
-    ``t_end``, or None when there is none (whisperx.alignment.backtrack)."""
+    ``t_end``, or None when there is none (whisperx.alignment.backtrack);
+    ``bounds`` as in trellis."""
     j = len(tokens)
     frames = np.full(j, -1)
     for t in range(t_end, 0, -1):
+        if bounds is not None and not bounds[0][j - 1] <= t - 1 <= bounds[1][j - 1]:
+            continue
         if tr[t - 1, j - 1] + emission[t - 1, tokens[j - 1]] > tr[t - 1, j] + emission[t - 1, blank_id]:
             frames[j - 1] = t - 1
             j -= 1
@@ -287,14 +316,17 @@ def backtrack(
 
 def align_path(
     emission: np.ndarray, tokens: np.ndarray, blank_id: int, end_cost: Optional[float] = None,
+    bounds: Optional[tuple[np.ndarray, np.ndarray]] = None,
 ) -> Optional[tuple[np.ndarray, int]]:
     """(emission frame of each token, frame where the path ends), or None
-    when the tokens do not fit."""
+    when the tokens do not fit (also not within ``bounds``, as in trellis)."""
     if len(tokens) == 0 or emission.shape[0] < len(tokens):
         return None
-    tr = trellis(emission, tokens, blank_id)
+    tr = trellis(emission, tokens, blank_id, bounds)
     t_end = end_row(tr, emission[:, blank_id], end_cost)
-    frames = backtrack(tr, emission, tokens, blank_id, t_end)
+    if bounds is not None and not np.isfinite(tr[t_end, len(tokens)]):
+        return None
+    frames = backtrack(tr, emission, tokens, blank_id, t_end, bounds)
     return None if frames is None else (frames, t_end)
 
 
@@ -333,12 +365,22 @@ class _Emission:
         self.n_frames = self.em.shape[0]
 
     def path(self, tokens: np.ndarray, f0: int = 0, f1: Optional[int] = None,
-             end_cost: Optional[float] = None) -> Optional[_Path]:
-        """The path of the tokens (indices, in order) in frames f0 to f1."""
-        found = align_path(self.em[f0:f1], self.ids[tokens], self.blank_id, end_cost)
+             end_cost: Optional[float] = None,
+             bounds: Optional[tuple[np.ndarray, np.ndarray]] = None) -> Optional[_Path]:
+        """The path of the tokens (indices, in order) in frames f0 to f1
+        (``bounds`` as in trellis, counted from f0)."""
+        found = align_path(self.em[f0:f1], self.ids[tokens], self.blank_id, end_cost, bounds)
         if found is None:
             return None
         return _Path(tokens, found[0] + f0)
+
+    def log_prob(self, path: _Path, f0: int, f1: int) -> float:
+        """Log-probability of frames f0 to f1 on the path: of its token on a
+        frame of the path, of the blank on the others."""
+        values = self.em[f0:f1, self.blank_id].astype(np.float64)
+        on = (path.frames >= f0) & (path.frames < f1)
+        values[path.frames[on] - f0] = self.em[path.frames[on], self.ids[path.tokens[on]]]
+        return float(values.sum())
 
     def placement(self, path: _Path, p0: int, p1: int) -> _Placement:
         """Placement of the tokens at positions p0 to p1 of the path."""
@@ -347,9 +389,22 @@ class _Emission:
         return _Placement(frames[0] * self.frame_s, (frames[-1] + 1) * self.frame_s,
                           float(scores.mean()), path)
 
-    def lines(self, ranges: dict, lines: list[int], end_cost: Optional[float]) -> Optional[dict]:
-        """Placement of each line on one path over all frames."""
-        path = self.path(np.concatenate([np.arange(*ranges[i]) for i in lines]), end_cost=end_cost)
+    def lines(self, ranges: dict, lines: list[int], end_cost: Optional[float],
+              windows: Optional[dict] = None) -> Optional[dict]:
+        """Placement of each line on one path over all frames; the lines in
+        ``windows`` (line: first and last frame) are placed within them."""
+        tokens = np.concatenate([np.arange(*ranges[i]) for i in lines])
+        bounds = None
+        if windows:
+            lo, hi = np.zeros(len(tokens), int), np.full(len(tokens), self.n_frames, int)
+            pos = 0
+            for i in lines:
+                n = ranges[i][1] - ranges[i][0]
+                if i in windows:
+                    lo[pos:pos + n], hi[pos:pos + n] = windows[i]
+                pos += n
+            bounds = (lo, hi)
+        path = self.path(tokens, end_cost=end_cost, bounds=bounds)
         if path is None:
             return None
         out, pos = {}, 0
@@ -377,13 +432,54 @@ def _local(em: _Emission, i: int, rng: tuple[int, int], offset: float,
            line_times: list[float]) -> Optional[_Placement]:
     """The line alone, aligned in its LRC window, or None when the window is too short."""
     k0, k1 = rng
-    a = line_times[i] + offset - MARGIN_S
-    b = (line_times[i + 1] if i + 1 < len(line_times) else line_times[i] + LAST_LINE_S) + offset + MARGIN_S
-    f0, f1 = max(0, int(a / em.frame_s)), min(em.n_frames, int(b / em.frame_s))
+    f0, f1 = _window(em, i, offset, line_times)
     if f1 - f0 <= k1 - k0:
         return None
     path = em.path(np.arange(k0, k1), f0, f1)
     return None if path is None else em.placement(path, 0, k1 - k0)
+
+
+def _window(em: _Emission, i: int, offset: float, line_times: list[float]) -> tuple[int, int]:
+    """First frame and the frame after the last one of the LRC window of line i."""
+    a = line_times[i] + offset - MARGIN_S
+    b = (line_times[i + 1] if i + 1 < len(line_times) else line_times[i] + LAST_LINE_S) + offset + MARGIN_S
+    return max(0, int(a / em.frame_s)), min(em.n_frames, int(b / em.frame_s))
+
+
+def _held_lines(em: _Emission, ranges: dict, lines: list[int], line_times: list[float],
+                placed: dict, end_cost: Optional[float], offset: float) -> Optional[tuple[dict, dict]]:
+    """(placement of each line, window of each held line) on the path with
+    the lines more than HOLD_S from their LRC time held in their LRC window,
+    or None when there are none, no such path or it lowers the
+    log-probability of the frames where lines change by more than HOLD_LOSS
+    per held line (each line held counts, also one that stays where it was
+    in its wide window). Lines whose window is too short for them or that
+    the LRC puts after the end of the audio (lyrics of a longer version,
+    see _tail_drops) are not held."""
+    audio_end = em.n_frames * em.frame_s
+    windows = {}
+    for i in lines:
+        if (abs(placed[i].start - line_times[i] - offset) <= HOLD_S
+                or line_times[i] + offset > audio_end - TAIL_S):
+            continue
+        f0, f1 = _window(em, i, offset, line_times)
+        if f1 - f0 > ranges[i][1] - ranges[i][0]:
+            windows[i] = (f0, f1 - 1)
+    if not windows:
+        return None
+    held = em.lines(ranges, lines, end_cost, windows)
+    if held is None:
+        return None
+    changed = [i for i in lines if abs(held[i].start - placed[i].start) > OVERLAP_S
+               or abs(held[i].end - placed[i].end) > OVERLAP_S]
+    if not changed:
+        return None
+    f0 = int(min(min(placed[i].start, held[i].start) for i in changed) / em.frame_s)
+    f1 = int(max(max(placed[i].end, held[i].end) for i in changed) / em.frame_s) + 1
+    path, held_path = placed[lines[0]].path, held[lines[0]].path
+    if em.log_prob(path, f0, f1) - em.log_prob(held_path, f0, f1) > HOLD_LOSS * len(windows):
+        return None
+    return held, windows
 
 
 def _tail_drops(lines: list[int], placed: dict, local: dict, line_times: list[float],
@@ -432,10 +528,15 @@ def _moves(lines: list[int], placed: dict, local: dict) -> dict:
 
 def _check_lines(em: _Emission, ranges: dict, lines: list[int], line_times: list[float],
                  placed: dict, end_cost: Optional[float]) -> tuple[dict, list[int], int]:
-    """(placement per kept line, lines left out, lines moved) after the line check."""
+    """(placement per kept line, lines left out, lines moved or held) after the line check."""
     anchors = _anchors(placed, lines, line_times)
     if len(anchors) < MIN_OFFSET_LINES:
         return placed, [], 0
+    free, windows = placed, {}
+    held = _held_lines(em, ranges, lines, line_times, placed, end_cost, statistics.median(anchors))
+    if held is not None:
+        placed, windows = held
+        anchors = _anchors(placed, lines, line_times)
     offset = statistics.median(anchors)
     reliable = len(anchors) >= RELIABLE_LINES and statistics.median(
         [abs(d - offset) for d in anchors]) <= RELIABLE_S
@@ -445,7 +546,7 @@ def _check_lines(em: _Emission, ranges: dict, lines: list[int], line_times: list
         dropped = _tail_drops(lines, placed, local, line_times, offset, em.n_frames * em.frame_s)
     if dropped and len(dropped) < len(lines):
         kept = [i for i in lines if i not in dropped]
-        again = em.lines(ranges, kept, end_cost)
+        again = em.lines(ranges, kept, end_cost, {i: w for i, w in windows.items() if i in kept})
         if again is not None:
             keep, placed = kept, again
         else:
@@ -455,7 +556,10 @@ def _check_lines(em: _Emission, ranges: dict, lines: list[int], line_times: list
     choice = _moves(keep, placed, local)
     placements = {i: local[i] if choice[i] else placed[i] for i in keep}
     early = _early_moves(keep, placements, local, line_times, offset)
-    return placements, dropped, sum(choice.values()) + early
+    # held lines that the hold moved, and lines moved to their window (a
+    # line both held and moved counts once)
+    moved = {i for i in keep if choice[i] or (i in windows and abs(placed[i].start - free[i].start) > MOVE_S)}
+    return placements, dropped, len(moved) + early
 
 
 def _early_moves(lines: list[int], placements: dict, local: dict, line_times: list[float],
@@ -515,7 +619,7 @@ class LyricsAlignment:
     capped: bool             # whether the path end was capped
     lines: int               # lines with tokens
     fit: Optional[int] = None  # of these, the lines at their LRC time (None without LRC times)
-    moved: int = 0           # lines moved to their LRC window
+    moved: int = 0           # lines moved to or held in their LRC window
     dropped: list[int] = field(default_factory=list)  # lines left out
 
 
@@ -740,6 +844,16 @@ def checked_line_times(
     heard = [(key, start, end) for key, start, end in ((_word_key(w), s, e) for w, s, e in words)
              if key and start is not None and end is not None]
     sure, pairs = _sure_pairs([lyric[k][2] for k in keyed], [h[0] for h in heard])
+
+    def close(a: int, b: int) -> bool:
+        # pairs (a, b) and (a + 1, b + 1), with transcribed word b + 1
+        # starting within SURE_GAP_S after the end of word b
+        return (a + 1, b + 1) in pairs and heard[b + 1][1] - heard[b][2] <= SURE_GAP_S
+
+    # A pair confirms a line only with a pair next to it that is heard close
+    # by: "I" at the end of a chorus pairs with the first word of the verse
+    # after a break, as the verse's second word is the next word heard
+    sure = [(a, b) for a, b in sure if close(a, b) or close(a - 1, b - 1)]
     # The sung seconds per word: steps between sure pairs in the same line
     steps = [heard[b + 1][1] - heard[b][1] for a, b in sure
              if (a + 1, b + 1) in pairs and lyric[keyed[a + 1]][0] == lyric[keyed[a]][0]]

@@ -16,6 +16,7 @@ from modules.Speech_Recognition.lyrics_alignment import (
     _Emission,
     _local,
     _moves,
+    _Path,
     _Placement,
     align_lyrics,
     align_path,
@@ -213,6 +214,28 @@ class TestPathAsWhisperx:
         assert align_path(emission, np.array([1, 2, 3, 1]), 0) is None
         assert align_path(emission, np.array([], dtype=np.int64), 0) is None
 
+    def test_tokens_within_their_bounds(self):
+        # token 1 fits best at frame 2, token 2 at frame 4
+        emission = np.full((12, 3), -5.0, dtype=np.float32)
+        emission[:, 0] = -0.1
+        emission[2, 1] = emission[4, 2] = -0.01
+        emission[2, 0] = emission[4, 0] = -5.0
+        tokens = np.array([1, 2])
+        assert align_path(emission, tokens, 0)[0].tolist() == [2, 4]
+        # held to frames 6 to 8 and 9 to 11
+        bounds = (np.array([6, 9]), np.array([8, 11]))
+        frames, _ = align_path(emission, tokens, 0, bounds=bounds)
+        assert 6 <= frames[0] <= 8 and 9 <= frames[1] <= 11
+        # without bounds the path is the same as before
+        assert trellis(emission, tokens, 0, (np.array([0, 0]), np.array([11, 11]))).tolist() == \
+            trellis(emission, tokens, 0).tolist()
+
+    def test_no_path_within_bounds_that_do_not_fit(self):
+        emission = np.zeros((12, 3), dtype=np.float32)
+        # the second token would have to come before the first one
+        bounds = (np.array([6, 0]), np.array([8, 3]))
+        assert align_path(emission, np.array([1, 2]), 0, bounds=bounds) is None
+
 
 # ---------------------------------------------------------------------------
 # Path end: free or capped
@@ -368,6 +391,29 @@ def misplaced_line_song(n_lines: int = 20, line: int = 10):
     return tokens, em, times
 
 
+LATE_S = 6.0
+
+
+def late_chorus_song(sung_score, tail: tuple = ()):
+    """20 lines; lines 10 to 12 (a chorus at 32, 35 and 38 s) are sung at
+    their LRC times with tokens of sung_score (None: not sung there), and
+    their tokens fit a little better LATE_S later, where the path puts them
+    (a word before them held too long). The audio ends 6 s after line 19;
+    the LRC may have more lines at the times in ``tail``, not sung."""
+    times = [2.0 + 3.0 * i for i in range(10)] + [32.0, 35.0, 38.0] + [50.0 + 3.0 * i for i in range(7)]
+    tokens, em = spike_song([None if 10 <= i <= 12 else t for i, t in enumerate(times)] + [None] * len(tail),
+                            frame(times[-1]) + 300)
+    times = times + list(tail)
+    for i in (10, 11, 12):
+        for n, k in enumerate(line_tokens(tokens, i)):
+            late = frame(times[i] + LATE_S) + 2 * n
+            em[late, BLANK], em[late, tokens.ids[k]] = -10.0, -1.9
+            if sung_score is not None:
+                f = frame(times[i]) + 2 * n
+                em[f, BLANK], em[f, tokens.ids[k]] = -10.0, sung_score
+    return tokens, em, times
+
+
 class TestChoice:
 
     def test_more_lines_at_their_lrc_time_wins(self):
@@ -439,6 +485,47 @@ class TestLineCheck:
         assert _moves([0, 1, 2], glob, local) == {0: 0, 1: 1, 2: 0}
         local[2] = placement(20.0, 22.0, -0.5)
         assert _moves([0, 1, 2], glob, local) == {0: 0, 1: 0, 2: 1}
+
+    def test_lines_far_after_their_time_are_held_in_their_window(self):
+        tokens, em, times = late_chorus_song(-2.0)
+        free = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, None)
+        assert starts_of_line(free, tokens, 10)[0] == pytest.approx(times[10] + LATE_S)
+        result = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, times)
+        # held in their windows, lines 10 and 11 go back to where they are sung
+        for i in (10, 11):
+            assert starts_of_line(result, tokens, i)[0] == pytest.approx(times[i])
+        # line 12 fits its window (up to line 13 plus 2 s) also late: it stays there
+        assert starts_of_line(result, tokens, 12)[0] == pytest.approx(times[12] + LATE_S)
+        assert result.moved == 2
+        # the other lines stay
+        for i in (9, 13):
+            assert starts_of_line(result, tokens, i)[0] == pytest.approx(times[i])
+
+    @pytest.mark.parametrize("tail", [(80.0, 83.0), (70.5, 71.5)])
+    def test_lines_are_held_also_with_lines_of_a_longer_version(self, tail):
+        # two more LRC lines at the end that the recording does not have: past
+        # its end (74 s) they are left out, and the held lines stay held when
+        # the path runs again without them; just before its end they stay
+        tokens, em, times = late_chorus_song(-2.0, tail)
+        result = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, times)
+        assert result.dropped == ([20, 21] if tail[0] > 74.0 else [])
+        for i in (10, 11):
+            assert starts_of_line(result, tokens, i)[0] == pytest.approx(times[i])
+
+    def test_lines_sung_late_stay_late(self):
+        # nothing is sung at the LRC times: holding the lines there costs too much
+        tokens, em, times = late_chorus_song(None)
+        result = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, times)
+        for i in (10, 11, 12):
+            assert starts_of_line(result, tokens, i)[0] == pytest.approx(times[i] + LATE_S)
+
+    def test_log_prob_of_a_path(self):
+        em = np.log(np.full((6, 3), 1 / 3, dtype=np.float32))
+        em[1, 1] = em[3, 2] = np.log(0.5)
+        emission = _Emission(em, np.array([1, 2]), BLANK, FRAME_S)
+        path = _Path(np.array([0, 1]), np.array([1, 3]))
+        # frames 1 to 3: token, blank, token
+        assert emission.log_prob(path, 1, 4) == pytest.approx(2 * np.log(0.5) + np.log(1 / 3))
 
     def test_line_far_before_its_window_moves_into_it(self):
         # line 1 at 10 s (offset 1 s): its window starts at 9 s; its first word stretched from 2 s on
@@ -539,9 +626,9 @@ class TestTailDrop:
         real_lines = lyrics_alignment._Emission.lines
         calls = []
 
-        def lines_spy(self, ranges, lines, end_cost):
+        def lines_spy(self, ranges, lines, end_cost, windows=None):
             calls.append(list(lines))
-            return real_lines(self, ranges, lines, end_cost)
+            return real_lines(self, ranges, lines, end_cost, windows)
 
         with patch.object(lyrics_alignment._Emission, "lines", lines_spy):
             result = align_lyrics(tokens, [(WHOLE, em)], BLANK, FRAME_S, times)
@@ -913,6 +1000,20 @@ class TestCheckedLineTimes:
         checked = checked_line_times(lines, times + [30.0], words)
         assert checked.confirmed == 6
         assert checked.times[6] == pytest.approx(30.0)
+
+    def test_words_heard_far_apart_confirm_nothing(self):
+        lines, words, times = self.song(6)
+        # both words are heard, in order, but 10 s apart (a break between them)
+        lines.append(["solo", "duo"])
+        words += [("solo", 50.0, 50.3), ("duo", 60.3, 60.6)]
+        checked = checked_line_times(lines, times + [30.0], words)
+        assert checked.confirmed == 6
+        assert checked.times[6] == pytest.approx(30.0)
+        # heard close together, they confirm the line, which moves there
+        words[-1] = ("duo", 50.4, 50.7)
+        checked = checked_line_times(lines, times + [30.0], words)
+        assert checked.confirmed == 7
+        assert checked.times[6] == pytest.approx(50.0 - checked.offset)
 
     def test_unconfirmed_lines_before_and_after_the_confirmed_ones(self):
         lines, words, times = self.song()
