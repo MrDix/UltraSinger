@@ -132,6 +132,14 @@ CHECKED_MOVE_S = 5.0
 # neighbour starts at most SURE_GAP_S after the end of the one before it
 # (with HOLD_S on the benchmark: 4.18 % -> 4.15 % of the words more than 1 s off)
 SURE_GAP_S = 3.0
+# Found lyrics that the singing does not have (another song, a few lines of
+# it only): fewer than POOR_HEARD_SHARE of the words of a transcription of at
+# least MIN_HEARD_WORDS words in a sure pair with them (see heard_share).
+# Other lyrics replace them only with HEARD_SHARE_GAIN more of these words: a
+# transcription that misheard the song pairs few words with any lyrics
+POOR_HEARD_SHARE = 0.4
+MIN_HEARD_WORDS = 30
+HEARD_SHARE_GAIN = 0.25
 
 
 # ---------------------------------------------------------------------------
@@ -806,6 +814,25 @@ def confirmed_words(lines: list[list[str]], words: list[tuple[str, float, float]
              if key and start is not None and end is not None]
     sure, _ = _sure_pairs([lyric[k][2] for k in keyed], heard)
     return {lyric[keyed[a]][:2] for a, _ in sure}
+
+
+def heard_share(lyrics_words: list[str], words: list[tuple[str, float, float]]) -> tuple[float, int]:
+    """The share of the words of a transcription (``words``: text, start s,
+    end s, in order) in a sure pair (see SURE_REACH) with a word of the
+    lyrics (``lyrics_words``, in order), and the number of these transcribed
+    words (with text and times).
+
+    On a benchmark of 89 songs, the lyrics of the song had at least half of
+    the words of all but a few transcriptions (median: 86 %); the lyrics of
+    another song in the same language never more than 8 %.
+    """
+    lyric = [key for key in map(_word_key, lyrics_words) if key]
+    heard = [key for key, start, end in ((_word_key(w), s, e) for w, s, e in words)
+             if key and start is not None and end is not None]
+    if not heard:
+        return 0.0, 0
+    sure, _ = _sure_pairs(lyric, heard)
+    return len(sure) / len(heard), len(heard)
 
 
 @dataclass

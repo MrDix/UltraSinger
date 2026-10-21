@@ -134,7 +134,13 @@ def search_lyrics(artist: str, title: str, duration: Optional[float] = None) -> 
     if result is None:
         print(f"{ULTRASINGER_HEAD} {red_highlighted(f'No lyrics found on LRCLIB or {SECOND_DB_NAME}')}")
         return None
+    report_found_lyrics(result, duration)
+    return result
 
+
+def report_found_lyrics(result: LyricsInfo, duration: Optional[float] = None) -> None:
+    """Report found lyrics: where from, of which version, what kinds (the GUI
+    queue reads this line, see queue_manager)."""
     has_plain = _has_text(result.plain_lyrics)
     has_synced = _has_text(result.synced_lyrics)
     parts = []
@@ -154,7 +160,14 @@ def search_lyrics(artist: str, title: str, duration: Optional[float] = None) -> 
           f"{blue_highlighted(result.artist_name)} - {blue_highlighted(result.track_name)} "
           f"[{info_str}]{length}")
 
-    return result
+
+def find_on_second_db(artist: str, title: str, duration: Optional[float] = None) -> Optional[LyricsInfo]:
+    """The lyrics of a song in the second lyrics database alone (see
+    ``_find_on_second_db``): for lyrics of LRCLIB that the singing does not
+    have, also when they have words enough. None when it has none."""
+    if not (artist or "").strip() or not (title or "").strip():
+        return None
+    return _find_on_second_db(artist, title, duration)
 
 
 def find_lyrics(artist: str, title: str, duration: Optional[float] = None,

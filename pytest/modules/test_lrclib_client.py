@@ -15,6 +15,7 @@ from src.modules.lrclib_client import (
     too_few_words,
     LyricsInfo,
     find_lyrics,
+    find_on_second_db,
     lrc_text,
     other_recording,
     search_lyrics,
@@ -543,6 +544,16 @@ class TestSecondLyricsDatabase(unittest.TestCase):
         self.assertNotIn("Composer", result.synced_lyrics)
         self.assertEqual(len(result.plain_lyrics.split()), 100)
         self.assertTrue(result.synced_lyrics.startswith("[00:10.500] word0"))
+
+    def test_asked_alone(self):
+        asked = []
+        with patch("src.modules.lrclib_client._get_json",
+                   side_effect=self._get_json([], [_second_db_song(7)], {7: _second_db_lrc(100)}, asked)):
+            result = find_on_second_db("Some Artist", "Song Title", 300.0)
+            self.assertIsNone(find_on_second_db(" ", "Song Title", 300.0))
+        self.assertEqual(result.source, "music.163.com")
+        # LRCLIB is not asked
+        self.assertFalse(any(url.startswith("https://lrclib.net/") for url in asked))
 
     def test_fuller_lyrics_replace_far_too_few(self):
         # 40 words for 5 minutes: 8 per minute

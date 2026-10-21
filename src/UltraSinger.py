@@ -1073,6 +1073,7 @@ def run() -> tuple[str, Score, Score]:
             model_segmentation_used=model_segmentation_used,
             phoneme_word_starts_result=phoneme_word_starts_result,
             lyrics_source=process_data.lyrics_source,
+            lyrics_heard=process_data.lyrics_heard,
         )
 
     # Cleanup
@@ -1256,10 +1257,12 @@ def _write_settings_info_file(
         model_segmentation_used: bool = False,
         phoneme_word_starts_result: str | None = None,
         lyrics_source: str | None = None,
+        lyrics_heard: str | None = None,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results.
 
-    ``lyrics_source`` names where the found lyrics come from (LRCLIB when not given).
+    ``lyrics_source`` names where the found lyrics come from (LRCLIB when not given),
+    ``lyrics_heard`` how many of the transcribed words they had (see ``_lyrics_the_singing_has``).
     """
     from datetime import datetime, timezone
 
@@ -1379,6 +1382,8 @@ def _write_settings_info_file(
                 f.write(synced_line)
                 f.write("  Transcription:            full\n")
                 f.write("  Alignment:                WhisperX wav2vec2\n")
+            if lyrics_heard:
+                f.write(f"  Lyrics heard:             {lyrics_heard}\n")
             # Language detection method
             _LANG_SOURCE_LABELS = {
                 "manual": f"manual (--language {settings.language})",
@@ -2013,6 +2018,11 @@ def _align_synced_lyrics(process_data, language: str, allowed_notes) -> list:
     are dropped, and their text becomes the plain lyrics (unless LRCLIB had
     plain lyrics): the words of the transcription place its lines and sing
     the passages it does not have.
+
+    Synced lyrics of LRCLIB that the singing does not have are replaced by
+    the lyrics of the second lyrics database when these fit it clearly
+    better (see ``_lyrics_the_singing_has``); without synced lyrics there,
+    none are aligned here, and its plain ones are aligned as such.
     """
     from modules.lrclib_client import lrc_text, other_recording
     from modules.Speech_Recognition.reference_lyrics_aligner import (
@@ -2025,6 +2035,13 @@ def _align_synced_lyrics(process_data, language: str, allowed_notes) -> list:
     # Synced lyrics of this recording are checked by the words of the
     # transcription (lyrics of another recording go their own way: below)
     heard_words = None if of_other_recording else _words_to_check_synced_lyrics(process_data)
+    if heard_words:
+        _lyrics_the_singing_has(process_data, heard_words, synced=True)
+        if not process_data.synced_lyrics:
+            return []
+        if other_recording(process_data.synced_lyrics_length, audio_s):
+            # The lyrics that replaced them are of another recording
+            heard_words, of_other_recording = None, True
     if heard_words:
         segments, check = create_midi_segments_from_checked_synced_lyrics(
             synced_lyrics=process_data.synced_lyrics,
@@ -2095,15 +2112,91 @@ def _words_to_check_synced_lyrics(process_data) -> list:
     return process_data.transcription_words
 
 
+def _lyrics_the_singing_has(process_data, heard_words: list, synced: bool) -> None:
+    """Replace lyrics of LRCLIB that the singing does not have (another song,
+    a few lines of it only) by the lyrics of the second lyrics database, when
+    these clearly have more of the transcribed words (``heard_words``: text,
+    start s, end s, in order).
+
+    Of a transcription of at least ``MIN_HEARD_WORDS`` words, fewer than
+    ``POOR_HEARD_SHARE`` in the found lyrics (``heard_share``; the synced
+    ones when ``synced``, else the plain ones) let the second database be
+    asked; its lyrics replace them with at least ``HEARD_SHARE_GAIN`` more.
+    A transcription that misheard the song has few words of any lyrics: the
+    found ones are kept then. The lyrics are compared once.
+    """
+    from modules.lrclib_client import SECOND_DB_NAME, find_on_second_db, lrc_text, report_found_lyrics
+    from modules.Speech_Recognition.lyrics_alignment import (
+        HEARD_SHARE_GAIN,
+        MIN_HEARD_WORDS,
+        POOR_HEARD_SHARE,
+        heard_share,
+    )
+    if process_data.lyrics_heard is not None or (process_data.lyrics_source or "LRCLIB") != "LRCLIB":
+        return
+    text = lrc_text(process_data.synced_lyrics) if synced else process_data.plain_lyrics
+    share, heard = heard_share((text or "").split(), heard_words)
+    if heard < MIN_HEARD_WORDS:
+        return
+    process_data.lyrics_heard = f"LRCLIB {share:.0%} of the {heard} transcribed words"
+    if share >= POOR_HEARD_SHARE:
+        return
+    print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} the lyrics of LRCLIB have only {share:.0%} of the "
+          f"{heard} transcribed words: searching {SECOND_DB_NAME} for lyrics")
+    audio_s = audio_length(process_data.process_data_paths.whisper_audio_path)
+    try:
+        other = find_on_second_db(process_data.media_info.artist, process_data.media_info.title, audio_s)
+    except Exception as e:
+        print(f"{ULTRASINGER_HEAD} The search on {SECOND_DB_NAME} failed ({e}): keeping the lyrics of LRCLIB")
+        return
+    # Synced lyrics replace synced ones; else the plain ones, or the text of the synced ones
+    other_text = None
+    if other is not None:
+        other_text = (lrc_text(other.synced_lyrics) if synced and other.synced_lyrics
+                      else other.plain_lyrics or lrc_text(other.synced_lyrics or ""))
+    if not (other_text or "").strip():
+        process_data.lyrics_heard += f"; none found on {SECOND_DB_NAME}"
+        print(f"{ULTRASINGER_HEAD} {SECOND_DB_NAME} has no lyrics of the song: keeping the ones of LRCLIB")
+        return
+    other_share, _ = heard_share(other_text.split(), heard_words)
+    process_data.lyrics_heard += f"; {SECOND_DB_NAME} {other_share:.0%}"
+    if other_share < share + HEARD_SHARE_GAIN:
+        process_data.lyrics_heard += ": kept the ones of LRCLIB"
+        print(f"{ULTRASINGER_HEAD} The lyrics on {SECOND_DB_NAME} have {other_share:.0%} of the transcribed words: "
+              f"keeping the ones of LRCLIB")
+        return
+    process_data.lyrics_heard += ": taken"
+    print(f"{ULTRASINGER_HEAD} The lyrics on {SECOND_DB_NAME} have {other_share:.0%} of the transcribed words: "
+          f"taking them")
+    report_found_lyrics(other, audio_s)
+    process_data.lyrics_source = other.source
+    process_data.lyrics_instead = other
+    process_data.synced_lyrics_other_recording = None
+    process_data.synced_lyrics_length = other.duration
+    if synced and other.synced_lyrics:
+        process_data.synced_lyrics = other.synced_lyrics
+        process_data.plain_lyrics = other.plain_lyrics
+        process_data.plain_lyrics_from_synced = False
+    else:
+        # Their text placed by the words of the transcription
+        process_data.synced_lyrics = None
+        process_data.plain_lyrics = other_text
+        process_data.plain_lyrics_from_synced = not other.plain_lyrics
+
+
 def _align_plain_lyrics(process_data, language: str, allowed_notes, remote_transcription):
     """The notes of the plain lyrics aligned in ``language``, how their lines
     were placed, and whether the words of remote speech-to-text placed them:
     the words of the transcription, else those of the remote answer, give
-    the lines their times."""
+    the lines their times. Plain lyrics of LRCLIB that the singing does not
+    have are replaced by the lyrics of the second lyrics database when these
+    fit it clearly better (see ``_lyrics_the_singing_has``)."""
     from modules.Speech_Recognition.reference_lyrics_aligner import create_midi_segments_from_plain_lyrics
     heard_words, remote_words = process_data.transcription_words, False
     if not heard_words and remote_transcription is not None:
         heard_words, remote_words = remote_transcription.words, True
+    if heard_words:
+        _lyrics_the_singing_has(process_data, heard_words, synced=False)
     segments, placement = create_midi_segments_from_plain_lyrics(
         plain_lyrics=process_data.plain_lyrics,
         audio_path=process_data.process_data_paths.whisper_audio_path,
@@ -2226,7 +2319,8 @@ def TranscribeAudio(process_data):
         try:
             from modules.lrclib_client import search_lyrics
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
-            lyrics_info = search_lyrics(
+            # (not the found lyrics that the singing did not have: the ones that replaced them)
+            lyrics_info = getattr(process_data, "lyrics_instead", None) or search_lyrics(
                 process_data.media_info.artist, process_data.media_info.title,
                 duration=audio_length(process_data.process_data_paths.whisper_audio_path),
             )

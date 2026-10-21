@@ -153,8 +153,8 @@ def print_help() -> None:
                             The separation is skipped when the GPU has less than about 2.2 GB free.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
-                            When LRCLIB has no lyrics of the song or far too few, the lyrics database of
-                            music.163.com is asked too.
+                            When LRCLIB has no lyrics of the song, far too few, or ones with few of the
+                            transcribed words, the lyrics database of music.163.com is asked too.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain precise
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.
