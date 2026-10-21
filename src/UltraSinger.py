@@ -2123,16 +2123,23 @@ def _lyrics_the_singing_has(process_data, heard_words: list, synced: bool) -> No
     ones when ``synced``, else the plain ones) let the second database be
     asked; its lyrics replace them with at least ``HEARD_SHARE_GAIN`` more.
     A transcription that misheard the song has few words of any lyrics: the
-    found ones are kept then. The lyrics are compared once.
+    found ones are kept then. The lyrics are compared once, not in languages
+    written without spaces (their words are not split).
+
+    Synced lyrics replace synced ones. In place of plain lyrics (also of the
+    text of synced lyrics of another recording), the text of the others is
+    taken, and the transcription's words place its lines.
     """
     from modules.lrclib_client import SECOND_DB_NAME, find_on_second_db, lrc_text, report_found_lyrics
     from modules.Speech_Recognition.lyrics_alignment import (
         HEARD_SHARE_GAIN,
+        LANGUAGES_WITHOUT_SPACES,
         MIN_HEARD_WORDS,
         POOR_HEARD_SHARE,
         heard_share,
     )
-    if process_data.lyrics_heard is not None or (process_data.lyrics_source or "LRCLIB") != "LRCLIB":
+    if (process_data.lyrics_heard is not None or (process_data.lyrics_source or "LRCLIB") != "LRCLIB"
+            or process_data.media_info.language in LANGUAGES_WITHOUT_SPACES):
         return
     text = lrc_text(process_data.synced_lyrics) if synced else process_data.plain_lyrics
     share, heard = heard_share((text or "").split(), heard_words)
@@ -2320,7 +2327,7 @@ def TranscribeAudio(process_data):
             from modules.lrclib_client import search_lyrics
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
             # (not the found lyrics that the singing did not have: the ones that replaced them)
-            lyrics_info = getattr(process_data, "lyrics_instead", None) or search_lyrics(
+            lyrics_info = process_data.lyrics_instead or search_lyrics(
                 process_data.media_info.artist, process_data.media_info.title,
                 duration=audio_length(process_data.process_data_paths.whisper_audio_path),
             )
@@ -2370,6 +2377,13 @@ def TranscribeAudio(process_data):
             if plain_lyrics:
                 process_data.plain_lyrics = plain_lyrics
                 process_data.plain_lyrics_from_synced = False
+            # Found lyrics that the singing does not have are replaced before they correct the words
+            if process_data.transcription_words and (process_data.synced_lyrics or process_data.plain_lyrics):
+                _lyrics_the_singing_has(process_data, process_data.transcription_words,
+                                        synced=bool(process_data.synced_lyrics))
+                if process_data.lyrics_instead is not None:
+                    plain_lyrics = process_data.plain_lyrics
+            if plain_lyrics:
                 process_data.transcribed_data, lyrics_lookup_result = correct_transcription_from_lyrics(
                     process_data.transcribed_data, plain_lyrics
                 )

@@ -712,6 +712,7 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
             transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_source=None,
         )
         heard = [_syllable("helo, ", 1.0, 1.3), _syllable("world ", 1.5, 1.8)]
         transcription = SimpleNamespace(detected_language="en", transcribed_data=heard)
@@ -748,6 +749,7 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="fr"),
             transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_source=None,
         )
         cached = [_syllable("♪ ", 0.0, 0.1), _syllable("Pourquoi ", 1.0, 1.5), _syllable("? ", 1.6, 1.7),
                   _syllable("- ", 1.8, 1.9), _syllable("toi ", 2.0, 2.4), _syllable("♪ ", 2.5, 2.6)]
@@ -771,6 +773,7 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
             transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_source=None,
             check_transcription=SimpleNamespace(detected_language="en", transcribed_data=heard),
         )
         with patch.object(us, "transcribe_audio") as transcribe, \
@@ -824,6 +827,7 @@ class TestRejectedSyncedLyricsAreDropped(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
             transcribed_data=[], synced_lyrics=synced_lyrics, plain_lyrics=plain_lyrics, check_transcription=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_source=None,
         )
         transcription = SimpleNamespace(detected_language="de", transcribed_data=[])
         with patch.object(us, "transcribe_audio", return_value=transcription), \
@@ -1322,7 +1326,9 @@ class TestLyricsTheSingingHas(unittest.TestCase):
         aligned = lambda **kw: ([us.MidiSegment(n.note, n.start, n.end, n.word) for n in _ALIGNED], check)  # noqa: E731
         with patch.object(us, "transcribe_audio", return_value=result), \
                 patch.object(us, "audio_length", return_value=300.0), \
-                patch("modules.lrclib_client.find_on_second_db", return_value=other) as second_db, \
+                patch("modules.lrclib_client.find_on_second_db",
+                      **({"side_effect": other} if isinstance(other, Exception) else {"return_value": other})
+                      ) as second_db, \
                 patch("modules.Speech_Recognition.reference_lyrics_aligner."
                       "create_midi_segments_from_checked_synced_lyrics", side_effect=aligned) as checked:
             notes, out, files = _run(
@@ -1427,3 +1433,48 @@ class TestLyricsTheSingingHas(unittest.TestCase):
         self.assertEqual(notes, _ALIGNED_NOTES)
         self.assertIn("  music.163.com plain lyrics: the text of the synced lyrics\n", info)
         self.assertIn("music.163.com 100%: taken", info)
+
+    def test_failed_search_keeps_the_lyrics(self):
+        _, out, _, _, _, checked = self._run_with(OSError("offline"))
+        self.assertEqual(checked.call_args.kwargs["synced_lyrics"], self._LRCLIB.synced_lyrics)
+        self.assertIn("The search on music.163.com failed (offline): keeping the lyrics of LRCLIB", out)
+
+    def test_not_in_languages_without_spaces(self):
+        # their lines are no words: none would pair with the transcribed ones
+        _, _, info, _, second_db, _ = self._run_with(None, language="ja")
+        second_db.assert_not_called()
+        self.assertNotIn("Lyrics heard", info)
+
+    def test_replaced_before_they_correct_the_transcription(self):
+        heard = [_syllable(w, a, b) for w, a, b in self._HEARD]
+        process_data = SimpleNamespace(
+            process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
+            media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_source=None, plain_lyrics_from_synced=False,
+            synced_lyrics_other_recording=None, synced_lyrics_length=None,
+        )
+        transcription = SimpleNamespace(detected_language="en", transcribed_data=heard)
+        found = SimpleNamespace(duration=None, synced_lyrics=None, plain_lyrics=_numbered(40, first=100),
+                                source="LRCLIB")
+        other = SimpleNamespace(source="music.163.com", duration=300.0, synced_lyrics=None,
+                                plain_lyrics=_numbered(40), artist_name="Artist", track_name="Song Title",
+                                instrumental=False)
+        with patch.object(us, "transcribe_audio", return_value=transcription), \
+                patch.object(us, "audio_length", return_value=300.0), \
+                patch.object(us, "check_lyrics_language", return_value=(True, None)), \
+                patch("modules.Speech_Recognition.lyrics_corrector.correct_transcription_from_lyrics",
+                      side_effect=lambda data, lyrics: (data, None)) as correct, \
+                patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data), \
+                patch("modules.lrclib_client.search_lyrics", return_value=found), \
+                patch("modules.lrclib_client.find_on_second_db", return_value=other), \
+                patch.object(us.settings, "lyrics_lookup", True), \
+                patch.object(us.settings, "llm_correct_lyrics", False), \
+                patch.object(us.settings, "hyphenation", False), \
+                patch.object(us.settings, "language", None), \
+                contextlib.redirect_stdout(io.StringIO()):
+            us.TranscribeAudio(process_data)
+        self.assertEqual(correct.call_args.args[1], other.plain_lyrics)
+        self.assertEqual(process_data.plain_lyrics, other.plain_lyrics)
+        self.assertEqual(process_data.lyrics_source, "music.163.com")
+        self.assertIs(process_data.lyrics_instead, other)
