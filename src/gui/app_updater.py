@@ -34,6 +34,8 @@ MAX_SUBJECTS = 15
 # Set for the update script started from the GUI: it starts the GUI again
 # when the update has completed
 RESTART_ENV = "ULTRASINGER_RESTART_GUI"
+# The update script's full path, for a checkout on a network path
+_SCRIPT_ENV = "ULTRASINGER_UPDATE_SCRIPT"
 
 
 @dataclass
@@ -171,12 +173,15 @@ def start_update(root: Path | None = None, restart: bool = True) -> bool:
     Windows only (see :func:`can_start_update`). The GUI quits right after:
     the script stops a running UltraSinger of the checkout anyway, to replace
     its files. With ``restart`` it starts the GUI again when the update has
-    completed. Never raises.
+    completed, except for a checkout on a network share: the script works
+    there on a drive letter that is gone when it ends. Never
+    raises.
     """
     root = root or repo_root()
     script = update_script(root)
+    network = not restarts_after_update(root)
     env = dict(os.environ)
-    if restart:
+    if restart and not network:
         env[RESTART_ENV] = "1"
     # The GUI's own Python environment must not leak into the update's uv calls
     for name in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH"):
@@ -185,8 +190,13 @@ def start_update(root: Path | None = None, restart: bool = True) -> bool:
     # quotes, so the path stays quoted (the quoting of a list of arguments does
     # not protect & or ^ from cmd.exe). The path is relative to the checkout,
     # the working folder: cmd.exe would expand a %NAME% in the checkout's path.
-    # Not on a network path (\\server\share), which cmd.exe cannot work in.
-    target = script if str(root).startswith("\\\\") else script.relative_to(root)
+    # Not on a network path (\\server\share), which cmd.exe cannot work in:
+    # there the full path comes in a variable, whose value cmd.exe does not
+    # expand again.
+    target = str(script.relative_to(root))
+    if network:
+        env[_SCRIPT_ENV] = str(script)
+        target = f"%{_SCRIPT_ENV}%"
     command = f'"{env.get("COMSPEC", "cmd.exe")}" /d /s /c ""{target}""'
     try:
         subprocess.Popen(
@@ -201,6 +211,11 @@ def start_update(root: Path | None = None, restart: bool = True) -> bool:
         return False
     logger.info("Started the update: %s", script)
     return True
+
+
+def restarts_after_update(root: Path | None = None) -> bool:
+    """Whether :func:`start_update` can start the GUI again: not on a network share."""
+    return not str(root or repo_root()).startswith("\\\\")
 
 
 def can_start_update() -> bool:

@@ -505,7 +505,7 @@ class MainWindow(QMainWindow):
 
     def _ask_to_update(self, info):
         """The question whether to update now."""
-        from .app_updater import can_start_update
+        from .app_updater import can_start_update, restarts_after_update
 
         changes = "1 new change" if info.count == 1 else f"{info.count} new changes"
         box = QMessageBox(self)
@@ -521,6 +521,9 @@ class MainWindow(QMainWindow):
             box.setInformativeText(
                 "UltraSinger closes for the update and starts again when it is done. "
                 "The queue is kept."
+                if restarts_after_update() else
+                "UltraSinger closes for the update. Start it again when the update "
+                "has finished. The queue is kept."
             )
             update = box.addButton("Update Now", QMessageBox.ButtonRole.AcceptRole)
         else:

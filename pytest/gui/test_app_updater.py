@@ -195,11 +195,20 @@ class TestStartUpdate:
         assert up.start_update(root, restart=False)
         assert started == [0] and marker.is_file()
 
-    def test_a_checkout_on_a_network_path_runs_the_script_by_its_full_path(self):
+    def test_a_checkout_on_a_network_path_runs_the_script_by_its_full_path(self, monkeypatch):
+        monkeypatch.delenv(up.RESTART_ENV, raising=False)
         root = Path("\\\\server\\share\\UltraSinger")
         with patch.object(up.subprocess, "Popen") as popen:
-            assert up.start_update(root, restart=False)
-        assert popen.call_args.args[0].endswith(f'/d /s /c ""{up.update_script(root)}""')
+            assert up.start_update(root)
+        # Without a restart: the script's drive letter for the share is gone when it ends
+        assert up.RESTART_ENV not in popen.call_args.kwargs["env"]
+        # In a variable: cmd.exe does not expand a %NAME% in the value again
+        assert popen.call_args.args[0].endswith(f'/d /s /c ""%{up._SCRIPT_ENV}%""')
+        assert popen.call_args.kwargs["env"][up._SCRIPT_ENV] == str(up.update_script(root))
+
+    def test_restarts_only_off_a_network_share(self, tmp_path):
+        assert up.restarts_after_update(tmp_path)
+        assert not up.restarts_after_update(Path("\\\\server\\share\\UltraSinger"))
 
     def test_reports_a_failed_start(self, tmp_path):
         with patch.object(up.subprocess, "Popen", side_effect=OSError("no cmd")):
