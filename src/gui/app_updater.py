@@ -159,9 +159,11 @@ def check_for_update(root: Path | None = None, cancel=None) -> UpdateInfo | None
             if ahead > 0:
                 logger.debug("No update offered: the checkout has %d commit(s) of its own", ahead)
             return None
-        commit = (_git(root, "rev-parse", "@{u}", cancel=cancel) or "").strip()
-        log = _git(root, "log", f"--max-count={MAX_SUBJECTS}", "--format=%s", "HEAD..@{u}", cancel=cancel) or ""
-        return UpdateInfo(upstream, commit, behind, [s for s in log.splitlines() if s.strip()])
+        commit = _git(root, "rev-parse", "@{u}", cancel=cancel)
+        log = _git(root, "log", f"--max-count={MAX_SUBJECTS}", "--format=%s", "HEAD..@{u}", cancel=cancel)
+        if commit is None or log is None:
+            return None
+        return UpdateInfo(upstream, commit.strip(), behind, [s for s in log.splitlines() if s.strip()])
     except Exception:  # noqa: BLE001 — fail open, this is a startup check
         logger.debug("Update check failed", exc_info=True)
         return None

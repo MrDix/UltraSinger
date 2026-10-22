@@ -835,6 +835,56 @@ class TestMainWindow:
             win._sidebar._import_action.trigger()
         assert [Path(p) for p in start_paths] == [Path.home(), first, first, second, Path.home()]
 
+    def test_an_update_found_during_an_export_or_import_is_asked_about_after_it(
+            self, settings_dir, open_window, tmp_path, monkeypatch):
+        from src.gui.app_updater import UpdateInfo
+
+        win = open_window()
+        win._queue_mgr.add_item(_URL, "url", "First")
+        asked = []
+        monkeypatch.setattr(win, "_ask_to_update", lambda info: asked.append(info))
+        info = UpdateInfo("origin/main", "abc", 1)
+        exported = tmp_path / "exported.json"
+
+        def exec_(dialog):  # the update check reports while the dialog is open
+            win._on_app_update_checked(info)
+            assert asked == []
+            return 1
+
+        with patch.multiple(QFileDialog, exec=exec_, selectedFiles=lambda dialog: [str(exported)]):
+            win._sidebar._export_action.trigger()
+        assert exported.exists() and asked == [info]
+
+        def get_open(*args):
+            win._on_app_update_checked(info)
+            assert asked == [info]
+            return str(exported), ""
+
+        with patch.object(QFileDialog, "getOpenFileName", side_effect=get_open):
+            win._sidebar._import_action.trigger()
+        assert "Imported 0 song(s)" in _console(win) and asked == [info, info]
+
+    def test_an_update_held_for_a_conversion_ending_during_an_export_is_asked_about_after_it(
+            self, settings_dir, open_window, tmp_path, monkeypatch):
+        from src.gui.app_updater import UpdateInfo
+
+        win = open_window()
+        win._queue_mgr.add_item(_URL, "url", "First")
+        asked = []
+        monkeypatch.setattr(win, "_ask_to_update", lambda info: asked.append(info))
+        info = UpdateInfo("origin/main", "abc", 1)
+        win._app_update_pending = info  # found while the conversion ran
+        exported = tmp_path / "exported.json"
+
+        def exec_(dialog):  # the conversion ends while the dialog is open
+            win._on_queue_finished(0, False)
+            assert asked == []
+            return 1
+
+        with patch.multiple(QFileDialog, exec=exec_, selectedFiles=lambda dialog: [str(exported)]):
+            win._sidebar._export_action.trigger()
+        assert exported.exists() and asked == [info]
+
     def test_the_sidebar_starts_at_its_default_width_and_can_be_dragged_wider(self, settings_dir, open_window):
         from src.gui import main_window
         from src.gui.widgets.sidebar import Sidebar

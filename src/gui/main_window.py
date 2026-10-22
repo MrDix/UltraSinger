@@ -2,6 +2,7 @@
 
 import importlib.metadata
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
@@ -344,7 +345,8 @@ class MainWindow(QMainWindow):
         # whether to update (never updates by itself)
         self._app_update_thread = None
         self._app_update_cancel = None
-        self._app_update_pending = None  # found while a conversion ran: asked after it
+        self._app_update_pending = None  # found during a conversion or queue file: asked after it
+        self._queue_file_busy = False  # a queue file is being exported or imported
         self._update_on_close = False
         self._start_app_update_check()
 
@@ -498,7 +500,7 @@ class MainWindow(QMainWindow):
         if info.upstream_commit and info.upstream_commit == self._config.get("update_skipped_commit"):
             logger.info("Not asking to update: the user skipped this version")
             return
-        if self._queue_mgr.is_running:
+        if self._queue_mgr.is_running or self._queue_file_busy:
             self._app_update_pending = info
             return
         self._ask_to_update(info)
@@ -794,6 +796,8 @@ class MainWindow(QMainWindow):
         """Handle queue batch completion."""
         self._queue_tab.on_queue_finished(failed_count, cancelled)
         self._update_queue_buttons()
+        if self._queue_file_busy:
+            return  # asked after the export or import (see _holding_update_prompt)
         pending, self._app_update_pending = self._app_update_pending, None
         if pending is not None and not self._closing:
             self._ask_to_update(pending)
@@ -883,8 +887,29 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, TypeError):  # kept for this session; saved on close
             logger.warning("Failed to save the queue files folder", exc_info=True)
 
+    @contextmanager
+    def _holding_update_prompt(self):
+        """Ask about an update found meanwhile only after the queue file is done.
+
+        The file dialogs and messages run their own event loop; updating from
+        there would close the window in the middle of an export or import.
+        """
+        self._queue_file_busy = True
+        try:
+            yield
+        finally:
+            self._queue_file_busy = False
+            if not self._queue_mgr.is_running and not self._closing:
+                pending, self._app_update_pending = self._app_update_pending, None
+                if pending is not None:
+                    self._ask_to_update(pending)
+
     def _on_export_queue(self):
         """Write the songs of the queue that are not finished to a file the user picks."""
+        with self._holding_update_prompt():
+            self._export_queue()
+
+    def _export_queue(self):
         dialog = QFileDialog(
             self, "Export Queue", str(self._queue_files_folder() / "ultrasinger-queue.json"),
             "Queue Files (*.json);;All Files (*)",
@@ -908,6 +933,11 @@ class MainWindow(QMainWindow):
         self._queue_tab.append_log(f"[Queue] Exported {count} song(s) to {path}")
 
     def _on_import_queue(self):
+        """Add the songs of a queue file the user picks (see ``_import_queue``)."""
+        with self._holding_update_prompt():
+            self._import_queue()
+
+    def _import_queue(self):
         """Add the songs of a queue file the user picks as waiting songs.
 
         Songs already waiting in the queue with the same settings are skipped;

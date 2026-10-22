@@ -127,6 +127,20 @@ class TestCheckForUpdate:
         assert captured["SSH_ASKPASS_REQUIRE"] == "never"
         assert captured["GIT_TERMINAL_PROMPT"] == "0"
 
+    @pytest.mark.parametrize("failing", ["rev-parse", "log"])
+    def test_no_update_when_reading_the_new_commits_fails(self, checkout, monkeypatch, failing):
+        app, seed = checkout
+        _push(seed, "Upstream change")
+        real = up._git
+
+        def git(root, *args, **kwargs):
+            if args[0] == failing and "--abbrev-ref" not in args:
+                return None
+            return real(root, *args, **kwargs)
+
+        monkeypatch.setattr(up, "_git", git)
+        assert up.check_for_update(app) is None
+
     def test_cancelled(self, checkout):
         app, seed = checkout
         _push(seed, "Upstream change")
