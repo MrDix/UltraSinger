@@ -181,6 +181,7 @@ def start_update(root: Path | None = None, restart: bool = True) -> bool:
     script = update_script(root)
     network = not restarts_after_update(root)
     env = dict(os.environ)
+    env.pop(RESTART_ENV, None)  # only this call decides on a restart
     if restart and not network:
         env[RESTART_ENV] = "1"
     # The GUI's own Python environment must not leak into the update's uv calls

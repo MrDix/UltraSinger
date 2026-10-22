@@ -206,6 +206,14 @@ class TestStartUpdate:
         assert popen.call_args.args[0].endswith(f'/d /s /c ""%{up._SCRIPT_ENV}%""')
         assert popen.call_args.kwargs["env"][up._SCRIPT_ENV] == str(up.update_script(root))
 
+    @pytest.mark.parametrize("network", [False, True])
+    def test_an_inherited_restart_request_does_not_count(self, tmp_path, monkeypatch, network):
+        monkeypatch.setenv(up.RESTART_ENV, "1")
+        root = Path("\\\\server\\share\\UltraSinger") if network else tmp_path
+        with patch.object(up.subprocess, "Popen") as popen:
+            assert up.start_update(root, restart=network)  # no restart either way
+        assert up.RESTART_ENV not in popen.call_args.kwargs["env"]
+
     def test_restarts_only_off_a_network_share(self, tmp_path):
         assert up.restarts_after_update(tmp_path)
         assert not up.restarts_after_update(Path("\\\\server\\share\\UltraSinger"))
