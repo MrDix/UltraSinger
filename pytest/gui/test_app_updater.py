@@ -109,6 +109,24 @@ class TestCheckForUpdate:
         shutil.rmtree(app / "install")
         assert up.check_for_update(app) is None
 
+    def test_never_asks_for_credentials(self, checkout, monkeypatch):
+        """An askpass program in the environment is not run (empty GIT_ASKPASS wins)."""
+        app, seed = checkout
+        captured = {}
+        real_popen = subprocess.Popen
+
+        def popen(*args, **kwargs):
+            captured.update(kwargs["env"])
+            return real_popen(*args, **kwargs)
+
+        monkeypatch.setenv("GIT_ASKPASS", "some-askpass")
+        monkeypatch.setenv("SSH_ASKPASS", "some-askpass")
+        monkeypatch.setattr(up.subprocess, "Popen", popen)
+        up.check_for_update(app)
+        assert captured["GIT_ASKPASS"] == ""
+        assert captured["SSH_ASKPASS_REQUIRE"] == "never"
+        assert captured["GIT_TERMINAL_PROMPT"] == "0"
+
     def test_cancelled(self, checkout):
         app, seed = checkout
         _push(seed, "Upstream change")
@@ -142,7 +160,7 @@ class TestStartUpdate:
         with patch.object(up.subprocess, "Popen") as popen:
             assert up.start_update(tmp_path)
         args, kwargs = popen.call_args
-        assert args[0][-2:] == ["/c", str(up.update_script(tmp_path))]
+        assert args[0].endswith(f'/d /s /c ""{up.update_script(tmp_path)}""')
         assert kwargs["cwd"] == str(tmp_path)
         assert kwargs["creationflags"] == up._CREATE_NEW_CONSOLE
         assert kwargs["env"][up.RESTART_ENV] == "1"
@@ -155,6 +173,26 @@ class TestStartUpdate:
         with patch.object(up.subprocess, "Popen") as popen:
             assert up.start_update(tmp_path, restart=False)
         assert up.RESTART_ENV not in popen.call_args.kwargs["env"]
+
+    @pytest.mark.skipif(os.name != "nt", reason="cmd.exe")
+    @pytest.mark.parametrize("folder", ["paren (2) dir", "amp & dir", "caret ^ dir"])
+    def test_the_script_runs_from_a_folder_with_cmd_metacharacters(self, tmp_path, monkeypatch, folder):
+        root = tmp_path / folder
+        (root / "install").mkdir(parents=True)
+        marker = root / "ran.txt"
+        (root / "install" / "update.bat").write_text(f'@echo ran> "{marker}"\r\n', encoding="ascii")
+        started = []
+        real_popen = subprocess.Popen
+
+        def popen(*args, **kwargs):  # the same command, but waited for and without a console
+            kwargs["creationflags"] = 0
+            proc = real_popen(*args, **kwargs, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started.append(proc.wait(timeout=30))
+            return proc
+
+        monkeypatch.setattr(up.subprocess, "Popen", popen)
+        assert up.start_update(root, restart=False)
+        assert started == [0] and marker.is_file()
 
     def test_reports_a_failed_start(self, tmp_path):
         with patch.object(up.subprocess, "Popen", side_effect=OSError("no cmd")):

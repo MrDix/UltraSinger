@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -65,10 +66,14 @@ def _git(root: Path, *args: str, timeout: float = _GIT_TIMEOUT, cancel=None) -> 
     if git is None:
         return None
     env = dict(os.environ)
-    # Never ask for credentials: the check runs unattended (git's own prompt and
-    # the credential manager's sign-in window). The SSH setup of the user is
-    # kept; without a console and input, ssh cannot ask either.
+    # Never ask for credentials: the check runs unattended (git's own prompt,
+    # an askpass program the environment or git config names - an empty
+    # GIT_ASKPASS wins over both -, the credential manager's sign-in window and
+    # ssh's askpass). The SSH setup of the user is kept; in a session of its
+    # own (POSIX), ssh has no terminal to ask on either.
     env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_ASKPASS"] = ""
+    env["SSH_ASKPASS_REQUIRE"] = "never"
     env["GCM_INTERACTIVE"] = "never"
     try:
         proc = subprocess.Popen(
@@ -82,6 +87,7 @@ def _git(root: Path, *args: str, timeout: float = _GIT_TIMEOUT, cancel=None) -> 
             errors="replace",
             env=env,
             creationflags=_CREATE_NO_WINDOW,
+            start_new_session=os.name != "nt",
         )
     except (OSError, subprocess.SubprocessError) as e:
         logger.debug("git %s failed: %s", " ".join(args), e)
@@ -109,6 +115,12 @@ def _kill(proc: subprocess.Popen) -> None:
             subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
                            timeout=_GIT_TIMEOUT, creationflags=_CREATE_NO_WINDOW)
         except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        # The command leads a session of its own (see _git): end its whole group
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
             pass
     proc.kill()
     try:
@@ -169,9 +181,13 @@ def start_update(root: Path | None = None, restart: bool = True) -> bool:
     # The GUI's own Python environment must not leak into the update's uv calls
     for name in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH"):
         env.pop(name, None)
+    # One command line, as cmd.exe reads it: with /s it only removes the outer
+    # quotes, so the script's path stays quoted even with & or ^ in it (the
+    # quoting of a list of arguments does not protect these from cmd.exe)
+    command = f'"{env.get("COMSPEC", "cmd.exe")}" /d /s /c ""{script}""'
     try:
         subprocess.Popen(
-            [env.get("COMSPEC", "cmd.exe"), "/c", str(script)],
+            command,
             cwd=str(root),
             env=env,
             creationflags=_CREATE_NEW_CONSOLE,
