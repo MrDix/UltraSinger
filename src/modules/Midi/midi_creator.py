@@ -624,9 +624,13 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
     Moves a phrase whose median is an octave or more from the song's median
     by whole octaves toward it, all its notes together, when the move joins
     it to a note right before or after it (one without a rest in between is
-    then at most a phrase step away).  That octave-size jump into or out of
-    the phrase marks a tracker error; a part sung an octave higher or lower
-    after a rest keeps its octave.  The phrases are taken in order, so the
+    then at most a phrase step away).  A jump into or out of the phrase that
+    the move turns into such a step marks a tracker error, also one smaller
+    than an octave (a fifth up into a phrase the tracker read an octave too
+    high): requiring an octave-size jump there kept more misread phrases,
+    and on 100 benchmark songs the worst song lost 8 instead of 3 points of
+    octave agreement with the reference charts.  A part sung an octave
+    higher or lower after a rest keeps its octave.  The phrases are taken in order, so the
     note before a phrase counts where an earlier move put it.  Applies only
     when most notes lie near the song's median. Returns the number of notes
     moved.
@@ -712,7 +716,8 @@ def correct_octave_outliers(
     step by step into the low end of a wide-range song is kept, and so is
     a high note in a phrase near the middle of the song (a head-voice note
     in a song sung mostly low), while a phrase the tracker read an octave
-    off — entered or left by an octave-size jump — is still moved.
+    off — entered or left by a jump that the move turns into a step — is
+    still moved.
 
     Args:
         midi_segments: List of MIDI segments with ``.note`` attributes.

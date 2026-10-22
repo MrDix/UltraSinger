@@ -384,6 +384,14 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
         notes = line + phrase + line
         self.assertEqual(self._get_notes(correct_octave_outliers(self._make_segs(notes))), notes)
 
+    def test_global_consensus_moves_a_phrase_entered_by_a_fifth_when_the_move_joins_it(self):
+        """A jump smaller than an octave counts too, when the move turns it
+        into a step: F4 to C5 (7 semitones) becomes F4 to C4 (5).  Requiring
+        an octave-size jump kept more misread phrases on the benchmark."""
+        notes = ["C4"] * 24 + ["F4"] + ["C5"] * 8 + ["F4"] + ["C4"] * 24
+        midis = self._get_midis(correct_octave_outliers(self._make_segs(notes)))
+        self.assertEqual(midis[25:33], [60] * 8)
+
     def test_phrase_aware_keeps_a_low_run_of_a_wide_range_song(self):
         """The run belongs to the verse phrase (small steps), whose median is
         less than an octave below the middle of the song."""
