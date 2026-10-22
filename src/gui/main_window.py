@@ -2,9 +2,10 @@
 
 import importlib.metadata
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -12,6 +13,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QWidget,
 )
@@ -111,6 +114,30 @@ class _YtdlpUpdateCheckWorker(QObject):
         self.finished.emit(installed, latest)
 
 
+class _AppUpdateCheckWorker(QObject):
+    """Looks for a newer UltraSinger version (off the GUI thread).
+
+    The fetch can take seconds; ``cancel`` ends it when the window closes.
+    Never raises — no result (None) when there is no update or no check.
+    """
+
+    finished = Signal(object)  # UpdateInfo | None
+
+    def __init__(self, cancel):
+        super().__init__()
+        self._cancel = cancel
+
+    def run(self):
+        from .app_updater import check_for_update
+
+        try:
+            info = check_for_update(cancel=self._cancel)
+        except Exception as e:  # noqa: BLE001 — fail open, never crash startup
+            logger.debug("UltraSinger update check failed: %s", e)
+            info = None
+        self.finished.emit(info)
+
+
 class MainWindow(QMainWindow):
     """Main UltraSinger GUI window with sidebar navigation.
 
@@ -156,13 +183,26 @@ class MainWindow(QMainWindow):
         self._sidebar.add_section("\U0001F4BB", "Console")
         self._sidebar.add_section("\u2699\uFE0F", "Settings")
         self._sidebar.finalize()
-        main_layout.addWidget(self._sidebar)
+        # The sidebar can be dragged wider (long song titles in the queue);
+        # every start begins with its default width
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setObjectName("sidebarSplitter")
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.setHandleWidth(4)  # wide enough to grab
+        self._splitter.addWidget(self._sidebar)
+        main_layout.addWidget(self._splitter)
 
         # Content stack
         self._stack = QStackedWidget()
         self._stack.setObjectName("contentArea")
         self._stack.setFrameShape(QFrame.Shape.NoFrame)
-        main_layout.addWidget(self._stack, 1)
+        # The pages do not limit the drag: the console's button row alone
+        # would leave the sidebar hardly any room in a window of default size
+        self._stack.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self._splitter.addWidget(self._stack)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([Sidebar.DEFAULT_WIDTH, self.width() - Sidebar.DEFAULT_WIDTH])
 
         # Create tabs (Video, Console, Settings). While signing in to the video
         # platform is not allowed, the browser deletes its account cookies and
@@ -301,6 +341,15 @@ class MainWindow(QMainWindow):
         self._ytdlp_check_cancel = None
         self._start_ytdlp_update_check()
 
+        # Look for a newer UltraSinger version in the background and ask
+        # whether to update (never updates by itself)
+        self._app_update_thread = None
+        self._app_update_cancel = None
+        self._app_update_pending = None  # found during a conversion or queue file: asked after it
+        self._queue_file_busy = False  # a queue file is being exported or imported
+        self._update_on_close = False
+        self._start_app_update_check()
+
         # Second line of defence besides closeEvent: model list fetches are
         # joined before the application ends, however it quits
         app = QApplication.instance()
@@ -423,6 +472,98 @@ class MainWindow(QMainWindow):
             thread.quit()
             # No timeout (a QThread destroyed while running aborts the
             # application): the version lookup has its own timeout
+            thread.wait()
+
+    # ── UltraSinger update check ──────────────────────────────────────
+
+    def _start_app_update_check(self):
+        """Look for a newer UltraSinger version (background, non-blocking)."""
+        if not self._config.get("check_for_updates", True):
+            return
+        import threading
+
+        self._app_update_cancel = threading.Event()
+        self._app_update_thread = QThread(self)
+        self._app_update_worker = _AppUpdateCheckWorker(self._app_update_cancel)
+        self._app_update_worker.moveToThread(self._app_update_thread)
+        self._app_update_thread.started.connect(self._app_update_worker.run)
+        self._app_update_worker.finished.connect(self._on_app_update_checked)
+        self._app_update_worker.finished.connect(self._app_update_thread.quit)
+        self._app_update_thread.start()
+
+    def _on_app_update_checked(self, info):
+        """Report a newer version and ask whether to update (after a running conversion)."""
+        if info is None or self._closing:
+            return
+        changes = "1 change" if info.count == 1 else f"{info.count} changes"
+        self._queue_tab.append_log(f"[Update] A new version of UltraSinger is available ({changes}).")
+        if info.upstream_commit and info.upstream_commit == self._config.get("update_skipped_commit"):
+            logger.info("Not asking to update: the user skipped this version")
+            return
+        if self._queue_mgr.is_running or self._queue_file_busy:
+            self._app_update_pending = info
+            return
+        self._ask_to_update(info)
+
+    def _ask_to_update(self, info):
+        """The question whether to update now."""
+        from .app_updater import can_start_update, restarts_after_update
+
+        changes = "1 new change" if info.count == 1 else f"{info.count} new changes"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("UltraSinger Update")
+        lines = "\n".join(f"- {subject}" for subject in info.subjects)
+        if info.count > len(info.subjects):
+            lines += f"\n- ... and {info.count - len(info.subjects)} more"
+        if lines:
+            box.setDetailedText(lines)
+        if can_start_update():
+            box.setText(f"A new version of UltraSinger is available ({changes}). Update now?")
+            box.setInformativeText(
+                "UltraSinger closes for the update and starts again when it is done. "
+                "The queue is kept."
+                if restarts_after_update() else
+                "UltraSinger closes for the update. Start it again when the update "
+                "has finished. The queue is kept."
+            )
+            update = box.addButton("Update Now", QMessageBox.ButtonRole.AcceptRole)
+        else:
+            box.setText(f"A new version of UltraSinger is available ({changes}).")
+            box.setInformativeText(
+                "To update, close UltraSinger and run install/update.sh."
+            )
+            update = None
+        later = box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        skip = box.addButton("Skip This Version", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(update or later)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is skip:
+            self._config["update_skipped_commit"] = info.upstream_commit
+            try:
+                save_config(self._config)
+            except (OSError, ValueError, TypeError):
+                logger.warning("Failed to save the skipped version", exc_info=True)
+        elif update is not None and clicked is update:
+            self._update_now()
+
+    def _update_now(self):
+        """Close the window and start the update script (asked first if work is running)."""
+        self._update_on_close = True
+        if not self.close():
+            # Closing was cancelled (a conversion or training goes on)
+            self._update_on_close = False
+
+    def _shutdown_app_update_check(self):
+        """Stop a running update check and join its thread."""
+        thread = self._app_update_thread
+        if thread is not None and thread.isRunning():
+            if self._app_update_cancel is not None:
+                self._app_update_cancel.set()
+            thread.quit()
+            # No timeout (a QThread destroyed while running aborts the
+            # application): the cancelled check ends its git command
             thread.wait()
 
     # ── Model training ────────────────────────────────────────────────
@@ -655,6 +796,11 @@ class MainWindow(QMainWindow):
         """Handle queue batch completion."""
         self._queue_tab.on_queue_finished(failed_count, cancelled)
         self._update_queue_buttons()
+        if self._queue_file_busy:
+            return  # asked after the export or import (see _holding_update_prompt)
+        pending, self._app_update_pending = self._app_update_pending, None
+        if pending is not None and not self._closing:
+            self._ask_to_update(pending)
 
     def _on_item_status_changed(self, item_id: str, status: str):
         """Update queue buttons when item status changes."""
@@ -720,10 +866,52 @@ class MainWindow(QMainWindow):
     def _save_queue(self):
         save_queue(self._queue_file, self._queue_mgr.items)
 
+    def _queue_files_folder(self) -> Path:
+        """The folder of the last queue export or import (the home folder at first or when it is gone)."""
+        folder = self._config.get("queue_files_folder", "")
+        try:
+            if folder and Path(folder).is_dir():
+                return Path(folder)
+        except OSError:
+            pass
+        return Path.home()
+
+    def _remember_queue_files_folder(self, path: str):
+        """The next export or import dialog opens in the folder of ``path``."""
+        folder = str(Path(path).parent)
+        if folder == self._config.get("queue_files_folder"):
+            return
+        self._config["queue_files_folder"] = folder
+        try:
+            save_config(self._config)
+        except (OSError, ValueError, TypeError):  # kept for this session; saved on close
+            logger.warning("Failed to save the queue files folder", exc_info=True)
+
+    @contextmanager
+    def _holding_update_prompt(self):
+        """Ask about an update found meanwhile only after the queue file is done.
+
+        The file dialogs and messages run their own event loop; updating from
+        there would close the window in the middle of an export or import.
+        """
+        self._queue_file_busy = True
+        try:
+            yield
+        finally:
+            self._queue_file_busy = False
+            if not self._queue_mgr.is_running and not self._closing:
+                pending, self._app_update_pending = self._app_update_pending, None
+                if pending is not None:
+                    self._ask_to_update(pending)
+
     def _on_export_queue(self):
         """Write the songs of the queue that are not finished to a file the user picks."""
+        with self._holding_update_prompt():
+            self._export_queue()
+
+    def _export_queue(self):
         dialog = QFileDialog(
-            self, "Export Queue", str(Path.home() / "ultrasinger-queue.json"),
+            self, "Export Queue", str(self._queue_files_folder() / "ultrasinger-queue.json"),
             "Queue Files (*.json);;All Files (*)",
         )
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
@@ -733,6 +921,7 @@ class MainWindow(QMainWindow):
         dialog.deleteLater()
         if not path:
             return
+        self._remember_queue_files_folder(path)
         try:
             count = write_queue_file(Path(path), self._queue_mgr.items)
         except (OSError, ValueError, TypeError) as exc:
@@ -744,16 +933,22 @@ class MainWindow(QMainWindow):
         self._queue_tab.append_log(f"[Queue] Exported {count} song(s) to {path}")
 
     def _on_import_queue(self):
+        """Add the songs of a queue file the user picks (see ``_import_queue``)."""
+        with self._holding_update_prompt():
+            self._import_queue()
+
+    def _import_queue(self):
         """Add the songs of a queue file the user picks as waiting songs.
 
         Songs already waiting in the queue with the same settings are skipped;
         the queue does not start by itself.
         """
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import Queue", str(Path.home()), "Queue Files (*.json);;All Files (*)",
+            self, "Import Queue", str(self._queue_files_folder()), "Queue Files (*.json);;All Files (*)",
         )
         if not path:
             return
+        self._remember_queue_files_folder(path)
         try:
             items, problems = read_queue_file(Path(path), imported=True)
         except (OSError, ValueError) as exc:
@@ -1036,12 +1231,28 @@ class MainWindow(QMainWindow):
         # Stop a pending yt-dlp update check
         self._shutdown_ytdlp_update_check()
 
+        # Stop a running UltraSinger update check
+        self._shutdown_app_update_check()
+
         # Stop a running model training (its subprocess tree)
         if training is not None:
             training.shutdown()
 
         # Shut down the browser engine so Chromium can flush cookies
         self._browser_tab.shutdown()
+
+        # "Update Now": the update script starts once everything is saved and
+        # stopped; it stops what is left of this instance and starts it again
+        if self._update_on_close:
+            from .app_updater import start_update, update_script, repo_root
+
+            if not start_update():
+                QMessageBox.warning(
+                    self,
+                    "UltraSinger Update",
+                    "The update could not be started. Please run "
+                    f"{update_script(repo_root())} yourself.",
+                )
 
         super().closeEvent(event)
 

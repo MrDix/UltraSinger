@@ -75,7 +75,6 @@ QLabel#infoLabel {
 #sidebar {
     background-color: #363847;
     border: none;
-    min-width: 56px;
 }
 
 #sidebar QPushButton {
@@ -429,6 +428,15 @@ QSplitter::handle:horizontal {
 
 QSplitter::handle:vertical {
     height: 2px;
+}
+
+/* The sidebar's edge (its width is set in main_window.py) */
+#sidebarSplitter::handle:horizontal {
+    background: #2a2c38;
+}
+
+#sidebarSplitter::handle:horizontal:hover {
+    background: rgba(0, 212, 212, 0.4);
 }
 
 /* --- Group Box --- */

@@ -163,6 +163,11 @@ _DEFAULTS = {
     "potoken_auto_start_node": True,     # allow launching the local Node.js server
     "potoken_auto_start_docker": True,   # allow launching the provider via Docker
     "potoken_base_url": "",              # empty -> default http://127.0.0.1:4416
+    # Look for a newer UltraSinger version on start and ask whether to update
+    "check_for_updates": True,
+    "update_skipped_commit": "",         # the version "Skip This Version" was chosen for
+    # The folder of the last queue export or import: the next dialog opens there
+    "queue_files_folder": "",
     # Corporate proxy: "system" (use OS/env proxy), "manual" (proxy_url below),
     # or "none" (strip any proxy env vars, even if the OS/shell set one)
     "proxy_mode": "system",

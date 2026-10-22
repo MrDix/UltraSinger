@@ -148,6 +148,16 @@ if exist "%~dp0helpers\setup_potoken_provider.bat" (
 echo.
 echo Update completed.
 echo.
+REM Started from the GUI's update question: start the GUI again (it quit for
+REM the update). A failed update stops at its pause above instead, so the
+REM error stays readable. The launcher is named relative to the checkout (the
+REM current folder): a full path in this block breaks on a ")" in it.
+if defined ULTRASINGER_RESTART_GUI (
+    set "ULTRASINGER_RESTART_GUI="
+    echo Starting UltraSinger again...
+    start "UltraSinger" cmd /c .\run_gui_on_windows.bat
+    exit /b 0
+)
 pause
 exit /b 0
 

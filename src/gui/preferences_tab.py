@@ -318,6 +318,26 @@ class PreferencesTab(QWidget):
 
         main_layout.addWidget(proxy_card)
 
+        # ── UltraSinger Updates ──────────────────────────────────────────
+        updates_header = QLabel("Updates")
+        updates_header.setObjectName("subsectionHeader")
+        main_layout.addWidget(updates_header)
+        updates_card = SettingsCard()
+        self._check_updates_switch = ToggleSwitch(
+            checked=config.get("check_for_updates", True) is True
+        )
+        updates_card.add_toggle_row(
+            "Check for a new version on start", self._check_updates_switch,
+            "On start, look in the background whether a newer version of UltraSinger "
+            "is available, and ask whether to update. It never updates by itself.",
+        )
+        updates_card.add_info(
+            "The update runs install/update (the code, the Python packages, yt-dlp and "
+            "the PO-token provider). UltraSinger closes for it and starts again when it "
+            "is done; the queue is kept."
+        )
+        main_layout.addWidget(updates_card)
+
         # ── yt-dlp Update ────────────────────────────────────────────────
         ytdlp_header = QLabel("yt-dlp")
         ytdlp_header.setObjectName("subsectionHeader")
@@ -617,6 +637,7 @@ class PreferencesTab(QWidget):
         result["output_folder"] = self._output_folder.text()
         result["cookie_file"] = self._cookie_path.text()
         result["allow_platform_signin"] = self._signin_allowed
+        result["check_for_updates"] = self._check_updates_switch.isChecked()
         result["proxy_mode"] = self._proxy_mode.currentData()
         result["proxy_url"] = self._proxy_url.text()
         result["proxy_no_proxy"] = self._proxy_no_proxy.text()

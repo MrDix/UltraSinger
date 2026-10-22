@@ -23,7 +23,7 @@ pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMessageBox, QWidget
 
 from src.gui import queue_file
 from src.gui.config import _DEFAULTS, _is_secret_key
@@ -641,6 +641,7 @@ def open_window(settings_dir, monkeypatch):
     def open_():
         with patch.object(main_window, "BrowserTab", _FakeBrowserTab), \
                 patch.object(main_window.MainWindow, "_start_potoken_provider", lambda self: None), \
+                patch.object(main_window.MainWindow, "_start_app_update_check", lambda self: None), \
                 patch.object(main_window.MainWindow, "_start_ytdlp_update_check",
                              lambda self: None):
             win = main_window.MainWindow({**_DEFAULTS, "cookie_file": ""})
@@ -794,6 +795,136 @@ class TestMainWindow:
         assert not manager.is_running
         win.conversion_start.assert_not_called()
         assert win._sidebar._start_btn.isEnabled()
+
+    def test_the_dialogs_open_in_the_folder_of_the_last_export_or_import(self, settings_dir, open_window,
+                                                                         tmp_path):
+        from src.gui import main_window
+
+        win = open_window()
+        win._queue_mgr.add_item(_URL, "url", "First")
+        first, second = tmp_path / "first", tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        start_paths = []
+
+        def export_to(target):
+            def exec_(dialog):
+                start_paths.append(dialog.directory().absolutePath())
+                return 1
+            return patch.multiple(QFileDialog, exec=exec_, selectedFiles=lambda dialog: [str(target)])
+
+        def import_from(target):
+            def get_open(parent, caption, folder, filters):
+                start_paths.append(folder)
+                return str(target), ""
+            return patch.object(QFileDialog, "getOpenFileName", side_effect=get_open)
+
+        with export_to(first / "queue.json"):
+            win._sidebar._export_action.trigger()
+        assert win._config["queue_files_folder"] == str(first)
+        main_window.save_config.assert_called()
+        with import_from(first / "queue.json"):
+            win._sidebar._import_action.trigger()
+        with export_to(second / "queue.json"):
+            win._sidebar._export_action.trigger()
+        with import_from(second / "queue.json"):
+            win._sidebar._import_action.trigger()
+        # A folder that is gone: the home folder again
+        win._config["queue_files_folder"] = str(tmp_path / "gone")
+        with import_from(second / "queue.json"):
+            win._sidebar._import_action.trigger()
+        assert [Path(p) for p in start_paths] == [Path.home(), first, first, second, Path.home()]
+
+    def test_an_update_found_during_an_export_or_import_is_asked_about_after_it(
+            self, settings_dir, open_window, tmp_path, monkeypatch):
+        from src.gui.app_updater import UpdateInfo
+
+        win = open_window()
+        win._queue_mgr.add_item(_URL, "url", "First")
+        asked = []
+        monkeypatch.setattr(win, "_ask_to_update", lambda info: asked.append(info))
+        info = UpdateInfo("origin/main", "abc", 1)
+        exported = tmp_path / "exported.json"
+
+        def exec_(dialog):  # the update check reports while the dialog is open
+            win._on_app_update_checked(info)
+            assert asked == []
+            return 1
+
+        with patch.multiple(QFileDialog, exec=exec_, selectedFiles=lambda dialog: [str(exported)]):
+            win._sidebar._export_action.trigger()
+        assert exported.exists() and asked == [info]
+
+        def get_open(*args):
+            win._on_app_update_checked(info)
+            assert asked == [info]
+            return str(exported), ""
+
+        with patch.object(QFileDialog, "getOpenFileName", side_effect=get_open):
+            win._sidebar._import_action.trigger()
+        assert "Imported 0 song(s)" in _console(win) and asked == [info, info]
+
+    def test_an_update_held_for_a_conversion_ending_during_an_export_is_asked_about_after_it(
+            self, settings_dir, open_window, tmp_path, monkeypatch):
+        from src.gui.app_updater import UpdateInfo
+
+        win = open_window()
+        win._queue_mgr.add_item(_URL, "url", "First")
+        asked = []
+        monkeypatch.setattr(win, "_ask_to_update", lambda info: asked.append(info))
+        info = UpdateInfo("origin/main", "abc", 1)
+        win._app_update_pending = info  # found while the conversion ran
+        exported = tmp_path / "exported.json"
+
+        def exec_(dialog):  # the conversion ends while the dialog is open
+            win._on_queue_finished(0, False)
+            assert asked == []
+            return 1
+
+        with patch.multiple(QFileDialog, exec=exec_, selectedFiles=lambda dialog: [str(exported)]):
+            win._sidebar._export_action.trigger()
+        assert exported.exists() and asked == [info]
+
+    def test_the_sidebar_starts_at_its_default_width_and_can_be_dragged_wider(self, settings_dir, open_window):
+        from src.gui import main_window
+        from src.gui.widgets.sidebar import Sidebar
+
+        win = open_window()
+        # The application's stylesheet, as the GUI sets it (it holds sizes too)
+        win.setStyleSheet((Path(main_window.__file__).parent / "resources" / "styles.qss")
+                          .read_text(encoding="utf-8"))
+        win._queue_mgr.add_item(_URL, "url", "A song title far too long to be read in the narrow sidebar")
+        win._sidebar.set_active(win._TAB_CONSOLE)  # the page with the widest content
+        win.resize(1400, 900)
+        win.show()
+        _app.processEvents()
+        title = win._sidebar.queue_list.findChildren(QLabel)
+        title = max((label for label in title if type(label).__name__ == "_ElidingLabel"),
+                    key=lambda label: label.width())
+        assert win._sidebar.width() == Sidebar.DEFAULT_WIDTH
+        narrow = title.width()
+
+        win._splitter.setSizes([600, win.width() - 600])
+        _app.processEvents()
+        assert win._sidebar.width() == 600
+        assert title.width() >= narrow + 250  # the title gets the room
+        if os.environ.get("SIDEBAR_SHOT"):
+            win.grab().save(os.environ["SIDEBAR_SHOT"])
+
+        # Never narrower than the default, never wider than its maximum
+        win._splitter.setSizes([100, win.width() - 100])
+        _app.processEvents()
+        assert win._sidebar.width() == Sidebar.DEFAULT_WIDTH
+        win._splitter.setSizes([1000, win.width() - 1000])
+        _app.processEvents()
+        assert win._sidebar.width() == Sidebar.MAX_WIDTH
+        assert win._stack.width() > 0
+        # The narrowest window keeps the sidebar at its default width
+        win._splitter.setSizes([Sidebar.DEFAULT_WIDTH, 900])
+        win.resize(win.minimumWidth(), 900)
+        _app.processEvents()
+        assert win._sidebar.width() == Sidebar.DEFAULT_WIDTH
+        win.hide()
 
     def test_import_of_an_unreadable_file_warns(self, settings_dir, open_window, tmp_path):
         win = open_window()
