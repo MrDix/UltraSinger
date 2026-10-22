@@ -754,6 +754,7 @@ def open_window(settings_dir, monkeypatch):
         config = {**_DEFAULTS, "cookie_file": str(cookie), "allow_platform_signin": allowed}
         with patch.object(main_window_module, "BrowserTab", _FakeBrowserTab), \
                 patch.object(main_window_module.MainWindow, "_start_potoken_provider", lambda self: None), \
+                patch.object(main_window_module.MainWindow, "_start_app_update_check", lambda self: None), \
                 patch.object(main_window_module.MainWindow, "_start_ytdlp_update_check",
                              lambda self: None):
             window = main_window_module.MainWindow(config)

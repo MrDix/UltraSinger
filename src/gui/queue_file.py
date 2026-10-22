@@ -60,6 +60,7 @@ _GLOBAL_ONLY = frozenset({
     "potoken_base_url", "llm_providers", "llm_api_base_url", "llm_model",
     "llm_legacy_provider_id", "training_library", "training_workdir",
     "training_exclude", "training_model", "training_epochs",
+    "check_for_updates", "update_skipped_commit", "queue_files_folder",
 })
 
 # The settings an item can override (those of the per-song settings dialog),

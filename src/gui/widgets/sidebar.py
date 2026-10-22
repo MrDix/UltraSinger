@@ -40,6 +40,12 @@ class Sidebar(QWidget):
       Start/Clear buttons and the export/import menu → Navigation buttons → Version
     """
 
+    # Wide enough for the queue result line + buttons: the width it starts
+    # with and its narrowest; it can be dragged wider up to MAX_WIDTH to read
+    # long song titles in the queue
+    DEFAULT_WIDTH = 300
+    MAX_WIDTH = 900
+
     section_changed = Signal(int)
     start_all_requested = Signal()
     export_queue_requested = Signal()
@@ -51,7 +57,8 @@ class Sidebar(QWidget):
         super().__init__(parent)
         self.setObjectName("sidebar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedWidth(300)  # wide enough for the queue result line + buttons
+        self.setMinimumWidth(self.DEFAULT_WIDTH)
+        self.setMaximumWidth(self.MAX_WIDTH)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)

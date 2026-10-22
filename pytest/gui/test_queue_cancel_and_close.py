@@ -251,6 +251,7 @@ def window(monkeypatch, settings_dir):
     # Plain functions: PySide crashes on mocks in the class while connecting slots
     with patch.object(main_window, "BrowserTab", _FakeBrowserTab), \
             patch.object(main_window.MainWindow, "_start_potoken_provider", lambda self: None), \
+            patch.object(main_window.MainWindow, "_start_app_update_check", lambda self: None), \
             patch.object(main_window.MainWindow, "_start_ytdlp_update_check", lambda self: None):
         win = main_window.MainWindow({**_DEFAULTS, "cookie_file": ""})
     with patch.object(main_window, "save_config"):
@@ -272,6 +273,7 @@ def test_start_removes_stale_private_files(settings_dir, monkeypatch):
         leftover.write_text("secret", encoding="utf-8")
     with patch.object(main_window, "BrowserTab", _FakeBrowserTab), \
             patch.object(main_window.MainWindow, "_start_potoken_provider", lambda self: None), \
+            patch.object(main_window.MainWindow, "_start_app_update_check", lambda self: None), \
             patch.object(main_window.MainWindow, "_start_ytdlp_update_check", lambda self: None):
         main_window.MainWindow({**_DEFAULTS, "cookie_file": ""})
     assert not options.exists() and not copy.exists()
@@ -350,3 +352,116 @@ class TestCloseWindow:
             _app.aboutToQuit.emit()
         assert thread.isFinished()
         assert llm_provider_list._shutting_down
+
+
+class TestUpdateQuestion:
+    """A newer UltraSinger version found on start: the question and the update on close."""
+
+    @staticmethod
+    def _info(commit="abc123", count=2):
+        from src.gui.app_updater import UpdateInfo
+
+        return UpdateInfo("origin/main", commit, count, ["Newest change", "Older change"])
+
+    @staticmethod
+    def _answer(label):
+        """Answer the next question with the button of this label."""
+        return patch.multiple(
+            QMessageBox,
+            exec=lambda self: None,
+            clickedButton=lambda self: next(b for b in self.buttons() if b.text() == label),
+        )
+
+    def test_no_check_when_switched_off(self, window):
+        window._config["check_for_updates"] = False
+        window._start_app_update_check()
+        assert window._app_update_thread is None
+
+    def test_nothing_without_an_update(self, window):
+        with patch.object(window, "_ask_to_update") as ask:
+            window._on_app_update_checked(None)
+        ask.assert_not_called()
+
+    def test_asks_at_once(self, window):
+        info = self._info()
+        with patch.object(window, "_ask_to_update") as ask:
+            window._on_app_update_checked(info)
+        ask.assert_called_once_with(info)
+
+    def test_asks_after_a_running_conversion(self, window):
+        info = self._info()
+        window._queue_mgr._running = True
+        with patch.object(window, "_ask_to_update") as ask:
+            window._on_app_update_checked(info)
+            ask.assert_not_called()
+            window._queue_mgr._running = False
+            window._on_queue_finished(0, False)
+            window._on_queue_finished(0, False)
+        ask.assert_called_once_with(info)
+
+    def test_skipped_version_is_not_asked_again(self, window):
+        window._config["update_skipped_commit"] = "abc123"
+        with patch.object(window, "_ask_to_update") as ask:
+            window._on_app_update_checked(self._info("abc123"))
+            ask.assert_not_called()
+            window._on_app_update_checked(self._info("def456"))
+        ask.assert_called_once()
+
+    def test_skip_this_version(self, window):
+        from src.gui import main_window
+
+        with self._answer("Skip This Version"), patch.object(window, "_update_now") as update:
+            window._ask_to_update(self._info("abc123"))
+        update.assert_not_called()
+        assert window._config["update_skipped_commit"] == "abc123"
+        main_window.save_config.assert_called()
+
+    def test_later(self, window):
+        with self._answer("Later"), patch.object(window, "_update_now") as update:
+            window._ask_to_update(self._info())
+        update.assert_not_called()
+        assert window._config.get("update_skipped_commit", "") == ""
+
+    def test_update_now(self, window):
+        with self._answer("Update Now"), patch("src.gui.app_updater.can_start_update", return_value=True), \
+                patch.object(window, "_update_now") as update:
+            window._ask_to_update(self._info())
+        update.assert_called_once()
+
+    def test_without_an_update_script_to_start_only_tells(self, window):
+        buttons = []
+        with patch.multiple(QMessageBox, clickedButton=lambda self: None,
+                            exec=lambda self: buttons.extend(b.text() for b in self.buttons())),                 patch("src.gui.app_updater.can_start_update", return_value=False):
+            window._ask_to_update(self._info())
+        assert "Update Now" not in buttons and {"Later", "Skip This Version"} <= set(buttons)
+
+    def test_closing_starts_the_update(self, window):
+        from PySide6.QtGui import QCloseEvent
+
+        window._update_on_close = True
+        with patch("src.gui.app_updater.start_update", return_value=True) as start:
+            window.closeEvent(QCloseEvent())
+        start.assert_called_once_with()
+
+    def test_a_failed_start_is_reported(self, window):
+        from PySide6.QtGui import QCloseEvent
+
+        window._update_on_close = True
+        with patch("src.gui.app_updater.start_update", return_value=False), \
+                patch.object(QMessageBox, "warning") as warning:
+            window.closeEvent(QCloseEvent())
+        warning.assert_called_once()
+
+    def test_no_update_when_closing_is_cancelled(self, window):
+        window._queue_mgr._running = True
+        window._queue_mgr.shutdown = MagicMock()
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No), \
+                patch("src.gui.app_updater.start_update") as start:
+            window._update_now()
+        start.assert_not_called()
+        assert not window._update_on_close
+
+    def test_plain_closing_starts_no_update(self, window):
+        with patch("src.gui.app_updater.start_update") as start:
+            TestCloseWindow()._close(window)
+        start.assert_not_called()

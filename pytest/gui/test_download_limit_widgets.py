@@ -362,6 +362,7 @@ def test_the_window_gives_the_browser_tab_its_saved_settings(tmp_path, monkeypat
     monkeypatch.setattr(llm_provider_list, "_shutting_down", False)
     with patch.object(main_window, "BrowserTab", _FakeBrowserTab), \
             patch.object(main_window.MainWindow, "_start_potoken_provider", lambda self: None), \
+            patch.object(main_window.MainWindow, "_start_app_update_check", lambda self: None), \
             patch.object(main_window.MainWindow, "_start_ytdlp_update_check", lambda self: None):
         win = main_window.MainWindow({**_DEFAULTS, "cookie_file": ""})
     assert win._browser_tab.probe_config is win._config
