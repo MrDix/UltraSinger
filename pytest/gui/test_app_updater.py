@@ -160,7 +160,7 @@ class TestStartUpdate:
         with patch.object(up.subprocess, "Popen") as popen:
             assert up.start_update(tmp_path)
         args, kwargs = popen.call_args
-        assert args[0].endswith(f'/d /s /c ""{up.update_script(tmp_path)}""')
+        assert args[0].endswith(f'/d /s /c ""{up.update_script(tmp_path).relative_to(tmp_path)}""')
         assert kwargs["cwd"] == str(tmp_path)
         assert kwargs["creationflags"] == up._CREATE_NEW_CONSOLE
         assert kwargs["env"][up.RESTART_ENV] == "1"
@@ -175,12 +175,13 @@ class TestStartUpdate:
         assert up.RESTART_ENV not in popen.call_args.kwargs["env"]
 
     @pytest.mark.skipif(os.name != "nt", reason="cmd.exe")
-    @pytest.mark.parametrize("folder", ["paren (2) dir", "amp & dir", "caret ^ dir"])
+    @pytest.mark.parametrize("folder", ["paren (2) dir", "amp & dir", "caret ^ dir", "pct %USERNAME% dir"])
     def test_the_script_runs_from_a_folder_with_cmd_metacharacters(self, tmp_path, monkeypatch, folder):
         root = tmp_path / folder
         (root / "install").mkdir(parents=True)
         marker = root / "ran.txt"
-        (root / "install" / "update.bat").write_text(f'@echo ran> "{marker}"\r\n', encoding="ascii")
+        # Into the working folder (the checkout): a path in the script would be expanded too
+        (root / "install" / "update.bat").write_text('@echo ran> ran.txt\r\n', encoding="ascii")
         started = []
         real_popen = subprocess.Popen
 
@@ -193,6 +194,12 @@ class TestStartUpdate:
         monkeypatch.setattr(up.subprocess, "Popen", popen)
         assert up.start_update(root, restart=False)
         assert started == [0] and marker.is_file()
+
+    def test_a_checkout_on_a_network_path_runs_the_script_by_its_full_path(self):
+        root = Path("\\\\server\\share\\UltraSinger")
+        with patch.object(up.subprocess, "Popen") as popen:
+            assert up.start_update(root, restart=False)
+        assert popen.call_args.args[0].endswith(f'/d /s /c ""{up.update_script(root)}""')
 
     def test_reports_a_failed_start(self, tmp_path):
         with patch.object(up.subprocess, "Popen", side_effect=OSError("no cmd")):

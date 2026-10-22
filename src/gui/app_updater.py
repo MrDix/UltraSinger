@@ -182,9 +182,12 @@ def start_update(root: Path | None = None, restart: bool = True) -> bool:
     for name in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH"):
         env.pop(name, None)
     # One command line, as cmd.exe reads it: with /s it only removes the outer
-    # quotes, so the script's path stays quoted even with & or ^ in it (the
-    # quoting of a list of arguments does not protect these from cmd.exe)
-    command = f'"{env.get("COMSPEC", "cmd.exe")}" /d /s /c ""{script}""'
+    # quotes, so the path stays quoted (the quoting of a list of arguments does
+    # not protect & or ^ from cmd.exe). The path is relative to the checkout,
+    # the working folder: cmd.exe would expand a %NAME% in the checkout's path.
+    # Not on a network path (\\server\share), which cmd.exe cannot work in.
+    target = script if str(root).startswith("\\\\") else script.relative_to(root)
+    command = f'"{env.get("COMSPEC", "cmd.exe")}" /d /s /c ""{target}""'
     try:
         subprocess.Popen(
             command,
