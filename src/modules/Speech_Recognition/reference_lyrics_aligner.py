@@ -677,9 +677,17 @@ def _compute_note_for_word(
 # Minimum confidence for a frame to be considered voiced.
 # SwiftF0 reports a frequency for EVERY frame (never returns 0 Hz), even in
 # silence -- only the confidence value distinguishes voiced from unvoiced.
-# The SwiftF0 detector uses confidence_threshold=0.9 internally, so frames
-# below 0.9 are effectively unvoiced.
+# The detector's own confidence threshold (Pitcher.py) only sets a voicing
+# flag that PitchedData does not keep: every frame arrives with its frequency
+# and confidence, so the thresholds here decide what counts as voiced.
 _VOICED_CONFIDENCE = 0.9
+# Minimum confidence for a frame to count as sung when trimming a word and
+# splitting it at pauses.  Lower than _VOICED_CONFIDENCE: a head voice, a
+# breathy line or a quiet ad-lib often stays between 0.5 and 0.9, and the
+# stricter threshold cut such words down to a few frames.  The split at
+# pitch changes keeps _VOICED_CONFIDENCE: a quiet stretch between two
+# different pitches still ends the note there.
+_SUNG_CONFIDENCE = 0.5
 # Minimum frequency (Hz) for a frame to be considered voiced.
 _VOICED_MIN_FREQ = 50.0
 # Buffer (seconds) added before/after trimmed boundaries to avoid cutting
@@ -741,7 +749,7 @@ def _trim_word_to_voiced(
     if len(w_times) < 2:
         return word
 
-    voiced = (w_freqs > _VOICED_MIN_FREQ) & (w_confs > _VOICED_CONFIDENCE)
+    voiced = (w_freqs > _VOICED_MIN_FREQ) & (w_confs > _SUNG_CONFIDENCE)
     voiced_indices = np.where(voiced)[0]
 
     if len(voiced_indices) == 0:
@@ -803,7 +811,7 @@ def _split_word_at_silence_gaps(
     if len(w_times) < 5:
         return [word]
 
-    voiced = (w_freqs > _VOICED_MIN_FREQ) & (w_confs > _VOICED_CONFIDENCE)
+    voiced = (w_freqs > _VOICED_MIN_FREQ) & (w_confs > _SUNG_CONFIDENCE)
 
     # Derive frame duration from data
     frame_dt = float(w_times[1] - w_times[0]) if len(w_times) >= 2 else 0.016
