@@ -322,7 +322,8 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
         """G4 (MIDI 67) is 7 ST from global median C4 (60).
 
         Phase 2 must NOT shift it — it is a valid melody interval,
-        not an octave error.  Only notes ≥ 12 ST away should be touched.
+        not an octave error: a phrase less than an octave from the
+        median is kept.
         """
         # 6x C4, 1x G4, 6x C4  → global median ≈ 60
         notes = ["C4"] * 6 + ["G4"] + ["C4"] * 6
@@ -369,13 +370,19 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
     _VERSE = ["A#3", "G#3", "A#3", "A#3"]
     _RUN = ["B3", "A#3", "A3", "G#3", "F#3", "E3", "D#3", "D#3", "C#3"]
 
-    def test_global_consensus_folds_a_low_run_of_a_wide_range_song(self):
-        """Per note, the second half of the run is an octave or more below the
-        middle of the song and is folded up (shown as a jump in the run)."""
+    def test_global_consensus_keeps_a_low_run_of_a_wide_range_song(self):
+        """The second half of the run is an octave or more below the middle of
+        the song, but its phrase (small steps) is not: it is not folded up."""
         notes = self._CHORUS + self._VERSE + self._RUN + self._VERSE + self._CHORUS
-        a = len(self._CHORUS) + len(self._VERSE)
-        midis = self._get_midis(correct_octave_outliers(self._make_segs(notes)))
-        self.assertEqual(midis[a:a + len(self._RUN)], [59, 58, 57, 56, 66, 64, 63, 63, 61])
+        self.assertEqual(self._get_notes(correct_octave_outliers(self._make_segs(notes))), notes)
+
+    def test_global_consensus_keeps_a_high_note_of_a_phrase_near_the_middle(self):
+        """A head-voice D#5 in a phrase around A4 of a song sung mostly at C4:
+        15 semitones above the song's median, but its phrase is not."""
+        line = ["C4"] * 24
+        phrase = ["G4", "A4", "G4", "A4", "D#5", "A4", "G4", "A4", "G4"]
+        notes = line + phrase + line
+        self.assertEqual(self._get_notes(correct_octave_outliers(self._make_segs(notes))), notes)
 
     def test_phrase_aware_keeps_a_low_run_of_a_wide_range_song(self):
         """The run belongs to the verse phrase (small steps), whose median is
@@ -440,7 +447,7 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
             shift = 2.0 if k < b else 4.0
             seg.start, seg.end = seg.start + shift, seg.end + shift
         self.assertEqual(self._get_midis(correct_octave_outliers(apart, phrase_aware=True))[a:b], [72] * 3)
-        self.assertEqual(self._get_midis(correct_octave_outliers(apart))[a:b], [60] * 3)  # per note: moved
+        self.assertEqual(self._get_midis(correct_octave_outliers(apart))[a:b], [60] * 3)  # phase 1 compares across the rests: moved
 
     def test_phrase_aware_takes_the_shift_that_joins_a_neighbour(self):
         """F#5 in a C4 song: F#3 and F#4 are as close to the median, but only

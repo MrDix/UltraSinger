@@ -611,14 +611,15 @@ def enforce_octave_consistency(
     return midi_segments
 
 
-# A phrase for correct_octave_outliers(phrase_aware=True): notes joined by steps
-# of at most this many semitones, without a rest longer than this many seconds.
+# A phrase for phase 2 of correct_octave_outliers (the rest limit also ends a
+# part in its phrase-aware phase 1): notes joined by steps of at most this many
+# semitones, without a rest longer than this many seconds.
 _PHRASE_MAX_STEP = 6
 _PHRASE_MAX_REST_S = 1.0
 
 
 def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
-    """Phase 2 of ``correct_octave_outliers(phrase_aware=True)``.
+    """Phase 2 of ``correct_octave_outliers``.
 
     Moves a phrase whose median is an octave or more from the song's median
     by whole octaves toward it, all its notes together, when the move joins
@@ -627,8 +628,8 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
     the phrase marks a tracker error; a part sung an octave higher or lower
     after a rest keeps its octave.  The phrases are taken in order, so the
     note before a phrase counts where an earlier move put it.  Applies only
-    when most notes lie near the song's median, like the per-note phase 2.
-    Returns the number of notes moved.
+    when most notes lie near the song's median. Returns the number of notes
+    moved.
     """
     midis: list[int | None] = []
     for seg in midi_segments:
@@ -702,12 +703,16 @@ def correct_octave_outliers(
     **Phase 2 — Global consensus:**  After local passes, some clusters
     may remain uncorrected because the local neighbourhood was dominated
     by wrong-octave notes (contaminated median).  When the majority of
-    notes agree on a particular octave region, this phase shifts notes
-    that are a full octave or more (≥ 12 semitones) from the global
-    median by whole octaves toward it.  Legitimate melody intervals
-    (< 12 semitones, e.g. a fifth or sixth) are never touched.
-    This only activates when a clear majority exists (> 50 % of notes
-    near the global median).
+    notes agree on a particular octave region (> 50 % of notes near the
+    global median), this phase moves whole phrases instead of single
+    notes: notes joined by steps of at most 6 semitones (without a rest of
+    more than a second) move together, and only when the median of the
+    phrase is an octave or more from the global median and the move joins
+    the phrase to a note right before or after it.  A run that descends
+    step by step into the low end of a wide-range song is kept, and so is
+    a high note in a phrase near the middle of the song (a head-voice note
+    in a song sung mostly low), while a phrase the tracker read an octave
+    off — entered or left by an octave-size jump — is still moved.
 
     Args:
         midi_segments: List of MIDI segments with ``.note`` attributes.
@@ -718,16 +723,7 @@ def correct_octave_outliers(
             come straight from the vocal.  In phase 1, only notes up to the
             next rest of more than a second count as neighbours, and of
             several octave candidates the one closest to them wins (the
-            global median only breaks exact ties).  Phase 2 moves whole phrases
-            instead of single notes: notes joined by steps of at most 6
-            semitones (without a rest of more than a second) move together,
-            and only when the median of the phrase is an octave or more from
-            the global median and the move joins the phrase to a note right
-            before or after it.  A run that descends step by step into the
-            low end of a wide-range song is kept, and so is a part sung an
-            octave higher or lower after a rest, while a phrase the tracker
-            read an octave off — entered or left by an octave-size jump — is
-            still moved.
+            global median only breaks exact ties).
 
     Returns:
         The same list, with outlier notes corrected in-place.
@@ -831,66 +827,11 @@ def correct_octave_outliers(
             # No changes this pass — further passes won't help
             break
 
-    if phrase_aware:
-        moved = _fold_phrases_toward_median(midi_segments)
-        if moved:
-            print(f"{ULTRASINGER_HEAD} Global consensus: moved "
-                  f"{blue_highlighted(str(moved))} note{'s' if moved != 1 else ''} "
-                  f"of phrases an octave off")
-        return midi_segments
-
-    # ── Phase 2: Global consensus correction ─────────────────────────
-    # Fixes clusters that local correction couldn't handle because the
-    # local neighbourhood median was contaminated by wrong-octave notes.
-    midi_values_ph2: list[int | None] = []
-    for seg in midi_segments:
-        try:
-            midi_values_ph2.append(librosa.note_to_midi(seg.note))
-        except (ValueError, KeyError, librosa.ParameterError):
-            midi_values_ph2.append(None)
-
-    valid_values = [v for v in midi_values_ph2 if v is not None]
-    if len(valid_values) >= 3:
-        global_median = float(np.median(valid_values))
-
-        # Only apply when there is a clear majority near the global median
-        near_global = sum(
-            1 for v in valid_values if abs(v - global_median) <= 6
-        )
-        if near_global / len(valid_values) > 0.5:
-            consensus_corrections = 0
-            for i, seg in enumerate(midi_segments):
-                if midi_values_ph2[i] is None:
-                    continue
-                current = midi_values_ph2[i]
-
-                # Only target notes that are a full octave or more from the
-                # global median — these are true octave errors.  Notes
-                # within 11 semitones are legitimate melody intervals
-                # (e.g. G4 is 7 ST from C4 and must NOT be shifted).
-                if abs(current - global_median) < 12:
-                    continue
-
-                # Try octave shifts (±12, ±24) to get closer to global median
-                best = current
-                for shift in [-24, -12, 12, 24]:
-                    candidate = current + shift
-                    if abs(candidate - global_median) < abs(best - global_median):
-                        best = candidate
-
-                # Only apply if the shift brings the note reasonably close
-                if best != current and abs(best - global_median) <= 11:
-                    seg.note = librosa.midi_to_note(best)
-                    midi_values_ph2[i] = best
-                    consensus_corrections += 1
-
-            if consensus_corrections > 0:
-                print(
-                    f"{ULTRASINGER_HEAD} Global consensus: corrected "
-                    f"{blue_highlighted(str(consensus_corrections))} "
-                    f"cluster note{'s' if consensus_corrections != 1 else ''}"
-                )
-
+    moved = _fold_phrases_toward_median(midi_segments)
+    if moved:
+        print(f"{ULTRASINGER_HEAD} Global consensus: moved "
+              f"{blue_highlighted(str(moved))} note{'s' if moved != 1 else ''} "
+              f"of phrases an octave off")
     return midi_segments
 
 

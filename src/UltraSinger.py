@@ -833,8 +833,9 @@ def run() -> tuple[str, Score, Score]:
     # Correct global octave shift (e.g. sub-harmonic detection)
     process_data.midi_segments = correct_global_octave(process_data.midi_segments)
 
-    # Correct local octave outliers (model notes: whole phrases, so a run into the
-    # low or high end of a wide-range song is not folded toward its middle)
+    # Correct local octave outliers (whole phrases, so a run into the low or high
+    # end of a wide-range song is not folded toward its middle; model notes are
+    # compared only with the notes up to the next rest)
     process_data.midi_segments = correct_octave_outliers(
         process_data.midi_segments, phrase_aware=model_segmentation_used
     )

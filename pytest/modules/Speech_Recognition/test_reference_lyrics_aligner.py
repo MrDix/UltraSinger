@@ -426,6 +426,49 @@ class TestTrimWordToVoiced:
         assert trimmed["backing"] is True
         assert trimmed["word"] == "night"
 
+    @staticmethod
+    def _word_with_a_quiet_tail(tail_conf):
+        """Sung clearly 1.0-2.0s, then 2.0-3.0s at ``tail_conf``, then silence until 3.5s."""
+        fps = 62.5
+        times = [i / fps for i in range(int(4.0 * fps))]
+        confs = [0.95 if 1.0 <= t < 2.0 else tail_conf if 2.0 <= t <= 3.0 else 0.05
+                 for t in times]
+        pd = PitchedData(times=times, frequencies=[880.0] * len(times), confidence=confs)
+        return {"word": "high", "start": 1.0, "end": 3.5}, pd
+
+    def test_keeps_a_head_voice_below_the_pitch_confidence(self):
+        """A head voice or breathy line often stays at a confidence of 0.5-0.9; it is still sung."""
+        word, pd = self._word_with_a_quiet_tail(0.7)
+        trimmed = _trim_word_to_voiced(word, pd)
+        assert trimmed["end"] == pytest.approx(3.05, abs=0.03)
+
+    def test_trims_frames_of_a_low_confidence(self):
+        word, pd = self._word_with_a_quiet_tail(0.3)
+        trimmed = _trim_word_to_voiced(word, pd)
+        assert trimmed["end"] == pytest.approx(2.05, abs=0.03)
+
+
+class TestSplitWordAtSilenceGaps:
+    """Tests for _split_word_at_silence_gaps."""
+
+    @staticmethod
+    def _word_with_a_quiet_middle(middle_conf):
+        """A 2.4s word sung clearly except 1.0-1.4s, where the confidence is ``middle_conf``."""
+        fps = 62.5
+        times = [i / fps for i in range(int(2.4 * fps) + 1)]
+        confs = [middle_conf if 1.0 <= t <= 1.4 else 0.95 for t in times]
+        pd = PitchedData(times=times, frequencies=[440.0] * len(times), confidence=confs)
+        return {"word": "long", "start": 0.0, "end": 2.4}, pd
+
+    def test_splits_at_a_pause(self):
+        word, pd = self._word_with_a_quiet_middle(0.1)
+        parts = aligner._split_word_at_silence_gaps(word, pd)
+        assert [p["word"] for p in parts] == ["long", "~ "]
+
+    def test_a_quieter_stretch_of_the_singing_is_no_pause(self):
+        word, pd = self._word_with_a_quiet_middle(0.7)
+        assert aligner._split_word_at_silence_gaps(word, pd) == [word]
+
 
 # ---------------------------------------------------------------------------
 # Integration (with mocked WhisperX)
