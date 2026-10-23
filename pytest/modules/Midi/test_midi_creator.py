@@ -287,6 +287,19 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
         # C2 (36) should become C4 (60), not C6 (84)
         self.assertEqual(midis[3], 60)
 
+    def test_global_median_candidate_far_from_the_neighbours(self):
+        """A note read two octaves high in a phrase around A#4 of a song sung
+        mostly at C4: D4 is closest to the global median but 8 semitones from
+        the neighbours, so D5 (4 semitones from them) is chosen."""
+        line = ["C4"] * 24
+        phrase = ["A#4", "C5", "A#4", "A4", "A#4", "D6", "A#4", "C5", "A#4", "A4", "A#4"]
+        notes = line + phrase + line
+        result = correct_octave_outliers(self._make_segs(notes))
+        onset = len(line) + 5
+        self.assertEqual(self._get_midis(result)[onset], 74)
+        self.assertEqual([n for i, n in enumerate(self._get_notes(result)) if i != onset],
+                         [n for i, n in enumerate(notes) if i != onset])
+
     # -- early termination when no corrections --------------------------------
 
     def test_early_termination_no_changes(self):
@@ -433,12 +446,13 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
 
     def test_phrase_aware_prefers_the_octave_closest_to_the_neighbours(self):
         """A note read two octaves low in a verse: the octave next to the verse
-        (G#3) wins over the one nearer the middle of the song (G#4)."""
+        (G#3) wins over the one nearer the middle of the song (G#4).  Without
+        phrase_aware too, as G#4 lies 11 semitones from the verse."""
         before = ["A3", "B3", "A3", "G#3", "A3"]
         after = ["A3", "C4", "B3", "A3", "G#3", "A3", "B3", "C4"]
         notes = self._CHORUS + before + ["G#2"] + after + self._CHORUS
         onset = len(self._CHORUS) + len(before)
-        self.assertEqual(self._get_midis(correct_octave_outliers(self._make_segs(notes)))[onset], 68)
+        self.assertEqual(self._get_midis(correct_octave_outliers(self._make_segs(notes)))[onset], 56)
         result = correct_octave_outliers(self._make_segs(notes), phrase_aware=True)
         self.assertEqual(self._get_midis(result)[onset], 56)
         self.assertEqual([n for i, n in enumerate(self._get_notes(result)) if i != onset],

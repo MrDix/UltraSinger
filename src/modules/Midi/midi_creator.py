@@ -620,6 +620,11 @@ _PHRASE_MAX_REST_S = 1.0
 # the move turns into a step is at least this many semitones: a smaller one is
 # a leap of the melody (a sixth up to a high note and back)
 _SINGLE_NOTE_MIN_JUMP = 10
+# Phase 1 of correct_octave_outliers takes the octave candidate closest to the
+# song's median, unless that one lies more than this many semitones from the
+# neighbours: then the one closest to the neighbours (a note read two octaves
+# high in a high phrase goes down one octave, not two)
+_OUTLIER_MAX_NEIGHBOUR_DIST = 7
 
 
 def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
@@ -712,7 +717,9 @@ def correct_octave_outliers(
     the median of its *window* neighbours.  Notes more than 11 semitones
     away are shifted by whole octaves toward the local median.  When
     several candidates are equally valid, the one closest to the *global*
-    median wins.  Multiple passes help because corrections from earlier
+    median wins, unless it lies more than 7 semitones from the neighbours:
+    then the one closest to them (D6 among notes around A#4 becomes D5, not
+    D4).  Multiple passes help because corrections from earlier
     passes update neighbour values for later passes.
 
     **Phase 2 — Global consensus:**  After local passes, some clusters
@@ -830,8 +837,11 @@ def correct_octave_outliers(
                 # Closest to the neighbours; the global median only breaks ties
                 best = min(candidates, key=lambda x: (abs(x - median_neighbour), abs(x - global_median)))
             else:
-                # Pick candidate closest to global median (tie-breaker)
+                # Pick candidate closest to global median (tie-breaker), unless
+                # it is far from the neighbours
                 best = min(candidates, key=lambda x: abs(x - global_median))
+                if abs(best - median_neighbour) > _OUTLIER_MAX_NEIGHBOUR_DIST:
+                    best = min(candidates, key=lambda x: (abs(x - median_neighbour), abs(x - global_median)))
 
             if best != midi_values[i]:
                 pending_updates.append((i, best))
