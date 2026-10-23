@@ -616,6 +616,10 @@ def enforce_octave_consistency(
 # semitones, without a rest longer than this many seconds.
 _PHRASE_MAX_STEP = 6
 _PHRASE_MAX_REST_S = 1.0
+# A note that is a phrase of its own moves in phase 2 only when the jump that
+# the move turns into a step is at least this many semitones: a smaller one is
+# a leap of the melody (a sixth up to a high note and back)
+_SINGLE_NOTE_MIN_JUMP = 10
 
 
 def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
@@ -629,9 +633,13 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
     than an octave (a fifth up into a phrase the tracker read an octave too
     high): requiring an octave-size jump there kept more misread phrases,
     and on 100 benchmark songs the worst song lost 8 instead of 3 points of
-    octave agreement with the reference charts.  A part sung an octave
-    higher or lower after a rest keeps its octave.  The phrases are taken in order, so the
-    note before a phrase counts where an earlier move put it.  Applies only
+    octave agreement with the reference charts.  For a phrase of a single
+    note, the jump must be at least ``_SINGLE_NOTE_MIN_JUMP`` semitones: a
+    high note a sixth above the notes around it is a leap the singer makes,
+    and on the benchmark a smaller limit moved more such notes that the
+    reference charts keep than it fixed.  A part sung an octave higher or
+    lower after a rest keeps its octave.  The phrases are taken in order, so
+    the note before a phrase counts where an earlier move put it.  Applies only
     when most notes lie near the song's median. Returns the number of notes
     moved.
     """
@@ -667,10 +675,13 @@ def _fold_phrases_toward_median(midi_segments: list[MidiSegment]) -> int:
         if abs(phrase_median - global_median) >= 12:
             # Of the shifts that bring the phrase within an octave of the
             # median, the closest one that joins it to a note next to it: the
-            # note before as moved so far, the note after as detected
+            # note before as moved so far, the note after as detected.  A
+            # single note needs a jump of at least _SINGLE_NOTE_MIN_JUMP there
+            min_jump = _SINGLE_NOTE_MIN_JUMP if i == j else 0
             shifts = [k for k in (-12, 12, -24, 24)
                       if abs(phrase_median + k - global_median) <= 11
-                      and (joined(i - 1, i, shift_b=k) or joined(j, j + 1, shift_a=k))]
+                      and ((joined(i - 1, i, shift_b=k) and abs(midis[i] - midis[i - 1]) >= min_jump)
+                           or (joined(j, j + 1, shift_a=k) and abs(midis[j + 1] - midis[j]) >= min_jump))]
             if shifts:
                 shift = min(shifts, key=lambda k: abs(phrase_median + k - global_median))
                 for k in range(i, j + 1):
@@ -717,7 +728,8 @@ def correct_octave_outliers(
     a high note in a phrase near the middle of the song (a head-voice note
     in a song sung mostly low), while a phrase the tracker read an octave
     off — entered or left by a jump that the move turns into a step — is
-    still moved.
+    still moved.  A single note needs a jump of at least 10 semitones there,
+    so a high note reached by a sixth and left again keeps its octave.
 
     Args:
         midi_segments: List of MIDI segments with ``.note`` attributes.

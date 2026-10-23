@@ -392,6 +392,23 @@ class TestCorrectOctaveOutliers(unittest.TestCase):
         midis = self._get_midis(correct_octave_outliers(self._make_segs(notes)))
         self.assertEqual(midis[25:33], [60] * 8)
 
+    def test_global_consensus_keeps_a_single_high_note_reached_by_a_sixth(self):
+        """F5 between A4 and A#4 in a song sung mostly at C4: 17 semitones above
+        the song's median and a phrase of its own, but the jumps into and out
+        of it (8 and 7 semitones) are a leap of the melody."""
+        line = ["C4"] * 24
+        notes = line + ["A4", "A#4", "A4", "A#4", "A4", "F5", "A#4", "A4", "A#4", "A4", "A4"] + line
+        self.assertEqual(self._get_notes(correct_octave_outliers(self._make_segs(notes))), notes)
+
+    def test_global_consensus_moves_a_single_note_entered_by_a_seventh(self):
+        """A jump of 10 semitones into a single note that the move turns into
+        a step marks it as read an octave off: F5 after G4 becomes F4."""
+        line = ["C4"] * 24
+        notes = line + ["G4", "A4", "G4", "F5", "G4", "A4", "G4"] + line
+        midis = self._get_midis(correct_octave_outliers(self._make_segs(notes)))
+        self.assertEqual(midis[27], 65)
+        self.assertEqual(midis[:27] + midis[28:], self._get_midis(self._make_segs(notes[:27] + notes[28:])))
+
     def test_phrase_aware_keeps_a_low_run_of_a_wide_range_song(self):
         """The run belongs to the verse phrase (small steps), whose median is
         less than an octave below the middle of the song."""
