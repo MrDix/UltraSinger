@@ -84,6 +84,9 @@ class Settings:
     # Golden notes (bonus notes worth double score in-game)
     golden_notes = False  # Mark 10 held notes (long, sung on pitch) as golden "*" bonus notes (disabled by default: changes score distribution)
 
+    # Vocal runs, riffs and acrobatics as notes (harder to sing; professional charts mostly keep one held note)
+    vocal_runs_as_notes = False  # Split a held note where the singing briefly flips to another pitch and back
+
     # Process data Paths
     input_file_path = ""
     output_folder_path = ""

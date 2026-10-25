@@ -225,6 +225,14 @@ def print_help() -> None:
                                 most 15% of all scorable notes become golden (short songs), and at most 3
                                 in each tenth of the song, so they do not pile up in one section.
 
+    [vocal runs]
+    --vocal_runs_as_notes       Vocal runs, riffs and acrobatics as notes (harder): split a held note where
+                                the singing briefly flips to another pitch and comes back (mordents, turns,
+                                grace notes, neighbour notes, trills) and chart the flip as a note of its
+                                own. Makes the song noticeably harder to sing, and professional charts
+                                rarely notate singing this finely - they mostly keep the one held note.
+                                Disabled by default.
+
 
     [llm lyric correction]
     --llm_correct           Enable LLM-based lyric correction (requires API key). It corrects the words of

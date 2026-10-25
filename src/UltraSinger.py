@@ -235,6 +235,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Model-based note segmentation: model from repository {settings.segmentation_model_repo}')}")
     if settings.golden_notes:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Golden note generation enabled')}")
+    if settings.vocal_runs_as_notes:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocal runs, riffs and acrobatics as notes (harder)')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -990,6 +992,20 @@ def run() -> tuple[str, Score, Score]:
             pitch_frames=pitch_frames,
         )
 
+    # Vocal runs, riffs and acrobatics as notes — split a held note where the
+    # singing briefly flips to another pitch and back, on the final note
+    # boundaries and pitches; before the golden notes, which pick from the
+    # notes that are left held
+    if settings.vocal_runs_as_notes and not settings.ignore_audio:
+        from modules.Pitcher.vocal_runs import split_notes_at_vocal_runs
+
+        process_data.midi_segments = split_notes_at_vocal_runs(
+            process_data.midi_segments,
+            process_data.pitched_data,
+            bpm=process_data.media_info.bpm,
+            music_key=process_data.media_info.music_key,
+        )
+
     # Golden notes — mark long held notes the singing stays on, spread over
     # the song, as golden ("*") bonus notes. Runs last, on the final note
     # boundaries/pitches (after refinement and ptAKF refit), so it never gets
@@ -1524,6 +1540,7 @@ def _write_settings_info_file(
                 if settings.ptakf_refit_fill:
                     f.write(f"  Refit fill min run:       {settings.ptakf_refit_fill_min_ms} ms\n")
             f.write(f"  Golden notes:             {settings.golden_notes}\n")
+            f.write(f"  Vocal runs as notes:      {settings.vocal_runs_as_notes}\n")
             f.write("\n")
 
             # Lyrics Lookup
@@ -3255,6 +3272,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.ptakf_refit_fill = False
         elif opt in ("--golden_notes"):
             settings.golden_notes = True
+        elif opt in ("--vocal_runs_as_notes"):
+            settings.vocal_runs_as_notes = True
         elif opt in ("--disable_score"):
             settings.calculate_score = False
     if not any(opt == "--yt_po_token" for opt, _ in opts):
@@ -3397,6 +3416,7 @@ def arg_options():
         "disable_ptakf_refit",
         "disable_ptakf_refit_fill",
         "golden_notes",
+        "vocal_runs_as_notes",
         "disable_score",
     ]
     return long, short

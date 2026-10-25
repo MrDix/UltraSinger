@@ -56,6 +56,7 @@ _DEFAULTS = {
     "syllable_split": False,
     "vocal_gap_fill": False,
     "golden_notes": False,
+    "vocal_runs_as_notes": False,
     "pitch_change_split": True,
     "pitch_notes": False,
     "segmentation_model": "",
