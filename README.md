@@ -417,7 +417,7 @@ _Not all options working now!_
                                 grace notes, neighbour notes, trills) and chart the flip as a note of its
                                 own. Makes the song noticeably harder to sing, and professional charts
                                 rarely notate singing this finely - they mostly keep the one held note.
-                                Disabled by default.
+                                Needs the separated vocal. Disabled by default.
 
 
     [llm lyric correction]
@@ -1007,7 +1007,7 @@ Singers often leave a held note for a moment and come back to it within one syll
 
 **The song becomes noticeably harder to sing.** Professional charts rarely notate singing this finely: at most of these places they keep the one held note, so the option is off by default. Turn it on when the chart should follow the singer as closely as possible.
 
-A flip is a pitch change of at least one semitone that lasts 50 to 400 ms inside a note held for at least 350 ms, with the voice steady on the held pitch before and after it. Jumps of more than 4 semitones are pitch detection errors (mostly octave errors) and are ignored. A quick flip is often sung short of its pitch, so the flipped note goes to the nearest note of the song's key within one semitone of what was measured. Flips are placed on the beat grid and last at least one beat. Freestyle and rap notes are never split. Runs on the final notes, before the golden notes are picked.
+A flip is a pitch change of at least one semitone that lasts 50 to 400 ms inside a note held for at least 350 ms, with the voice steady on the held pitch before and after it. Jumps of more than 4 semitones are pitch detection errors (mostly octave errors) and are ignored. A quick flip is often sung short of its pitch, so the flipped note goes to the nearest note of the song's key within one semitone of what was measured. Flips are placed on the beat grid and last at least one beat. Freestyle and rap notes are never split. Runs on the final notes, before the golden notes are picked, and only on the separated vocal; when the note pitches come from the lead vocal, flips are searched there too, so a backing voice is never charted as one.
 
 ```commandline
 -i XYZ --vocal_runs_as_notes

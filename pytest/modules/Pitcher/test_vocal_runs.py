@@ -163,6 +163,34 @@ class TestScalePitchClasses(unittest.TestCase):
                 self.assertIsNone(scale_pitch_classes(key))
 
 
+class TestFlipPitchTrack(unittest.TestCase):
+    """The pipeline searches flips in the track of the audio the note pitches come from."""
+
+    def _process_data(self):
+        from types import SimpleNamespace
+        paths = SimpleNamespace(vocals_audio_file_path="vocals.wav", whisper_audio_path="mix.wav")
+        return SimpleNamespace(process_data_paths=paths, pitched_data=_flip(-2.0))
+
+    def test_vocal_stem_uses_the_pitch_data(self):
+        from src.UltraSinger import _flip_pitch_track
+        data = self._process_data()
+        self.assertIs(_flip_pitch_track(data, "vocals.wav"), data.pitched_data)
+
+    def test_lead_stem_is_pitched(self):
+        from unittest import mock
+        from src import UltraSinger
+        lead = _flip(-1.0)
+        with mock.patch.object(UltraSinger, "get_pitch_with_file", return_value=lead) as pitch:
+            self.assertIs(UltraSinger._flip_pitch_track(self._process_data(), "lead.wav"), lead)
+        pitch.assert_called_once_with("lead.wav")
+
+    def test_unreadable_lead_stem_gives_no_track(self):
+        from unittest import mock
+        from src import UltraSinger
+        with mock.patch.object(UltraSinger, "get_pitch_with_file", side_effect=OSError("gone")):
+            self.assertIsNone(UltraSinger._flip_pitch_track(self._process_data(), "lead.wav"))
+
+
 class TestWrittenBeat(unittest.TestCase):
     def test_matches_the_writer_grid(self):
         # 120 BPM is written as 30 x 14 = 420 BPM: a beat of 60 / (120 * 14) s

@@ -995,13 +995,15 @@ def run() -> tuple[str, Score, Score]:
     # Vocal runs, riffs and acrobatics as notes — split a held note where the
     # singing briefly flips to another pitch and back, on the final note
     # boundaries and pitches; before the golden notes, which pick from the
-    # notes that are left held
-    if settings.vocal_runs_as_notes and not settings.ignore_audio:
+    # notes that are left held. Only on isolated vocals (in the full mix an
+    # instrument line would pass for a flip), and in the pitch track of the
+    # audio the note pitches come from (a backing voice is no flip)
+    if settings.vocal_runs_as_notes and not settings.ignore_audio and settings.use_separated_vocal:
         from modules.Pitcher.vocal_runs import split_notes_at_vocal_runs
 
         process_data.midi_segments = split_notes_at_vocal_runs(
             process_data.midi_segments,
-            process_data.pitched_data,
+            _flip_pitch_track(process_data, note_pitch_audio),
             bpm=process_data.media_info.bpm,
             music_key=process_data.media_info.music_key,
         )
@@ -1111,6 +1113,22 @@ def run() -> tuple[str, Score, Score]:
     # Print Support
     print_support()
     return ultrastar_file_output, simple_score, accurate_score
+
+
+def _flip_pitch_track(process_data: ProcessData, note_pitch_audio: str) -> PitchedData | None:
+    """Pitch track for the vocal runs pass: the pitch data of the vocal, or of
+    *note_pitch_audio* when the note pitches come from another stem (the lead
+    vocal). None when that stem cannot be pitched: the notes then stay held.
+    """
+    paths = process_data.process_data_paths
+    if note_pitch_audio in (paths.vocals_audio_file_path, paths.whisper_audio_path):
+        return process_data.pitched_data
+    try:
+        return get_pitch_with_file(note_pitch_audio)
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f"{ULTRASINGER_HEAD} Warning: no pitch track of {note_pitch_audio} ({e}); "
+              "vocal runs are not charted as notes")
+        return None
 
 
 def _cover_of_special_version(process_data: ProcessData) -> None:

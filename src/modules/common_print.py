@@ -231,7 +231,7 @@ def print_help() -> None:
                                 grace notes, neighbour notes, trills) and chart the flip as a note of its
                                 own. Makes the song noticeably harder to sing, and professional charts
                                 rarely notate singing this finely - they mostly keep the one held note.
-                                Disabled by default.
+                                Needs the separated vocal. Disabled by default.
 
 
     [llm lyric correction]
