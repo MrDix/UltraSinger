@@ -1005,7 +1005,8 @@ def run() -> tuple[str, Score, Score]:
             process_data.midi_segments,
             _flip_pitch_track(process_data, note_pitch_audio),
             bpm=process_data.media_info.bpm,
-            music_key=process_data.media_info.music_key,
+            # like the other notes, flips only go to the key when notes are quantized to it
+            music_key=process_data.media_info.music_key if settings.quantize_to_key else None,
         )
 
     # Golden notes — mark long held notes the singing stays on, spread over
