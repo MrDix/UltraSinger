@@ -235,6 +235,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Model-based note segmentation: model from repository {settings.segmentation_model_repo}')}")
     if settings.golden_notes:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Golden note generation enabled')}")
+    if settings.vocal_runs_as_notes:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Vocal runs, riffs and acrobatics as notes (harder)')}")
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
@@ -990,6 +992,23 @@ def run() -> tuple[str, Score, Score]:
             pitch_frames=pitch_frames,
         )
 
+    # Vocal runs, riffs and acrobatics as notes — split a held note where the
+    # singing briefly flips to another pitch and back, on the final note
+    # boundaries and pitches; before the golden notes, which pick from the
+    # notes that are left held. Only on isolated vocals (in the full mix an
+    # instrument line would pass for a flip), and in the pitch track of the
+    # audio the note pitches come from (a backing voice is no flip)
+    if settings.vocal_runs_as_notes and not settings.ignore_audio and settings.use_separated_vocal:
+        from modules.Pitcher.vocal_runs import split_notes_at_vocal_runs
+
+        process_data.midi_segments = split_notes_at_vocal_runs(
+            process_data.midi_segments,
+            _flip_pitch_track(process_data, note_pitch_audio),
+            bpm=process_data.media_info.bpm,
+            # like the other notes, flips only go to the key when notes are quantized to it
+            music_key=process_data.media_info.music_key if settings.quantize_to_key else None,
+        )
+
     # Golden notes — mark long held notes the singing stays on, spread over
     # the song, as golden ("*") bonus notes. Runs last, on the final note
     # boundaries/pitches (after refinement and ptAKF refit), so it never gets
@@ -1095,6 +1114,22 @@ def run() -> tuple[str, Score, Score]:
     # Print Support
     print_support()
     return ultrastar_file_output, simple_score, accurate_score
+
+
+def _flip_pitch_track(process_data: ProcessData, note_pitch_audio: str) -> PitchedData | None:
+    """Pitch track for the vocal runs pass: the pitch data of the vocal, or of
+    *note_pitch_audio* when the note pitches come from another stem (the lead
+    vocal). None when that stem cannot be pitched: the notes then stay held.
+    """
+    paths = process_data.process_data_paths
+    if note_pitch_audio in (paths.vocals_audio_file_path, paths.whisper_audio_path):
+        return process_data.pitched_data
+    try:
+        return get_pitch_with_file(note_pitch_audio)
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f"{ULTRASINGER_HEAD} Warning: no pitch track of {note_pitch_audio} ({e}); "
+              "vocal runs are not charted as notes")
+        return None
 
 
 def _cover_of_special_version(process_data: ProcessData) -> None:
@@ -1524,6 +1559,7 @@ def _write_settings_info_file(
                 if settings.ptakf_refit_fill:
                     f.write(f"  Refit fill min run:       {settings.ptakf_refit_fill_min_ms} ms\n")
             f.write(f"  Golden notes:             {settings.golden_notes}\n")
+            f.write(f"  Vocal runs as notes:      {settings.vocal_runs_as_notes}\n")
             f.write("\n")
 
             # Lyrics Lookup
@@ -3255,6 +3291,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.ptakf_refit_fill = False
         elif opt in ("--golden_notes"):
             settings.golden_notes = True
+        elif opt in ("--vocal_runs_as_notes"):
+            settings.vocal_runs_as_notes = True
         elif opt in ("--disable_score"):
             settings.calculate_score = False
     if not any(opt == "--yt_po_token" for opt, _ in opts):
@@ -3397,6 +3435,7 @@ def arg_options():
         "disable_ptakf_refit",
         "disable_ptakf_refit_fill",
         "golden_notes",
+        "vocal_runs_as_notes",
         "disable_score",
     ]
     return long, short

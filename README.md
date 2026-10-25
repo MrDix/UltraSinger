@@ -72,6 +72,7 @@ This will help me a lot to keep this project alive and improve it.
       - [Syllable-Level Note Splitting](#syllable-level-note-splitting---syllable_split)
       - [Vocal Gap Fill](#vocal-gap-fill---vocal_gap_fill)
       - [Golden Notes](#golden-notes---golden_notes)
+      - [Vocal Runs, Riffs and Acrobatics as Notes](#vocal-runs-riffs-and-acrobatics-as-notes---vocal_runs_as_notes)
     - [🏆 Ultrastar Score Calculation](#-ultrastar-score-calculation)
     - [📟 Use GPU](#-use-gpu)
       - [Considerations for Windows users](#considerations-for-windows-users)
@@ -409,6 +410,14 @@ _Not all options working now!_
                                 at least 200ms are eligible; freestyle and rap notes are never marked. At
                                 most 15% of all scorable notes become golden (short songs), and at most 3
                                 in each tenth of the song, so they do not pile up in one section.
+
+    [vocal runs]
+    --vocal_runs_as_notes       Vocal runs, riffs and acrobatics as notes (harder): split a held note where
+                                the singing briefly flips to another pitch and comes back (mordents, turns,
+                                grace notes, neighbour notes, trills) and chart the flip as a note of its
+                                own. Makes the song noticeably harder to sing, and professional charts
+                                rarely notate singing this finely - they mostly keep the one held note.
+                                Needs the separated vocal. Disabled by default.
 
 
     [llm lyric correction]
@@ -991,6 +1000,18 @@ Hand-made professional charts mark only a handful of golden notes per song (typi
 ```
 
 Disabled by default, since it changes the in-game score distribution.
+
+#### Vocal Runs, Riffs and Acrobatics as Notes (`--vocal_runs_as_notes`)
+
+Singers often leave a held note for a moment and come back to it within one syllable: a quick flip a tone up or down. Depending on the style this is called a mordent, a turn, a grace note, a neighbour note, a trill, or part of a vocal run or riff. UltraSinger charts such a syllable as one held note. With this option the held note is split there, and the flip becomes a note of its own (`~`) between two pieces of the held note.
+
+**The song becomes noticeably harder to sing.** Professional charts rarely notate singing this finely: at most of these places they keep the one held note, so the option is off by default. Turn it on when the chart should follow the singer as closely as possible.
+
+A flip is a pitch change of at least one semitone that lasts 50 to 400 ms inside a note held for at least 350 ms, with the voice steady on the held pitch before and after it. Jumps of more than 4 semitones are pitch detection errors (mostly octave errors) and are ignored. A quick flip is often sung short of its pitch, so the flipped note goes to the nearest note of the song's key within one semitone of what was measured (unless `--disable_quantization` is set). Flips are placed on the beat grid and last at least one beat. Freestyle and rap notes are never split. Runs on the final notes, before the golden notes are picked, and only on the separated vocal; when the note pitches come from the lead vocal, flips are searched there too, so a backing voice is never charted as one.
+
+```commandline
+-i XYZ --vocal_runs_as_notes
+```
 
 ### 🏆 Ultrastar Score Calculation
 

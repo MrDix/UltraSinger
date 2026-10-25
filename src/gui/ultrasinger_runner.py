@@ -590,6 +590,8 @@ class UltraSingerRunner(QObject):
             args.append("--disable_lead_vocal_pitch")
         if config.get("golden_notes"):
             args.append("--golden_notes")
+        if config.get("vocal_runs_as_notes"):
+            args.append("--vocal_runs_as_notes")
 
         # LLM correction
         if config.get("llm_correct"):
