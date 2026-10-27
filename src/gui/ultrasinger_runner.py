@@ -593,7 +593,10 @@ class UltraSingerRunner(QObject):
         if config.get("vocal_runs_as_notes"):
             args.append("--vocal_runs_as_notes")
             threshold = config.get("vocal_runs_threshold", 1.0)
-            if threshold != 1.0:
+            if not isinstance(threshold, (int, float)) or not 0.3 <= threshold <= 4.0:
+                # e.g. from a queue file: the CLI would stop instead of converting
+                logger.warning("Vocal runs threshold %r is not 0.3 to 4.0 semitones; using 1.0", threshold)
+            elif threshold != 1.0:
                 args.extend(["--vocal_runs_threshold", str(threshold)])
 
         # LLM correction

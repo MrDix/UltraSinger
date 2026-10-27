@@ -1130,7 +1130,7 @@ def _flip_pitch_track(process_data: ProcessData, note_pitch_audio: str) -> Pitch
     try:
         cache_path = os.path.join(
             cache_folder, f"swiftf0_stem_{conversion_cache.content_key(note_pitch_audio)}.json")
-        if check_file_exists(cache_path):
+        if not settings.skip_cache_pitch_detection and check_file_exists(cache_path):
             with open(cache_path, encoding=FILE_ENCODING) as file:
                 return PitchedData.from_json(file.read())
         pitched_data = get_pitch_with_file(note_pitch_audio)

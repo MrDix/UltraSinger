@@ -192,6 +192,15 @@ class TestFlipPitchTrack(unittest.TestCase):
         self.assertIs(first, stem_track)
         self.assertEqual((again.times, again.frequencies), (stem_track.times, stem_track.frequencies))
 
+    def test_skipping_the_pitch_cache_pitches_the_stem_again(self):
+        from unittest import mock
+        from src import UltraSinger
+        with mock.patch.object(UltraSinger, "get_pitch_with_file", return_value=_flip(-2.0)) as pitch:
+            UltraSinger._flip_pitch_track(self._process_data(), self.stem)
+            with mock.patch.object(UltraSinger.settings, "skip_cache_pitch_detection", True):
+                UltraSinger._flip_pitch_track(self._process_data(), self.stem)
+        self.assertEqual(pitch.call_count, 2)
+
     def test_unreadable_stem_gives_no_track(self):
         from unittest import mock
         from src import UltraSinger

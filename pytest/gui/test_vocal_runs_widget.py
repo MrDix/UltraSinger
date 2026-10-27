@@ -63,6 +63,15 @@ class TestVocalRunsSetting(unittest.TestCase):
         form._vocal_runs_as_notes.setChecked(True)
         self.assertTrue(form._vocal_runs_threshold.isEnabled())
 
+    def test_a_queued_threshold_out_of_range_runs_with_the_default(self):
+        # A queue file can bring any number; the CLI would stop instead of converting
+        for value in (5, 0.1, "x"):
+            with self.subTest(value=value):
+                args = UltraSingerRunner().build_args(
+                    {**_DEFAULTS, "vocal_runs_as_notes": True, "vocal_runs_threshold": value}, "test.mp3")
+                self.assertIn("--vocal_runs_as_notes", args)
+                self.assertNotIn("--vocal_runs_threshold", args)
+
     def test_threshold_out_of_range_is_an_error(self):
         for value in ("0.1", "5"):
             with self.subTest(value=value), self.assertRaises(SystemExit):
