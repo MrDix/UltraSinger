@@ -37,15 +37,21 @@ class _MemoryKeyring:
 
 @pytest.fixture(autouse=True)
 def _private_settings(tmp_path_factory, monkeypatch):
-    try:
-        from src.gui import config as config_module
-        from src.gui import secrets as secrets_module
-    except ImportError:  # without the GUI dependencies
-        return
+    import importlib
+
     folder = tmp_path_factory.mktemp("settings")
-    monkeypatch.setattr(config_module, "_CONFIG_DIR", folder)
-    monkeypatch.setattr(config_module, "_CONFIG_FILE", folder / "config.json")
-    # The window deletes an exported cookie file while signing in is off
-    monkeypatch.setitem(config_module._DEFAULTS, "cookie_file", str(folder / "cookies.txt"))
-    monkeypatch.setattr(secrets_module, "_keyring_mod", _MemoryKeyring())
-    monkeypatch.setattr(secrets_module, "_keyring_available", True)
+    keyring = _MemoryKeyring()
+    # Tests import the GUI both as src.gui and (src is on the path) as gui:
+    # two copies of each module, both get redirected
+    for package in ("src.gui", "gui"):
+        try:
+            config_module = importlib.import_module(f"{package}.config")
+            secrets_module = importlib.import_module(f"{package}.secrets")
+        except ImportError:  # without the GUI dependencies
+            continue
+        monkeypatch.setattr(config_module, "_CONFIG_DIR", folder)
+        monkeypatch.setattr(config_module, "_CONFIG_FILE", folder / "config.json")
+        # The window deletes an exported cookie file while signing in is off
+        monkeypatch.setitem(config_module._DEFAULTS, "cookie_file", str(folder / "cookies.txt"))
+        monkeypatch.setattr(secrets_module, "_keyring_mod", keyring)
+        monkeypatch.setattr(secrets_module, "_keyring_available", True)
