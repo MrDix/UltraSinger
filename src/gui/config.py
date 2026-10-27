@@ -57,6 +57,7 @@ _DEFAULTS = {
     "vocal_gap_fill": False,
     "golden_notes": False,
     "vocal_runs_as_notes": False,
+    "vocal_runs_threshold": 1.0,
     "pitch_change_split": True,
     "pitch_notes": False,
     "segmentation_model": "",

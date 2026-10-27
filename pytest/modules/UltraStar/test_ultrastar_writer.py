@@ -11,7 +11,7 @@ from src.modules.Ultrastar.ultrastar_writer import (
     create_ultrastar_txt, silence_threshold, calculate_silent_beat_length,
     format_separated_string, add_score_to_ultrastar_txt,
     add_game_score_to_ultrastar_txt,
-    _compute_linebreak_indices, _enforce_max_line_length, note_beats,
+    _compute_linebreak_indices, _enforce_max_line_length, _merge_short_lines, note_beats,
     linebreak_beat,
 )
 from src.modules.Midi.MidiSegment import MidiSegment
@@ -615,6 +615,67 @@ class TestComputeLinebreakIndices(unittest.TestCase):
         segments = _make_line(["one", "two", "three"])
         breaks = _compute_linebreak_indices(segments, silence_split_duration=None)
         self.assertEqual(breaks, set())
+
+
+class TestMergeShortLines(unittest.TestCase):
+    """A line of a word or two that would flash by joins a neighbouring line."""
+
+    @staticmethod
+    def _lines(*lines, pause_after=None):
+        """Segments of lines of words, 0.3 s each; ``pause_after`` maps line index -> pause in s."""
+        segments, breaks, t = [], set(), 0.0
+        for k, words in enumerate(lines):
+            for w in words:
+                segments.append(_seg(w + " ", t, t + 0.3))
+                t += 0.3
+            breaks.add(len(segments) - 1)
+            t += (pause_after or {}).get(k, 0.05)
+        breaks.discard(len(segments) - 1)
+        return segments, breaks
+
+    @staticmethod
+    def _at_next_start(segments):
+        # A break when the next line starts
+        return lambda i: segments[i + 1].start if i + 1 < len(segments) else segments[i].end
+
+    def test_a_short_line_joins_the_neighbour_it_is_sung_closer_to(self):
+        segments, breaks = self._lines(["don't", "ever", "leave", "me"], ["falling"], ["I", "know", "you"],
+                                       pause_after={1: 0.4})
+        _merge_short_lines(segments, breaks, self._at_next_start(segments))
+        self.assertEqual(breaks, {4})  # "falling" stays with the line before it
+
+    def test_the_other_neighbour_when_the_closer_one_gets_too_long(self):
+        segments, breaks = self._lines(["a" * 20, "b" * 20], ["falling"], ["I", "know", "you"],
+                                       pause_after={1: 0.4})
+        _merge_short_lines(segments, breaks, self._at_next_start(segments))
+        self.assertEqual(breaks, {1})
+
+    def test_a_line_shown_long_enough_stays(self):
+        segments, breaks = self._lines(["don't", "ever"], ["falling"], ["I", "know"], pause_after={1: 1.0})
+        _merge_short_lines(segments, breaks, self._at_next_start(segments))
+        self.assertEqual(breaks, {1, 2})
+
+    def test_a_line_of_three_words_stays(self):
+        segments, breaks = self._lines(["don't", "ever"], ["oh", "oh", "oh"], ["I", "know"])
+        _merge_short_lines(segments, breaks, lambda i: segments[i].end)
+        self.assertEqual(breaks, {1, 4})
+
+    def test_first_and_last_lines_stay(self):
+        segments, breaks = self._lines(["yeah"], ["I", "know", "you", "hear"], ["oh"])
+        _merge_short_lines(segments, breaks, self._at_next_start(segments))
+        self.assertEqual(breaks, {0, 4})
+
+    def test_the_written_chart_has_no_line_that_flashes_by(self):
+        segments, _ = self._lines(["don't", "ever", "leave", "me"], ["falling"], ["I", "know", "you"])
+        for k in (3, 4):
+            segments[k].line_break_after = True
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "song.txt")
+            create_ultrastar_txt(segments, path, UltrastarTxtValue(), 120.0)
+            with open(path, encoding="utf-8") as f:
+                body = [line for line in f.read().splitlines() if line[:1] in (":", "-")]
+        self.assertEqual(sum(line.startswith("-") for line in body), 1)
+        self.assertEqual(body.index(next(line for line in body if line.startswith("-"))), 5)
 
 
 class TestEnforceMaxLineLength(unittest.TestCase):

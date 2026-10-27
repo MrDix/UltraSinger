@@ -231,7 +231,10 @@ def print_help() -> None:
                                 grace notes, neighbour notes, trills) and chart the flip as a note of its
                                 own. Makes the song noticeably harder to sing, and professional charts
                                 rarely notate singing this finely - they mostly keep the one held note.
-                                Needs the separated vocal. Disabled by default.
+                                Unlike --chart_style score, every other note stays as it is. Needs the
+                                separated vocal. Disabled by default.
+    --vocal_runs_threshold      Semitones the singing has to leave a held note by to count as a flip
+                                (0.3 to 4.0; lower finds more, also smaller ones) >> ((default) is 1.0)
 
 
     [llm lyric correction]

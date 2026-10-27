@@ -592,6 +592,9 @@ class UltraSingerRunner(QObject):
             args.append("--golden_notes")
         if config.get("vocal_runs_as_notes"):
             args.append("--vocal_runs_as_notes")
+            threshold = config.get("vocal_runs_threshold", 1.0)
+            if threshold != 1.0:
+                args.extend(["--vocal_runs_threshold", str(threshold)])
 
         # LLM correction
         if config.get("llm_correct"):

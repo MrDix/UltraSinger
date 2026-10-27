@@ -424,9 +424,41 @@ class ConversionSettingsForm(QWidget):
                      "produces many short notes that trace vibrato and "
                      "ornaments (harder to sing). Note: singable charts report "
                      "a lower game score (~the level professional charts reach) "
-                     "— that is expected, not a defect.",
+                     "— that is expected, not a defect. To keep a singable chart "
+                     "but follow a singer's quick flips between two notes, turn on "
+                     "'Vocal runs, riffs and acrobatics as notes' below.",
                      reset_callback=lambda: self._chart_style.setCurrentText(
                          _DEFAULTS.get("chart_style", "singable")))
+
+        # Vocal runs, riffs and acrobatics as notes (opt-in, harder)
+        self._vocal_runs_as_notes = ToggleSwitch(
+            checked=self._config.get("vocal_runs_as_notes", False)
+        )
+        card.add_toggle_row("Vocal runs, riffs and acrobatics as notes (harder)",
+                           self._vocal_runs_as_notes,
+                           "Split a held note where the singer briefly flips to another "
+                           "pitch and comes back (mordents, turns, grace notes, neighbour "
+                           "notes, trills) and chart the flip as a note of its own. Makes "
+                           "the song noticeably harder to sing. Professional charts rarely "
+                           "notate singing this finely and mostly keep the one held note. "
+                           "Unlike the 'score' chart style, every other note stays as it is.",
+                           reset_callback=lambda: self._vocal_runs_as_notes.setChecked(
+                               _DEFAULTS["vocal_runs_as_notes"]))
+
+        self._vocal_runs_threshold = _NoScrollDoubleSpinBox()
+        self._vocal_runs_threshold.setRange(0.3, 4.0)
+        self._vocal_runs_threshold.setSingleStep(0.1)
+        self._vocal_runs_threshold.setDecimals(1)
+        self._vocal_runs_threshold.setSuffix(" st")
+        self._vocal_runs_threshold.setValue(self._config.get("vocal_runs_threshold", 1.0))
+        card.add_row("Vocal Runs Threshold", self._vocal_runs_threshold,
+                     "How far (in semitones) the singing has to leave a held note to "
+                     "count as a flip. Lower finds more flips, also smaller and less "
+                     "certain ones; higher only clear ones.",
+                     reset_callback=lambda: self._vocal_runs_threshold.setValue(
+                         _DEFAULTS.get("vocal_runs_threshold", 1.0)))
+        self._vocal_runs_threshold.setEnabled(self._vocal_runs_as_notes.isChecked())
+        self._vocal_runs_as_notes.toggled.connect(self._vocal_runs_threshold.setEnabled)
 
         # Hyphenation
         self._hyphenation = ToggleSwitch(checked=self._config.get("hyphenation", True))
@@ -863,19 +895,6 @@ class ConversionSettingsForm(QWidget):
                            "in-game score distribution.",
                            reset_callback=lambda: self._golden_notes.setChecked(
                                _DEFAULTS["golden_notes"]))
-
-        self._vocal_runs_as_notes = ToggleSwitch(
-            checked=self._config.get("vocal_runs_as_notes", False)
-        )
-        card.add_toggle_row("Vocal runs, riffs and acrobatics as notes (harder)",
-                           self._vocal_runs_as_notes,
-                           "Split a held note where the singer briefly flips to another "
-                           "pitch and comes back (mordents, turns, grace notes, neighbour "
-                           "notes, trills) and chart the flip as a note of its own. Makes "
-                           "the song noticeably harder to sing. Professional charts rarely "
-                           "notate singing this finely and mostly keep the one held note.",
-                           reset_callback=lambda: self._vocal_runs_as_notes.setChecked(
-                               _DEFAULTS["vocal_runs_as_notes"]))
 
         self._keep_numbers = ToggleSwitch(
             checked=self._config.get("keep_numbers", False)
@@ -1804,6 +1823,7 @@ class ConversionSettingsForm(QWidget):
             "vocal_gap_fill": self._vocal_gap_fill.isChecked(),
             "golden_notes": self._golden_notes.isChecked(),
             "vocal_runs_as_notes": self._vocal_runs_as_notes.isChecked(),
+            "vocal_runs_threshold": self._vocal_runs_threshold.value(),
             "pitch_change_split": self._pitch_change_split.isChecked(),
             "pitch_notes": self._pitch_notes.isChecked(),
             "segmentation_model": self._segmentation_model.text().strip(),

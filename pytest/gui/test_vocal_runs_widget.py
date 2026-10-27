@@ -45,3 +45,26 @@ class TestVocalRunsSetting(unittest.TestCase):
         self.assertIn("--vocal_runs_as_notes", args)
         self.assertTrue(init_settings(_cli(args)).vocal_runs_as_notes)
         init_settings(["-i", "test.mp3"])  # reset the shared settings
+
+    def test_threshold_round_trip(self):
+        form = ConversionSettingsForm({"vocal_runs_as_notes": True, "vocal_runs_threshold": 0.6})
+        config = form.collect_config()
+        self.assertEqual(config["vocal_runs_threshold"], 0.6)
+        args = UltraSingerRunner().build_args(config, "test.mp3")
+        self.assertEqual(args[args.index("--vocal_runs_threshold") + 1], "0.6")
+        self.assertEqual(init_settings(_cli(args)).vocal_runs_threshold, 0.6)
+        init_settings(["-i", "test.mp3"])  # reset the shared settings
+
+    def test_threshold_only_with_the_switch(self):
+        form = ConversionSettingsForm({"vocal_runs_as_notes": False, "vocal_runs_threshold": 0.6})
+        self.assertFalse(form._vocal_runs_threshold.isEnabled())
+        args = UltraSingerRunner().build_args(form.collect_config(), "test.mp3")
+        self.assertNotIn("--vocal_runs_threshold", args)
+        form._vocal_runs_as_notes.setChecked(True)
+        self.assertTrue(form._vocal_runs_threshold.isEnabled())
+
+    def test_threshold_out_of_range_is_an_error(self):
+        for value in ("0.1", "5"):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                init_settings(["-i", "test.mp3", "--vocal_runs_threshold", value])
+        init_settings(["-i", "test.mp3"])  # reset the shared settings

@@ -417,7 +417,10 @@ _Not all options working now!_
                                 grace notes, neighbour notes, trills) and chart the flip as a note of its
                                 own. Makes the song noticeably harder to sing, and professional charts
                                 rarely notate singing this finely - they mostly keep the one held note.
-                                Needs the separated vocal. Disabled by default.
+                                Unlike --chart_style score, every other note stays as it is. Needs the
+                                separated vocal. Disabled by default.
+    --vocal_runs_threshold      Semitones the singing has to leave a held note by to count as a flip
+                                (0.3 to 4.0; lower finds more, also smaller ones) >> ((default) is 1.0)
 
 
     [llm lyric correction]
@@ -717,6 +720,8 @@ You can choose between different format versions. The default is `1.2.0`.
 - `usdx`, as the UltraStar Deluxe editor does it: 2 beats after the line (1 beat in a pause of 2 beats, at the next line's start in shorter pauses).
 - `after_last_note`: right after the line's last note, so the next line is shown as early as possible.
 
+Whatever the timing, a line of one or two words that would be on screen for less than a second (a short call like "Falling" between two lines) joins the neighbouring line it is sung closer to, or the other one when the joined line would get longer than 45 characters. Professional charts have short lines too, but at the places where such a line is joined, they mostly have no line break at all.
+
 ```commandline
 -i XYZ --linebreak_timing after_last_note
 ```
@@ -1005,9 +1010,9 @@ Disabled by default, since it changes the in-game score distribution.
 
 Singers often leave a held note for a moment and come back to it within one syllable: a quick flip a tone up or down. Depending on the style this is called a mordent, a turn, a grace note, a neighbour note, a trill, or part of a vocal run or riff. UltraSinger charts such a syllable as one held note. With this option the held note is split there, and the flip becomes a note of its own (`~`) between two pieces of the held note.
 
-**The song becomes noticeably harder to sing.** Professional charts rarely notate singing this finely: at most of these places they keep the one held note, so the option is off by default. Turn it on when the chart should follow the singer as closely as possible.
+**The song becomes noticeably harder to sing.** Professional charts rarely notate singing this finely: at most of these places they keep the one held note, so the option is off by default. Turn it on when the chart should follow the singer as closely as possible. Unlike the `score` [chart style](#chart-style-singable-vs-score---chart_style-gui-settings--post-processing--chart-style), which rebuilds every note from the recording, it keeps the singable chart and only adds these flips.
 
-A flip is a pitch change of at least one semitone that lasts 50 to 400 ms inside a note held for at least 350 ms, with the voice steady on the held pitch before and after it. Jumps of more than 4 semitones are pitch detection errors (mostly octave errors) and are ignored. A quick flip is often sung short of its pitch, so the flipped note goes to the nearest note of the song's key within one semitone of what was measured (unless `--disable_quantization` is set). Flips are placed on the beat grid and last at least one beat. Freestyle and rap notes are never split. Runs on the final notes, before the golden notes are picked, and only on the separated vocal; when the note pitches come from the lead vocal, flips are searched there too, so a backing voice is never charted as one.
+A flip is a pitch change of at least `--vocal_runs_threshold` semitones (default 1.0, GUI: **Vocal Runs Threshold**; lower finds more and smaller flips) that lasts 50 to 400 ms inside a note held for at least 350 ms, with the voice steady on the held pitch before and after it. Jumps of more than 4 semitones are pitch detection errors (mostly octave errors) and are ignored. A quick flip is often sung short of its pitch, so the flipped note goes to the nearest note of the song's key within one semitone of what was measured (unless `--disable_quantization` is set). Flips are placed on the beat grid and last at least one beat. Freestyle and rap notes are never split. Runs on the final notes, before the golden notes are picked, and only on the separated vocal. Flips are measured in the pitch of the separated vocal stem itself (the lead vocal when the note pitches come from it, so a backing voice is never charted as one), not in the denoised vocal the notes are made from: its noise reduction can smear a quick whole-tone flip to half a tone or less.
 
 ```commandline
 -i XYZ --vocal_runs_as_notes
