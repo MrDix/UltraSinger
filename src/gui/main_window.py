@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
@@ -537,6 +538,12 @@ class MainWindow(QMainWindow):
         later = box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
         skip = box.addButton("Skip This Version", QMessageBox.ButtonRole.DestructiveRole)
         box.setDefaultButton(update or later)
+        # A message box keeps to a maximum width and squeezes its buttons below
+        # the width their text and the style's padding need; with a minimum
+        # width each the box grows instead
+        for button in box.findChildren(QPushButton):
+            button.ensurePolished()
+            button.setMinimumWidth(button.sizeHint().width())
         box.exec()
         clicked = box.clickedButton()
         if clicked is skip:

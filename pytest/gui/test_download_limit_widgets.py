@@ -359,6 +359,7 @@ def test_the_window_gives_the_browser_tab_its_saved_settings(tmp_path, monkeypat
     from src.gui.widgets import llm_provider_list
 
     monkeypatch.setattr(config_module, "_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_module, "_CONFIG_FILE", tmp_path / "config.json")
     monkeypatch.setattr(llm_provider_list, "_shutting_down", False)
     with patch.object(main_window, "BrowserTab", _FakeBrowserTab), \
             patch.object(main_window.MainWindow, "_start_potoken_provider", lambda self: None), \
