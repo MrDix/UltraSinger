@@ -639,34 +639,34 @@ class TestMergeShortLines(unittest.TestCase):
         return lambda i: segments[i + 1].start if i + 1 < len(segments) else segments[i].end
 
     def test_a_short_line_joins_the_neighbour_it_is_sung_closer_to(self):
-        segments, breaks = self._lines(["don't", "ever", "leave", "me"], ["falling"], ["I", "know", "you"],
+        segments, breaks = self._lines(["one", "two", "three", "four"], ["oh"], ["and", "so", "on"],
                                        pause_after={1: 0.4})
         _merge_short_lines(segments, breaks, self._at_next_start(segments))
-        self.assertEqual(breaks, {4})  # "falling" stays with the line before it
+        self.assertEqual(breaks, {4})  # "oh" stays with the line before it
 
     def test_the_other_neighbour_when_the_closer_one_gets_too_long(self):
-        segments, breaks = self._lines(["a" * 20, "b" * 20], ["falling"], ["I", "know", "you"],
+        segments, breaks = self._lines(["a" * 22, "b" * 22], ["oh"], ["and", "so", "on"],
                                        pause_after={1: 0.4})
         _merge_short_lines(segments, breaks, self._at_next_start(segments))
         self.assertEqual(breaks, {1})
 
     def test_a_line_shown_long_enough_stays(self):
-        segments, breaks = self._lines(["don't", "ever"], ["falling"], ["I", "know"], pause_after={1: 1.0})
+        segments, breaks = self._lines(["one", "two"], ["oh"], ["and", "so"], pause_after={1: 1.0})
         _merge_short_lines(segments, breaks, self._at_next_start(segments))
         self.assertEqual(breaks, {1, 2})
 
     def test_a_line_of_three_words_stays(self):
-        segments, breaks = self._lines(["don't", "ever"], ["oh", "oh", "oh"], ["I", "know"])
+        segments, breaks = self._lines(["one", "two"], ["oh", "oh", "oh"], ["and", "so"])
         _merge_short_lines(segments, breaks, lambda i: segments[i].end)
         self.assertEqual(breaks, {1, 4})
 
     def test_first_and_last_lines_stay(self):
-        segments, breaks = self._lines(["yeah"], ["I", "know", "you", "hear"], ["oh"])
+        segments, breaks = self._lines(["yeah"], ["and", "so", "on", "again"], ["oh"])
         _merge_short_lines(segments, breaks, self._at_next_start(segments))
         self.assertEqual(breaks, {0, 4})
 
     def test_the_written_chart_has_no_line_that_flashes_by(self):
-        segments, _ = self._lines(["don't", "ever", "leave", "me"], ["falling"], ["I", "know", "you"])
+        segments, _ = self._lines(["one", "two", "three", "four"], ["oh"], ["and", "so", "on"])
         for k in (3, 4):
             segments[k].line_break_after = True
         with tempfile.TemporaryDirectory() as folder:

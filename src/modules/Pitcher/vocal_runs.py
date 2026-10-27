@@ -84,8 +84,10 @@ def find_flips(times: np.ndarray, midi: np.ndarray,
     held = float(np.median(smooth))
     deviation = smooth - held
     hop = float(np.median(np.diff(times)))
-    # Frames on the held pitch stay closer to it than a flip starts
-    steady = min(STEADY_SEMITONES, threshold)
+    # Frames on the held pitch (vibrato included) stay within STEADY_SEMITONES
+    # of it, whatever the threshold: a lower one must not lose the flips of a
+    # note sung with vibrato
+    steady = STEADY_SEMITONES
     flips = []
     i, n = 0, len(smooth)
     while i < n:

@@ -39,5 +39,7 @@ def _private_settings(tmp_path_factory, monkeypatch):
     folder = tmp_path_factory.mktemp("settings")
     monkeypatch.setattr(config_module, "_CONFIG_DIR", folder)
     monkeypatch.setattr(config_module, "_CONFIG_FILE", folder / "config.json")
+    # The window deletes an exported cookie file while signing in is off
+    monkeypatch.setitem(config_module._DEFAULTS, "cookie_file", str(folder / "cookies.txt"))
     monkeypatch.setattr(secrets_module, "_keyring_mod", _MemoryKeyring())
     monkeypatch.setattr(secrets_module, "_keyring_available", True)

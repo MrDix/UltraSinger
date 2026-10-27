@@ -32,7 +32,7 @@ def _track(*spans, confidence=0.95):
     return PitchedData(times, freqs, conf)
 
 
-def _held(word="leave ", start=0.0, end=1.0, note_type=":"):
+def _held(word="hold ", start=0.0, end=1.0, note_type=":"):
     return MidiSegment(note="C5", start=start, end=end, word=word, note_type=note_type)
 
 
@@ -52,12 +52,12 @@ class TestSplitNotesAtVocalRuns(unittest.TestCase):
         segment = _held()
         segment.line_break_after = True
         result = split_notes_at_vocal_runs([segment], _flip(-1.3), bpm=120.0, music_key="D minor")
-        self.assertEqual(_shape(result), [("C5", "leave"), ("A♯4", "~"), ("C5", "~ ")])
+        self.assertEqual(_shape(result), [("C5", "hold"), ("A♯4", "~"), ("C5", "~ ")])
         self.assertEqual([seg.line_break_after for seg in result], [False, False, True])
 
     def test_without_key_the_rounded_deviation(self):
         result = split_notes_at_vocal_runs([_held()], _flip(-1.3), bpm=120.0)
-        self.assertEqual(_shape(result), [("C5", "leave"), ("B4", "~"), ("C5", "~ ")])
+        self.assertEqual(_shape(result), [("C5", "hold"), ("B4", "~"), ("C5", "~ ")])
 
     def test_flip_up(self):
         result = split_notes_at_vocal_runs([_held()], _flip(2.0), bpm=120.0, music_key="C major")
@@ -76,7 +76,7 @@ class TestSplitNotesAtVocalRuns(unittest.TestCase):
 
     def test_octave_error_is_not_a_flip(self):
         result = split_notes_at_vocal_runs([_held()], _flip(12.0), bpm=120.0)
-        self.assertEqual(_shape(result), [("C5", "leave ")])
+        self.assertEqual(_shape(result), [("C5", "hold ")])
 
     def test_too_short_or_too_long_is_not_a_flip(self):
         for start, end in ((0.4, 0.43), (0.2, 0.7)):
@@ -119,7 +119,7 @@ class TestSplitNotesAtVocalRuns(unittest.TestCase):
         segments = [segment]
         split_notes_at_vocal_runs(segments, _flip(-2.0), bpm=120.0)
         self.assertEqual(segments, [segment])
-        self.assertEqual((segment.word, segment.end), ("leave ", 1.0))
+        self.assertEqual((segment.word, segment.end), ("hold ", 1.0))
 
     def test_no_pitch_track(self):
         segments = [_held()]
@@ -127,10 +127,10 @@ class TestSplitNotesAtVocalRuns(unittest.TestCase):
         self.assertIs(split_notes_at_vocal_runs(segments, PitchedData([], [], []), bpm=120.0), segments)
 
     def test_later_notes_are_kept_in_order(self):
-        segments = [_held(), _held(word="me ", start=1.0, end=1.2)]
+        segments = [_held(), _held(word="on ", start=1.0, end=1.2)]
         track = _track((0.0, 0.4, 0.0), (0.4, 0.5, -2.0), (0.5, 1.2, 0.0))
         result = split_notes_at_vocal_runs(segments, track, bpm=120.0)
-        self.assertEqual([seg.word for seg in result], ["leave", "~", "~ ", "me "])
+        self.assertEqual([seg.word for seg in result], ["hold", "~", "~ ", "on "])
 
 
 class TestFlipInterval(unittest.TestCase):
@@ -204,7 +204,19 @@ class TestThreshold(unittest.TestCase):
         track = _flip(-0.7)
         self.assertEqual(len(split_notes_at_vocal_runs([_held()], track, bpm=120.0)), 1)
         result = split_notes_at_vocal_runs([_held()], track, bpm=120.0, threshold=0.5)
-        self.assertEqual(_shape(result), [("C5", "leave"), ("B4", "~"), ("C5", "~ ")])
+        self.assertEqual(_shape(result), [("C5", "hold"), ("B4", "~"), ("C5", "~ ")])
+
+    def test_a_lower_threshold_keeps_the_flips_of_a_note_with_vibrato(self):
+        # +-0.6 semitone vibrato at 6 Hz around C5, a 2-semitone flip of 100 ms
+        import numpy as np
+        times = np.round(np.arange(0.0, 1.0, 0.01), 3)
+        semitones = 0.6 * np.sin(2 * np.pi * 6 * times)
+        semitones[(times >= 0.4) & (times < 0.5)] = -2.0
+        track = PitchedData(list(times), [_hz(x) for x in semitones], [0.95] * len(times))
+        for threshold in (1.0, 0.7, 0.5):
+            with self.subTest(threshold=threshold):
+                result = split_notes_at_vocal_runs([_held()], track, bpm=120.0, threshold=threshold)
+                self.assertIn("A♯4", [seg.note for seg in result])
 
     def test_a_higher_threshold_keeps_smaller_flips_held(self):
         self.assertEqual(len(split_notes_at_vocal_runs([_held()], _flip(-1.3), bpm=120.0, threshold=1.5)), 1)

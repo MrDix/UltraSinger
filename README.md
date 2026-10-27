@@ -720,7 +720,7 @@ You can choose between different format versions. The default is `1.2.0`.
 - `usdx`, as the UltraStar Deluxe editor does it: 2 beats after the line (1 beat in a pause of 2 beats, at the next line's start in shorter pauses).
 - `after_last_note`: right after the line's last note, so the next line is shown as early as possible.
 
-Whatever the timing, a line of one or two words that would be on screen for less than a second (a short call like "Falling" between two lines) joins the neighbouring line it is sung closer to, or the other one when the joined line would get longer than 45 characters. Professional charts have short lines too, but at the places where such a line is joined, they mostly have no line break at all.
+Whatever the timing, a line of one or two words that would be on screen for less than a second (a short call like "Oh" between two lines) joins the neighbouring line it is sung closer to, or the other one when the joined line would get longer than 45 characters. Professional charts have short lines too, but at the places where such a line is joined, they mostly have no line break at all.
 
 ```commandline
 -i XYZ --linebreak_timing after_last_note
