@@ -195,6 +195,15 @@ def create_ultrastar_txt(
         beats = note_beats(midi_segments, gap, real_bpm, multiplication)
         seconds_per_beat = 60 / (real_bpm * multiplication)
 
+        def break_beat(i: int) -> int:
+            # Never before the written end of the line's last note, so the
+            # line stays visible until that note is sung
+            end_beat = beats[i][0] + beats[i][1]
+            next_beat = beats[i + 1][0] if i + 1 < len(beats) else end_beat
+            return linebreak_beat(end_beat, next_beat, linebreak_timing, seconds_per_beat)
+
+        _merge_short_lines(midi_segments, break_indices, lambda i: break_beat(i) * seconds_per_beat)
+
         for i, midi_segment in enumerate(midi_segments):
             start_beat, duration = beats[i]
 
@@ -216,12 +225,7 @@ def create_ultrastar_txt(
             file.write(line)
 
             if i in break_indices:
-                # Never before the written end of the line's last note, so the
-                # line stays visible until that note is sung
-                end_beat = start_beat + duration
-                next_beat = beats[i + 1][0] if i + 1 < len(beats) else end_beat
-                break_beat = linebreak_beat(end_beat, next_beat, linebreak_timing, seconds_per_beat)
-                file.write(f"{UltrastarTxtTag.LINEBREAK.value} {break_beat}\n")
+                file.write(f"{UltrastarTxtTag.LINEBREAK.value} {break_beat(i)}\n")
         file.write(f"{UltrastarTxtTag.FILE_END.value}")
 
 
@@ -232,6 +236,10 @@ def create_ultrastar_txt(
 _MAX_LINE_CHARS = 45
 # Never create a line shorter than this via forced splits.
 _MIN_SPLIT_CHARS = 10
+# A line of at most _SHORT_LINE_WORDS words that would be on screen for less
+# than this joins a neighbouring line: it changes too fast to be read
+_MIN_LINE_SHOWN_S = 1.0
+_SHORT_LINE_WORDS = 2
 
 
 def _compute_linebreak_indices(
@@ -275,6 +283,57 @@ def _compute_linebreak_indices(
 
     _enforce_max_line_length(midi_segments, breaks)
     return breaks
+
+
+def _merge_short_lines(
+    midi_segments: list[MidiSegment],
+    breaks: set[int],
+    break_time,
+    min_shown_s: float = _MIN_LINE_SHOWN_S,
+    max_words: int = _SHORT_LINE_WORDS,
+    max_chars: int = _MAX_LINE_CHARS,
+) -> None:
+    """Join lines that would flash by to a neighbouring line.
+
+    Modifies ``breaks`` in place. ``break_time(i)`` is the time in seconds of
+    a line break after note ``i``: a line is on screen from the break before
+    it to its own. A line of at most ``max_words`` words that is on screen
+    for less than ``min_shown_s`` joins the neighbour it is sung closer to
+    (the other one when that would make a line longer than ``max_chars``
+    visible characters); a line that fits neither stays, and so do the first
+    and the last line. Professional charts have short lines too (about one
+    in twenty is on screen for less than a second), but rarely a word or
+    two for a moment.
+    """
+    n = len(midi_segments)
+
+    def text(a: int, b: int) -> str:
+        return "".join(midi_segments[k].word for k in range(a, b + 1)).strip()
+
+    changed = True
+    while changed:
+        changed = False
+        bounds = sorted(breaks)
+        lines = list(zip([0] + [i + 1 for i in bounds], bounds + [n - 1]))
+        for k, (a, b) in enumerate(lines):
+            if len(text(a, b).replace("~", " ").split()) > max_words:
+                continue
+            if a == 0 or b == n - 1 or break_time(b) - break_time(a - 1) >= min_shown_s:
+                continue
+            options = []
+            if k > 0:
+                pa, _ = lines[k - 1]
+                options.append((midi_segments[a].start - midi_segments[a - 1].end, a - 1, pa, b))
+            if k + 1 < len(lines):
+                _, nb = lines[k + 1]
+                options.append((midi_segments[b + 1].start - midi_segments[b].end, b, a, nb))
+            for _, break_index, first, last in sorted(options):
+                if len(text(first, last)) <= max_chars:
+                    breaks.discard(break_index)
+                    changed = True
+                    break
+            if changed:
+                break
 
 
 def _enforce_max_line_length(

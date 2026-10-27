@@ -86,6 +86,7 @@ class Settings:
 
     # Vocal runs, riffs and acrobatics as notes (harder to sing; professional charts mostly keep one held note)
     vocal_runs_as_notes = False  # Split a held note where the singing briefly flips to another pitch and back
+    vocal_runs_threshold: float = 1.0  # Semitones the singing leaves the held pitch by to count as a flip (lower finds more)
 
     # Process data Paths
     input_file_path = ""

@@ -435,6 +435,20 @@ class TestUpdateQuestion:
             window._ask_to_update(self._info())
         assert "Update Now" not in buttons and {"Later", "Skip This Version"} <= set(buttons)
 
+    def test_buttons_are_not_squeezed(self, window):
+        """The box grows instead of cutting off "Skip This Version" (#217 follow-up)."""
+        from PySide6.QtWidgets import QPushButton
+
+        widths = []
+
+        def show(box):
+            widths.extend((b.minimumWidth(), b.sizeHint().width()) for b in box.findChildren(QPushButton))
+
+        with patch.multiple(QMessageBox, clickedButton=lambda self: None, exec=show),                 patch("src.gui.app_updater.can_start_update", return_value=True):
+            window._ask_to_update(self._info())
+        assert len(widths) == 4  # Update Now, Later, Skip This Version, Show Details...
+        assert all(minimum >= hint > 0 for minimum, hint in widths)
+
     def test_closing_starts_the_update(self, window):
         from PySide6.QtGui import QCloseEvent
 

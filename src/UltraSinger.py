@@ -997,7 +997,7 @@ def run() -> tuple[str, Score, Score]:
     # boundaries and pitches; before the golden notes, which pick from the
     # notes that are left held. Only on isolated vocals (in the full mix an
     # instrument line would pass for a flip), and in the pitch track of the
-    # audio the note pitches come from (a backing voice is no flip)
+    # stem the note pitches come from (a backing voice is no flip)
     if settings.vocal_runs_as_notes and not settings.ignore_audio and settings.use_separated_vocal:
         from modules.Pitcher.vocal_runs import split_notes_at_vocal_runs
 
@@ -1007,6 +1007,7 @@ def run() -> tuple[str, Score, Score]:
             bpm=process_data.media_info.bpm,
             # like the other notes, flips only go to the key when notes are quantized to it
             music_key=process_data.media_info.music_key if settings.quantize_to_key else None,
+            threshold=settings.vocal_runs_threshold,
         )
 
     # Golden notes — mark long held notes the singing stays on, spread over
@@ -1117,15 +1118,25 @@ def run() -> tuple[str, Score, Score]:
 
 
 def _flip_pitch_track(process_data: ProcessData, note_pitch_audio: str) -> PitchedData | None:
-    """Pitch track for the vocal runs pass: the pitch data of the vocal, or of
-    *note_pitch_audio* when the note pitches come from another stem (the lead
-    vocal). None when that stem cannot be pitched: the notes then stay held.
+    """Pitch track for the vocal runs pass: of *note_pitch_audio*, the stem the
+    note pitches come from (the separated vocal, or the lead vocal).
+
+    Not the pitch data of the denoised vocal the notes were made from: its
+    noise reduction smears quick flips (a whole tone sung for 100 ms measures
+    as half a tone or less there). Cached next to the other pitch data. None
+    when the stem cannot be pitched: the notes then stay held.
     """
-    paths = process_data.process_data_paths
-    if note_pitch_audio in (paths.vocals_audio_file_path, paths.whisper_audio_path):
-        return process_data.pitched_data
+    cache_folder = process_data.process_data_paths.cache_folder_path
     try:
-        return get_pitch_with_file(note_pitch_audio)
+        cache_path = os.path.join(
+            cache_folder, f"swiftf0_stem_{conversion_cache.content_key(note_pitch_audio)}.json")
+        if not settings.skip_cache_pitch_detection and check_file_exists(cache_path):
+            with open(cache_path, encoding=FILE_ENCODING) as file:
+                return PitchedData.from_json(file.read())
+        pitched_data = get_pitch_with_file(note_pitch_audio)
+        with open(cache_path, "w", encoding=FILE_ENCODING) as file:
+            file.write(pitched_data.to_json())
+        return pitched_data
     except (OSError, ValueError, RuntimeError) as e:
         print(f"{ULTRASINGER_HEAD} Warning: no pitch track of {note_pitch_audio} ({e}); "
               "vocal runs are not charted as notes")
@@ -1560,6 +1571,8 @@ def _write_settings_info_file(
                     f.write(f"  Refit fill min run:       {settings.ptakf_refit_fill_min_ms} ms\n")
             f.write(f"  Golden notes:             {settings.golden_notes}\n")
             f.write(f"  Vocal runs as notes:      {settings.vocal_runs_as_notes}\n")
+            if settings.vocal_runs_as_notes:
+                f.write(f"  Vocal runs threshold:     {settings.vocal_runs_threshold} semitones\n")
             f.write("\n")
 
             # Lyrics Lookup
@@ -3293,6 +3306,12 @@ def init_settings(argv: list[str]) -> Settings:
             settings.golden_notes = True
         elif opt in ("--vocal_runs_as_notes"):
             settings.vocal_runs_as_notes = True
+        elif opt in ("--vocal_runs_threshold"):
+            settings.vocal_runs_threshold = _option_number(opt, arg)
+            if not 0.3 <= settings.vocal_runs_threshold <= 4.0:
+                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} {opt} needs 0.3 to 4.0 semitones, "
+                      f"got {blue_highlighted(arg)}")
+                sys.exit(1)
         elif opt in ("--disable_score"):
             settings.calculate_score = False
     if not any(opt == "--yt_po_token" for opt, _ in opts):
@@ -3436,6 +3455,7 @@ def arg_options():
         "disable_ptakf_refit_fill",
         "golden_notes",
         "vocal_runs_as_notes",
+        "vocal_runs_threshold=",
         "disable_score",
     ]
     return long, short

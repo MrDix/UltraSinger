@@ -16,8 +16,8 @@ How a flip is found, in each normal or golden note held for at least
 
 1. The confident pitch frames of the note (median-smoothed over 3 frames)
    are compared with their median, the note's held pitch.
-2. A flip is a run of frames at least ``START_DEVIATION`` semitones to one
-   side of it, lasting ``MIN_FLIP_MS`` to ``MAX_FLIP_MS``, with the voice
+2. A flip is a run of frames at least ``threshold`` semitones (by default
+   ``START_DEVIATION``; lower finds more) to one side of it, lasting ``MIN_FLIP_MS`` to ``MAX_FLIP_MS``, with the voice
    steady on the held pitch for ``STEADY_FRAMES`` frames before and after.
 3. A flip of more than ``MAX_INTERVAL`` semitones is a pitch detection
    error (most often an octave error), not singing, and is left out.
@@ -43,7 +43,7 @@ from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
 
 MIN_NOTE_S = 0.35  # shorter notes are not held long enough to flip in
 CONFIDENCE = 0.9  # pitch frames below this confidence are not used
-START_DEVIATION = 1.0  # semitones from the held pitch that start a flip
+START_DEVIATION = 1.0  # semitones from the held pitch that start a flip (default threshold)
 MIN_FLIP_MS = 50.0
 MAX_FLIP_MS = 400.0
 MAX_INTERVAL = 4  # semitones; a larger jump is a pitch detection error
@@ -70,7 +70,8 @@ def scale_pitch_classes(music_key: str | None) -> set[int] | None:
     return {(root + step) % 12 for step in _SCALES[parts[1].lower()]}
 
 
-def find_flips(times: np.ndarray, midi: np.ndarray) -> list[tuple[float, float, float]]:
+def find_flips(times: np.ndarray, midi: np.ndarray,
+               threshold: float = START_DEVIATION) -> list[tuple[float, float, float]]:
     """Flips in the confident pitch frames of one held note.
 
     *times* (s) and *midi* (fractional MIDI pitch) are the note's confident
@@ -83,23 +84,27 @@ def find_flips(times: np.ndarray, midi: np.ndarray) -> list[tuple[float, float, 
     held = float(np.median(smooth))
     deviation = smooth - held
     hop = float(np.median(np.diff(times)))
+    # Frames on the held pitch (vibrato included) stay within STEADY_SEMITONES
+    # of it, whatever the threshold: a lower one must not lose the flips of a
+    # note sung with vibrato
+    steady = STEADY_SEMITONES
     flips = []
     i, n = 0, len(smooth)
     while i < n:
-        if abs(deviation[i]) < START_DEVIATION:
+        if abs(deviation[i]) < threshold:
             i += 1
             continue
         side = np.sign(deviation[i])
         j = i
         while (j + 1 < n and np.sign(deviation[j + 1]) == side
-               and abs(deviation[j + 1]) >= START_DEVIATION
+               and abs(deviation[j + 1]) >= threshold
                and times[j + 1] - times[j] < MAX_FRAME_GAP_S):
             j += 1
         start, end = float(times[i]), float(times[j] + hop)
         steady_before = i >= STEADY_FRAMES and np.all(
-            np.abs(deviation[i - STEADY_FRAMES:i]) < STEADY_SEMITONES)
+            np.abs(deviation[i - STEADY_FRAMES:i]) < steady)
         steady_after = j + STEADY_FRAMES < n and np.all(
-            np.abs(deviation[j + 1:j + 1 + STEADY_FRAMES]) < STEADY_SEMITONES)
+            np.abs(deviation[j + 1:j + 1 + STEADY_FRAMES]) < steady)
         if (MIN_FLIP_MS <= (end - start) * 1000 <= MAX_FLIP_MS
                 and steady_before and steady_after):
             flips.append((start, end, float(np.median(smooth[i:j + 1]) - held)))
@@ -146,6 +151,7 @@ def split_notes_at_vocal_runs(
     pitched_data: PitchedData,
     bpm: float,
     music_key: str | None = None,
+    threshold: float = START_DEVIATION,
 ) -> list[MidiSegment]:
     """Split held notes where the singing flips to another pitch and back.
 
@@ -155,6 +161,8 @@ def split_notes_at_vocal_runs(
         pitched_data: Pitch track of the vocal.
         bpm: Real BPM, for the written beat grid.
         music_key: Key of the song ("D minor"); flips go to its scale.
+        threshold: Semitones the singing has to leave the held pitch by to
+            count as a flip; lower finds more.
 
     Returns:
         The notes with each flip as a note of its own between two pieces of
@@ -184,7 +192,7 @@ def split_notes_at_vocal_runs(
         note_midi = int(librosa.note_to_midi(segment.note))
         cuts: list[tuple[int, int, int]] = []  # (start beat, end beat, interval)
         last_end, note_end = beat_of(segment.start), beat_of(segment.end)
-        for start, end, deviation in find_flips(times[inside], midi[inside]):
+        for start, end, deviation in find_flips(times[inside], midi[inside], threshold):
             interval = flip_interval(note_midi, deviation, scale)
             if interval is None:
                 continue
