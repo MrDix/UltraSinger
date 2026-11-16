@@ -462,6 +462,53 @@ def _former_align_syllables(note_starts_ms, syllables):
 
 # ── pipeline step ───────────────────────────────────────────────────────────
 
+def _syllables(*syllables):
+    """Syllables of (text, start s, end s) or (text, start s, end s, starts a line)."""
+    return [seg_lyrics.Syllable(text, start * 1000, end * 1000, *rest) for text, start, end, *rest in syllables]
+
+
+class TestSplitFreestyleAtWords:
+    """A freestyle region of the model is one note: it is cut at the starts of the words in it."""
+
+    def test_each_word_gets_its_part_of_the_note(self):
+        notes = [PredictedNote(1.0, 4.0, 57, freestyle=True)]
+        syllables = _syllables(("get ", 1.0, 1.5), ("out ", 2.0, 2.4), ("now ", 3.2, 3.9))
+        parts = seg_lyrics.split_freestyle_at_words(notes, syllables)
+        assert [(p.start, p.end, p.midi, p.freestyle) for p in parts] == [
+            (1.0, 2.0, 57, True), (2.0, 3.2, 57, True), (3.2, 4.0, 57, True)]
+        assert [s.word for s in seg_lyrics.place_lyrics(parts, syllables)] == ["get ", "out ", "now "]
+
+    def test_the_syllables_of_a_word_stay_in_one_note(self):
+        notes = [PredictedNote(0.0, 2.0, 57, freestyle=True)]
+        syllables = _syllables(("hur", 0.0, 0.5), ("ri", 0.5, 1.0), ("cane ", 1.0, 2.0))
+        assert seg_lyrics.split_freestyle_at_words(notes, syllables) == notes
+
+    def test_a_line_starts_a_word(self):
+        notes = [PredictedNote(0.0, 2.0, 57, freestyle=True)]
+        syllables = _syllables(("one", 0.0, 0.5), ("two ", 1.0, 2.0, True))
+        assert [p.start for p in seg_lyrics.split_freestyle_at_words(notes, syllables)] == [0.0, 1.0]
+
+    def test_pitched_notes_are_not_cut(self):
+        notes = [PredictedNote(0.0, 2.0, 57, voiced=0.9, check_midi=58)]
+        syllables = _syllables(("one ", 0.0, 0.5), ("two ", 1.0, 2.0))
+        assert seg_lyrics.split_freestyle_at_words(notes, syllables) == notes
+
+    def test_no_part_is_shorter_than_a_tenth_of_a_second(self):
+        notes = [PredictedNote(1.0, 3.0, 57, freestyle=True)]
+        # too close to the start, to the word before, and to the end
+        syllables = _syllables(("a ", 1.0, 1.04), ("b ", 1.05, 1.5), ("c ", 2.0, 2.04), ("d ", 2.05, 2.5),
+                               ("e ", 2.95, 3.0))
+        assert [(p.start, p.end) for p in seg_lyrics.split_freestyle_at_words(notes, syllables)] == [
+            (1.0, 2.0), (2.0, 3.0)]
+
+    def test_words_outside_the_note_do_not_cut_it(self):
+        notes = [PredictedNote(1.0, 2.0, 57, freestyle=True), PredictedNote(5.0, 6.0, 60)]
+        syllables = _syllables(("before ", 0.2, 0.8), ("after ", 2.5, 3.0), ("sung ", 5.0, 6.0))
+        assert seg_lyrics.split_freestyle_at_words(notes, syllables) == notes
+        assert seg_lyrics.split_freestyle_at_words(notes, []) == notes
+        assert seg_lyrics.split_freestyle_at_words([], syllables) == []
+
+
 class TestSegmenter:
     def test_missing_model_keeps_segments(self, tmp_path):
         assert segmenter.segment_with_model([_seg("a ", 0, 1)], str(tmp_path / "v.wav"),
@@ -543,6 +590,23 @@ class TestSegmenter:
         result = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en")
         assert [s.word for s in result.segments] == ["hel", "lo "]
         assert result.pitch_audio_path == str(vocal)
+
+    def test_a_freestyle_note_of_the_model_gets_a_note_for_each_word(self, tmp_path, monkeypatch, fake_hyphen):
+        model = tmp_path / "m.pt"
+        save_model(model, SegNet())
+        vocal = tmp_path / "v.wav"
+        vocal.write_bytes(b"x")
+        import modules.Segmentation.decode as dec
+        import modules.Segmentation.features as feats
+        monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(16000, np.float32))
+        monkeypatch.setattr(feats, "analyse_vocal", lambda y: _analysis(200))
+        monkeypatch.setattr(dec, "decode_notes", lambda *a, **k: [PredictedNote(0.0, 0.4, 60, voiced=1.0),
+                                                                  PredictedNote(1.0, 2.5, 55, freestyle=True)])
+        words = [_seg("la ", 0.0, 0.4), _seg("get ", 1.0, 1.4), _seg("out ", 1.5, 1.9), _seg("now ", 2.0, 2.5)]
+        result = segmenter.segment_with_model(words, str(vocal), str(model), "en")
+        assert [(s.word, s.note_type, s.start, s.end) for s in result.segments] == [
+            ("la ", ":", 0.0, 0.4), ("get ", "F", 1.0, 1.5), ("out ", "F", 1.5, 2.0), ("now ", "F", 2.0, 2.5)]
+        assert [s.pitch_locked for s in result.segments] == [True, False, False, False]
 
     def test_well_tracked_notes_lock_their_pitch(self):
         notes = [PredictedNote(0.0, 0.5, 60, voiced=0.5, check_midi=62),

@@ -11,7 +11,7 @@ model has no note for, such as those after the last note, are left out.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import librosa
 import numpy as np
@@ -24,6 +24,7 @@ CONTINUE_COST_MS = 150.0  # base cost of a "~" continuation note
 MAX_START_COST_MS = 2500.0
 MAX_SKIP = 3              # syllables that may be merged in one step
 BAND_MS = 8000.0          # only syllables this close to a note are candidates
+MIN_FREESTYLE_WORD_S = 0.1  # shortest part of a freestyle note that is cut at its words
 
 _WORD_RE = re.compile(r"[\w'’-]+", re.UNICODE)
 _EDGES_RE = re.compile(r"(\W*)(.*?)(\W*)", re.DOTALL)  # punctuation before, word, punctuation after
@@ -122,6 +123,37 @@ def syllables_from_segments(segments: list[MidiSegment], language: str | None) -
                                 t0, t1, ls and k == 0))
             t0 = t1
     return out
+
+
+def split_freestyle_at_words(notes: list[PredictedNote], syllables: list[Syllable]) -> list[PredictedNote]:
+    """Cut the freestyle notes at the starts of the words inside them.
+
+    The model hears a spoken, shouted or screamed passage as one freestyle
+    region and makes one note of it, however many words it has: a whole line
+    then shows as one long bar with all its words. Each word gets the part of
+    the note from its start (by the alignment of the lyrics) to the start of
+    the next word; a part shorter than ``MIN_FREESTYLE_WORD_S`` stays with the
+    word before it. Pitched notes are not changed: those the model splits
+    itself, where a note begins.
+    """
+    word_starts = np.array(sorted(
+        syllable.start_ms / 1000.0 for index, syllable in enumerate(syllables)
+        if index == 0 or syllable.line_start or syllables[index - 1].text.endswith(" ")))
+    result: list[PredictedNote] = []
+    for note in notes:
+        edges = [note.start]
+        if note.freestyle:
+            first = np.searchsorted(word_starts, note.start + MIN_FREESTYLE_WORD_S, side="left")
+            last = np.searchsorted(word_starts, note.end - MIN_FREESTYLE_WORD_S, side="right")
+            for start in word_starts[first:last]:
+                if start - edges[-1] >= MIN_FREESTYLE_WORD_S:
+                    edges.append(float(start))
+        edges.append(note.end)
+        if len(edges) == 2:
+            result.append(note)
+        else:
+            result.extend(replace(note, start=start, end=end) for start, end in zip(edges, edges[1:]))
+    return result
 
 
 def align_syllables(note_starts_ms: np.ndarray, syllables: list[Syllable]) -> list[tuple[int, bool]]:

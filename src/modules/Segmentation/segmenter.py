@@ -114,7 +114,7 @@ def segment_with_model(
     try:
         from modules.Segmentation.decode import decode_notes
         from modules.Segmentation.features import analyse_vocal, load_vocal, model_input
-        from modules.Segmentation.lyrics import place_lyrics, syllables_from_segments
+        from modules.Segmentation.lyrics import place_lyrics, split_freestyle_at_words, syllables_from_segments
         from modules.Segmentation.model import predict
 
         # Read the vocal without checking first that it exists: such a check once
@@ -140,6 +140,7 @@ def segment_with_model(
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} model found no notes - keeping word-based notes")
             return None
         syllables = syllables_from_segments(midi_segments, language)
+        notes = split_freestyle_at_words(notes, syllables)
         segments = place_lyrics(notes, syllables)
         if not segments:
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} lyrics could not be placed onto the "
