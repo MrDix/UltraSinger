@@ -712,7 +712,7 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
             transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
-            lyrics_heard=None, lyrics_instead=None, lyrics_source=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_found=None, lyrics_source=None,
         )
         heard = [_syllable("helo, ", 1.0, 1.3), _syllable("world ", 1.5, 1.8)]
         transcription = SimpleNamespace(detected_language="en", transcribed_data=heard)
@@ -749,7 +749,7 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="fr"),
             transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
-            lyrics_heard=None, lyrics_instead=None, lyrics_source=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_found=None, lyrics_source=None,
         )
         cached = [_syllable("♪ ", 0.0, 0.1), _syllable("Pourquoi ", 1.0, 1.5), _syllable("? ", 1.6, 1.7),
                   _syllable("- ", 1.8, 1.9), _syllable("toi ", 2.0, 2.4), _syllable("♪ ", 2.5, 2.6)]
@@ -773,7 +773,7 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
             transcribed_data=[], synced_lyrics=None, plain_lyrics=None,
-            lyrics_heard=None, lyrics_instead=None, lyrics_source=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_found=None, lyrics_source=None,
             check_transcription=SimpleNamespace(detected_language="en", transcribed_data=heard),
         )
         with patch.object(us, "transcribe_audio") as transcribe, \
@@ -787,6 +787,59 @@ class TestTranscriptionWordsAreKept(unittest.TestCase):
 
         transcribe.assert_not_called()
         self.assertEqual(process_data.transcription_words, [("hello ", 1.0, 1.3)])
+
+
+class TestLyricsAreSearchedOnce(unittest.TestCase):
+    """The lookup of the transcription takes the lyrics that the lookup before it found."""
+
+    @staticmethod
+    def _transcribe(lyrics_found, searched):
+        """TranscribeAudio after a lookup that found ``lyrics_found``, a new search finding ``searched``;
+        returns the process data, the mock of the search and the lyrics that corrected the words."""
+        process_data = SimpleNamespace(
+            process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
+            media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
+            transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_found=lyrics_found, lyrics_source=None,
+        )
+        transcription = SimpleNamespace(detected_language="en", transcribed_data=[_syllable("hello ", 1.0, 1.3)])
+        with patch.object(us, "transcribe_audio", return_value=transcription), \
+                patch.object(us, "audio_length", return_value=200.0), \
+                patch.object(us, "check_lyrics_language", return_value=(True, None)), \
+                patch("modules.Speech_Recognition.lyrics_corrector.correct_transcription_from_lyrics",
+                      side_effect=lambda data, lyrics: (data, None)) as correct, \
+                patch.object(us, "remove_silence_from_transcription_data", side_effect=lambda path, data: data), \
+                patch("modules.lrclib_client.search_lyrics", return_value=searched) as search, \
+                patch.object(us.settings, "lyrics_lookup", True), \
+                patch.object(us.settings, "llm_correct_lyrics", False), \
+                patch.object(us.settings, "hyphenation", False), \
+                patch.object(us.settings, "language", None), \
+                contextlib.redirect_stdout(io.StringIO()):
+            us.TranscribeAudio(process_data)
+        return process_data, search, correct.call_args.args[1] if correct.called else None
+
+    def test_found_lyrics_are_not_searched_again(self):
+        found = SimpleNamespace(duration=None, synced_lyrics=None, plain_lyrics="hello world", source="music.163.com")
+        other = SimpleNamespace(duration=None, synced_lyrics=None, plain_lyrics="other words", source="LRCLIB")
+        process_data, search, corrected_by = self._transcribe(found, other)
+        search.assert_not_called()
+        self.assertEqual(corrected_by, "hello world")
+        self.assertEqual((process_data.plain_lyrics, process_data.lyrics_source), ("hello world", "music.163.com"))
+
+    def test_nothing_found_before_is_searched_again(self):
+        """Also after a lookup that failed: the lyrics databases are asked once more."""
+        other = SimpleNamespace(duration=None, synced_lyrics=None, plain_lyrics="other words", source="LRCLIB")
+        process_data, search, corrected_by = self._transcribe(None, other)
+        search.assert_called_once_with("Artist", "Song Title", duration=200.0)
+        self.assertEqual(corrected_by, "other words")
+
+    def test_the_lookup_before_the_transcription_keeps_what_it_found(self):
+        found = SimpleNamespace(duration=None, synced_lyrics=None, plain_lyrics="one")
+        process_data = _process_data()
+        _run(process_data, _pitch_track([(1.0, 1.24, "C4")], length=2.5),
+             _transcription([("one ", 1.0, 1.24)], "en"), early_lyrics=found)
+        self.assertIs(process_data.lyrics_found, found)
+
 
 class TestRejectedSyncedLyricsInRun(unittest.TestCase):
     def test_info_file_says_found_but_rejected(self):
@@ -827,7 +880,7 @@ class TestRejectedSyncedLyricsAreDropped(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
             transcribed_data=[], synced_lyrics=synced_lyrics, plain_lyrics=plain_lyrics, check_transcription=None,
-            lyrics_heard=None, lyrics_instead=None, lyrics_source=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_found=None, lyrics_source=None,
         )
         transcription = SimpleNamespace(detected_language="de", transcribed_data=[])
         with patch.object(us, "transcribe_audio", return_value=transcription), \
@@ -1534,8 +1587,8 @@ class TestLyricsTheSingingHas(unittest.TestCase):
             process_data_paths=SimpleNamespace(cache_folder_path="cache", whisper_audio_path="audio.wav"),
             media_info=SimpleNamespace(artist="Artist", title="Song Title", language="en"),
             transcribed_data=[], synced_lyrics=None, plain_lyrics=None, check_transcription=None,
-            lyrics_heard=None, lyrics_instead=None, lyrics_source=None, plain_lyrics_from_synced=False,
-            synced_lyrics_other_recording=None, synced_lyrics_length=None,
+            lyrics_heard=None, lyrics_instead=None, lyrics_found=None, lyrics_source=None,
+            plain_lyrics_from_synced=False, synced_lyrics_other_recording=None, synced_lyrics_length=None,
         )
         transcription = SimpleNamespace(detected_language="en", transcribed_data=heard)
         found = SimpleNamespace(duration=None, synced_lyrics=None, plain_lyrics=_numbered(40, first=100),

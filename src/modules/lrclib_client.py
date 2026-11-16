@@ -208,13 +208,15 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     rules a version out.
 
     A cover ("Title (Somebody Cover)", see ``cover_of``) has the lyrics of
-    the song itself, which counts as a result for it too (see
-    ``_names_match``). When nothing is found with the title of the cover
-    (also without its additions), the title without the cover mark is
-    searched: by our artist and by the one the mark names (the artist of
-    the song and the covering one, whichever is which). A stripped-down
-    recording ("Title (Stripped)", see ``title_without_stripped``) is
-    then searched without that mark as well.
+    the song itself. When a search lists no lyrics under the title of the
+    cover, the song it covers counts as a result of that search (see
+    ``_is_covered_song``); a result with the title of the cover always
+    comes first. When nothing is found with the title of the cover (also
+    without its additions), the title without the cover mark is searched:
+    by our artist and by the one the mark names (the artist of the song
+    and the covering one, whichever is which). A stripped-down recording
+    ("Title (Stripped)", see ``title_without_stripped``) is then searched
+    without that mark as well.
 
     When LRCLIB has no lyrics of the song (and does not know it as
     instrumental), far too few for the length of the audio (see
@@ -306,7 +308,11 @@ def _words_shared(text: str, other: str) -> float:
 def _find_on_lrclib(artist: str, title: str, duration: Optional[float], verbose: bool) -> Optional[LyricsInfo]:
     """The lyrics of a song on LRCLIB, searched as ``find_lyrics`` describes."""
     stripped = strip_title_additions(title)
-    cover = cover_of(stripped)
+    cover = cover_of(title)
+    covered = _covered_song(artist, cover)
+    # A cover is searched without its mark for the artist that the mark names, or for a mark that
+    # is no addition to the title (else the title without its additions is the one without the mark)
+    without_mark = cover[0] if cover and (cover[1] or cover[0].casefold() != stripped.casefold()) else ""
     # (title searched, title of the song, how it was shortened, how far a version may be off the length,
     # the artist its mark names ("" for none) when the title of a cover is searched without the mark)
     titles, seen = [], set()
@@ -314,7 +320,7 @@ def _find_on_lrclib(artist: str, title: str, duration: Optional[float], verbose:
             (title, title, "", None, None),
             (stripped, None, "without the additions to the title", None, None),
             # "Title (Somebody Cover)" has the lyrics of "Title": listed under our artist, or under Somebody
-            (cover[0] if cover else "", stripped, "without the cover mark", None, cover[1] if cover else None),
+            (without_mark, title, "without the cover mark", None, cover[1] if cover else None),
             (title_without_stripped(title), None, "without the stripped mark", None, None),
             (title_before_dash(title), None, "with the title before the dash", None, None),
             # "Title - I" is listed as "Title, Part I": all parts of "Title", for the one of ours
@@ -335,22 +341,47 @@ def _find_on_lrclib(artist: str, title: str, duration: Optional[float], verbose:
             break
         if how and verbose:
             print(f"{ULTRASINGER_HEAD} Searching LRCLIB again {how}: {blue_highlighted(wanted)}")
-        searches = [_search_by_fields(artist, wanted, duration, max_off, song=song, answers=answers)]
-        if song == wanted or named is not None:
-            # (not for the parts of a title: they are found by its name alone, one search is enough)
-            searches.append(_search_by_query(f"{artist} {wanted}", artist, song, duration, max_off,
-                                             answers=answers))
-        if named:
-            # The song, or its cover, listed under the artist that the cover mark names
-            searches.append(_search_by_fields(artist, wanted, duration, max_off, song=song, answers=answers,
-                                              searched_artist=named))
-        results = [result for result in searches if result is not None]
+        results = _search_title(artist, wanted, song, duration, max_off, named, answers)
         with_lyrics = [result for result in results if result.has_lyrics]
+        if not with_lyrics and covered is not None and song in (title, stripped):
+            # Nothing is listed under the title of the cover: the song it covers
+            # counts, in the same answers (they are kept: nothing is asked again)
+            with_lyrics = [result for result in _search_title(artist, wanted, song, duration, max_off, named,
+                                                              answers, covered=covered) if result.has_lyrics]
         if with_lyrics:
             return _best_result(with_lyrics, duration)
         # Only instrumental entries so far: lyrics may still come with the next title
         found = found or next(iter(results), None)
     return found
+
+
+def _covered_song(artist: str, cover: Optional[tuple[str, str]]) -> Optional[tuple[str, list[str]]]:
+    """The song that the cover ``cover`` (see ``cover_of``) of our ``artist``
+    covers, and the artists it may be listed under (see ``_is_covered_song``):
+    ours and the one the cover mark names. None for no cover."""
+    if cover is None:
+        return None
+    return cover[0], [name for name in (artist, cover[1]) if name]
+
+
+def _search_title(artist: str, wanted: str, song: str, duration: Optional[float], max_off: Optional[float],
+                  named: Optional[str], answers: dict,
+                  covered: Optional[tuple[str, list[str]]] = None) -> list[LyricsInfo]:
+    """The results of the searches of LRCLIB for the title ``wanted`` (see
+    ``_find_on_lrclib``): by artist and title, by the combined query, and for
+    a cover without its mark by the artist that the mark names (``named``).
+    They must be of the title ``song``; with ``covered``, of the song a cover
+    covers instead (see ``_do_search``)."""
+    searches = [_search_by_fields(artist, wanted, duration, max_off, song=song, answers=answers, covered=covered)]
+    if song == wanted or named is not None:
+        # (not for the parts of a title: they are found by its name alone, one search is enough)
+        searches.append(_search_by_query(f"{artist} {wanted}", artist, song, duration, max_off,
+                                         answers=answers, covered=covered))
+    if named:
+        # The song, or its cover, listed under the artist that the cover mark names
+        searches.append(_search_by_fields(artist, wanted, duration, max_off, song=song, answers=answers,
+                                          searched_artist=named, covered=covered))
+    return [result for result in searches if result is not None]
 
 
 def _best_result(results: list[LyricsInfo], duration: Optional[float]) -> LyricsInfo:
@@ -362,31 +393,35 @@ def _best_result(results: list[LyricsInfo], duration: Optional[float]) -> Lyrics
 
 def _search_by_fields(artist: str, title: str, duration: Optional[float] = None,
                       max_off: Optional[float] = None, song: Optional[str] = None,
-                      answers: Optional[dict] = None, searched_artist: Optional[str] = None) -> Optional[LyricsInfo]:
+                      answers: Optional[dict] = None, searched_artist: Optional[str] = None,
+                      covered: Optional[tuple[str, list[str]]] = None) -> Optional[LyricsInfo]:
     """Search LRCLIB using separate artist_name and track_name parameters;
-    the results must be of the title ``song``, if given, else of ``title``.
-    ``searched_artist``, if given, is searched in place of ``artist`` (the
-    artist that the cover mark of ``song`` names)."""
+    the results must be of the title ``song``, if given, else of ``title``
+    (with ``covered``: see ``_do_search``). ``searched_artist``, if given,
+    is searched in place of ``artist`` (the artist that the cover mark of
+    ``song`` names)."""
     params = urllib.parse.urlencode({
         "artist_name": searched_artist or artist,
         "track_name": title,
     })
     return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=song or title, duration=duration,
-                      max_off=max_off, answers=answers)
+                      max_off=max_off, answers=answers, covered=covered)
 
 
 def _search_by_query(query: str, artist: str = "", title: str = "",
                      duration: Optional[float] = None, max_off: Optional[float] = None,
-                     answers: Optional[dict] = None) -> Optional[LyricsInfo]:
+                     answers: Optional[dict] = None,
+                     covered: Optional[tuple[str, list[str]]] = None) -> Optional[LyricsInfo]:
     """Search LRCLIB using a combined query string."""
     params = urllib.parse.urlencode({"q": query})
     return _do_search(f"{_BASE_URL}/search?{params}", artist=artist, title=title, duration=duration,
-                      max_off=max_off, answers=answers)
+                      max_off=max_off, answers=answers, covered=covered)
 
 
 def _do_search(url: str, artist: str = "", title: str = "",
                duration: Optional[float] = None, max_off: Optional[float] = None,
-               answers: Optional[dict] = None) -> Optional[LyricsInfo]:
+               answers: Optional[dict] = None,
+               covered: Optional[tuple[str, list[str]]] = None) -> Optional[LyricsInfo]:
     """Execute a search request and return the best result with lyrics.
 
     With ``artist`` and ``title`` given, only results of that song count
@@ -395,6 +430,11 @@ def _do_search(url: str, artist: str = "", title: str = "",
     LRCLIB only knows as instrumental is returned as such, without lyrics.
     ``answers`` keeps the answer to each URL, so that one is not fetched twice.
     Look-alike letters in the lyrics are folded (see ``fold_lookalike_letters``).
+
+    With ``covered`` (a song and the artists it may be listed under), the
+    results that count are instead those with the lyrics of that song, for a
+    cover of it (see ``_is_covered_song``): asked for when no result has the
+    title of the cover itself.
     """
     if answers is not None and url in answers:
         data = answers[url]
@@ -407,7 +447,9 @@ def _do_search(url: str, artist: str = "", title: str = "",
 
     matching = [
         entry for entry in data
-        if isinstance(entry, dict) and (not (artist and title) or _names_match(entry, artist, title))
+        if isinstance(entry, dict)
+        and (_is_covered_song(entry, *covered) if covered is not None
+             else not (artist and title) or _names_match(entry, artist, title))
         and (max_off is None or _length_off(entry, duration) <= max_off)
     ]
     with_lyrics = [entry for entry in matching if _has_lyrics(entry)]
@@ -478,10 +520,6 @@ def _names_match(entry: dict, artist: str, title: str) -> bool:
     """Whether a search result is the wanted song: its artist and its title
     match ours, titles compared without their additions. Also accepted the
     other way round, for video titles that name the song before the artist.
-
-    When our title is the one of a cover ("Title (Somebody Cover)", see
-    ``cover_of``), a result with the lyrics of the covered song counts too
-    (see ``_is_covered_song``).
     """
     found_artist = entry.get("artistName") or ""
     found_title = entry.get("trackName") or ""
@@ -489,23 +527,24 @@ def _names_match(entry: dict, artist: str, title: str) -> bool:
     def match(wanted_artist: str, wanted_track: str) -> bool:
         return _artist_matches(found_artist, wanted_artist) and titles_match(found_title, wanted_track)
 
-    if match(artist, title) or match(strip_title_additions(title), artist):
-        return True
-    cover = cover_of(title)
-    return cover is not None and _is_covered_song(entry, cover[0], [name for name in (artist, cover[1]) if name])
+    return match(artist, title) or match(strip_title_additions(title), artist)
 
 
 def _is_covered_song(entry: dict, song: str, artists: list[str]) -> bool:
     """Whether a search result has the lyrics of a cover of ``song``: it is
-    the song itself or a cover of it, by one of ``artists``.
+    the song itself or a cover of it, by one of ``artists``. Such results
+    count for a cover ("Title (Somebody Cover)", see ``cover_of``) only when
+    none has the title of the cover itself (see ``_names_match``): that
+    title may be a song of its own ("Title (Take Cover)").
 
-    These are the artist of our title and the one its cover mark names: the
-    artist of the song and the covering one, whichever is which ("Artist -
-    Title (Somebody Cover)" is written for both). The title of the result
-    may carry a cover mark of its own ("Title (Somebody Vocal Cover)") and
-    may name one of them before the title ("Artist - Title"). A cover mark
-    that names somebody else, when ours names an artist, tells of another
-    cover or another song: such a result is not taken.
+    The artists are the one of our title and the one its cover mark names
+    (see ``_covered_song``): the artist of the song and the covering one,
+    whichever is which ("Artist - Title (Somebody Cover)" is written for
+    both). The title of the result may carry a cover mark of its own
+    ("Title (Somebody Vocal Cover)") and may name one of them before the
+    title ("Artist - Title"). A cover mark that names somebody else, when
+    ours names an artist, tells of another cover or another song: such a
+    result is not taken.
     """
     found_artist = entry.get("artistName") or ""
     found_title = entry.get("trackName") or ""
@@ -649,19 +688,22 @@ def _find_on_second_db(artist: str, title: str, duration: Optional[float],
     is searched without its mark, by our artist and by the one the mark
     names (see ``cover_of``), and a stripped-down recording without that
     mark (see ``title_without_stripped``). Only results whose artist and
-    title match are taken (see ``_names_match``); their lyrics are fetched
-    in the order of their length's distance to the audio (``duration``),
-    at most ``_SECOND_DB_LYRICS`` per search and each version once; the
-    first with lyrics wins, with ``synced_only`` the first with synced ones.
+    title match are taken (see ``_names_match``), for a cover after them
+    also those of the song it covers (see ``_is_covered_song``); their
+    lyrics are fetched in the order of their length's distance to the audio
+    (``duration``), at most ``_SECOND_DB_LYRICS`` per search and each
+    version once; the first with lyrics wins, with ``synced_only`` the
+    first with synced ones.
     """
     stripped = strip_title_additions(title)
-    cover = cover_of(stripped)
+    cover = cover_of(title)
+    covered = _covered_song(artist, cover)
     plain_title = title_without_stripped(title)
     # (what is searched, title of the song)
     searches, seen = [], set()
     for searched, song in ((f"{artist} {title}", title), (f"{artist} {stripped}", stripped),
-                           (f"{artist} {cover[0]}" if cover else "", stripped),
-                           (f"{cover[1]} {cover[0]}" if cover and cover[1] else "", stripped),
+                           (f"{artist} {cover[0]}" if cover else "", title),
+                           (f"{cover[1]} {cover[0]}" if cover and cover[1] else "", title),
                            (f"{artist} {plain_title}" if plain_title else "", plain_title)):
         if searched and searched.casefold() not in seen:
             seen.add(searched.casefold())
@@ -678,10 +720,14 @@ def _find_on_second_db(artist: str, title: str, duration: Optional[float],
         songs = result.get("songs") if isinstance(result, dict) else None
         if not isinstance(songs, list):
             continue
-        versions = [version for version in map(_second_db_version, songs)
-                    if version is not None and version["id"] not in asked
-                    and _names_match(version, artist, song)]
-        versions.sort(key=lambda version: _length_off(version, duration))
+        listed = [version for version in map(_second_db_version, songs)
+                  if version is not None and version["id"] not in asked]
+        listed.sort(key=lambda version: _length_off(version, duration))
+        versions = [version for version in listed if _names_match(version, artist, song)]
+        if covered is not None and song in (title, stripped):
+            # After the versions under the title of the cover: the song it covers
+            versions += [version for version in listed
+                         if version not in versions and _is_covered_song(version, *covered)]
         for version in versions[:_SECOND_DB_LYRICS]:
             asked.add(version["id"])
             synced, plain = _second_db_lyrics(version)

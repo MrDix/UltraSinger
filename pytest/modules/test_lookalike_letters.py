@@ -32,15 +32,38 @@ class TestFoldLookalikeLetters(unittest.TestCase):
         text = "Even over The Top, five voices Are in tune"
         self.assertEqual(fold_lookalike_letters(_disguised(text, letters="oviATE", lookalikes=_GREEK)), text)
 
-    def test_words_of_lookalikes_only_in_a_latin_text(self):
-        # "a" and "o" alone, "see" and "yes" with every letter replaced
-        text = "I found a way, o my friend, to see the light and tell them yes"
+    @staticmethod
+    def _with_words_disguised(text: str, whole: tuple, partly: tuple) -> str:
+        """The text with the words at ``whole`` made of look-alikes only, and one letter of those at ``partly``."""
         words = text.split()
-        for n in (2, 4, 8, 14):
+        for n in whole:
             words[n] = _disguised(words[n], letters="aeosy")
-        disguised = " ".join(words)
-        self.assertEqual(sum(a != b for a, b in zip(disguised, text)), 8)
+        for n in partly:
+            words[n] = _disguised(words[n], letters="eo")
+        return " ".join(words)
+
+    def test_words_of_lookalikes_only_in_a_text_written_with_lookalikes(self):
+        # "a" and "o" alone, "see" and "yes" with every letter replaced; "found", "friend" and "tell" with one
+        text = "I found a way, o my friend, to see the light and tell them yes"
+        disguised = self._with_words_disguised(text, whole=(2, 4, 8, 14), partly=(1, 6, 12))
+        self.assertEqual(sum(a != b for a, b in zip(disguised, text)), 11)
         self.assertEqual(fold_lookalike_letters(disguised), text)
+
+    def test_words_of_lookalikes_only_stay_without_enough_words_that_mix_the_scripts(self):
+        """One or two words with a look-alike are slips: they are folded, a word of look-alikes only is not."""
+        text = "I found a way, o my friend, to see the light and tell them yes"
+        for partly in ((), (1,), (1, 6)):
+            with self.subTest(mixed_words=len(partly)):
+                disguised = self._with_words_disguised(text, whole=(2, 4, 8, 14), partly=partly)
+                self.assertEqual(fold_lookalike_letters(disguised),
+                                 self._with_words_disguised(text, whole=(2, 4, 8, 14), partly=()))
+
+    def test_a_word_of_the_other_script_made_of_lookalikes_stays(self):
+        """A Russian interjection of three letters that all look like Latin ones, in an English text."""
+        interjection = "".join(map(chr, (0x0423, 0x0440, 0x0430)))
+        text = ("One two three, over the ocean we come home\nFour five six, the river is wide\n"
+                f"Seven eight nine, {interjection}! we sing tonight\nTen more lines and the song is done")
+        self.assertEqual(fold_lookalike_letters(text), text)
 
     def test_a_text_in_cyrillic_script_stays(self):
         for text in (
@@ -102,6 +125,20 @@ class TestFoldLookalikeLetters(unittest.TestCase):
                 self.assertTrue(name.startswith(("CYRILLIC", "GREEK")))
                 self.assertTrue(chr(latin).isascii() and chr(latin).isalpha())
                 self.assertEqual(chr(lookalike).isupper(), chr(latin).isupper())
+
+    def test_capital_and_small_letter_are_both_lookalikes(self):
+        """Except for the capitals whose small letter looks like a small capital, not like a Latin letter:
+        the Cyrillic Ve, Ka, Em, En, Te and the Greek Beta, Epsilon, Zeta, Eta, Mu, Tau."""
+        alone = set()
+        for lookalike in _LOOKALIKES:
+            letter = chr(lookalike)
+            other_case = letter.lower() if letter.isupper() else letter.upper()
+            if other_case != letter and ord(other_case) not in _LOOKALIKES:
+                alone.add(lookalike)
+        self.assertEqual(alone, {0x0412, 0x041A, 0x041C, 0x041D, 0x0422,
+                                 0x0392, 0x0395, 0x0396, 0x0397, 0x039C, 0x03A4})
+        for capital, small, latin in ((0x04BA, 0x04BB, "Hh"), (0x0500, 0x0501, "Dd")):
+            self.assertEqual((chr(capital) + chr(small)).translate(_LOOKALIKES), latin)
 
 
 if __name__ == "__main__":

@@ -864,6 +864,55 @@ class TestCoverLyrics(unittest.TestCase):
                                        title="Song Title (Cover)")
                 self.assertEqual(result is not None, taken)
 
+    def test_a_result_with_the_title_of_the_cover_comes_first(self):
+        """"Song Title (Take Cover)" can be a song of its own: the song "Song Title" counts only when a
+        search lists no lyrics under our title, however close in length and synced it is."""
+        title = "Song Title (Take Cover)"
+        own = _version(200.0, synced=False, track=title)
+        other = _version(201.0, track="Song Title")
+        for where, answer in (("in one answer", lambda params: [other, own]),
+                              ("in the answers of two searches", lambda params: [own] if "q" in params else [other])):
+            with self.subTest(where=where):
+                result, requests = self._find(answer, title=title, duration=200.0)
+                self.assertEqual((result.track_name, result.synced_lyrics), (title, None))
+                self.assertEqual(requests, [("Some Artist", title), f"Some Artist {title}"])
+        result, requests = self._find(lambda params: [other], title=title, duration=200.0)
+        self.assertEqual(result.track_name, "Song Title")
+        self.assertEqual(len(requests), 2)
+
+    def test_the_covered_song_for_a_cover_listed_without_lyrics(self):
+        instrumental = _lrclib_entry(track="Song Title (Somebody Cover)", artist="Some Artist", plain=None,
+                                     instrumental=True)
+        result, _ = self._find(lambda params: [instrumental, _version(201.0)])
+        self.assertEqual((result.track_name, result.instrumental), ("Song Title", False))
+
+    def test_words_that_tell_the_kind_of_the_cover_are_no_artist(self):
+        """Nobody is searched under "Female" or "Metal", and nothing listed under such a name is taken."""
+        for mark in ("Female Cover", "Metal Cover", "Live Cover", "Japanese Cover", "Instrumental Cover"):
+            with self.subTest(mark=mark):
+                title = f"Song Title ({mark})"
+                result, requests = self._find(lambda params: [_version(201.0, artist=mark.split()[0])], title=title)
+                self.assertIsNone(result)
+                self.assertEqual(requests, [("Some Artist", title), f"Some Artist {title}",
+                                            ("Some Artist", "Song Title"), "Some Artist Song Title"])
+
+    def test_a_mark_that_is_an_addition_to_the_title(self):
+        """"(Acoustic Cover by Somebody)" is left out with the additions to the title: the song is then
+        searched under Somebody too."""
+        title = "Song Title (Acoustic Cover by Somebody)"
+
+        def answer(params):
+            return [_version(201.0, artist="Somebody")] if params.get("artist_name") == "Somebody" else []
+        result, requests = self._find(answer, title=title)
+        self.assertEqual((result.artist_name, result.track_name), ("Somebody", "Song Title"))
+        self.assertEqual(requests, [("Some Artist", title), f"Some Artist {title}",
+                                    ("Some Artist", "Song Title"), "Some Artist Song Title",
+                                    ("Somebody", "Song Title")])
+        # a mark that names nobody adds no search
+        result, requests = self._find(lambda params: [], title="Song Title (Acoustic Cover)")
+        self.assertEqual([request for request in requests if isinstance(request, tuple)],
+                         [("Some Artist", "Song Title (Acoustic Cover)"), ("Some Artist", "Song Title")])
+
     def test_a_title_without_a_cover_mark_is_searched_as_before(self):
         for artist, track in (("Some Artist", "Song Title (Somebody Cover)"), ("Somebody", "Song Title"),
                               ("Some Artist", "Some Artist - Song Title")):
@@ -1135,6 +1184,23 @@ class TestSecondDatabaseSearches(unittest.TestCase):
         self.assertEqual(searches, ["Some Artist Song Title (Somebody Cover) (Official Video)",
                                     "Some Artist Song Title (Somebody Cover)", "Some Artist Song Title",
                                     "Somebody Song Title"])
+
+    def test_a_version_with_the_title_of_the_cover_comes_first(self):
+        """Before the song it covers, however close that one is in length."""
+        title = "Song Title (Take Cover)"
+        songs = [_second_db_song(1), _second_db_song(2, name=title, duration_s=330.0)]
+        result, _, fetched = self._find(title, songs, {1: _second_db_lrc(100), 2: _second_db_lrc(200)})
+        self.assertEqual(result.track_name, title)
+        self.assertEqual(len(fetched), 1)
+        # listed without lyrics: the song it covers
+        result, _, fetched = self._find(title, songs, {1: _second_db_lrc(100)})
+        self.assertEqual(result.track_name, "Song Title")
+        self.assertEqual(len(fetched), 2)
+
+    def test_words_that_tell_the_kind_of_the_cover_are_not_searched(self):
+        result, searches, _ = self._find("Song Title (Female Cover)", [], {})
+        self.assertIsNone(result)
+        self.assertEqual(searches, ["Some Artist Song Title (Female Cover)", "Some Artist Song Title"])
 
     def test_searched_again_without_the_stripped_mark(self):
         def songs(searched):
