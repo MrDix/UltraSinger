@@ -175,6 +175,20 @@ class TestRefinePitchWithUscore:
         assert corrections == 1
         assert [s.note for s in result] == ["C4", "D4"]  # the first note was judged on the lead stem
 
+    def test_freestyle_notes_are_neither_corrected_nor_checked_against_the_fallback_audio(self):
+        """A freestyle note has no pitch: the scorer has no tone for it in either audio."""
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a "),
+                    MidiSegment(note="C4", start=1.0, end=2.0, word="shout ", note_type="F")]
+        # no scores of the fallback audio: scoring it would fail the test
+        scores = {
+            "fake_vocal.wav": [FakeNoteScore(beats_hit=9, beats_total=10, detected_tones=[24] * 10),
+                               FakeNoteScore(beats_hit=0, beats_total=10, detected_tones=[])],
+        }
+        result, corrections = self._run_refinement(segments, scores, hit_ratio_threshold=0.5,
+                                                   fallback_audio_path="full.wav")
+        assert corrections == 0
+        assert [(s.note, s.note_type) for s in result] == [("C4", ":"), ("C4", "F")]
+
     def test_note_with_tones_ignores_fallback_audio(self):
         segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a ")]
         scores = {

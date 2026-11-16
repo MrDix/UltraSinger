@@ -63,9 +63,11 @@ This will help me a lot to keep this project alive and improve it.
     - [Format Version](#format-version)
     - [Line Break Timing](#line-break-timing)
     - [Cache Folder](#cache-folder)
+    - [Freestyle Detection](#freestyle-detection)
     - [🧪 Experimental Features](#-experimental-features)
       - [Library Triage Tool](#library-triage-tool)
       - [Chart Benchmark Tool](#chart-benchmark-tool)
+      - [Chart Review Tool](#chart-review-tool)
       - [Model-Based Note Segmentation](#model-based-note-segmentation---segmentation_model)
       - [LLM Lyric Correction](#llm-lyric-correction---llm_correct)
       - [Remote Speech-to-Text](#remote-speech-to-text---remote_stt)
@@ -335,7 +337,9 @@ _Not all options working now!_
     --pitch_change_split    Split notes at pitch change boundaries within a syllable. Detects sustained pitch
                             changes (melismas, runs) and creates separate notes for each pitch region. Uses
                             vibrato-aware detection (region median comparison) to avoid false splits. Enabled
-                            by default.
+                            by default. A word-based note is also split where the singing clearly settles
+                            on another pitch in the separated vocal (the clearest steps of
+                            --vocal_runs_as_notes).
     --no_pitch_change_split Disable pitch-change splitting (revert to one note per word).
     --pitch_notes           Generate notes from pitch contour instead of word timing (experimental). Best for
                             melismatic songs with runs and slides. Notes are segmented by pitch stability, then
@@ -360,19 +364,14 @@ _Not all options working now!_
                             --remote_stt; turning it off saves the time of the transcription.
 
     [freestyle detection]
-    --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
-                                    notes (displayed but not scored). Covers growls, screams, rap, spoken word,
-                                    harsh vocals, and any non-melodic vocal style.
-                                    Primary: HPSS (Harmonic-Percussive Source Separation) harmonicity
-                                    analysis (genre/gender-independent, measures harmonic vs. percussive
-                                    energy). Fallback (when HPSS is unavailable): SwiftF0 confidence +
-                                    pitch stability.
-    --freestyle_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
-    --freestyle_energy              RMS energy threshold — segments below this are treated as silence >> ((default) is 0.01)
-    --freestyle_confidence          SwiftF0 median confidence threshold (fallback) >> ((default) is 0.35)
-    --freestyle_pitch_stdev         Pitch standard deviation threshold in semitones (fallback) >> ((default) is 4.0)
-    --freestyle_spectral_flatness   Spectral flatness threshold (fallback) >> ((default) is 0.25)
-    --no_freestyle_spectral         Disable spectral flatness analysis (fallback)
+    --disable_freestyle_detection   Chart every note with a pitch. Enabled by default: notes that are sung
+                                    without a pitch - screams, growls and other harsh vocals, shouted or
+                                    whispered lines - become freestyle notes (displayed but not scored), on
+                                    one pitch instead of the arbitrary ones the pitch detection gives them.
+                                    A note has a pitch when the pitch detection is sure of one in the
+                                    separated vocal, or when partials stand out of its spectrum (several
+                                    voices at once); harsh vocals sung on a pitch keep their notes. Needs
+                                    the separated vocal.
 
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
@@ -382,7 +381,9 @@ _Not all options working now!_
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on; a note keeps
                                 its octave, only its pitch class is corrected; notes from a segmentation
                                 model keep a well-tracked pitch unless a second pitch track confirms the
-                                correction)
+                                correction). Part of it: a word-based note charted beside the pitch the
+                                singing clearly stays on (steady and sure in the separated vocal) takes
+                                the sung pitch
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
                                 for notes from a segmentation model)
     --disable_refine_gap        Disable the GAP sweep, which shifts all notes together by up to 70 ms to where
@@ -412,14 +413,16 @@ _Not all options working now!_
                                 in each tenth of the song, so they do not pile up in one section.
 
     [vocal runs]
-    --vocal_runs_as_notes       Vocal runs, riffs and acrobatics as notes (harder): split a held note where
-                                the singing briefly flips to another pitch and comes back (mordents, turns,
-                                grace notes, neighbour notes, trills) and chart the flip as a note of its
-                                own. Makes the song noticeably harder to sing, and professional charts
-                                rarely notate singing this finely - they mostly keep the one held note.
-                                Unlike --chart_style score, every other note stays as it is. Needs the
-                                separated vocal. Disabled by default.
-    --vocal_runs_threshold      Semitones the singing has to leave a held note by to count as a flip
+    --vocal_runs_as_notes       Vocal runs, riffs and acrobatics as notes (harder): split a note where the
+                                singing goes to another pitch within the syllable - a step that is held,
+                                a run over several pitches, or a quick flip to another pitch and back
+                                (mordents, turns, grace notes, neighbour notes, trills) - and chart each
+                                sung pitch as a note of its own. Makes the song noticeably harder to sing,
+                                and professional charts rarely notate singing this finely - they mostly
+                                keep the one held note. Unlike --chart_style score, every other note stays
+                                as it is. Needs the separated vocal. Disabled by default.
+    --vocal_runs_threshold      Semitones the singing has to leave a held note by to count as a flip, and
+                                with it how clearly it has to settle on another pitch to count as a step
                                 (0.3 to 4.0; lower finds more, also smaller ones) >> ((default) is 1.0)
 
 
@@ -799,6 +802,24 @@ It is also asked when the lyrics of LRCLIB have few of the words a transcription
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used. It searches as a conversion of the video does: with the artist and title that the conversion takes from the video and looks up in the song database, and with the length of the video.
 
+### Freestyle Detection
+
+On by default; `--disable_freestyle_detection` (GUI: Settings → "Freestyle Detection") turns it off.
+
+Notes that are sung without a pitch become freestyle notes: screams, growls and other harsh vocals, shouted and whispered lines. A freestyle note shows its word and is not scored. There is no pitch in it that a singer could hit or a game could score: the pitch detection finds none, so such a note would be charted on an arbitrary pitch, and a passage of them as a zigzag nobody can sing. A run of freestyle notes is charted on one pitch instead, that of the last sung note before it.
+
+A note counts as sung when, in the separated vocal, most of its loud frames have a pitch: the pitch detection is sure of one there, or partials stand clearly out of the spectrum. The second is for harmonies and choirs — several voices at once leave the pitch detection unsure which one to follow, but every voice keeps its partials, while a scream is noise shaped by the mouth. Harsh vocals that carry a pitch (a scream on a note, a distorted voice) therefore keep their notes. The notes are judged together in their order, each most likely of the kind of its neighbours: a short or unclear note within singing stays a sung note, one within a scream becomes freestyle with it, and the notes of one syllable are always of one kind. A passage without a pitch is at least a second long: a note or two among sung ones are far more often a quick, breathy or half-spoken syllable of a sung line than a scream, and stay sung notes (this halves the notes that hand-made charts have with a pitch and that become freestyle; in songs with harsh vocals 6 % fewer notes do).
+
+On 100 songs with hand-made charts, 0.9 % of the notes that are charted with a pitch there became freestyle, most of them in two songs with shouted choruses; in more than half of the songs none did. On an annotated set of metal vocals (two hours from 57 songs), seven tenths of the screamed stretches were judged to be without a pitch, and 3 % of the cleanly sung ones — nearly all of those in a few songs with large choirs, which the pitch detection cannot follow and whose partials blur. In songs with harsh vocals, up to four fifths of the notes become freestyle.
+
+Freestyle notes also come from words in brackets in the lyrics (backing vocals) and from a [segmentation model](#model-based-note-segmentation---segmentation_model); those stay freestyle notes, and next to notes without a pitch they are charted on one height with them. The detection needs the separated vocal. The pitch refinement does not re-pitch freestyle notes, and they do not count in the score the GAP is searched with.
+
+```commandline
+-i XYZ --disable_freestyle_detection
+```
+
+The options of the earlier detection (`--detect_freestyle` and the `--freestyle_...` thresholds) are still accepted and do nothing.
+
 ### 🧪 Experimental Features
 
 These features are experimental and disabled by default. They may change or be removed in future versions.
@@ -814,6 +835,17 @@ These features are experimental and disabled by default. They may change or be r
 `tools/chart_benchmark.py` converts a reproducible sample of songs from your own UltraStar library and measures how close the generated charts come to the existing hand-made charts (note timing, length, pitch, which passages are charted at all and whether the lyrics sit under the right notes), including game-like piano-roll images. Use it to check whether a pipeline change actually improves the charts — the game score alone cannot tell. All data stays in a work directory outside the repository:
 
 * 📄 **[Chart Benchmark Tool documentation](docs/chart-benchmark.md)**
+
+#### Chart Review Tool
+
+`tools/chart_review.py` lays the chart of a converted song over its separated vocal, so a chart can be looked at without singing it and without a hand-made chart to compare with. It writes pages with the spectrogram of the vocal, its pitch track and the notes, and below each stretch the same as a piano roll (the sung pitch in semitones against the notes, with the lyrics): sung passages show as stacked lines with a calm pitch track, harsh vocals as a cloud without either, a vocal run as steps the notes follow or do not. A report (`review.md`) lists every line of the chart with how much of its notes is sung with a sure pitch and how much of that is on the notes, and names the lines that stand out: scored notes that are sung without a pitch, notes beside the sung pitch, sung pitches without a note of their own, singing between the notes.
+
+```commandline
+python tools/chart_review.py "path/to/Artist - Title" path/to/review_folder
+python tools/chart_review.py chart.txt review_folder --vocals vocals.wav --from 60 --to 120
+```
+
+It needs the separated vocal that UltraSinger writes next to the chart (the file of the `#VOCALS` tag), or one given with `--vocals`.
 
 #### LLM Lyric Correction (`--llm_correct`)
 
@@ -942,7 +974,7 @@ Notes are segmented by pitch stability (sustained pitch changes of 2+ semitones 
 
 #### Model-Based Note Segmentation (`--segmentation_model`)
 
-Instead of deriving notes from the word timing, a small neural network predicts directly on the separated vocal where notes start, how long they are, and which passages are charted at all (e.g. spoken parts become freestyle, background vocals are left out). The lyrics from the usual sources (synced lyrics or Whisper, with forced alignment) are then split into syllables and placed onto these notes; syllables held over several notes get `~` continuations, and syllables without a note of their own join a neighbouring note of the same line.
+Instead of deriving notes from the word timing, a small neural network predicts directly on the separated vocal where notes start, how long they are, and which passages are charted at all (e.g. spoken parts become freestyle, background vocals are left out). The lyrics from the usual sources (synced lyrics or Whisper, with forced alignment) are then split into syllables and placed onto these notes; syllables held over several notes get `~` continuations, and syllables without a note of their own join a neighbouring note of the same line. A freestyle passage (spoken, shouted, screamed) is one stretch for the network, however many words it has; it is cut at the starts of its words, so every word shows when it is said instead of a whole line in one long note.
 
 No model is shipped with UltraSinger. You train your own on your UltraStar song library with `tools/train_segmentation.py` or with **Train...** next to the Segmentation Model setting in the GUI — the more well-timed charts it sees, the better. Keep the model and the extracted training data private. Measure the result on songs the model was not trained on with the [Chart Benchmark Tool](#chart-benchmark-tool).
 
@@ -959,22 +991,7 @@ To share one model between computers, keep it in a (private) GitHub repository a
 ```commandline
 -i XYZ --segmentation_model_repo owner/models-repo
 ```
-**Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). The pitch refinement and the game-score report then compare the notes with the lead stem as well (notes without a detected tone there with the full vocal stem). On a 100-song benchmark this raised the median agreement with hand-made charts by about 1.7 points, mainly on songs with several voices. The separation needs about 2.2 GB of free GPU memory; with less it is skipped, since it would run in shared system memory and take very long, and the note pitches come from the full vocal stem.
-
-#### Freestyle Detection (`--detect_freestyle`)
-
-Detects vocal passages that cannot be reliably pitched and marks them as freestyle notes (displayed but not scored). This covers growls, screams, harsh vocals, rap, spoken word, and any non-melodic vocal style — useful for any song where parts of the vocal performance fall outside traditional singing.
-
-The primary detection method uses **HPSS (Harmonic-Percussive Source Separation)**: clean singing has a high harmonic-to-total energy ratio (typically 0.7+), while unpitchable passages have a low ratio (below 0.40). This approach is **genre- and gender-independent**. When HPSS is unavailable (e.g. no separated vocal audio or HPSS preprocessing fails), a fallback method uses SwiftF0 pitch confidence and pitch stability analysis.
-
-```commandline
--i XYZ --detect_freestyle
-```
-
-You can tune the detection thresholds:
-```commandline
--i XYZ --detect_freestyle --freestyle_harmonicity 0.35 --freestyle_energy 0.005
-```
+**Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). The pitch refinement and the game-score report then compare the notes with the lead stem as well. Where the lead stem has no tone, the full vocal stem counts instead (for the refinement in notes without a detected tone, for the game score in every moment without one): the separation takes a chorus sung by several voices for backing vocals, and its notes would otherwise score as all missed. On a 100-song benchmark this raised the median agreement with hand-made charts by about 1.7 points, mainly on songs with several voices. The separation needs about 2.2 GB of free GPU memory; with less it is skipped, since it would run in shared system memory and take very long, and the note pitches come from the full vocal stem.
 
 #### ptAKF Chart Refit (`--ptakf_refit`)
 
@@ -1012,11 +1029,20 @@ Disabled by default, since it changes the in-game score distribution.
 
 #### Vocal Runs, Riffs and Acrobatics as Notes (`--vocal_runs_as_notes`)
 
-Singers often leave a held note for a moment and come back to it within one syllable: a quick flip a tone up or down. Depending on the style this is called a mordent, a turn, a grace note, a neighbour note, a trill, or part of a vocal run or riff. UltraSinger charts such a syllable as one held note. With this option the held note is split there, and the flip becomes a note of its own (`~`) between two pieces of the held note.
+Singers often sing more than one pitch on a syllable: a step up or down that is held, a run over several pitches, or a quick flip a tone away and back. Depending on the style this is called a melisma, a mordent, a turn, a grace note, a neighbour note, a trill, or a vocal run or riff. UltraSinger charts such a syllable as one held note, or with fewer notes than are sung. With this option the note is split there, and every sung pitch becomes a note of its own (`~`).
 
-**The song becomes noticeably harder to sing.** Professional charts rarely notate singing this finely: at most of these places they keep the one held note, so the option is off by default. Turn it on when the chart should follow the singer as closely as possible. Unlike the `score` [chart style](#chart-style-singable-vs-score---chart_style-gui-settings--post-processing--chart-style), which rebuilds every note from the recording, it keeps the singable chart and only adds these flips.
+**The song becomes noticeably harder to sing.** Professional charts rarely notate singing this finely: at most of these places they keep the one held note, so the option is off by default. Turn it on when the chart should follow the singer as closely as possible. Unlike the `score` [chart style](#chart-style-singable-vs-score---chart_style-gui-settings--post-processing--chart-style), which rebuilds every note from the recording, it keeps the singable chart and only adds these steps and flips.
 
-A flip is a pitch change of at least `--vocal_runs_threshold` semitones (default 1.0, GUI: **Vocal Runs Threshold**; lower finds more and smaller flips) that lasts 50 to 400 ms inside a note held for at least 350 ms, with the voice steady on the held pitch before and after it. Jumps of more than 4 semitones are pitch detection errors (mostly octave errors) and are ignored. A quick flip is often sung short of its pitch, so the flipped note goes to the nearest note of the song's key within one semitone of what was measured (unless `--disable_quantization` is set). Flips are placed on the beat grid and last at least one beat. Freestyle and rap notes are never split. Runs on the final notes, before the golden notes are picked, and only on the separated vocal. Flips are measured in the pitch of the separated vocal stem itself (the lead vocal when the note pitches come from it, so a backing voice is never charted as one), not in the denoised vocal the notes are made from: its noise reduction can smear a quick whole-tone flip to half a tone or less.
+Two things are found in each note:
+
+- **Steps and runs.** The sung pitch of the note is cut into plateaus, stretches of at least 80 ms on one pitch; each plateau becomes a note. What the singing only passes through is no note: the glide between two pitches, the scoop into a note and the voice falling off at its end (a first or last plateau shorter than 150 ms). A wide vibrato is averaged out first, so its swings are no steps. Pitches count as the games score them, octaves folded, so an octave error of the pitch detection never splits a note; a jump of more than 4 semitones between two plateaus is taken for such an error. The note keeps its pitch on the plateau it has it from, and the other plateaus are charted by their distance to it.
+- **Flips.** A quick departure that is too short for a plateau: a pitch change of at least `--vocal_runs_threshold` semitones that lasts 50 to 400 ms inside a note held for at least 350 ms, with the voice steady on the held pitch before and after it. In a note sung with vibrato, a flip has to leave the held pitch by one and a half times the extent of the vibrato. Jumps of more than 4 semitones are ignored. A quick flip is often sung short of its pitch, so the flipped note goes to the nearest note of the song's key within one semitone of what was measured (unless `--disable_quantization` is set).
+
+`--vocal_runs_threshold` (default 1.0, GUI: **Vocal Runs Threshold**) sets how readily both are found: lower finds more and smaller flips, and steps the singing settles on less clearly. The pieces are placed on the beat grid. Freestyle and rap notes are never split. Runs on the final notes, before the golden notes are picked, and only on the separated vocal. The pitch is that of the separated vocal stem itself (the lead vocal when the note pitches come from it, so a backing voice is never charted as a run), not that of the denoised vocal the notes are made from: its noise reduction can smear a quick whole-tone flip to half a tone or less.
+
+With a [segmentation model](#model-based-note-segmentation---segmentation_model) the notes follow runs closely already, and this option adds little.
+
+**Without the option**, notes made from words still get the clearest of these steps (a pitch the singing stays on for long, or far away from the note's) — professional charts have those as notes of their own — and a word-based note that is charted beside the pitch the singing clearly stays on takes the sung pitch. Both compare the notes with the pitch of the separated vocal stem; the word notes themselves are made from the denoised vocal, and the pitch refinement can move a note to a tone the games' pitch detection mishears. On 94 songs with hand-made charts the two raised the agreement of the word-based charts with the hand-made ones by 1.0 points (78 songs gained, 13 lost). The steps are part of the pitch-change split (`--no_pitch_change_split`), the sung pitch of the pitch refinement (`--disable_refine_pitch`). The notes of a segmentation model get neither: they have their pitches and steps from the vocal stem already.
 
 ```commandline
 -i XYZ --vocal_runs_as_notes

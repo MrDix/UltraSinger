@@ -82,7 +82,7 @@ def _run(process_data, pitched_data, transcribe, *, early_lyrics=None, fast_lang
         disable_reference_lyrics=False, onset_correction=False, vocal_gap_fill=False, quantize_to_key=False,
         pitch_change_split=True, pitch_notes=False, syllable_split=False, segmentation_model=None,
         segmentation_model_repo=None, create_audio_chunks=False, octave_snap=False, octave_consistency=False,
-        vocal_center_correction=False, octave_shift=None, detect_growl=False, refine_from_vocal=False,
+        vocal_center_correction=False, octave_shift=None, freestyle_detection=False, refine_from_vocal=False,
         ptakf_refit=False, calculate_score=False, golden_notes=False, create_plot=False, create_midi=False,
         write_settings_info=False, remote_stt=False, llm_correct_lyrics=False, keep_numbers=False,
         cache_folder=None, keep_cache=False, use_separated_vocal=True, create_karaoke=True,
@@ -1614,3 +1614,125 @@ class TestLyricsTheSingingHas(unittest.TestCase):
         self.assertEqual(process_data.plain_lyrics, other.plain_lyrics)
         self.assertEqual(process_data.lyrics_source, "music.163.com")
         self.assertIs(process_data.lyrics_instead, other)
+
+
+class TestNotesComparedWithTheVocalStem(unittest.TestCase):
+    """The passes that compare the notes with the pitch of the separated stem:
+    the freestyle detection, the steady sung pitch and the vocal runs."""
+
+    WORDS = [("one ", 0.0, 0.24), ("two ", 0.40, 0.64)]
+
+    def _passes(self, model=None, **settings_values):
+        """The passes run() ran, in order, each with the stem its pitch track was of."""
+        process_data = _process_data()
+        process_data.process_data_paths.vocals_audio_file_path = "stem.wav"
+        calls = []
+
+        def stem_track(data, stem_path):
+            return stem_path
+
+        def freestyle(segments, track, stem_path):
+            calls.append(("freestyle", track))
+            self.assertEqual(stem_path, "stem.wav")
+            return segments
+
+        def steady(segments, track):
+            calls.append(("steady pitch", track))
+            return segments
+
+        def runs(segments, track, **kwargs):
+            calls.append(("vocal runs", track))
+            return segments
+
+        def clear_steps(segments, track, **kwargs):
+            calls.append(("clear steps", track))
+            return segments
+
+        def refine(**kwargs):
+            calls.append(("refine", kwargs["vocal_audio_path"]))
+            return kwargs["midi_segments"]
+
+        def refit(segments, **kwargs):
+            calls.append(("refit", kwargs["vocal_audio_path"]))
+            return segments
+
+        def segment(segments, **kwargs):
+            return SimpleNamespace(segments=segments, pitch_audio_path=model)
+
+        if model:
+            settings_values["segmentation_model"] = "model.pt"
+        with patch.object(us, "_stem_pitch_track", side_effect=stem_track), \
+                patch("modules.Pitcher.unpitched_notes.mark_unpitched_notes", side_effect=freestyle), \
+                patch("modules.Pitcher.steady_pitch.follow_steady_sung_pitch", side_effect=steady), \
+                patch("modules.Pitcher.vocal_runs.split_notes_at_vocal_runs", side_effect=runs), \
+                patch("modules.Pitcher.vocal_runs.split_notes_at_clear_steps", side_effect=clear_steps), \
+                patch("modules.Refinement.refine_from_vocal.refine_notes", side_effect=refine), \
+                patch("modules.Refinement.ptakf_refit.refit_notes_ptakf", side_effect=refit), \
+                patch("modules.Segmentation.segmenter.segment_with_model", side_effect=segment), \
+                patch("ultrastar_score.detect_pitch_frames", return_value=[]):
+            pitched = _pitch_track([(0.0, 0.24, "C4"), (0.40, 0.64, "E4")])
+            _run(process_data, pitched, _transcription(self.WORDS, "en"), bpm_override=60.0,
+                 **{"freestyle_detection": True, "refine_from_vocal": True, **settings_values})
+        return calls
+
+    def test_the_freestyle_detection_runs_before_the_notes_are_refined(self):
+        self.assertEqual(self._passes(), [("freestyle", "stem.wav"), ("refine", "stem.wav"),
+                                          ("steady pitch", "stem.wav"), ("clear steps", "stem.wav")])
+
+    def test_vocal_runs_come_last_and_include_the_clear_steps(self):
+        self.assertEqual([name for name, _ in self._passes(vocal_runs_as_notes=True)],
+                         ["freestyle", "refine", "steady pitch", "vocal runs"])
+
+    def test_no_clear_steps_without_the_pitch_change_split(self):
+        self.assertNotIn("clear steps", [name for name, _ in self._passes(pitch_change_split=False)])
+
+    def test_the_freestyle_detection_can_be_turned_off(self):
+        self.assertNotIn("freestyle", [name for name, _ in self._passes(freestyle_detection=False)])
+
+    def test_nothing_is_compared_without_the_separated_vocal(self):
+        self.assertEqual(self._passes(use_separated_vocal=False, vocal_runs_as_notes=True), [])
+
+    def test_no_steady_pitch_without_the_pitch_refinement(self):
+        for setting in ("refine_from_vocal", "refine_pitch"):
+            with self.subTest(setting=setting):
+                names = [name for name, _ in self._passes(**{setting: False})]
+                self.assertNotIn("steady pitch", names)
+                self.assertIn("clear steps", names)
+
+    def test_notes_from_the_pitch_contour_are_no_word_notes(self):
+        names = [name for name, _ in self._passes(pitch_notes=True)]
+        self.assertNotIn("steady pitch", names)
+        self.assertNotIn("clear steps", names)
+        # the option still splits them
+        self.assertIn("vocal runs", [name for name, _ in self._passes(pitch_notes=True, vocal_runs_as_notes=True)])
+
+    def test_no_steady_pitch_for_the_score_first_chart(self):
+        names = [name for name, _ in self._passes(ptakf_refit=True)]
+        self.assertEqual(names, ["freestyle", "refine", "refit"])
+
+    def test_the_game_score_counts_the_full_vocal_where_the_lead_vocal_has_no_tone(self):
+        process_data = _process_data()
+        process_data.process_data_paths.vocals_audio_file_path = "stem.wav"
+        frames = {"lead.wav": [{"tone": 24}, {"tone": -1}], "stem.wav": [{"tone": 30}, {"tone": 31}]}
+        scored = {}
+
+        def report(txt_path, audio_path, pitch_frames=None):
+            scored.update(audio=audio_path, tones=[frame["tone"] for frame in pitch_frames])
+
+        with patch.object(us, "_stem_pitch_track", return_value=None), \
+                patch("modules.Segmentation.segmenter.segment_with_model",
+                      side_effect=lambda segments, **kwargs: SimpleNamespace(segments=segments,
+                                                                               pitch_audio_path="lead.wav")), \
+                patch("ultrastar_score.detect_pitch_frames", side_effect=frames.get), \
+                patch("modules.uscore_report.calculate_uscore_report", side_effect=report):
+            pitched = _pitch_track([(0.0, 0.24, "C4"), (0.40, 0.64, "E4")])
+            _run(process_data, pitched, _transcription(self.WORDS, "en"), bpm_override=60.0,
+                 segmentation_model="model.pt", calculate_score=True)
+        self.assertEqual(scored, {"audio": "lead.wav", "tones": [24, 31]})
+
+    def test_model_notes_from_the_lead_vocal(self):
+        # The freestyle detection listens to the whole vocal stem, the vocal runs
+        # to the lead vocal the note pitches are from; model notes keep their pitch
+        self.assertEqual(self._passes(model="lead.wav", vocal_runs_as_notes=True),
+                         [("freestyle", "stem.wav"), ("refine", "lead.wav"), ("vocal runs", "lead.wav")])
+        self.assertEqual(self._passes(model="lead.wav"), [("freestyle", "stem.wav"), ("refine", "lead.wav")])

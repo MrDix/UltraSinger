@@ -115,12 +115,33 @@ class TestInputKindOptions(unittest.TestCase):
         self.assertFalse(us.is_url("https_song.mp3"))
 
 
+class TestFreestyleDetectionOptions(unittest.TestCase):
+    def test_enabled_by_default_and_disabled_by_option(self):
+        self.assertTrue(init_settings(["-i", "test.mp3"]).freestyle_detection)
+        self.assertFalse(init_settings(["-i", "test.mp3", "--disable_freestyle_detection"]).freestyle_detection)
+
+    def test_the_option_of_when_it_was_disabled_by_default_is_accepted(self):
+        self.assertTrue(init_settings(["-i", "test.mp3", "--detect_freestyle"]).freestyle_detection)
+
+    def test_the_threshold_options_of_the_earlier_detection_are_accepted_and_do_nothing(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            settings = init_settings([
+                "-i", "test.mp3", "--detect_freestyle", "--freestyle_harmonicity", "0.3",
+                "--freestyle_energy", "0.02", "--freestyle_confidence", "0.4", "--freestyle_pitch_stdev", "3",
+                "--freestyle_spectral_flatness", "0.2", "--no_freestyle_spectral"])
+        self.assertTrue(settings.freestyle_detection)
+        for option in ("--freestyle_harmonicity", "--no_freestyle_spectral"):
+            self.assertIn(f"{option} is no longer used", out.getvalue())
+        self.assertFalse(hasattr(settings, "growl_harmonicity_threshold"))
+
+
 class TestSettingsResetPerRun(unittest.TestCase):
     """settings is a reused singleton: no option of an earlier run carries over."""
 
     def test_options_of_an_earlier_run_do_not_carry_over(self):
         init_settings(["-i", "test.mp3", "--ignore_audio", "--bpm", "100", "--octave", "1", "--plot",
-                       "--language", "de", "--disable_separation", "--detect_freestyle"])
+                       "--language", "de", "--disable_separation", "--disable_freestyle_detection"])
         settings = init_settings(["-i", "test.mp3"])
         self.assertFalse(settings.ignore_audio)
         self.assertIsNone(settings.bpm_override)
@@ -128,7 +149,7 @@ class TestSettingsResetPerRun(unittest.TestCase):
         self.assertFalse(settings.create_plot)
         self.assertIsNone(settings.language)
         self.assertTrue(settings.use_separated_vocal)
-        self.assertFalse(settings.detect_growl)
+        self.assertTrue(settings.freestyle_detection)
 
     def test_values_set_during_a_run_do_not_carry_over(self):
         settings = init_settings(["-i", "test.mp3"])

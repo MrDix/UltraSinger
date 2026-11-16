@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch
 
-from modules.uscore_report import calculate_uscore_report, format_uscore_report
+from modules.uscore_report import calculate_uscore_report, format_uscore_report, with_fallback_frames
 
 
 def _diff(total_pct: float) -> dict:
@@ -136,3 +136,34 @@ class TestCalculateUscoreReportPitchFrames:
         # Each difficulty: first attempt with pitch_frames (fails), retry without
         assert len(calls) == 6
         assert result["easy"]["total_pct"] == 90.0
+
+
+class TestWithFallbackFrames:
+    """Where the lead stem has no tone, the frames of the full vocal stem count."""
+
+    @staticmethod
+    def _frames(*tones):
+        return [{"tone": tone, "time": index * 0.023} for index, tone in enumerate(tones)]
+
+    def test_frames_without_a_tone_are_taken_from_the_fallback(self):
+        lead = self._frames(24, -1, -1, 26)
+        full = self._frames(12, 30, -1, 31)
+        merged = with_fallback_frames(lead, full)
+        assert [frame["tone"] for frame in merged] == [24, 30, -1, 26]
+        assert merged[0] is lead[0] and merged[1] is full[1]
+
+    def test_the_given_frames_are_not_changed(self):
+        lead = self._frames(-1, 24)
+        with_fallback_frames(lead, self._frames(30, 30))
+        assert [frame["tone"] for frame in lead] == [-1, 24]
+
+    def test_lists_of_different_lengths(self):
+        lead = self._frames(-1, -1, -1)
+        assert [f["tone"] for f in with_fallback_frames(lead, self._frames(30))] == [30, -1, -1]
+        assert [f["tone"] for f in with_fallback_frames(lead[:1], self._frames(30, 31, 32))] == [30]
+
+    def test_without_a_fallback_the_frames_themselves(self):
+        lead = self._frames(-1, 24)
+        assert with_fallback_frames(lead, None) is lead
+        assert with_fallback_frames(lead, []) is lead
+        assert with_fallback_frames(None, self._frames(30)) is None
