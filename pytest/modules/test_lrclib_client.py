@@ -764,3 +764,389 @@ class TestSecondDbLyricsLines(unittest.TestCase):
     def test_lines_like_a_credit_or_the_title_among_the_lyrics_are_sung(self):
         lines = ("first line", "Song Title", "Music: All I Need", "last line")
         self.assertEqual(self._lines(*lines), list(lines))
+
+
+class TestCoverLyrics(unittest.TestCase):
+    """A cover ("Song Title (Somebody Cover)") has the lyrics of the song itself: of the artist
+    of our title or of the one its mark names, whichever of them covers the other."""
+
+    def _find(self, answer, title="Song Title (Somebody Cover)", duration=None):
+        """find_lyrics with LRCLIB answering ``answer(params)``; returns the
+        result and what each request searched: (artist, title) or the query."""
+        requests = []
+
+        def get_json(url):
+            params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+            requests.append(params.get("q") or (params["artist_name"], params["track_name"]))
+            return answer(params)
+
+        with patch("src.modules.lrclib_client._get_json", side_effect=get_json):
+            result = find_lyrics("Some Artist", title, duration)
+        return result, requests
+
+    def test_the_song_is_searched_without_the_cover_mark(self):
+        def answer(params):
+            return [_version(200.0)] if params.get("track_name") == "Song Title" else []
+        for title in ("Song Title (Somebody Cover)", "Song Title [Cover by Somebody]",
+                      "Song Title (Somebody Vocal Cover)"):
+            with self.subTest(title=title):
+                result, requests = self._find(answer, title=title)
+                self.assertEqual((result.artist_name, result.track_name), ("Some Artist", "Song Title"))
+                self.assertEqual(requests, [
+                    ("Some Artist", title), f"Some Artist {title}",
+                    # by our artist, and by the one the mark names
+                    ("Some Artist", "Song Title"), "Some Artist Song Title", ("Somebody", "Song Title"),
+                ])
+
+    def test_a_cover_that_names_nobody(self):
+        def answer(params):
+            return [_version(200.0)] if params.get("track_name") == "Song Title" else []
+        result, requests = self._find(answer, title="Song Title (Cover) (Official Video)")
+        self.assertEqual(result.track_name, "Song Title")
+        self.assertEqual(requests, [
+            ("Some Artist", "Song Title (Cover) (Official Video)"), "Some Artist Song Title (Cover) (Official Video)",
+            ("Some Artist", "Song Title (Cover)"), "Some Artist Song Title (Cover)",
+            ("Some Artist", "Song Title"), "Some Artist Song Title",
+        ])
+
+    def test_the_song_and_its_cover_under_either_artist(self):
+        """Of the versions of both artists, the one closest in length to the audio."""
+        def answer(params):
+            if params.get("artist_name") == "Somebody":
+                return [_version(201.0, artist="Somebody")]
+            return [_version(205.0)] if params.get("track_name") == "Song Title" else []
+        result, _ = self._find(answer, duration=201.5)
+        self.assertEqual((result.artist_name, result.duration), ("Somebody", 201.0))
+        result, _ = self._find(answer, duration=205.5)
+        self.assertEqual((result.artist_name, result.duration), ("Some Artist", 205.0))
+
+    def test_the_mark_names_the_artist_of_the_song(self):
+        """"Song Title (Somebody Cover)" by the covering artist: the song is Somebody's.
+        Its length does not rule it out, as for any other version."""
+        def answer(params):
+            return [_version(230.0, artist="Somebody")] if params.get("artist_name") == "Somebody" else []
+        for duration in (201.5, None):
+            with self.subTest(duration=duration):
+                result, _ = self._find(answer, duration=duration)
+                self.assertEqual((result.artist_name, result.track_name), ("Somebody", "Song Title"))
+
+    def test_a_result_that_names_the_cover(self):
+        """Found with the whole title: the title without the mark is not searched."""
+        for artist, track in (("Some Artist", "Song Title (SOMEBODY Vocal Cover)"),
+                              ("Somebody", "Some Artist - Song Title (SOMEBODY Vocal Cover)"),
+                              ("Somebody", "Song Title (Some Artist Cover)"),
+                              ("Somebody", "Song Title (Cover)"),
+                              ("Somebody", "Some Artist - Song Title"),
+                              ("Some Artist", "Somebody - Song Title")):
+            with self.subTest(artist=artist, track=track):
+                result, requests = self._find(lambda params: [_version(150.0, track=track, artist=artist)]
+                                              if "q" in params else [], duration=201.5)
+                self.assertEqual(result.track_name, track)
+                self.assertEqual(len(requests), 2)
+
+    def test_a_cover_by_somebody_else_is_not_taken(self):
+        for artist, track in (("Some Artist", "Song Title (Other Name Cover)"),
+                              ("Other Name", "Song Title"),
+                              ("Other Name", "Some Artist - Song Title (Other Name Cover)"),
+                              ("Somebody", "Other Band - Song Title"),
+                              ("Some Artist", "Other Song"),
+                              ("Some Artist", "Song Title Goes On")):
+            with self.subTest(artist=artist, track=track):
+                result, _ = self._find(lambda params: [_version(201.0, track=track, artist=artist)], duration=201.5)
+                self.assertIsNone(result)
+
+    def test_a_cover_that_names_nobody_takes_any_cover_of_the_artist(self):
+        for artist, track, taken in (("Some Artist", "Song Title (Other Name Cover)", True),
+                                     ("Some Artist", "Song Title", True),
+                                     ("Other Name", "Song Title", False)):
+            with self.subTest(artist=artist, track=track):
+                result, _ = self._find(lambda params: [_version(201.0, track=track, artist=artist)],
+                                       title="Song Title (Cover)")
+                self.assertEqual(result is not None, taken)
+
+    def test_a_title_without_a_cover_mark_is_searched_as_before(self):
+        for artist, track in (("Some Artist", "Song Title (Somebody Cover)"), ("Somebody", "Song Title"),
+                              ("Some Artist", "Some Artist - Song Title")):
+            with self.subTest(artist=artist, track=track):
+                result, requests = self._find(lambda params: [_version(201.0, track=track, artist=artist)],
+                                              title="Song Title", duration=201.5)
+                self.assertIsNone(result)
+                self.assertEqual(requests, [("Some Artist", "Song Title"), "Some Artist Song Title"])
+
+    def test_the_search_without_the_mark_is_reported(self):
+        with patch("src.modules.lrclib_client._get_json", return_value=[]), \
+                patch("builtins.print") as printed:
+            search_lyrics("Some Artist", "Song Title (Somebody Cover)")
+        lines = [str(call.args[0]) for call in printed.call_args_list]
+        self.assertTrue(any("Searching LRCLIB again without the cover mark" in line and "Song Title" in line
+                            for line in lines))
+
+    def test_a_stripped_version_is_searched_without_the_mark(self):
+        def answer(params):
+            return [_version(200.0)] if params.get("track_name") == "Song Title" else []
+        result, requests = self._find(answer, title="Song Title (stripped)")
+        self.assertEqual(result.track_name, "Song Title")
+        self.assertEqual(requests, [("Some Artist", "Song Title (stripped)"), "Some Artist Song Title (stripped)",
+                                    ("Some Artist", "Song Title"), "Some Artist Song Title"])
+
+    def test_a_stripped_version_under_its_own_title_comes_first(self):
+        versions = [_version(180.0), _version(200.0, track="Song Title (Stripped)"),
+                    _version(200.5, track="Song Title - Stripped")]
+        result, requests = self._find(lambda params: versions, title="Song Title (stripped)", duration=180.0)
+        self.assertEqual(result.track_name, "Song Title (Stripped)")
+        self.assertEqual(len(requests), 2)
+
+
+# A Cyrillic look-alike of each of these Latin letters (by code point: they cannot be told apart here)
+_LOOKALIKES = {"a": "\u0430", "e": "\u0435", "o": "\u043e"}
+
+
+def _disguised(text: str) -> str:
+    return "".join(_LOOKALIKES.get(letter, letter) for letter in text)
+
+
+class TestLookalikeLetters(unittest.TestCase):
+    """Look-alike letters of other scripts in found lyrics are folded to the Latin ones."""
+    asks_second_db = True
+
+    def test_lyrics_of_lrclib(self):
+        plain = "one two three\nover the ocean we come home"
+        synced = "[00:01.00] one two three\n[00:05.50] over the ocean we come home"
+        entry = _lrclib_entry(track="Song Title", artist="Some Artist", plain=_disguised(plain),
+                              synced=_disguised(synced))
+        with patch("src.modules.lrclib_client._get_json", return_value=[entry]):
+            result = find_lyrics("Some Artist", "Song Title")
+        self.assertEqual(result.plain_lyrics, plain)
+        self.assertEqual(result.synced_lyrics, synced)
+
+    def test_lyrics_of_the_second_database(self):
+        lines = ["one two three four five", "over the ocean we come home"]
+        for timed in (True, False):
+            with self.subTest(timed=timed):
+                lyric = "\n".join((f"[00:{10 + n}.00] " if timed else "") + _disguised(line)
+                                  for n, line in enumerate(lines))
+                get_json = TestSecondLyricsDatabase._get_json([], [_second_db_song(7)],
+                                                              {7: {"lrc": {"lyric": lyric}}}, [])
+                with patch("src.modules.lrclib_client._get_json", side_effect=get_json):
+                    result = find_lyrics("Some Artist", "Song Title", 300.0)
+                self.assertEqual(result.plain_lyrics, "\n".join(lines))
+                self.assertEqual(result.synced_lyrics,
+                                 "[00:10.00] one two three four five\n[00:11.00] over the ocean we come home"
+                                 if timed else None)
+
+    def test_lyrics_in_cyrillic_script_stay(self):
+        plain = "это просто придуманный текст\nдля проверки"
+        entry = _lrclib_entry(track="Song Title", artist="Some Artist", plain=plain,
+                              synced="[00:01.00] это просто придуманный текст\n[00:05.00] для проверки")
+        with patch("src.modules.lrclib_client._get_json", return_value=[entry]):
+            result = find_lyrics("Some Artist", "Song Title")
+        self.assertEqual(result.plain_lyrics, plain)
+        self.assertEqual(lrc_text(result.synced_lyrics), plain)
+
+
+def _lines(count: int, word: str = "word") -> list[str]:
+    """Lines of ten words each, all different."""
+    return [" ".join(f"{word}{10 * n + m}" for m in range(10)) for n in range(count)]
+
+
+def _synced(lines: list[str]) -> dict:
+    """The answer of the second database with these lines as synced lyrics."""
+    return {"lrc": {"lyric": "\n".join(f"[00:{10 + n:02d}.500] {line}" for n, line in enumerate(lines))},
+            "code": 200}
+
+
+class TestSyncedLyricsForPlainOnes(unittest.TestCase):
+    """LRCLIB has plain lyrics only: the second lyrics database is asked for synced ones."""
+    asks_second_db = True
+
+    def _find(self, songs=(), lyrics=None, lrclib_length=300.0, duration=300.0, plain=None):
+        """find_lyrics with plain lyrics of 150 words on LRCLIB; returns the result and the URLs asked."""
+        lrclib = [_version(lrclib_length, synced=False, plain=plain or "\n".join(_lines(15)))]
+        asked = []
+        with patch("src.modules.lrclib_client._get_json",
+                   side_effect=TestSecondLyricsDatabase._get_json(lrclib, songs, lyrics, asked)):
+            result = find_lyrics("Some Artist", "Song Title", duration)
+        return result, asked
+
+    def test_synced_lyrics_of_the_same_text_are_taken(self):
+        result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(_lines(15))})
+        self.assertEqual(result.source, "music.163.com")
+        self.assertTrue(result.synced_lyrics.startswith("[00:10.500] word0 word1"))
+        self.assertEqual(result.plain_lyrics, "\n".join(_lines(15)))
+
+    def test_a_text_that_differs_in_places_is_the_same(self):
+        # a line less, another word in each line, a line more
+        other = [line.replace("5 ", "5 oh ", 1) for line in _lines(15)[1:]] + ["one more line at the end"]
+        result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(other)})
+        self.assertEqual(result.source, "music.163.com")
+
+    def test_another_text_is_not_taken(self):
+        result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(_lines(15, word="other"))})
+        self.assertEqual(result.source, "LRCLIB")
+        self.assertIsNone(result.synced_lyrics)
+
+    def test_much_less_of_the_text_is_not_taken(self):
+        # 11 of the 15 lines, then 12
+        result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(_lines(11))})
+        self.assertEqual(result.source, "LRCLIB")
+        result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(_lines(12))})
+        self.assertEqual(result.source, "music.163.com")
+
+    def test_another_recording_is_not_taken(self):
+        result, _ = self._find(songs=[_second_db_song(7, duration_s=200.0)], lyrics={7: _synced(_lines(15))},
+                               lrclib_length=205.0)
+        self.assertEqual(result.source, "LRCLIB")
+
+    def test_a_version_much_further_off_the_audio_is_not_taken(self):
+        """As among the versions on LRCLIB: plain lyrics of the length of the audio
+        beat synced ones of a version more than 5 s further off."""
+        for length, taken in ((296.0, True), (305.0, True), (294.0, False), (None, False)):
+            with self.subTest(length=length):
+                song = _second_db_song(7, duration_s=length or 1.0)
+                if length is None:
+                    del song["duration"]
+                result, _ = self._find(songs=[song], lyrics={7: _synced(_lines(15))})
+                self.assertEqual(result.source == "music.163.com", taken)
+        # plain ones that are off themselves: 12 s, the synced ones 15 s
+        result, _ = self._find(songs=[_second_db_song(7, duration_s=285.0)], lyrics={7: _synced(_lines(15))},
+                               lrclib_length=288.0)
+        self.assertEqual(result.source, "music.163.com")
+
+    def test_without_the_length_of_the_audio(self):
+        result, _ = self._find(songs=[_second_db_song(7, duration_s=200.0)], lyrics={7: _synced(_lines(15))},
+                               duration=None)
+        self.assertEqual(result.source, "music.163.com")
+
+    def test_lyrics_without_times_are_not_taken(self):
+        songs = [_second_db_song(1), _second_db_song(2, duration_s=301.0)]
+        untimed = {"lrc": {"lyric": "\n".join(_lines(15))}}
+        result, _ = self._find(songs=songs, lyrics={1: untimed})
+        self.assertEqual(result.source, "LRCLIB")
+        # the next version has synced ones
+        result, _ = self._find(songs=songs, lyrics={1: untimed, 2: _synced(_lines(15))})
+        self.assertEqual((result.source, result.duration), ("music.163.com", 301.0))
+
+    def test_nothing_found_keeps_the_plain_lyrics(self):
+        result, asked = self._find(songs=[])
+        self.assertEqual(result.source, "LRCLIB")
+        self.assertEqual(result.plain_lyrics, "\n".join(_lines(15)))
+        self.assertEqual(sum("music.163.com" in url for url in asked), 1)
+
+    def test_asked_once_when_unreachable(self):
+        asked = []
+
+        def get_json(url, attempts=None):
+            asked.append((url, attempts))
+            if url.startswith("https://lrclib.net/"):
+                return [_version(300.0, synced=False, plain="\n".join(_lines(15)))]
+            return None
+
+        with patch("src.modules.lrclib_client._get_json", side_effect=get_json):
+            result = find_lyrics("Some Artist", "Song Title (Official Video)", 300.0)
+        self.assertEqual(result.source, "LRCLIB")
+        self.assertEqual([attempts for url, attempts in asked if "music.163.com" in url], [1])
+
+    def test_not_asked_for_synced_lyrics_of_lrclib(self):
+        asked = []
+        lrclib = [_version(300.0, plain="\n".join(_lines(15)))]
+        with patch("src.modules.lrclib_client._get_json",
+                   side_effect=TestSecondLyricsDatabase._get_json(lrclib, [_second_db_song(7)],
+                                                                  {7: _synced(_lines(15))}, asked)):
+            result = find_lyrics("Some Artist", "Song Title", 300.0)
+        self.assertEqual(result.source, "LRCLIB")
+        self.assertTrue(all(url.startswith("https://lrclib.net/") for url in asked))
+
+    def test_far_too_few_plain_lyrics_need_fuller_ones(self):
+        """Too few words come first: their text is no measure for other lyrics."""
+        sparse = "\n".join(_lines(4))
+        result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(_lines(15, word="other"))},
+                               plain=sparse)
+        self.assertEqual(result.source, "music.163.com")
+        result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(_lines(5))}, plain=sparse)
+        self.assertEqual(result.source, "LRCLIB")
+
+    @staticmethod
+    def _report(lyrics):
+        """What search_lyrics prints with these lyrics in the second database."""
+        lrclib = [_version(300.0, synced=False, plain="\n".join(_lines(15)))]
+        get_json = TestSecondLyricsDatabase._get_json(lrclib, [_second_db_song(7, duration_s=298.0)], lyrics, [])
+        with patch("builtins.print") as printed, \
+                patch("src.modules.lrclib_client._get_json", side_effect=get_json):
+            search_lyrics("Some Artist", "Song Title", 300.0)
+        return [str(call.args[0]) for call in printed.call_args_list]
+
+    def test_its_search_reported(self):
+        lines = self._report({7: _synced(_lines(15))})
+        self.assertTrue(any("Searching music.163.com for synced lyrics (the lyrics on LRCLIB have no times)" in line
+                            for line in lines))
+        self.assertTrue(any("have 100% of the words of the plain ones of LRCLIB: taking them" in line
+                            for line in lines))
+        self.assertTrue(any("Found lyrics on music.163.com" in line and "synced" in line for line in lines))
+
+    def test_kept_plain_lyrics_reported(self):
+        lines = self._report({7: _synced(_lines(15, word="other"))})
+        self.assertTrue(any("have only 0% of the words of the plain ones: keeping the plain ones of LRCLIB" in line
+                            for line in lines))
+        self.assertTrue(any("Found lyrics on LRCLIB" in line for line in lines))
+        lines = self._report({})
+        self.assertTrue(any("No synced lyrics found on music.163.com: keeping the plain ones of LRCLIB" in line
+                            for line in lines))
+
+
+class TestSecondDatabaseSearches(unittest.TestCase):
+    """The searches of the second lyrics database for a cover or a stripped-down recording."""
+    asks_second_db = True
+
+    @staticmethod
+    def _find(title, songs, lyrics, duration=300.0):
+        """find_lyrics with nothing on LRCLIB; returns the result, what the
+        second database was searched for and the lyrics fetched from it."""
+        asked = []
+        with patch("src.modules.lrclib_client._get_json",
+                   side_effect=TestSecondLyricsDatabase._get_json([], songs, lyrics, asked)):
+            result = find_lyrics("Some Artist", title, duration)
+        searches = [dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))["s"]
+                    for url in asked if "/search/get?" in url]
+        return result, searches, [url for url in asked if "/song/lyric?" in url]
+
+    def test_the_song_of_a_cover(self):
+        """Its search for the cover lists the song itself: no further search."""
+        result, searches, _ = self._find("Song Title (Somebody Cover)", [_second_db_song(7)],
+                                         {7: _second_db_lrc(100)})
+        self.assertEqual((result.source, result.track_name), ("music.163.com", "Song Title"))
+        self.assertEqual(searches, ["Some Artist Song Title (Somebody Cover)"])
+
+    def test_searched_again_without_the_cover_mark(self):
+        def songs(searched):
+            return [] if "Cover" in searched else [_second_db_song(7),
+                                                   _second_db_song(8, artists=("Other Artist",))]
+        result, searches, lyrics = self._find("Song Title (Somebody Cover)", songs,
+                                              {7: _second_db_lrc(100), 8: _second_db_lrc(200)})
+        self.assertEqual(result.artist_name, "Some Artist")
+        self.assertEqual(searches, ["Some Artist Song Title (Somebody Cover)", "Some Artist Song Title"])
+        self.assertEqual(len(lyrics), 1)
+
+    def test_searched_last_by_the_artist_the_cover_mark_names(self):
+        def songs(searched):
+            return [_second_db_song(7, artists=("Somebody",))] if searched == "Somebody Song Title" else []
+        result, searches, _ = self._find("Song Title (Somebody Cover) (Official Video)", songs,
+                                         {7: _second_db_lrc(100)})
+        self.assertEqual((result.artist_name, result.track_name), ("Somebody", "Song Title"))
+        self.assertEqual(searches, ["Some Artist Song Title (Somebody Cover) (Official Video)",
+                                    "Some Artist Song Title (Somebody Cover)", "Some Artist Song Title",
+                                    "Somebody Song Title"])
+
+    def test_searched_again_without_the_stripped_mark(self):
+        def songs(searched):
+            return [] if "stripped" in searched else [_second_db_song(7)]
+        result, searches, _ = self._find("Song Title (stripped)", songs, {7: _second_db_lrc(100)})
+        self.assertEqual(result.source, "music.163.com")
+        self.assertEqual(searches, ["Some Artist Song Title (stripped)", "Some Artist Song Title"])
+
+    def test_the_lyrics_of_a_version_are_fetched_once(self):
+        """A later search lists the versions without lyrics again."""
+        songs = [_second_db_song(1), _second_db_song(2, duration_s=310.0)]
+        result, searches, lyrics = self._find("Song Title (Official Video)", songs, {})
+        self.assertIsNone(result)
+        self.assertEqual(len(searches), 2)
+        self.assertEqual(len(lyrics), 2)

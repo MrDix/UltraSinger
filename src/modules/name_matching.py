@@ -162,6 +162,21 @@ _NUMBER_WORDS = frozenset("part pt vol volume no nr number chapter act movement 
 # A part designation with its separator or brackets, to search without it
 _PART_SUFFIX_RE = re.compile(
     rf"\s*[,:;\-–—]?\s*[(\[{{]?\s*\b(?:part|pt)\b\.?\s*(?:{_PART_NUMBER})\s*[)\]}}]?\s*$", re.IGNORECASE)
+# The bracketed part a title ends with
+_TRAILING_BRACKETS_RE = re.compile(r"\s*[(\[{]([^)\]}]*)[)\]}]\s*$")
+# Words that tell the kind of a cover, not an artist: "(Somebody Vocal Cover)".
+# Not the words that also end names ("Band", "Rock", "Pop", "Punk").
+_COVER_KIND = r"vocal|acoustic|piano|guitar"
+# What marks a title as a cover, in brackets: "Somebody Cover", "Cover by
+# Somebody", "Somebody Vocal Cover", "Cover"
+_COVER_MARK_RE = re.compile(
+    rf"(?:\S.*\s+)?cover(?:ed)?\s+by\s+(?P<by>\S.*)"
+    rf"|(?:(?P<name>\S.*?)\s+)??(?:(?:{_COVER_KIND})\s+)*cover(?:\s+version)?",
+    re.IGNORECASE | re.DOTALL)
+# "Stripped" at the end of a title, in brackets or after a dash: a
+# stripped-down recording of the song
+_STRIPPED = r"stripped(?:\s+(?:down|back))?"
+_STRIPPED_RE = re.compile(rf"\s*(?:[(\[{{]\s*{_STRIPPED}\s*[)\]}}]|\s[-–—]\s+{_STRIPPED})\s*$", re.IGNORECASE)
 
 
 def _part_number(name: str) -> str:
@@ -192,6 +207,37 @@ def title_without_part(title: str) -> str:
     if shorter == s:
         shorter = _PART_SUFFIX_RE.sub("", s)
     shorter = shorter.strip(" ,:;-–—")
+    return shorter if shorter and shorter != s else ""
+
+
+def cover_of(title: str) -> tuple[str, str] | None:
+    """The song a title marks as a cover, and the artist its mark names:
+    ("Title", "Somebody") for "Title (Somebody Cover)", "Title [Cover by
+    Somebody]" or "Title (Somebody Vocal Cover)", ("Title", "") for "Title
+    (Cover)". None for a title without such a mark.
+
+    The mark is the bracketed part the title ends with (after its additions,
+    see strip_title_additions), when it ends with the word "cover" or names
+    who the cover is by. Titles are written both ways: "Somebody Cover" names
+    who covers the song, or whose song is covered. A subtitle like "(Take
+    Cover)" reads as a mark too; a title like "Cover Me" or "Title
+    (Undercover)" has none.
+    """
+    s = strip_title_additions(title)
+    brackets = _TRAILING_BRACKETS_RE.search(s)
+    mark = _COVER_MARK_RE.fullmatch(brackets.group(1).strip()) if brackets else None
+    song = s[:brackets.start()].strip() if mark else ""
+    if not song:
+        return None
+    return song, (mark.group("by") or mark.group("name") or "").strip()
+
+
+def title_without_stripped(title: str) -> str:
+    """The title (without its additions) before a "(Stripped)" or
+    "- Stripped" at its end, to search for the song itself with: a
+    stripped-down recording has its lyrics; "" when it ends with none."""
+    s = strip_title_additions(title)
+    shorter = _STRIPPED_RE.sub("", s).strip()
     return shorter if shorter and shorter != s else ""
 
 

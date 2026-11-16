@@ -3,6 +3,7 @@
 import unittest
 
 from src.modules.name_matching import (
+    cover_of,
     is_live_description,
     is_live_title,
     is_live_video,
@@ -11,6 +12,7 @@ from src.modules.name_matching import (
     title_before_dash,
     title_key,
     title_without_part,
+    title_without_stripped,
     titles_match,
     with_live_mark,
 )
@@ -255,6 +257,74 @@ class TestTitlesMatch(unittest.TestCase):
 
     def test_title_of_brackets_only(self):
         self.assertTrue(titles_match("(Untitled)", "(Untitled)"))
+
+
+class TestCoverOf(unittest.TestCase):
+    """The song a title marks as a cover, and the artist its mark names."""
+
+    def test_cover_marks(self):
+        cases = {
+            "Song Title (Somebody Cover)": ("Song Title", "Somebody"),
+            "Song Title (SOMEBODY ELSE cover)": ("Song Title", "SOMEBODY ELSE"),
+            "Song Title [Somebody Cover]": ("Song Title", "Somebody"),
+            "Song Title (Cover)": ("Song Title", ""),
+            "Song Title (cover)": ("Song Title", ""),
+            "Song Title (Cover by Somebody)": ("Song Title", "Somebody"),
+            "Song Title [cover by Some Band]": ("Song Title", "Some Band"),
+            "Song Title (Covered by Somebody)": ("Song Title", "Somebody"),
+            # the kind of the cover is no name
+            "Song Title (Somebody Vocal Cover)": ("Song Title", "Somebody"),
+            "Song Title (Piano Cover)": ("Song Title", ""),
+            "Song Title (Metal Cover by Some Band)": ("Song Title", "Some Band"),
+            # words that end names stay with them
+            "Song Title (Some Punk Band Cover)": ("Song Title", "Some Punk Band"),
+            # after the additions of a video title
+            "Song Title (Somebody Cover) (Official Video)": ("Song Title", "Somebody"),
+            "Song Title (Somebody Cover) [HD]": ("Song Title", "Somebody"),
+            "Song Title (Part 2) (Somebody Cover)": ("Song Title (Part 2)", "Somebody"),
+            "Some Band - Song Title (Somebody Cover)": ("Some Band - Song Title", "Somebody"),
+        }
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(cover_of(title), expected)
+
+    def test_titles_without_a_cover_mark(self):
+        for title in ("Song Title", "Cover Me", "Song Title (Undercover)", "Song Title (Covers)",
+                      "Song Title (Part 2)", "Song Title (Live)", "Song Title (Cover) - Part 2",
+                      "Song Title (Cover Story)", "(Somebody Cover)", "", None):
+            with self.subTest(title=title):
+                self.assertIsNone(cover_of(title))
+
+    def test_a_subtitle_that_ends_with_the_word_reads_as_a_mark(self):
+        self.assertEqual(cover_of("Song Title (Take Cover)"), ("Song Title", "Take"))
+
+    def test_the_mark_stays_a_part_of_the_title(self):
+        """Another title than the song's own: only the lyrics lookup searches without the mark."""
+        self.assertEqual(strip_title_additions("Song Title (Somebody Cover)"), "Song Title (Somebody Cover)")
+        self.assertFalse(titles_match("Song Title (Somebody Cover)", "Song Title"))
+        self.assertFalse(titles_match("Song Title (Cover)", "Song Title"))
+
+
+class TestTitleWithoutStripped(unittest.TestCase):
+    def test_stripped_marks(self):
+        cases = {"Song Title (stripped)": "Song Title", "Song Title (Stripped)": "Song Title",
+                 "Song Title [Stripped]": "Song Title", "Song Title - Stripped": "Song Title",
+                 "Song Title (Stripped Down)": "Song Title", "Song Title (Stripped Back)": "Song Title",
+                 "Song Title (Stripped) (Official Video)": "Song Title",
+                 "Song Title": "", "Stripped": "", "(Stripped)": "", "Song Title (Stripped Bare)": "",
+                 "Stripped Song Title": "", "Song Title (Live)": "", "": ""}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(title_without_stripped(title), expected)
+
+    def test_the_mark_stays_a_part_of_the_title(self):
+        """A stripped-down recording is listed under its own title: that one is searched first."""
+        self.assertEqual(strip_title_additions("Song Title (stripped)"), "Song Title (stripped)")
+        self.assertFalse(titles_match("Song Title (stripped)", "Song Title"))
+        self.assertTrue(titles_match("Song Title (Stripped)", "Song Title - stripped"))
+        # marks that are additions, as before
+        self.assertTrue(titles_match("Song Title (acoustic)", "Song Title"))
+        self.assertTrue(titles_match("Song Title (Live)", "Song Title"))
 
 
 if __name__ == "__main__":
