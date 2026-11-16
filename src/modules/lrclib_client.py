@@ -226,7 +226,7 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     has none; instead of too few, only with at least ``FULLER_SHARE`` times
     their words and of a recording of about the length of the audio (see
     ``other_recording``); instead of plain ones, only synced lyrics of the
-    same text and of about the same length (see ``_synced_for_plain``): of
+    same text and of about the same length (see ``_length_for_plain``): of
     the versions looked at there, the first that fits.
 
     Look-alike letters of other scripts in found lyrics are replaced by the
@@ -251,27 +251,37 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
             reason = " (the lyrics on LRCLIB have no times)"
         print(f"{ULTRASINGER_HEAD} Searching {SECOND_DB_NAME} for {'synced ' if plain_only else ''}lyrics{reason}: "
               f"{blue_highlighted(artist)} - {blue_highlighted(title)}")
-    judged: list[str] = []  # how the synced lyrics that were looked at compare with the plain ones
+    # Synced lyrics for plain ones: what was found of each version looked at, the closest in length first
+    judged: list[str] = []
 
-    def for_plain(other: LyricsInfo) -> bool:
-        fits, how = _synced_for_plain(found, other, duration)
-        judged.append(how)
+    def length_fits(version: dict) -> bool:
+        fits = _length_for_plain(found, version["duration"], duration)
+        if not fits:
+            judged.append(f"The lyrics on {SECOND_DB_NAME} are of a version of another length "
+                          f"({_minutes(version['duration'])}, the plain ones: {_minutes(found.duration)})")
+        return fits
+
+    def text_fits(other: LyricsInfo) -> bool:
+        shared = _words_shared(found.plain_lyrics, lrc_text(other.synced_lyrics))
+        fits = shared >= SAME_TEXT_SHARE
+        judged.append(f"The synced lyrics on {SECOND_DB_NAME} have {'' if fits else 'only '}{shared:.0%} "
+                      f"of the words of the plain ones")
         return fits
 
     other = _find_on_second_db(artist, title, duration, synced_only=plain_only,
-                               accept=for_plain if plain_only else None)
+                               wanted=length_fits if plain_only else None,
+                               accept=text_fits if plain_only else None)
     if other is None:
         if plain_only and verbose:
             # (of several versions that do not fit, the one closest in length is reported)
-            what = (f"The synced lyrics on {SECOND_DB_NAME} {judged[0]}" if judged
-                    else f"No synced lyrics found on {SECOND_DB_NAME}")
+            what = judged[0] if judged else f"No synced lyrics found on {SECOND_DB_NAME}"
             print(f"{ULTRASINGER_HEAD} {what}: keeping the plain ones of LRCLIB")
         return found
     if found is None:
         return other
     if plain_only:
         if verbose:
-            print(f"{ULTRASINGER_HEAD} The synced lyrics on {SECOND_DB_NAME} {judged[-1]} of LRCLIB: taking them")
+            print(f"{ULTRASINGER_HEAD} {judged[-1]} of LRCLIB: taking them")
         return other
     if lyric_words(other) >= FULLER_SHARE * lyric_words(found) and not other_recording(other.duration, duration):
         return other
@@ -281,26 +291,23 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     return found
 
 
-def _synced_for_plain(found: LyricsInfo, other: LyricsInfo, duration: Optional[float]) -> tuple[bool, str]:
-    """Whether the synced lyrics of the second database (``other``) can take
-    the place of the plain ones of LRCLIB (``found``), and how they compare
-    with them (the words of a report: "have 90% of the words of the plain
-    ones").
+def _length_for_plain(found: LyricsInfo, length: Optional[float], duration: Optional[float]) -> bool:
+    """Whether synced lyrics of a version of the second database that is
+    ``length`` seconds long can take the place of the plain ones of LRCLIB
+    (``found``), by its length.
 
-    They are compared as two versions on LRCLIB are (see ``_best_version``):
-    the synced ones win when their version is at most ``_SAME_LENGTH_S``
-    further off the length of the audio (``duration``) than the plain ones.
-    They must not be of another recording (see ``other_recording``), and
-    they must be the same text: with at least ``SAME_TEXT_SHARE`` of the
-    words of the plain ones (see ``_words_shared``).
+    The two are compared as two versions on LRCLIB are (see
+    ``_best_version``): the synced ones win when their version is at most
+    ``_SAME_LENGTH_S`` further off the length of the audio (``duration``)
+    than the plain ones. They must not be of another recording (see
+    ``other_recording``). The lyrics of a version that does not fit are not
+    fetched; those of one that does must be the same text as well, with at
+    least ``SAME_TEXT_SHARE`` of the words of the plain ones (see
+    ``_words_shared``).
     """
-    if _best_result([found, other], duration) is not other or other_recording(other.duration, duration):
-        return False, (f"are of a version of another length ({_minutes(other.duration)}, "
-                       f"the plain ones: {_minutes(found.duration)})")
-    shared = _words_shared(found.plain_lyrics, lrc_text(other.synced_lyrics))
-    if shared >= SAME_TEXT_SHARE:
-        return True, f"have {shared:.0%} of the words of the plain ones"
-    return False, f"have only {shared:.0%} of the words of the plain ones"
+    plain = {"duration": found.duration, "syncedLyrics": None}
+    synced = {"duration": length, "syncedLyrics": "synced"}
+    return _best_version([plain, synced], duration) is synced and not other_recording(length, duration)
 
 
 def _words_shared(text: str, other: str) -> float:
@@ -693,6 +700,7 @@ def _minutes(seconds: Optional[float]) -> str:
 
 
 def _find_on_second_db(artist: str, title: str, duration: Optional[float], synced_only: bool = False,
+                       wanted: Optional[Callable[[dict], bool]] = None,
                        accept: Optional[Callable[[LyricsInfo], bool]] = None) -> Optional[LyricsInfo]:
     """The lyrics of a song in the second lyrics database (``SECOND_DB_NAME``).
 
@@ -707,8 +715,9 @@ def _find_on_second_db(artist: str, title: str, duration: Optional[float], synce
     lyrics are fetched in the order of their length's distance to the audio
     (``duration``), at most ``_SECOND_DB_LYRICS`` per search and each
     version once; the first with lyrics wins, with ``synced_only`` the
-    first with synced ones. With ``accept``, the first of these that it
-    takes: the next version is looked at when it does not.
+    first with synced ones. The lyrics of a version that ``wanted`` does
+    not want are not fetched. With ``accept``, the first lyrics that it
+    takes win: the next version is looked at when it does not take them.
     """
     stripped = strip_title_additions(title)
     cover = cover_of(title)
@@ -747,7 +756,13 @@ def _find_on_second_db(artist: str, title: str, duration: Optional[float], synce
                 # so far): the song it covers counts. A version of the cover
                 # itself without lyrics is taken for an instrumental cover.
                 versions = [version for version in listed if _is_covered_song(version, *covered)]
-        for version in versions[:_SECOND_DB_LYRICS]:
+        fetched = 0
+        for version in versions:
+            if fetched == _SECOND_DB_LYRICS:
+                break
+            if wanted is not None and not wanted(version):
+                continue
+            fetched += 1
             asked.add(version["id"])
             synced, plain = _second_db_lyrics(version)
             if synced or (plain and not synced_only):

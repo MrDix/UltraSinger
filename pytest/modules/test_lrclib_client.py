@@ -1063,6 +1063,21 @@ class TestSyncedLyricsForPlainOnes(unittest.TestCase):
                                                     2: _synced(_lines(15, word="another"))})
         self.assertEqual(result.source, "LRCLIB")
 
+    def test_the_lyrics_of_a_version_of_another_length_are_not_fetched(self):
+        """Its length is known from the search: a version that cannot take the place of the plain
+        lyrics costs no request, nor do the ones further off after it."""
+        songs = [_second_db_song(n, duration_s=260.0 + n) for n in range(1, 6)]
+        result, asked = self._find(songs=songs, lyrics={n: _synced(_lines(15)) for n in range(1, 6)},
+                                   lrclib_length=200.0, duration=200.0)
+        self.assertEqual(result.source, "LRCLIB")
+        self.assertEqual(sum("/song/lyric" in url for url in asked), 0)
+        # with another text, the limit of fetched lyrics holds
+        songs = [_second_db_song(n, duration_s=300.0 - n) for n in range(1, 5)]
+        lyrics = {n: _synced(_lines(15, word="other")) for n in range(1, 4)}
+        result, asked = self._find(songs=songs, lyrics={**lyrics, 4: _synced(_lines(15))})
+        self.assertEqual(result.source, "LRCLIB")
+        self.assertEqual(sum("/song/lyric" in url for url in asked), 3)
+
     def test_much_less_of_the_text_is_not_taken(self):
         # 11 of the 15 lines, then 12
         result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(_lines(11))})
@@ -1182,6 +1197,17 @@ class TestSyncedLyricsForPlainOnes(unittest.TestCase):
         kept = [line for line in lines if "keeping the plain ones of LRCLIB" in line]
         self.assertEqual(len(kept), 1)
         self.assertIn("have only 20% of the words of the plain ones", kept[0])
+
+    def test_a_version_of_another_length_reported(self):
+        lrclib = [_version(200.0, synced=False, plain="\n".join(_lines(15)))]
+        get_json = TestSecondLyricsDatabase._get_json(lrclib, [_second_db_song(7, duration_s=261.0)],
+                                                      {7: _synced(_lines(15))}, [])
+        with patch("builtins.print") as printed, \
+                patch("src.modules.lrclib_client._get_json", side_effect=get_json):
+            search_lyrics("Some Artist", "Song Title", 200.0)
+        lines = [str(call.args[0]) for call in printed.call_args_list]
+        self.assertTrue(any("The lyrics on music.163.com are of a version of another length (4:21, the plain "
+                            "ones: 3:20): keeping the plain ones of LRCLIB" in line for line in lines))
 
 
 class TestSecondDatabaseSearches(unittest.TestCase):
