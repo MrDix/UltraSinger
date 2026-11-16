@@ -97,6 +97,8 @@ _IMPORT_VALUES = {
     "bpm_override": re.compile(r"([1-9][0-9]{0,2}([.,][0-9]{1,2})?)?"),
     "octave_shift": re.compile(r"([+-]?([0-9]|10))?"),
     "llm_provider_id": re.compile(r"([0-9a-f]{8})?"),
+    # The user's own lyrics of the song: any text, as long as a song's lyrics get
+    "lyrics_text": re.compile(r"[\s\S]{0,100000}"),
 }
 
 # Notes on the left-out settings of one entry, and on one file; more are only

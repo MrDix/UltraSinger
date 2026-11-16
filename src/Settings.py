@@ -53,6 +53,8 @@ class Settings:
     segmentation_model_token = None  # Access token for a private model repository, or set ULTRASINGER_MODEL_TOKEN env var
     lead_vocal_pitch = True  # With a segmentation model: note pitches from a lead-vocal stem (karaoke separation) when it kept most of the singing
     lyrics_lookup = True  # Look up reference lyrics from LRCLIB and correct Whisper transcription
+    lyrics_file = None  # Text file with the lyrics of the song (plain lines or LRC), used instead of a lookup; None = the file next to the input file under its name (.lrc, .txt), if there is one
+    lyrics_sources_dir = None  # Folder of the user's own lyrics sources (Python files with find_lyrics); None = lyrics_sources in the settings folder
     disable_reference_lyrics = False  # Disable reference-lyrics-first pipeline (forced alignment with LRCLIB synced lyrics)
     keep_audio_in_video = False  # Keep full audio (vocals+instrumental) embedded in the output video
     write_settings_info = False  # Write ultrasinger_parameter.info with settings + score to output dir

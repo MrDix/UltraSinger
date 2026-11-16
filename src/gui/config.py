@@ -73,6 +73,8 @@ _DEFAULTS = {
     "keep_numbers": False,
     # Lyrics Lookup
     "disable_lyrics_lookup": False,
+    # The user's own lyrics of one song (per-song setting; no song gets a global value)
+    "lyrics_text": "",
     "disable_reference_lyrics": False,
     "disable_synced_lyrics_check": False,
     # Freestyle detection

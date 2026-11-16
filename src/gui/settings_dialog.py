@@ -50,7 +50,7 @@ class PerSongSettingsDialog(QDialog):
         # Merge global + overrides for initial display
         merged = {**global_config, **overrides}
 
-        self._form = ConversionSettingsForm(merged)
+        self._form = ConversionSettingsForm(merged, per_song=True)
         self._form.set_llm_providers(
             llm_providers,
             selected_id=merged.get("llm_provider_id", ""),
@@ -136,7 +136,7 @@ class ReadOnlySettingsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        form = ConversionSettingsForm(resolved_config)
+        form = ConversionSettingsForm(resolved_config, per_song=True)
         form.set_llm_providers(
             llm_providers,
             selected_id=resolved_config.get("llm_provider_id", ""),

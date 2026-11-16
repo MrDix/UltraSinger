@@ -55,3 +55,11 @@ def _private_settings(tmp_path_factory, monkeypatch):
         monkeypatch.setitem(config_module._DEFAULTS, "cookie_file", str(folder / "cookies.txt"))
         monkeypatch.setattr(secrets_module, "_keyring_mod", keyring)
         monkeypatch.setattr(secrets_module, "_keyring_available", True)
+    # The lyrics sources of the user are programs in the settings folder: no test runs them
+    for package in ("src.modules", "modules"):
+        try:
+            sources_module = importlib.import_module(f"{package}.lyrics_sources")
+        except ImportError:
+            continue
+        monkeypatch.setattr(sources_module, "_SETTINGS_DIR", folder)
+        monkeypatch.setattr(sources_module, "_loaded_sources", {})

@@ -392,17 +392,17 @@ class TestFindLyrics(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_credits_split_only_at_list_separators(self):
-        from src.modules.lrclib_client import _artist_matches
-        self.assertTrue(_artist_matches("Some Artist / Guest Name", "Some Artist"))
-        self.assertFalse(_artist_matches("Ab/Cd", "Cd"))           # a slash inside a name
-        self.assertFalse(_artist_matches("And Some", "Some"))      # a name that starts with "And"
+        from src.modules.lrclib_client import artist_matches
+        self.assertTrue(artist_matches("Some Artist / Guest Name", "Some Artist"))
+        self.assertFalse(artist_matches("Ab/Cd", "Cd"))           # a slash inside a name
+        self.assertFalse(artist_matches("And Some", "Some"))      # a name that starts with "And"
         # a separator before an article belongs to a band name
-        self.assertFalse(_artist_matches("Singer and the Band Name", "Singer"))
-        self.assertFalse(_artist_matches("Singer & the Band Name", "Singer"))
-        self.assertTrue(_artist_matches("Singer and the Band Name", "Singer and the Band Name"))
+        self.assertFalse(artist_matches("Singer and the Band Name", "Singer"))
+        self.assertFalse(artist_matches("Singer & the Band Name", "Singer"))
+        self.assertTrue(artist_matches("Singer and the Band Name", "Singer and the Band Name"))
         # the same band name with another connector
-        self.assertTrue(_artist_matches("Singer & the Band Name", "Singer and the Band Name"))
-        self.assertTrue(_artist_matches("Singer + the Band Name", "Singer and the Band Name"))
+        self.assertTrue(artist_matches("Singer & the Band Name", "Singer and the Band Name"))
+        self.assertTrue(artist_matches("Singer + the Band Name", "Singer and the Band Name"))
 
     def test_empty_artist_or_title_finds_nothing(self):
         for artist, title in (("", "Song Title"), ("Some Artist", ""), (None, "Song Title"),

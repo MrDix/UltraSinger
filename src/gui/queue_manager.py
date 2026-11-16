@@ -263,6 +263,8 @@ class QueueManager(QObject):
         # from --video_url for an intercepted download) and, unlike a
         # --language, does not trust it to reject lyrics.
         merged = {**self._global_config, **next_item.settings_overrides}
+        # Own lyrics are those of one song: a value in the global settings never applies
+        merged["lyrics_text"] = next_item.settings_overrides.get("lyrics_text") or ""
 
         next_item.resolved_config = dict(merged)
 
@@ -525,8 +527,9 @@ class QueueManager(QObject):
             info["language"] = new_lang
             return
 
-        # Lyrics found (on LRCLIB or the second lyrics database) — parse what types are available
-        m = re.search(r"Found lyrics on \S+:.*\[(.*?)\]"
+        # Lyrics found (on a lyrics database, on a lyrics source of the user, or
+        # in the user's own lyrics file) — parse what types are available
+        m = re.search(r"Found lyrics (?:on|in) [^:]+:.*\[(.*?)\]"
                       r"(?:, (\d+(?:\.\d+)?) s long \(the audio: (\d+(?:\.\d+)?) s\))?", clean)
         if m:
             details = m.group(1).lower()

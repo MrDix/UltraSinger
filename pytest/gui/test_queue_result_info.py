@@ -97,6 +97,26 @@ class TestParseOutputLine:
         )
         assert item.result_info["lrclib_result"] == "synced"
 
+    def test_lyrics_of_your_own_file(self, queue_manager):
+        item = _make_item()
+        queue_manager._current_item = item
+        queue_manager._parse_output_line(
+            "[UltraSinger] Found lyrics in your file Band - Song.lrc: [plain (120 words), synced]")
+        assert item.result_info["lrclib_result"] == "synced"
+        queue_manager._parse_output_line(
+            "[UltraSinger] Found lyrics in your file 0a1b2c3d4e5f6071.txt: [plain (80 words)]")
+        assert item.result_info["lrclib_result"] == "plain"
+
+    def test_lyrics_of_a_source_with_a_name_of_several_words(self, queue_manager):
+        item = _make_item()
+        queue_manager._current_item = item
+        queue_manager._parse_output_line(
+            "[UltraSinger] Found lyrics on My Lyrics Collection: Artist - Title [plain (216 words), synced], "
+            "200.0 s long (the audio: 201.5 s)")
+        assert item.result_info["lrclib_result"] == "synced"
+        assert item.result_info["lyrics_length_s"] == 200.0
+        assert item.result_info["audio_length_s"] == 201.5
+
     def test_lyrics_of_the_second_database(self, queue_manager):
         item = _make_item()
         queue_manager._current_item = item

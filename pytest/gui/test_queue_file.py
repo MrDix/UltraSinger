@@ -555,6 +555,7 @@ class TestPerSongSettings:
             "transcriber", "whisper_compute_type", "language_mode", "language",
             "octave_consistency", "format_version", "linebreak_timing", "bpm_override",
             "octave_shift", "pitcher", "separator_backend", "chart_style", "llm_provider_id",
+            "lyrics_text",
         }
         assert queue_file._NOT_IMPORTED <= PER_SONG_SETTINGS
 

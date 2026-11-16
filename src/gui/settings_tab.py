@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QLocale, Qt, Signal
-from PySide6.QtGui import QDoubleValidator, QIntValidator
+from PySide6.QtCore import QLocale, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QRadioButton,
     QSpinBox,
@@ -31,6 +32,7 @@ from pathlib import Path
 
 from .config import _DEFAULTS, limit_setting, octave_consistency_choice
 from .models import LLMProvider
+from .own_lyrics import lyrics_sources_folder, read_lyrics_text
 from .widgets import SettingsCard, ToggleSwitch
 from .widgets.llm_provider_list import _ModelFetcher, filter_stt_models, start_model_fetch
 
@@ -149,10 +151,12 @@ class ConversionSettingsForm(QWidget):
     # allow_training, i.e. on the Settings page, not in per-song dialogs).
     training_requested = Signal()
 
-    def __init__(self, config: dict, parent=None, *, allow_training: bool = False):
+    def __init__(self, config: dict, parent=None, *, allow_training: bool = False, per_song: bool = False):
         super().__init__(parent)
         self._config = config
         self._allow_training = allow_training
+        # In the settings of one song: with the field for its own lyrics
+        self._per_song = per_song
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
@@ -567,6 +571,63 @@ class ConversionSettingsForm(QWidget):
                            "This runs before LLM correction and improves word accuracy for known songs.",
                            reset_callback=lambda: self._lyrics_lookup.setChecked(
                                not _DEFAULTS["disable_lyrics_lookup"]))
+
+        # Own lyrics of this song (only in the settings of one song)
+        self._lyrics_text: QPlainTextEdit | None = None
+        if self._per_song:
+            lyrics_tooltip = (
+                "Your own lyrics of this song: paste them here, or load a text file. Plain "
+                "lines, or LRC lines with times ([01:23.45] line). They are used instead of "
+                "a lookup - for a song no lyrics database knows, or one whose found lyrics "
+                "are wrong. For a file on your disk it is enough to put the lyrics next to "
+                "it under its name (Song.mp3: Song.lrc or Song.txt)."
+            )
+            self._lyrics_text = QPlainTextEdit()
+            self._lyrics_text.setPlaceholderText(
+                "Optional: paste the lyrics of this song (plain lines or LRC). Used instead of a lookup.")
+            self._lyrics_text.setPlainText(self._config.get("lyrics_text") or "")
+            self._lyrics_text.setMinimumHeight(110)
+            self._lyrics_text.setMaximumHeight(220)
+            self._lyrics_text.setTabChangesFocus(True)
+            self._lyrics_text.setToolTip(lyrics_tooltip)
+            lyrics_buttons = QVBoxLayout()
+            lyrics_buttons.setContentsMargins(0, 0, 0, 0)
+            lyrics_load = QPushButton("Load File...")
+            lyrics_load.setToolTip("Load the lyrics from a text or LRC file.")
+            lyrics_load.clicked.connect(self._load_lyrics_file)
+            lyrics_buttons.addWidget(lyrics_load)
+            lyrics_buttons.addStretch(1)
+            lyrics_row = QHBoxLayout()
+            lyrics_row.setContentsMargins(0, 0, 0, 0)
+            lyrics_row.addWidget(self._lyrics_text, 1)
+            lyrics_row.addLayout(lyrics_buttons)
+            lyrics_container = QWidget()
+            lyrics_container.setLayout(lyrics_row)
+            card.add_row("Own Lyrics", lyrics_container, lyrics_tooltip,
+                         reset_callback=lambda: self._lyrics_text.setPlainText(_DEFAULTS["lyrics_text"]))
+
+        # Lyrics sources of the user (a folder of Python files)
+        sources_tooltip = (
+            "Lyrics sources of your own: Python files in this folder, each with a function "
+            "find_lyrics(artist, title, duration) that returns the lyrics as text (plain or "
+            "LRC) or None. They are asked for lyrics the lyrics databases do not have, or "
+            "before them with BEFORE_DATABASES = True in the file (see the README). A source "
+            "is a program that runs with your rights: only put files there that you trust. "
+            "Not asked while Lyrics Lookup is off."
+        )
+        sources_folder = QLabel(str(lyrics_sources_folder()))
+        sources_folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        sources_folder.setToolTip(sources_tooltip)
+        sources_open = QPushButton("Open Folder")
+        sources_open.setToolTip("Open the folder of your lyrics sources (it is made when it is missing).")
+        sources_open.clicked.connect(self._open_lyrics_sources_folder)
+        sources_row = QHBoxLayout()
+        sources_row.setContentsMargins(0, 0, 0, 0)
+        sources_row.addWidget(sources_folder, 1)
+        sources_row.addWidget(sources_open)
+        sources_container = QWidget()
+        sources_container.setLayout(sources_row)
+        card.add_row("Lyrics Sources", sources_container, sources_tooltip)
 
         # Reference-lyrics-first pipeline
         self._reference_lyrics = ToggleSwitch(
@@ -1705,9 +1766,32 @@ class ConversionSettingsForm(QWidget):
         self._octave_consistency.setCurrentIndex(
             self._octave_consistency.findData(octave_consistency_choice(value)))
 
+    def _load_lyrics_file(self):
+        """Put the text of a lyrics file into the field of the song's own lyrics."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Lyrics of this song", "", "Lyrics (*.lrc *.txt);;All files (*)")
+        if not path or self._lyrics_text is None:
+            return
+        try:
+            self._lyrics_text.setPlainText(read_lyrics_text(path))
+        except OSError as error:
+            logger.warning("Lyrics file not loaded: %s", error)
+
+    def _open_lyrics_sources_folder(self):
+        folder = lyrics_sources_folder()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            logger.warning("Lyrics sources folder not made: %s", error)
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
     def collect_config(self) -> dict:
         """Collect all conversion settings into a config dictionary."""
         return {
+            # (the lyrics of one song: only its own settings have the field)
+            "lyrics_text": (self._lyrics_text.toPlainText().strip() if self._lyrics_text is not None
+                            else self._config.get("lyrics_text") or ""),
             "whisper_model": self._whisper_model.currentText(),
             "whisper_batch_size": self._whisper_batch_size.value(),
             "whisper_compute_type": "" if self._whisper_compute.currentText() == "auto"
