@@ -208,7 +208,8 @@ def _within_time(work: Callable, timeout_text: str, error_text: str):
     def run():
         try:
             result["value"] = work()
-        except Exception as error:  # noqa: BLE001 - a broken source of the user must not stop the conversion
+        # (also a source that ends the program, sys.exit(): it only ends this thread)
+        except BaseException as error:  # noqa: BLE001 - a broken source of the user must not stop the conversion
             result["error"] = error
 
     thread = threading.Thread(target=run, name="lyrics source", daemon=True)

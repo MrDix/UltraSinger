@@ -3,6 +3,7 @@
 import contextlib
 import io
 import os
+import sys
 import tempfile
 import time
 import unittest
@@ -219,6 +220,18 @@ class TestLoadLyricsSources(unittest.TestCase):
         # the same file name in two folders: two sources
         self.assertEqual((first.find("a", "t", None), second.find("a", "t", None)), ("la la la", "na na na"))
 
+    def test_a_source_that_ends_the_program_is_a_source_that_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            _source_file(folder, "exits.py", "import sys\nsys.exit(0)\n")
+            sources, out = _quiet(load_lyrics_sources, folder)
+        self.assertEqual(sources, [])
+        self.assertIn("could not be loaded", out)
+        self.assertIn("SystemExit", out)
+        self.assertEqual([name for name in sys.modules if name.startswith("ultrasinger_lyrics_source_exits")], [])
+        lyrics, out = _quiet(lyrics_of_source, _source(SystemExit(3)), "The Band", "A Song", None)
+        self.assertIsNone(lyrics)
+        self.assertIn("failed", out)
+
     def test_a_source_that_takes_too_long_to_load_is_left_out(self):
         """A source may ask a server while it is loaded: the conversion does not wait for it."""
         with tempfile.TemporaryDirectory() as folder:
@@ -249,7 +262,7 @@ class TestLoadLyricsSources(unittest.TestCase):
 
 def _source(answer, name="My Source", before=False):
     def find(artist, title, duration):
-        if isinstance(answer, Exception):
+        if isinstance(answer, BaseException):
             raise answer
         return answer(artist, title, duration) if callable(answer) else answer
     return lyrics_sources.LyricsSource(name=name, find=find, before_databases=before, path="source.py")
