@@ -260,12 +260,15 @@ def _named_in_cover_mark(name: str) -> str:
     # without case and punctuation: "Lo-Fi" is "lofi"
     plain = [re.sub(r"[\W_]", "", word).casefold() for word in words]
     while words:
-        kind_words = (1 if plain[-1] in _COVER_KINDS
-                      else 2 if plain[-2:] in (["a", "cappella"], ["a", "capella"]) else 0)
-        if not kind_words:
+        if plain[-2:] in (["a", "cappella"], ["a", "capella"]):
+            kind_words = 2
+        elif not plain[-1] or plain[-1] in _COVER_KINDS:
+            # (punctuation alone joins kinds, or a kind to the name: "Slowed + Reverb", "Somebody & Piano")
+            kind_words = 1
+        else:
             break
         del words[-kind_words:], plain[-kind_words:]
-    if all(word in _COVER_KINDS or word in _COVER_STYLES or word in _ARTICLES for word in plain):
+    if all(not word or word in _COVER_KINDS or word in _COVER_STYLES or word in _ARTICLES for word in plain):
         # (an article alone is the rest of a kind: "The Drums Cover")
         return ""
     return " ".join(words).rstrip(" ,;:-")

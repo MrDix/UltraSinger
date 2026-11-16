@@ -275,6 +275,18 @@ class TestNamedInCoverMark(unittest.TestCase):
     def test_punctuation_after_the_name_is_left_out(self):
         self.assertEqual(cover_of("Song (Somebody, Piano Cover)"), ("Song", "Somebody"))
         self.assertEqual(cover_of("Song (Some Body - Acoustic Cover)"), ("Song", "Some Body"))
+        self.assertEqual(cover_of("Song (Somebody & Piano Cover)"), ("Song", "Somebody"))
+
+    def test_punctuation_between_kinds_names_nobody(self):
+        self.assertEqual(cover_of("Song (Slowed + Reverb Cover)"), ("Song", ""))
+        self.assertEqual(cover_of("Song (Pop / Punk Cover)"), ("Song", ""))
+
+    def test_punctuation_within_a_name_stays(self):
+        self.assertEqual(cover_of("Song (Somebody & Friends Cover)"), ("Song", "Somebody & Friends"))
+
+    def test_a_capella_after_a_name_in_both_spellings(self):
+        self.assertEqual(cover_of("Song (Somebody A Capella Cover)"), ("Song", "Somebody"))
+        self.assertEqual(cover_of("Song (Somebody A Cappella Cover)"), ("Song", "Somebody"))
 
 
 class TestCoverOf(unittest.TestCase):
