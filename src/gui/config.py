@@ -76,13 +76,7 @@ _DEFAULTS = {
     "disable_reference_lyrics": False,
     "disable_synced_lyrics_check": False,
     # Freestyle detection
-    "detect_growl": False,
-    "freestyle_harmonicity": 0.40,
-    "freestyle_energy": 0.01,
-    "freestyle_confidence": 0.35,
-    "freestyle_pitch_stdev": 4.0,
-    "freestyle_spectral_flatness": 0.25,
-    "freestyle_use_spectral": True,
+    "freestyle_detection": True,
     # LLM
     "llm_correct": False,
     "llm_providers": [],  # list of LLMProvider dicts

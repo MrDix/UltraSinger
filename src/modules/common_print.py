@@ -125,6 +125,8 @@ def print_help() -> None:
     --vocal_gap_fill        Fill un-transcribed vocal gaps with placeholder notes (experimental). Disabled by default.
     --pitch_change_split    Split notes at pitch change boundaries within a syllable. Enabled by default.
                             Uses vibrato-aware detection (region median comparison) to avoid false splits.
+                            A word-based note is also split where the singing clearly settles on another
+                            pitch in the separated vocal (the clearest steps of --vocal_runs_as_notes).
     --no_pitch_change_split Disable pitch-change splitting (revert to one note per word).
     --pitch_notes           Generate notes from pitch contour instead of word timing (experimental). Disabled by
                             default. Best for melismatic songs with runs, slides and ornaments where word-level
@@ -170,19 +172,14 @@ def print_help() -> None:
                             --remote_stt; turning it off saves the time of the transcription.
 
     [freestyle detection]
-    --detect_freestyle              Detect vocal passages that cannot be reliably pitched and mark them as freestyle
-                                    notes (displayed but not scored). Covers growls, screams, rap, spoken word,
-                                    harsh vocals, and any non-melodic vocal style.
-                                    Primary: HPSS (Harmonic-Percussive Source Separation) harmonicity
-                                    analysis (genre/gender-independent, measures harmonic vs. percussive
-                                    energy). Fallback (when HPSS is unavailable): SwiftF0 confidence +
-                                    pitch stability.
-    --freestyle_harmonicity         HPSS harmonic ratio threshold — segments below this are unpitchable >> ((default) is 0.40)
-    --freestyle_energy              RMS energy threshold — segments below this are treated as silence >> ((default) is 0.01)
-    --freestyle_confidence          SwiftF0 median confidence threshold (fallback) >> ((default) is 0.35)
-    --freestyle_pitch_stdev         Pitch standard deviation threshold in semitones (fallback) >> ((default) is 4.0)
-    --freestyle_spectral_flatness   Spectral flatness threshold (fallback) >> ((default) is 0.25)
-    --no_freestyle_spectral         Disable spectral flatness analysis (fallback)
+    --disable_freestyle_detection   Chart every note with a pitch. Enabled by default: notes that are sung
+                                    without a pitch - screams, growls and other harsh vocals, shouted or
+                                    whispered lines - become freestyle notes (displayed but not scored), on
+                                    one pitch instead of the arbitrary ones the pitch detection gives them.
+                                    A note has a pitch when the pitch detection is sure of one in the
+                                    separated vocal, or when partials stand out of its spectrum (several
+                                    voices at once); harsh vocals sung on a pitch keep their notes. Needs
+                                    the separated vocal.
 
     [refinement]
     --disable_refine            Disable the reverse-scoring refinement pass. Refinement is enabled by default
@@ -192,7 +189,9 @@ def print_help() -> None:
     --disable_refine_pitch      Disable pitch refinement (enabled by default when refine is on; a note keeps
                                 its octave, only its pitch class is corrected; notes from a segmentation
                                 model keep a well-tracked pitch unless a second pitch track confirms the
-                                correction)
+                                correction). Part of it: a word-based note charted beside the pitch the
+                                singing clearly stays on (steady and sure in the separated vocal) takes
+                                the sung pitch
     --disable_refine_timing     Disable timing refinement (enabled by default when refine is on; always skipped
                                 for notes from a segmentation model)
     --disable_refine_gap        Disable the GAP sweep, which shifts all notes together by up to 70 ms to where
@@ -227,14 +226,16 @@ def print_help() -> None:
                                 in each tenth of the song, so they do not pile up in one section.
 
     [vocal runs]
-    --vocal_runs_as_notes       Vocal runs, riffs and acrobatics as notes (harder): split a held note where
-                                the singing briefly flips to another pitch and comes back (mordents, turns,
-                                grace notes, neighbour notes, trills) and chart the flip as a note of its
-                                own. Makes the song noticeably harder to sing, and professional charts
-                                rarely notate singing this finely - they mostly keep the one held note.
-                                Unlike --chart_style score, every other note stays as it is. Needs the
-                                separated vocal. Disabled by default.
-    --vocal_runs_threshold      Semitones the singing has to leave a held note by to count as a flip
+    --vocal_runs_as_notes       Vocal runs, riffs and acrobatics as notes (harder): split a note where the
+                                singing goes to another pitch within the syllable - a step that is held,
+                                a run over several pitches, or a quick flip to another pitch and back
+                                (mordents, turns, grace notes, neighbour notes, trills) - and chart each
+                                sung pitch as a note of its own. Makes the song noticeably harder to sing,
+                                and professional charts rarely notate singing this finely - they mostly
+                                keep the one held note. Unlike --chart_style score, every other note stays
+                                as it is. Needs the separated vocal. Disabled by default.
+    --vocal_runs_threshold      Semitones the singing has to leave a held note by to count as a flip, and
+                                with it how clearly it has to settle on another pitch to count as a step
                                 (0.3 to 4.0; lower finds more, also smaller ones) >> ((default) is 1.0)
 
 

@@ -874,20 +874,20 @@ def run() -> tuple[str, Score, Score]:
             preserve_syllables=settings.syllable_split,
         )
 
-    # Freestyle detection — mark unpitchable segments as freestyle
-    if not settings.ignore_audio and settings.detect_growl:
-        from modules.Pitcher.growl_detector import detect_growl_segments
+    # Freestyle detection — notes sung without a pitch (harsh vocals, shouting,
+    # whispering) become freestyle notes. Before the passes below that compare
+    # the notes with the singing: a note without a pitch has nothing to be
+    # compared with. In the full vocal stem, also when the note pitches come
+    # from the lead vocal: several voices at once are told from a scream by
+    # their partials, and the lead stem drops singing it takes for backing.
+    # Only on isolated vocals (in the full mix the instruments have the pitch).
+    vocal_stem = process_data.process_data_paths.vocals_audio_file_path
+    if (settings.freestyle_detection and not settings.ignore_audio and settings.use_separated_vocal
+            and vocal_stem):
+        from modules.Pitcher.unpitched_notes import mark_unpitched_notes
 
-        process_data.midi_segments = detect_growl_segments(
-            midi_segments=process_data.midi_segments,
-            pitched_data=process_data.pitched_data,
-            vocal_audio_path=process_data.process_data_paths.vocals_audio_file_path,
-            confidence_threshold=settings.growl_confidence_threshold,
-            pitch_stdev_threshold=settings.growl_pitch_stdev_threshold,
-            spectral_flatness_threshold=settings.growl_spectral_flatness_threshold,
-            use_spectral=settings.growl_use_spectral,
-            harmonicity_threshold=settings.growl_harmonicity_threshold,
-            energy_threshold=settings.growl_energy_threshold,
+        process_data.midi_segments = mark_unpitched_notes(
+            process_data.midi_segments, _stem_pitch_track(process_data, vocal_stem), vocal_stem
         )
 
     # Pre-compute ptAKF pitch frames once, up front, for reuse across every
@@ -994,22 +994,54 @@ def run() -> tuple[str, Score, Score]:
             pitch_frames=pitch_frames,
         )
 
-    # Vocal runs, riffs and acrobatics as notes — split a held note where the
-    # singing briefly flips to another pitch and back, on the final note
-    # boundaries and pitches; before the golden notes, which pick from the
-    # notes that are left held. Only on isolated vocals (in the full mix an
-    # instrument line would pass for a flip), and in the pitch track of the
-    # stem the note pitches come from (a backing voice is no flip)
+    # A note made from a word that is charted beside the pitch the singing
+    # clearly stays on takes that pitch. After the refinement, which can move
+    # a note to a tone the games' pitch detection mishears. Not for the notes
+    # of the segmentation model (they have their pitch from the vocal stem
+    # already), nor for the score-first chart of the ptAKF refit, whose
+    # pitches are meant to be the ones the games' pitch detection hears.
+    word_notes_on_vocals = (
+        not settings.ignore_audio
+        and settings.use_separated_vocal
+        and not model_segmentation_used
+        and not settings.ptakf_refit
+    )
+    if word_notes_on_vocals and settings.refine_from_vocal and settings.refine_pitch:
+        from modules.Pitcher.steady_pitch import follow_steady_sung_pitch
+
+        process_data.midi_segments = follow_steady_sung_pitch(
+            process_data.midi_segments, _stem_pitch_track(process_data, note_pitch_audio)
+        )
+
+    # Vocal runs, riffs and acrobatics as notes — split a note where the
+    # singing settles on another pitch or briefly flips to one and back, on
+    # the final note boundaries and pitches; before the golden notes, which
+    # pick from the notes that are left held. Only on isolated vocals (in the
+    # full mix an instrument line would pass for a run), and in the pitch
+    # track of the stem the note pitches come from (a backing voice is no run)
     if settings.vocal_runs_as_notes and not settings.ignore_audio and settings.use_separated_vocal:
         from modules.Pitcher.vocal_runs import split_notes_at_vocal_runs
 
         process_data.midi_segments = split_notes_at_vocal_runs(
             process_data.midi_segments,
-            _flip_pitch_track(process_data, note_pitch_audio),
+            _stem_pitch_track(process_data, note_pitch_audio),
             bpm=process_data.media_info.bpm,
             # like the other notes, flips only go to the key when notes are quantized to it
             music_key=process_data.media_info.music_key if settings.quantize_to_key else None,
             threshold=settings.vocal_runs_threshold,
+        )
+    elif word_notes_on_vocals and settings.pitch_change_split:
+        # Without the option, only the clearest steps, and only in notes made
+        # from words (as the steady sung pitch above): the pitch-change split
+        # of these notes works in the pitch of the denoised vocal and misses
+        # steps that professional charts have as notes of their own. The
+        # notes of the segmentation model have them already.
+        from modules.Pitcher.vocal_runs import split_notes_at_clear_steps
+
+        process_data.midi_segments = split_notes_at_clear_steps(
+            process_data.midi_segments,
+            _stem_pitch_track(process_data, note_pitch_audio),
+            bpm=process_data.media_info.bpm,
         )
 
     # Golden notes — mark long held notes the singing stays on, spread over
@@ -1119,30 +1151,37 @@ def run() -> tuple[str, Score, Score]:
     return ultrastar_file_output, simple_score, accurate_score
 
 
-def _flip_pitch_track(process_data: ProcessData, note_pitch_audio: str) -> PitchedData | None:
-    """Pitch track for the vocal runs pass: of *note_pitch_audio*, the stem the
-    note pitches come from (the separated vocal, or the lead vocal).
+def _stem_pitch_track(process_data: ProcessData, stem_path: str) -> PitchedData | None:
+    """Pitch track of a stem as it was separated: of the vocal stem, or of the
+    lead vocal the note pitches come from.
 
     Not the pitch data of the denoised vocal the notes were made from: its
-    noise reduction smears quick flips (a whole tone sung for 100 ms measures
-    as half a tone or less there). Cached next to the other pitch data. None
-    when the stem cannot be pitched: the notes then stay held.
+    noise reduction smears quick changes (a whole tone sung for 100 ms
+    measures as half a tone or less there). Pitched once per conversion and
+    cached next to the other pitch data. None when the stem cannot be
+    pitched: the passes that need the track then leave the notes as they are.
     """
+    if stem_path in process_data.stem_pitch_tracks:
+        return process_data.stem_pitch_tracks[stem_path]
     cache_folder = process_data.process_data_paths.cache_folder_path
     try:
+        # Not "swiftf0_stem_...": tracks cached under that name were made of
+        # stereo stems that reached the pitch detection far too loud
         cache_path = os.path.join(
-            cache_folder, f"swiftf0_stem_{conversion_cache.content_key(note_pitch_audio)}.json")
+            cache_folder, f"swiftf0_separated_{conversion_cache.content_key(stem_path)}.json")
         if not settings.skip_cache_pitch_detection and check_file_exists(cache_path):
             with open(cache_path, encoding=FILE_ENCODING) as file:
-                return PitchedData.from_json(file.read())
-        pitched_data = get_pitch_with_file(note_pitch_audio)
-        with open(cache_path, "w", encoding=FILE_ENCODING) as file:
-            file.write(pitched_data.to_json())
-        return pitched_data
+                pitched_data = PitchedData.from_json(file.read())
+        else:
+            pitched_data = get_pitch_with_file(stem_path)
+            with open(cache_path, "w", encoding=FILE_ENCODING) as file:
+                file.write(pitched_data.to_json())
     except (OSError, ValueError, RuntimeError) as e:
-        print(f"{ULTRASINGER_HEAD} Warning: no pitch track of {note_pitch_audio} ({e}); "
-              "vocal runs are not charted as notes")
-        return None
+        print(f"{ULTRASINGER_HEAD} Warning: no pitch track of {stem_path} ({e}); "
+              "the notes are not compared with it")
+        pitched_data = None
+    process_data.stem_pitch_tracks[stem_path] = pitched_data
+    return pitched_data
 
 
 def _cover_of_special_version(process_data: ProcessData) -> None:
@@ -1504,10 +1543,7 @@ def _write_settings_info_file(
                 f.write(f"  Lead-vocal pitch:         {settings.lead_vocal_pitch}\n")
             else:
                 f.write(f"  Segmentation model:       (none, word-based notes)\n")
-            f.write(f"  Freestyle detection:      {settings.detect_growl}\n")
-            if settings.detect_growl:
-                f.write(f"  Freestyle harmonicity:    {settings.growl_harmonicity_threshold}\n")
-                f.write(f"  Freestyle energy thr:     {settings.growl_energy_threshold}\n")
+            f.write(f"  Freestyle detection:      {settings.freestyle_detection}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
             f.write(f"  Noise floor tracking:     {settings.denoise_track_noise}\n")
@@ -2934,6 +2970,15 @@ def finish_cache_folder(cache_folder_path: str) -> None:
         print(f"{ULTRASINGER_HEAD} Kept the cache folder: {blue_highlighted(kept)}")
 
 
+# Options of the earlier freestyle detection, which had thresholds to set. They
+# are still accepted, so a saved command line keeps working, and do nothing.
+RETIRED_FREESTYLE_FLAGS = ("--no_freestyle_spectral",)
+RETIRED_FREESTYLE_OPTIONS = (
+    "--freestyle_harmonicity", "--freestyle_energy", "--freestyle_confidence",
+    "--freestyle_pitch_stdev", "--freestyle_spectral_flatness", *RETIRED_FREESTYLE_FLAGS,
+)
+
+
 def _option_number(opt: str, arg: str, kind: type = float):
     """The number given to an option; a clear error and exit when it is none
     (also for "inf" and "nan")."""
@@ -3181,40 +3226,14 @@ def init_settings(argv: list[str]) -> Settings:
             settings.disable_reference_lyrics = True
         elif opt in ("--no_metadata_tags"):
             settings.write_metadata_tags = False
-        elif opt in ("--detect_freestyle"):
-            settings.detect_growl = True
-        elif opt in ("--freestyle_harmonicity"):
-            val = _option_number(opt, arg)
-            if not 0.0 <= val <= 1.0:
-                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_harmonicity must be between 0.0 and 1.0, got {val}")
-                sys.exit(1)
-            settings.growl_harmonicity_threshold = val
-        elif opt in ("--freestyle_energy"):
-            val = _option_number(opt, arg)
-            if val < 0:
-                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_energy must be non-negative, got {val}")
-                sys.exit(1)
-            settings.growl_energy_threshold = val
-        elif opt in ("--freestyle_confidence"):
-            val = _option_number(opt, arg)
-            if not 0.0 <= val <= 1.0:
-                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_confidence must be between 0.0 and 1.0, got {val}")
-                sys.exit(1)
-            settings.growl_confidence_threshold = val
-        elif opt in ("--freestyle_pitch_stdev"):
-            val = _option_number(opt, arg)
-            if val <= 0:
-                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_pitch_stdev must be positive, got {val}")
-                sys.exit(1)
-            settings.growl_pitch_stdev_threshold = val
-        elif opt in ("--freestyle_spectral_flatness"):
-            val = _option_number(opt, arg)
-            if not 0.0 <= val <= 1.0:
-                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} --freestyle_spectral_flatness must be between 0.0 and 1.0, got {val}")
-                sys.exit(1)
-            settings.growl_spectral_flatness_threshold = val
-        elif opt in ("--no_freestyle_spectral"):
-            settings.growl_use_spectral = False
+        elif opt == "--disable_freestyle_detection":
+            settings.freestyle_detection = False
+        elif opt == "--detect_freestyle":
+            # Enabled by default now; the option of when it was not stays accepted
+            settings.freestyle_detection = True
+        elif opt in RETIRED_FREESTYLE_OPTIONS:
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} {opt} is no longer used: the freestyle "
+                  "detection needs no thresholds")
         elif opt in ("--ffmpeg"):
             settings.user_ffmpeg_path = arg
         elif opt in ("--denoise_nr"):
@@ -3407,13 +3426,9 @@ def arg_options():
         "disable_lyrics_lookup",
         "disable_reference_lyrics",
         "no_metadata_tags",
+        "disable_freestyle_detection",
         "detect_freestyle",
-        "freestyle_harmonicity=",
-        "freestyle_energy=",
-        "freestyle_confidence=",
-        "freestyle_pitch_stdev=",
-        "freestyle_spectral_flatness=",
-        "no_freestyle_spectral",
+        *(option[2:] + ("" if option in RETIRED_FREESTYLE_FLAGS else "=") for option in RETIRED_FREESTYLE_OPTIONS),
         "interactive",
         "cookiefile=",
         "download_rate_limit=",

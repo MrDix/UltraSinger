@@ -4,9 +4,8 @@ Covers the full chain: ConversionSettingsForm widgets -> collect_config()
 -> UltraSingerRunner.build_args() -> UltraSinger.py CLI option parsing
 (init_settings) -> Settings fields.
 
-Mirrors ``pytest/gui/test_freestyle_threshold_widgets.py`` in structure, but
-for the three new remote-STT retry fields, which themselves mirror the
-existing LLM lyric correction retry fields (``llm_retry_*`` / ``--llm_*``).
+For the three remote-STT retry fields, which mirror the LLM lyric correction
+retry fields (``llm_retry_*`` / ``--llm_*``).
 """
 
 import os

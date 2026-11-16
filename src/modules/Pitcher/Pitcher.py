@@ -28,11 +28,18 @@ def get_pitch_with_file(
         f"{ULTRASINGER_HEAD} Pitching with {blue_highlighted('SwiftF0')}"
     )
     sample_rate, audio = wavfile.read(filename)
+    return get_pitch_with_swift_f0(normalized_mono(audio), sample_rate)
 
-    # Convert stereo to mono if needed
-    if len(audio.shape) > 1:
-        audio = np.mean(audio, axis=1)
 
+def normalized_mono(audio: np.ndarray) -> np.ndarray:
+    """The samples of a WAV file as one channel of float32 in -1 ... 1.
+
+    The samples are scaled by their type first and the channels averaged
+    after: the average of integer channels is a float array, which would
+    pass for samples that are scaled already - a stereo file then reached
+    the pitch detection 32768 times too loud, and it is surer of a pitch
+    the louder the audio is.
+    """
     # Normalize audio to float32 based on dtype
     if audio.dtype == np.uint8:
         # uint8: range [0, 255] -> subtract 128 and divide by 128
@@ -49,7 +56,10 @@ def get_pitch_with_file(
         # Fallback for other types: assume int16 range
         audio = audio.astype(np.float32) / 32768.0
 
-    return get_pitch_with_swift_f0(audio, sample_rate)
+    # Convert stereo to mono if needed
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1, dtype=np.float32)
+    return audio
 
 
 def get_pitch_with_swift_f0(

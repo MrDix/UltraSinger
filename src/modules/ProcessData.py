@@ -44,6 +44,9 @@ class ProcessData:
     # corrections of transcribed_data do not change them (they give plain lyrics their line times)
     transcription_words: List[Tuple[str, float, float]] = field(default_factory=list)
     pitched_data: Optional[PitchedData] = None
+    # Pitch tracks of the stems as they were separated, by their path (None for a stem that could
+    # not be pitched): each is made once per conversion (see UltraSinger._stem_pitch_track)
+    stem_pitch_tracks: dict = field(default_factory=dict)
     midi_segments: Optional[List[MidiSegment]] = field(default_factory=list)
     parsed_file: Optional[UltrastarTxtValue] = None
     synced_lyrics: Optional[str] = None  # Synced LRC lyrics from LRCLIB (for reference-first pipeline)

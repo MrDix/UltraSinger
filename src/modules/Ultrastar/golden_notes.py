@@ -130,9 +130,8 @@ def mark_golden_notes(
     """Mark long held notes the singing stays on, spread over the song, as golden.
 
     Args:
-        midi_segments: Notes to mark. Mutated in place (matching the
-            convention used by ``growl_detector.detect_growl_segments``)
-            and also returned for convenient chaining.
+        midi_segments: Notes to mark. Mutated in place and also returned
+            for convenient chaining.
         bpm: Real BPM. Not used by the time-based selection but kept for
             API symmetry with the other post-processing passes.
         pitched_data: Pitch track of the vocal; notes the singing does not

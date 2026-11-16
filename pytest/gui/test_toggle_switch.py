@@ -51,11 +51,9 @@ def test_mouse_click_emits_once():
 
 def test_reset_updates_the_dependent_settings():
     """A reset button calls setChecked; the sub-settings must follow."""
-    form = ConversionSettingsForm({"llm_correct": True, "remote_stt": True, "detect_growl": True})
+    form = ConversionSettingsForm({"llm_correct": True, "remote_stt": True})
     assert form._llm_provider.isEnabled()
     form._llm_correct.setChecked(False)
     form._remote_stt.setChecked(False)
-    form._detect_growl.setChecked(False)
     assert not form._llm_provider.isEnabled()
     assert not form._remote_stt_api_key.isEnabled()
-    assert not form._freestyle_harmonicity.isEnabled()

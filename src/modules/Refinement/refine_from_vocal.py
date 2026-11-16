@@ -85,7 +85,11 @@ def _write_temp_ultrastar_txt(
     for seg, (start_beat, duration) in zip(midi_segments, note_beats(midi_segments, gap_s, bpm, multiplier)):
         pitch = convert_midi_note_to_ultrastar_note(seg)
         word = seg.word if seg.word else "~"
-        lines.append(f": {start_beat} {duration} {pitch} {word}")
+        # A freestyle note has no pitch to be compared with the singing: the
+        # scorer leaves it out, so it is neither re-pitched nor part of the
+        # score the GAP is searched with
+        note_type = "F" if seg.note_type == "F" else ":"
+        lines.append(f"{note_type} {start_beat} {duration} {pitch} {word}")
 
     lines.append("E")
 

@@ -436,12 +436,14 @@ class ConversionSettingsForm(QWidget):
         )
         card.add_toggle_row("Vocal runs, riffs and acrobatics as notes (harder)",
                            self._vocal_runs_as_notes,
-                           "Split a held note where the singer briefly flips to another "
-                           "pitch and comes back (mordents, turns, grace notes, neighbour "
-                           "notes, trills) and chart the flip as a note of its own. Makes "
-                           "the song noticeably harder to sing. Professional charts rarely "
-                           "notate singing this finely and mostly keep the one held note. "
-                           "Unlike the 'score' chart style, every other note stays as it is.",
+                           "Split a note where the singer goes to another pitch within the "
+                           "syllable - a step that is held, a run over several pitches, or a "
+                           "quick flip to another pitch and back (mordents, turns, grace "
+                           "notes, neighbour notes, trills) - and chart each sung pitch as a "
+                           "note of its own. Makes the song noticeably harder to sing. "
+                           "Professional charts rarely notate singing this finely and mostly "
+                           "keep the one held note. Unlike the 'score' chart style, every "
+                           "other note stays as it is.",
                            reset_callback=lambda: self._vocal_runs_as_notes.setChecked(
                                _DEFAULTS["vocal_runs_as_notes"]))
 
@@ -453,8 +455,9 @@ class ConversionSettingsForm(QWidget):
         self._vocal_runs_threshold.setValue(self._config.get("vocal_runs_threshold", 1.0))
         card.add_row("Vocal Runs Threshold", self._vocal_runs_threshold,
                      "How far (in semitones) the singing has to leave a held note to "
-                     "count as a flip. Lower finds more flips, also smaller and less "
-                     "certain ones; higher only clear ones.",
+                     "count as a flip, and with it how clearly it has to settle on "
+                     "another pitch to count as a step. Lower finds more, also smaller "
+                     "and less certain ones; higher only clear ones.",
                      reset_callback=lambda: self._vocal_runs_threshold.setValue(
                          _DEFAULTS.get("vocal_runs_threshold", 1.0)))
         self._vocal_runs_threshold.setEnabled(self._vocal_runs_as_notes.isChecked())
@@ -591,111 +594,19 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._synced_lyrics_check.setChecked(
                                not _DEFAULTS["disable_synced_lyrics_check"]))
 
-        # Freestyle detection (unpitchable passages)
-        self._detect_growl = ToggleSwitch(
-            checked=self._config.get("detect_growl", _DEFAULTS["detect_growl"])
+        # Freestyle detection (notes sung without a pitch)
+        self._freestyle_detection = ToggleSwitch(
+            checked=self._config.get("freestyle_detection", _DEFAULTS["freestyle_detection"])
         )
-        card.add_toggle_row("Freestyle Detection", self._detect_growl,
-                           "Detect vocal passages that cannot be reliably pitched and mark them "
-                           "as freestyle notes (displayed but not scored). Covers growls, screams, "
-                           "rap, spoken word, harsh vocals, and any non-melodic vocal style. "
-                           "Uses HPSS (Harmonic-Percussive Source Separation) harmonicity analysis "
-                           "(genre/gender-independent). Fallback: SwiftF0 confidence + pitch stability.",
-                           reset_callback=lambda: self._detect_growl.setChecked(
-                               _DEFAULTS["detect_growl"]))
-
-        self._freestyle_harmonicity = _NoScrollDoubleSpinBox()
-        self._freestyle_harmonicity.setRange(0.0, 1.0)
-        self._freestyle_harmonicity.setSingleStep(0.05)
-        self._freestyle_harmonicity.setDecimals(2)
-        self._freestyle_harmonicity.setValue(
-            self._config.get("freestyle_harmonicity", _DEFAULTS["freestyle_harmonicity"]))
-        card.add_row("Harmonicity Threshold", self._freestyle_harmonicity,
-                     "Main detector. Measures how musical (harmonic) versus noisy "
-                     "(percussive) a passage sounds. Passages scoring below this value are "
-                     "marked freestyle. Lower = stricter (fewer passages flagged, only very "
-                     "noisy ones); higher = looser (more passages get marked freestyle).",
-                     reset_callback=lambda: self._freestyle_harmonicity.setValue(
-                         _DEFAULTS["freestyle_harmonicity"]))
-
-        self._freestyle_energy = _NoScrollDoubleSpinBox()
-        self._freestyle_energy.setRange(0.0, 1.0)
-        self._freestyle_energy.setSingleStep(0.01)
-        self._freestyle_energy.setDecimals(3)
-        self._freestyle_energy.setValue(
-            self._config.get("freestyle_energy", _DEFAULTS["freestyle_energy"]))
-        card.add_row("Silence Energy Threshold", self._freestyle_energy,
-                     "Passages quieter than this (RMS energy) are treated as silence "
-                     "rather than freestyle and are skipped entirely. Raise this if a quiet "
-                     "noise floor gets mislabeled as freestyle; lower it to also catch very "
-                     "faint growls or whispers.",
-                     reset_callback=lambda: self._freestyle_energy.setValue(
-                         _DEFAULTS["freestyle_energy"]))
-
-        self._freestyle_confidence = _NoScrollDoubleSpinBox()
-        self._freestyle_confidence.setRange(0.0, 1.0)
-        self._freestyle_confidence.setSingleStep(0.05)
-        self._freestyle_confidence.setDecimals(2)
-        self._freestyle_confidence.setValue(
-            self._config.get("freestyle_confidence", _DEFAULTS["freestyle_confidence"]))
-        card.add_row("Confidence Threshold (fallback)", self._freestyle_confidence,
-                     "Fallback detector used only when the harmonicity check is "
-                     "inconclusive. If the pitch tracker's median confidence drops below "
-                     "this value, the passage is suspected to be unpitchable. Lower = "
-                     "stricter (only very low-confidence passages count); higher = looser.",
-                     reset_callback=lambda: self._freestyle_confidence.setValue(
-                         _DEFAULTS["freestyle_confidence"]))
-
-        self._freestyle_pitch_stdev = _NoScrollDoubleSpinBox()
-        self._freestyle_pitch_stdev.setRange(0.1, 24.0)
-        self._freestyle_pitch_stdev.setSingleStep(0.5)
-        self._freestyle_pitch_stdev.setDecimals(1)
-        self._freestyle_pitch_stdev.setSuffix(" st")
-        self._freestyle_pitch_stdev.setValue(
-            self._config.get("freestyle_pitch_stdev", _DEFAULTS["freestyle_pitch_stdev"]))
-        card.add_row("Pitch Stability Threshold (fallback)", self._freestyle_pitch_stdev,
-                     "Fallback detector: how much the detected pitch is allowed to wobble "
-                     "(in semitones) before a passage is suspected unpitchable — growls and "
-                     "screams tend to jump around wildly in pitch. Lower = stricter (flags "
-                     "more passages); higher = looser.",
-                     reset_callback=lambda: self._freestyle_pitch_stdev.setValue(
-                         _DEFAULTS["freestyle_pitch_stdev"]))
-
-        self._freestyle_spectral_flatness = _NoScrollDoubleSpinBox()
-        self._freestyle_spectral_flatness.setRange(0.0, 1.0)
-        self._freestyle_spectral_flatness.setSingleStep(0.05)
-        self._freestyle_spectral_flatness.setDecimals(2)
-        self._freestyle_spectral_flatness.setValue(
-            self._config.get("freestyle_spectral_flatness", _DEFAULTS["freestyle_spectral_flatness"]))
-        card.add_row("Spectral Flatness Threshold (fallback)", self._freestyle_spectral_flatness,
-                     "Fallback detector: how noise-like versus tonal the sound spectrum is. "
-                     "Passages above this value are considered noisy (harsh vocals, screams). "
-                     "Lower = stricter; higher = looser. Only used when 'Use Spectral "
-                     "Flatness' below is enabled.",
-                     reset_callback=lambda: self._freestyle_spectral_flatness.setValue(
-                         _DEFAULTS["freestyle_spectral_flatness"]))
-
-        self._freestyle_use_spectral = ToggleSwitch(
-            checked=self._config.get("freestyle_use_spectral", _DEFAULTS["freestyle_use_spectral"])
-        )
-        card.add_toggle_row("Use Spectral Flatness (fallback)", self._freestyle_use_spectral,
-                           "Include the spectral flatness check as part of the fallback "
-                           "detector. Disable this if it causes false positives on breathy "
-                           "or naturally noisy but still pitched vocal styles.",
-                           reset_callback=lambda: self._freestyle_use_spectral.setChecked(
-                               _DEFAULTS["freestyle_use_spectral"]))
-
-        # Enable/disable threshold widgets together with the main toggle
-        def _toggle_freestyle(on):
-            self._freestyle_harmonicity.setEnabled(on)
-            self._freestyle_energy.setEnabled(on)
-            self._freestyle_confidence.setEnabled(on)
-            self._freestyle_pitch_stdev.setEnabled(on)
-            self._freestyle_spectral_flatness.setEnabled(on)
-            self._freestyle_use_spectral.setEnabled(on)
-
-        self._detect_growl.toggled_signal.connect(_toggle_freestyle)
-        _toggle_freestyle(self._detect_growl.isChecked())
+        card.add_toggle_row("Freestyle Detection", self._freestyle_detection,
+                           "Notes that are sung without a pitch become freestyle notes (displayed "
+                           "but not scored): screams, growls and other harsh vocals, shouted or "
+                           "whispered lines. They are charted on one pitch instead of the arbitrary "
+                           "ones the pitch detection gives them. Harsh vocals sung on a pitch, "
+                           "harmonies and choirs keep their notes. Turn it off to chart every note "
+                           "with a pitch. Needs the vocal separation.",
+                           reset_callback=lambda: self._freestyle_detection.setChecked(
+                               _DEFAULTS["freestyle_detection"]))
 
         # Vocal separation
         self._separation = ToggleSwitch(
@@ -782,7 +693,9 @@ class ConversionSettingsForm(QWidget):
                            "Split notes at pitch change boundaries within a syllable "
                            "(melismas, runs, ornaments). Each pitch gets its own note "
                            "instead of averaging to a single flat note. Uses vibrato-aware "
-                           "detection to avoid false splits from vocal vibrato.",
+                           "detection to avoid false splits from vocal vibrato. A word-based "
+                           "note is also split where the singing clearly settles on another "
+                           "pitch in the separated vocal.",
                            reset_callback=lambda: self._pitch_change_split.setChecked(
                                _DEFAULTS["pitch_change_split"]))
 
@@ -934,7 +847,9 @@ class ConversionSettingsForm(QWidget):
                            "Correct note pitches by comparing against the vocal audio. "
                            "A note keeps its octave; only its pitch class is corrected. "
                            "Notes from a segmentation model keep a well-tracked pitch "
-                           "unless a second pitch track confirms the correction.",
+                           "unless a second pitch track confirms the correction. A "
+                           "word-based note charted beside the pitch the singing clearly "
+                           "stays on takes the sung pitch.",
                            reset_callback=lambda: self._refine_pitch.setChecked(
                                _DEFAULTS.get("refine_pitch", True)))
 
@@ -1834,13 +1749,7 @@ class ConversionSettingsForm(QWidget):
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),
             "disable_synced_lyrics_check": not self._synced_lyrics_check.isChecked(),
-            "detect_growl": self._detect_growl.isChecked(),
-            "freestyle_harmonicity": self._freestyle_harmonicity.value(),
-            "freestyle_energy": self._freestyle_energy.value(),
-            "freestyle_confidence": self._freestyle_confidence.value(),
-            "freestyle_pitch_stdev": self._freestyle_pitch_stdev.value(),
-            "freestyle_spectral_flatness": self._freestyle_spectral_flatness.value(),
-            "freestyle_use_spectral": self._freestyle_use_spectral.isChecked(),
+            "freestyle_detection": self._freestyle_detection.isChecked(),
             "llm_correct": self._llm_correct.isChecked(),
             "llm_provider_id": self.get_selected_provider_id(),
             "llm_retry_on_rate_limit": self._llm_retry.isChecked(),
