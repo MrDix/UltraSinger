@@ -505,6 +505,12 @@ class TestSplitFreestyleAtWords:
         parts = seg_lyrics.split_freestyle_at_words(notes, syllables)
         assert [(p.start, p.end) for p in parts] == [(0.0, 0.9), (1.0, 2.2), (2.2, 3.0)]
 
+    def test_a_note_that_overlaps_the_one_before_gets_no_part_without_a_word(self):
+        notes = [PredictedNote(0.0, 1.5, 60, voiced=1.0), PredictedNote(1.0, 3.0, 57, freestyle=True)]
+        syllables = _syllables(("la ", 0.0, 0.9), ("a ", 1.3, 2.0), ("b ", 2.2, 2.9))
+        parts = seg_lyrics.split_freestyle_at_words(notes, syllables)
+        assert [(p.start, p.end) for p in parts] == [(0.0, 1.5), (1.0, 2.2), (2.2, 3.0)]
+
     def test_the_syllables_of_a_word_stay_in_one_note(self):
         notes = [PredictedNote(0.0, 2.0, 57, freestyle=True)]
         syllables = _syllables(("hur", 0.0, 0.5), ("ri", 0.5, 1.0), ("cane ", 1.0, 2.0))

@@ -156,7 +156,8 @@ def split_freestyle_at_words(notes: list[PredictedNote], syllables: list[Syllabl
                 if start - edges[-1] >= MIN_FREESTYLE_WORD_S:
                     edges.append(float(start))
             before = result[-1].end - MIN_FREESTYLE_WORD_S if result else -np.inf
-            before = max(before, note.start - MAX_START_COST_MS / 1000.0)
+            # (never past the note's own start, should two notes overlap)
+            before = min(max(before, note.start - MAX_START_COST_MS / 1000.0), note.start + MIN_FREESTYLE_WORD_S)
             if len(edges) > 1 and np.searchsorted(word_starts, before, side="left") == first:
                 del edges[1]  # no word for the stretch before the first word: it goes to that word
         edges.append(note.end)
