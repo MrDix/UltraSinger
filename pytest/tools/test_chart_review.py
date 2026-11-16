@@ -63,6 +63,20 @@ class TestLoadChart(unittest.TestCase):
         self.assertEqual(chart.notes[4].midi - chart.notes[0].midi, 12)
         self.assertEqual(chart.headers["ARTIST"], "Some Band")
 
+    def test_several_spaces_between_the_numbers_of_a_note(self):
+        with tempfile.TemporaryDirectory() as folder:
+            text = "#BPM:300\n#GAP:0\n:  0   10  0 one" + " " + "\n: 10 10 2  two\nE\n"
+            chart = load_chart(_write(folder, text))
+        self.assertEqual([(n.word, round(n.start, 2), round(n.end, 2)) for n in chart.notes],
+                         [("one ", 0.0, 0.5), (" two", 0.5, 1.0)])
+
+    def test_of_a_duet_the_notes_of_the_first_singer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            text = "\n".join(["#BPM:300", "#GAP:0", "P1", ": 0 10 0 one", "- 12", ": 20 10 2 two",
+                              "P2", ": 0 10 7 other", "- 12", ": 20 10 9 voice", "E"]) + "\n"
+            chart = load_chart(_write(folder, text))
+        self.assertEqual([(n.word, n.line) for n in chart.notes], [("one", 0), ("two", 1)])
+
     def test_the_chart_of_a_song_folder(self):
         with tempfile.TemporaryDirectory() as folder:
             path = _write(folder)

@@ -105,6 +105,21 @@ class TestLoudness(unittest.TestCase):
         self.assertFalse(loud_frames(np.full(5, -90.0)).any())
 
 
+class TestLongSongs(unittest.TestCase):
+    """The frames of a song are analysed in blocks, with the same result."""
+
+    def test_blocks_give_the_same_loudness_and_prominence(self):
+        from unittest import mock
+        from src.modules.Pitcher import unpitched_notes
+        audio = np.concatenate([_voice(220.0, 0.5, 0.3), _noise(0.5)]).astype(np.float32)
+        times = _times(1.0)
+        whole = loudness_db(audio, SAMPLE_RATE, times), partial_prominence(audio, SAMPLE_RATE, times)
+        with mock.patch.object(unpitched_notes, "BLOCK_FRAMES", 7):
+            blocks = loudness_db(audio, SAMPLE_RATE, times), partial_prominence(audio, SAMPLE_RATE, times)
+        np.testing.assert_allclose(blocks[0], whole[0])
+        np.testing.assert_allclose(blocks[1], whole[1])
+
+
 class TestNoteEvidence(unittest.TestCase):
     def test_frames_with_a_pitch_speak_for_a_sung_note(self):
         self.assertLess(note_evidence(20, 18), 0)
@@ -251,6 +266,21 @@ class TestMarkUnpitchedNotes(unittest.TestCase):
         self.assertIs(mark_unpitched_notes(segments, None, self.stem), segments)
         self.assertIs(mark_unpitched_notes(segments, PitchedData([], [], []), self.stem), segments)
         self.assertEqual(mark_unpitched_notes([], PitchedData([0.0], [220.0], [0.9]), self.stem), [])
+
+    def test_a_failing_analysis_gives_the_notes_back(self):
+        # also when the memory runs out: the chart is never lost over this pass
+        import contextlib
+        import io
+        from unittest import mock
+        from src.modules.Pitcher import unpitched_notes
+        segments, pitched_data = self._song()
+        for error in (MemoryError(), KeyError("frames"), Exception("no decoder")):
+            with self.subTest(error=type(error).__name__):
+                out = io.StringIO()
+                with mock.patch.object(unpitched_notes, "partial_prominence", side_effect=error), \
+                        contextlib.redirect_stdout(out):
+                    self.assertIs(mark_unpitched_notes(segments, pitched_data, self.stem), segments)
+                self.assertIn("the freestyle detection failed", out.getvalue())
 
     def test_a_stem_that_cannot_be_read_gives_the_notes_back(self):
         segments = [_note(0.0, 1.0)]

@@ -250,6 +250,8 @@ def refine_pitch_with_uscore(
     for i, (seg, ns) in enumerate(
         zip(midi_segments, all_note_scores, strict=True)
     ):
+        if seg.note_type == "F":
+            continue  # no pitch to correct (the scorer has no tone for it in either audio)
         if fallback_audio_path and ns.beats_total > 0 and not any(t >= 0 for t in ns.detected_tones):
             unchecked.append(i)
             continue

@@ -63,12 +63,12 @@ This will help me a lot to keep this project alive and improve it.
     - [Format Version](#format-version)
     - [Line Break Timing](#line-break-timing)
     - [Cache Folder](#cache-folder)
+    - [Freestyle Detection](#freestyle-detection)
     - [🧪 Experimental Features](#-experimental-features)
       - [Library Triage Tool](#library-triage-tool)
       - [Chart Benchmark Tool](#chart-benchmark-tool)
       - [Chart Review Tool](#chart-review-tool)
       - [Model-Based Note Segmentation](#model-based-note-segmentation---segmentation_model)
-      - [Freestyle Detection](#freestyle-detection-on-by-default---disable_freestyle_detection)
       - [LLM Lyric Correction](#llm-lyric-correction---llm_correct)
       - [Remote Speech-to-Text](#remote-speech-to-text---remote_stt)
       - [Syllable-Level Note Splitting](#syllable-level-note-splitting---syllable_split)
@@ -802,6 +802,24 @@ It is also asked when the lyrics of LRCLIB have few of the words a transcription
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used. It searches as a conversion of the video does: with the artist and title that the conversion takes from the video and looks up in the song database, and with the length of the video.
 
+### Freestyle Detection
+
+On by default; `--disable_freestyle_detection` (GUI: Settings → "Freestyle Detection") turns it off.
+
+Notes that are sung without a pitch become freestyle notes: screams, growls and other harsh vocals, shouted and whispered lines. A freestyle note shows its word and is not scored. There is no pitch in it that a singer could hit or a game could score: the pitch detection finds none, so such a note would be charted on an arbitrary pitch, and a passage of them as a zigzag nobody can sing. A run of freestyle notes is charted on one pitch instead, that of the last sung note before it.
+
+A note counts as sung when, in the separated vocal, most of its loud frames have a pitch: the pitch detection is sure of one there, or partials stand clearly out of the spectrum. The second is for harmonies and choirs — several voices at once leave the pitch detection unsure which one to follow, but every voice keeps its partials, while a scream is noise shaped by the mouth. Harsh vocals that carry a pitch (a scream on a note, a distorted voice) therefore keep their notes. The notes are judged together in their order, each most likely of the kind of its neighbours: a short or unclear note within singing stays a sung note, one within a scream becomes freestyle with it, and the notes of one syllable are always of one kind.
+
+On 100 songs with hand-made charts, 1.8 % of the notes that are charted with a pitch there became freestyle, most of them in a few songs with shouted choruses; in more than half of the songs none did. On an annotated set of metal vocals (two hours from 57 songs), four fifths of the screamed stretches were judged to be without a pitch, and 6 % of the cleanly sung ones — nearly all of those in a few songs with large choirs, which the pitch detection cannot follow and whose partials blur. In songs with harsh vocals, between a tenth and four fifths of the notes become freestyle.
+
+Freestyle notes also come from words in brackets in the lyrics (backing vocals) and from a [segmentation model](#model-based-note-segmentation---segmentation_model); those stay as they are. The detection needs the separated vocal. The pitch refinement does not re-pitch freestyle notes, and they do not count in the score the GAP is searched with.
+
+```commandline
+-i XYZ --disable_freestyle_detection
+```
+
+The options of the earlier detection (`--detect_freestyle` and the `--freestyle_...` thresholds) are still accepted and do nothing.
+
 ### 🧪 Experimental Features
 
 These features are experimental and disabled by default. They may change or be removed in future versions.
@@ -973,23 +991,7 @@ To share one model between computers, keep it in a (private) GitHub repository a
 ```commandline
 -i XYZ --segmentation_model_repo owner/models-repo
 ```
-**Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). The pitch refinement and the game-score report then compare the notes with the lead stem as well (notes without a detected tone there with the full vocal stem). On a 100-song benchmark this raised the median agreement with hand-made charts by about 1.7 points, mainly on songs with several voices. The separation needs about 2.2 GB of free GPU memory; with less it is skipped, since it would run in shared system memory and take very long, and the note pitches come from the full vocal stem.
-
-#### Freestyle Detection (on by default, `--disable_freestyle_detection`)
-
-Notes that are sung without a pitch become freestyle notes: screams, growls and other harsh vocals, shouted and whispered lines. A freestyle note shows its word and is not scored. There is no pitch in it that a singer could hit or a game could score: the pitch detection finds none, so such a note would be charted on an arbitrary pitch, and a passage of them as a zigzag nobody can sing. A run of freestyle notes is charted on one pitch instead, that of the last sung note before it.
-
-A note counts as sung when, in the separated vocal, most of its loud frames have a pitch: the pitch detection is sure of one there, or partials stand clearly out of the spectrum. The second is for harmonies and choirs — several voices at once leave the pitch detection unsure which one to follow, but every voice keeps its partials, while a scream is noise shaped by the mouth. Harsh vocals that carry a pitch (a scream on a note, a distorted voice) therefore keep their notes. The notes are judged together in their order, each most likely of the kind of its neighbours: a short or unclear note within singing stays a sung note, one within a scream becomes freestyle with it, and the notes of one syllable are always of one kind.
-
-On 100 songs with hand-made charts, 1.8 % of the notes that are charted with a pitch there became freestyle, most of them in a few songs with shouted choruses; in more than half of the songs none did. On an annotated set of metal vocals (two hours from 57 songs), four fifths of the screamed stretches were judged to be without a pitch, and 6 % of the cleanly sung ones — nearly all of those in a few songs with large choirs, which the pitch detection cannot follow and whose partials blur. In songs with harsh vocals, between a tenth and four fifths of the notes become freestyle.
-
-Freestyle notes also come from words in brackets in the lyrics (backing vocals) and from a [segmentation model](#model-based-note-segmentation---segmentation_model); those stay as they are. The detection needs the separated vocal. The reverse-scoring refinement leaves freestyle notes alone.
-
-```commandline
--i XYZ --disable_freestyle_detection
-```
-
-The options of the earlier detection (`--detect_freestyle` and the `--freestyle_...` thresholds) are still accepted and do nothing.
+**Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). The pitch refinement and the game-score report then compare the notes with the lead stem as well. Where the lead stem has no tone, the full vocal stem counts instead (for the refinement in notes without a detected tone, for the game score in every moment without one): the separation takes a chorus sung by several voices for backing vocals, and its notes would otherwise score as all missed. On a 100-song benchmark this raised the median agreement with hand-made charts by about 1.7 points, mainly on songs with several voices. The separation needs about 2.2 GB of free GPU memory; with less it is skipped, since it would run in shared system memory and take very long, and the note pitches come from the full vocal stem.
 
 #### ptAKF Chart Refit (`--ptakf_refit`)
 
@@ -1029,7 +1031,7 @@ Disabled by default, since it changes the in-game score distribution.
 
 Singers often sing more than one pitch on a syllable: a step up or down that is held, a run over several pitches, or a quick flip a tone away and back. Depending on the style this is called a melisma, a mordent, a turn, a grace note, a neighbour note, a trill, or a vocal run or riff. UltraSinger charts such a syllable as one held note, or with fewer notes than are sung. With this option the note is split there, and every sung pitch becomes a note of its own (`~`).
 
-**The song becomes noticeably harder to sing.** Professional charts rarely notate singing this finely: at most of these places they keep the one held note, so the option is off by default. Turn it on when the chart should follow the singer as closely as possible. Unlike the `score` [chart style](#chart-style-singable-vs-score---chart_style-gui-settings--post-processing--chart-style), which rebuilds every note from the recording, it keeps the singable chart and only adds these flips.
+**The song becomes noticeably harder to sing.** Professional charts rarely notate singing this finely: at most of these places they keep the one held note, so the option is off by default. Turn it on when the chart should follow the singer as closely as possible. Unlike the `score` [chart style](#chart-style-singable-vs-score---chart_style-gui-settings--post-processing--chart-style), which rebuilds every note from the recording, it keeps the singable chart and only adds these steps and flips.
 
 Two things are found in each note:
 

@@ -34,6 +34,7 @@ pitches that are not charted.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,27 +100,40 @@ def fold(semitones):
     return (np.asarray(semitones, dtype=float) + 6.0) % 12.0 - 6.0
 
 
+# A note line: type, start beat, length, pitch, and after one space the word
+# (which may start or end with spaces of its own)
+_NOTE_LINE_RE = re.compile(r"\s*([:*FRG])\s+(-?\d+)\s+(\d+)\s+(-?\d+)(?: (.*))?$")
+# The line that starts the part of a singer in a duet: "P1", "P 2"
+_SINGER_LINE_RE = re.compile(r"\s*P\s*(\d+)\s*$", re.IGNORECASE)
+
+
 def load_chart(path: str | Path) -> ReviewChart:
-    """The notes of an UltraStar TXT with their times in seconds and their line."""
+    """The notes of an UltraStar TXT with their times in seconds and their line.
+
+    Of a duet, the notes of the first singer: the vocal has both voices, but
+    one after the other the two parts are no chart to lay over it.
+    """
     headers: dict[str, str] = {}
     raw: list[tuple[str, int, int, int, str, int]] = []
     line = 0
+    first_singer = True
     for text in absolute_chart_text(read_chart_text(path)).splitlines():
+        singer = _SINGER_LINE_RE.match(text)
+        note = _NOTE_LINE_RE.match(text)
         if text.startswith("#"):
             tag, _, value = text[1:].partition(":")
             headers[tag.strip().upper()] = value.strip()
-        elif text.startswith("-"):
-            line += 1
+        elif singer:
+            first_singer = int(singer.group(1)) == 1
         elif text.strip().upper() == "E":
             break
-        else:
-            parts = text.split(None, 4)
-            if len(parts) >= 4 and parts[0] in ":*FRG":
-                try:
-                    raw.append((parts[0], int(parts[1]), int(parts[2]), int(parts[3]),
-                                text.split(" ", 4)[4] if text.count(" ") >= 4 else "", line))
-                except ValueError:
-                    continue
+        elif not first_singer:
+            continue
+        elif text.startswith("-"):
+            line += 1
+        elif note:
+            raw.append((note.group(1), int(note.group(2)), int(note.group(3)), int(note.group(4)),
+                        note.group(5) or "", line))
     bpm, gap = _parse_bpm(headers.get("BPM", "0")), _parse_gap(headers.get("GAP", "0"))
     version = headers.get("VERSION")
     notes = [ReviewNote(kind, _beat_to_ms(beat, bpm, gap) / 1000.0, _beat_to_ms(beat + length, bpm, gap) / 1000.0,

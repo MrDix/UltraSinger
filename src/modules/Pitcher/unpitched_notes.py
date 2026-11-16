@@ -43,12 +43,15 @@ import numpy as np
 
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Pitcher.pitched_data import PitchedData
-from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted
+from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, gold_highlighted
 
 SAMPLE_RATE = 16000  # the audio is analysed at this rate
 VOICED_CONFIDENCE = 0.7  # the pitch detection is sure of a pitch from here on
 LOUD_BELOW_PEAK_DB = 30.0  # frames less than this below the loud singing are loud
 
+# Frames that are analysed at once: the windows of a whole song at once take
+# gigabytes (10 minutes are 37,500 frames)
+BLOCK_FRAMES = 2000
 LOUDNESS_WINDOW = 1024  # samples (64 ms) a frame's loudness is taken over
 PROMINENCE_WINDOW = 2048  # samples (128 ms): long enough to tell the partials of several voices apart
 PROMINENCE_BAND_HZ = (200.0, 4000.0)  # where the partials of singing are
@@ -87,8 +90,11 @@ def frame_samples(audio: np.ndarray, sample_rate: int, times: np.ndarray, window
 
 def loudness_db(audio: np.ndarray, sample_rate: int, times: np.ndarray) -> np.ndarray:
     """Level in dB (0 = full scale) of *audio* around each of *times*."""
-    frames = frame_samples(audio, sample_rate, times, LOUDNESS_WINDOW)
-    return 10.0 * np.log10(np.mean(frames.astype(np.float64) ** 2, axis=1) + 1e-12)
+    result = np.zeros(len(times))
+    for first in range(0, len(times), BLOCK_FRAMES):
+        frames = frame_samples(audio, sample_rate, times[first:first + BLOCK_FRAMES], LOUDNESS_WINDOW)
+        result[first:first + len(frames)] = np.mean(frames.astype(np.float64) ** 2, axis=1)
+    return 10.0 * np.log10(result + 1e-12)
 
 
 def loud_frames(level_db: np.ndarray) -> np.ndarray:
@@ -113,16 +119,14 @@ def partial_prominence(audio: np.ndarray, sample_rate: int, times: np.ndarray) -
     low, high = (int(round(hz * n_fft / sample_rate)) for hz in PROMINENCE_BAND_HZ)
     width = max(3, int(round(ENVELOPE_HZ * n_fft / sample_rate)) | 1)
     window = np.hanning(PROMINENCE_WINDOW).astype(np.float32)
-    kernel = np.ones(width) / width
     result = np.zeros(len(times))
-    # In blocks: the spectra of a whole song at once would take gigabytes
-    for first in range(0, len(times), 2000):
-        frames = frame_samples(audio, sample_rate, times[first:first + 2000], PROMINENCE_WINDOW) * window
+    for first in range(0, len(times), BLOCK_FRAMES):
+        frames = frame_samples(audio, sample_rate, times[first:first + BLOCK_FRAMES], PROMINENCE_WINDOW) * window
         spectrum = 20.0 * np.log10(np.abs(np.fft.rfft(frames, n_fft, axis=1)) + 1e-7)
         half = width // 2
         padded = np.pad(spectrum, ((0, 0), (half, half)), mode="edge")
         summed = np.cumsum(np.pad(padded, ((0, 0), (1, 0))), axis=1)
-        envelope = (summed[:, width:] - summed[:, :-width]) * kernel[0]
+        envelope = (summed[:, width:] - summed[:, :-width]) / width
         fine = (spectrum - envelope)[:, low:high + 1]
         ordered = np.sort(fine, axis=1)
         top = ordered[:, int((1.0 - TOP_SHARE) * ordered.shape[1]):].mean(axis=1)
@@ -243,21 +247,23 @@ def mark_unpitched_notes(midi_segments: list[MidiSegment], pitched_data: Pitched
 
     Returns:
         The notes, those without a pitch as freestyle notes; the given list
-        when there is nothing to judge or the stem cannot be read.
+        when there is nothing to judge, the stem cannot be read or its
+        analysis fails.
     """
     if not midi_segments or pitched_data is None or not pitched_data.times:
         return midi_segments
     try:
         audio, _ = librosa.load(vocal_audio_path, sr=SAMPLE_RATE, mono=True)
-    except (OSError, ValueError, RuntimeError) as error:
-        print(f"{ULTRASINGER_HEAD} Warning: {vocal_audio_path} could not be read ({error}); "
-              "notes without a pitch are not searched")
+        times = np.asarray(pitched_data.times, dtype=float)
+        confidence = np.asarray(pitched_data.confidence, dtype=float)
+        loud = loud_frames(loudness_db(audio, SAMPLE_RATE, times))
+        has_pitch = ((confidence >= VOICED_CONFIDENCE)
+                     | (partial_prominence(audio, SAMPLE_RATE, times) >= MIN_PROMINENCE_DB))
+        unpitched = find_unpitched_notes(midi_segments, times, has_pitch, loud)
+    except Exception as error:  # noqa: BLE001 - fail open, never lose the chart (also when memory runs out)
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the freestyle detection failed ({error!r}) "
+              "- every note is charted with a pitch")
         return midi_segments
-    times = np.asarray(pitched_data.times, dtype=float)
-    confidence = np.asarray(pitched_data.confidence, dtype=float)
-    loud = loud_frames(loudness_db(audio, SAMPLE_RATE, times))
-    has_pitch = (confidence >= VOICED_CONFIDENCE) | (partial_prominence(audio, SAMPLE_RATE, times) >= MIN_PROMINENCE_DB)
-    unpitched = find_unpitched_notes(midi_segments, times, has_pitch, loud)
     count = sum(unpitched)
     if not count:
         return midi_segments

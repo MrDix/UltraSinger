@@ -922,6 +922,32 @@ def run() -> tuple[str, Score, Score]:
             )
             pitch_frames = None
 
+    # With lead-vocal pitches, the game's pitch detection finds nothing in the
+    # separated lead stem where that dropped the singing (it loses frames,
+    # and takes harmonies and choirs for backing). There the notes are
+    # compared with the full vocal stem instead: by the refinement for notes
+    # without a tone in the lead stem, by the game score for its frames
+    # without one.
+    vocals_path = (
+        process_data.process_data_paths.vocals_audio_file_path
+        or process_data.process_data_paths.whisper_audio_path
+    )
+    fallback_audio = vocals_path if note_pitch_audio != vocals_path else None
+    fallback_frames = None
+    if (
+        fallback_audio
+        and not settings.ignore_audio
+        and settings.use_separated_vocal
+        and ((settings.refine_from_vocal and settings.refine_pitch) or game_score_wanted(settings))
+    ):
+        try:
+            from ultrastar_score import detect_pitch_frames
+
+            fallback_frames = detect_pitch_frames(fallback_audio)
+        except (ImportError, OSError, ValueError, RuntimeError,
+                AttributeError, KeyError, TypeError):
+            fallback_frames = None
+
     # Reverse-scoring refinement pass.
     # Only meaningful against isolated vocals: without separation the
     # processing audio is the full mix, and correcting notes toward what
@@ -932,24 +958,6 @@ def run() -> tuple[str, Score, Score]:
         and settings.use_separated_vocal
     ):
         from modules.Refinement.refine_from_vocal import refine_notes
-
-        # With lead-vocal pitches, notes in which the game's pitch detection
-        # finds nothing in the separated lead stem (it loses frames there)
-        # are checked against the full vocal stem instead.
-        vocals_path = (
-            process_data.process_data_paths.vocals_audio_file_path
-            or process_data.process_data_paths.whisper_audio_path
-        )
-        fallback_audio = vocals_path if note_pitch_audio != vocals_path else None
-        fallback_frames = None
-        if fallback_audio and settings.refine_pitch:
-            try:
-                from ultrastar_score import detect_pitch_frames
-
-                fallback_frames = detect_pitch_frames(fallback_audio)
-            except (ImportError, OSError, ValueError, RuntimeError,
-                    AttributeError, KeyError, TypeError):
-                fallback_frames = None
 
         # NOTE: skipping this phase's pitch correction when ptakf_refit is
         # enabled (since refit overwrites all pitches anyway) was measured
@@ -1077,10 +1085,15 @@ def run() -> tuple[str, Score, Score]:
         from modules.uscore_report import (
             calculate_uscore_report,
             format_uscore_report,
+            with_fallback_frames,
         )
 
+        # With lead-vocal pitches: where the lead stem has no tone (it dropped
+        # harmonies or a choir as backing), the singing of the full vocal stem
+        # counts - else a chorus sung by several voices scores as all missed
         uscore_result = calculate_uscore_report(
-            ultrastar_file_output, note_pitch_audio, pitch_frames=pitch_frames
+            ultrastar_file_output, note_pitch_audio,
+            pitch_frames=with_fallback_frames(pitch_frames, fallback_frames),
         )
         if uscore_result:
             print(
