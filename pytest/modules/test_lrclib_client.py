@@ -893,6 +893,17 @@ class TestCoverLyrics(unittest.TestCase):
                 result, _ = self._find(answer)
                 self.assertEqual((result.track_name, result.instrumental), ("Song Title (Somebody Cover)", True))
 
+    def test_an_instrumental_cover_found_by_an_earlier_search_stays(self):
+        """The search with the additions to the title lists the cover as instrumental, the one without
+        them only the song it covers: its lyrics are not taken."""
+        title = "Song Title (Somebody Cover) (Official Video)"
+        instrumental = _lrclib_entry(track="Song Title (Somebody Cover)", artist="Some Artist", plain=None,
+                                     instrumental=True)
+        result, requests = self._find(
+            lambda params: [instrumental] if "Official" in str(params) else [_version(201.0)], title=title)
+        self.assertEqual((result.track_name, result.instrumental), ("Song Title (Somebody Cover)", True))
+        self.assertTrue(any("Official" not in str(request) for request in requests))  # searched without them too
+
     def test_words_that_tell_the_kind_of_the_cover_are_no_artist(self):
         """Nobody is searched under "Female" or "Metal", and nothing listed under such a name is taken."""
         for mark in ("Female Cover", "Metal Cover", "Live Cover", "Japanese Cover", "Instrumental Cover"):
@@ -1041,6 +1052,17 @@ class TestSyncedLyricsForPlainOnes(unittest.TestCase):
         self.assertEqual(result.source, "LRCLIB")
         self.assertIsNone(result.synced_lyrics)
 
+    def test_the_next_version_when_the_closest_one_has_another_text(self):
+        songs = [_second_db_song(1), _second_db_song(2, duration_s=301.0)]
+        result, asked = self._find(songs=songs, lyrics={1: _synced(_lines(15, word="other")),
+                                                        2: _synced(_lines(15))})
+        self.assertEqual((result.source, result.duration), ("music.163.com", 301.0))
+        self.assertEqual(sum("/song/lyric" in url for url in asked), 2)
+        # none of them has the text: the plain ones stay
+        result, _ = self._find(songs=songs, lyrics={1: _synced(_lines(15, word="other")),
+                                                    2: _synced(_lines(15, word="another"))})
+        self.assertEqual(result.source, "LRCLIB")
+
     def test_much_less_of_the_text_is_not_taken(self):
         # 11 of the 15 lines, then 12
         result, _ = self._find(songs=[_second_db_song(7)], lyrics={7: _synced(_lines(11))})
@@ -1125,7 +1147,8 @@ class TestSyncedLyricsForPlainOnes(unittest.TestCase):
     def _report(lyrics):
         """What search_lyrics prints with these lyrics in the second database."""
         lrclib = [_version(300.0, synced=False, plain="\n".join(_lines(15)))]
-        get_json = TestSecondLyricsDatabase._get_json(lrclib, [_second_db_song(7, duration_s=298.0)], lyrics, [])
+        songs = [_second_db_song(7, duration_s=298.0), _second_db_song(8, duration_s=297.0)]
+        get_json = TestSecondLyricsDatabase._get_json(lrclib, songs, lyrics, [])
         with patch("builtins.print") as printed, \
                 patch("src.modules.lrclib_client._get_json", side_effect=get_json):
             search_lyrics("Some Artist", "Song Title", 300.0)
@@ -1147,6 +1170,18 @@ class TestSyncedLyricsForPlainOnes(unittest.TestCase):
         lines = self._report({})
         self.assertTrue(any("No synced lyrics found on music.163.com: keeping the plain ones of LRCLIB" in line
                             for line in lines))
+
+    def test_of_several_versions_the_one_that_decides_is_reported(self):
+        # the closest has another text, the next the same: taken, and only that is reported
+        lines = self._report({7: _synced(_lines(15, word="other")), 8: _synced(_lines(15))})
+        self.assertTrue(any("have 100% of the words of the plain ones of LRCLIB: taking them" in line
+                            for line in lines))
+        self.assertFalse(any("keeping the plain ones" in line for line in lines))
+        # none has the text: the closest one is reported, once
+        lines = self._report({7: _synced(_lines(12, word="other") + _lines(3)), 8: _synced(_lines(15, word="other"))})
+        kept = [line for line in lines if "keeping the plain ones of LRCLIB" in line]
+        self.assertEqual(len(kept), 1)
+        self.assertIn("have only 20% of the words of the plain ones", kept[0])
 
 
 class TestSecondDatabaseSearches(unittest.TestCase):
