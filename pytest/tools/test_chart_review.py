@@ -70,6 +70,13 @@ class TestLoadChart(unittest.TestCase):
         self.assertEqual([(n.word, round(n.start, 2), round(n.end, 2)) for n in chart.notes],
                          [("one ", 0.0, 0.5), (" two", 0.5, 1.0)])
 
+    def test_tabs_between_the_parts_of_a_note(self):
+        with tempfile.TemporaryDirectory() as folder:
+            text = "#BPM:300\n#GAP:0\n:\t0\t10\t-3\tone\n*\t10\t10\t2\nE\n"
+            chart = load_chart(_write(folder, text))
+        self.assertEqual([(n.kind, n.word, round(n.start, 2)) for n in chart.notes],
+                         [(":", "one", 0.0), ("*", "", 0.5)])
+
     def test_of_a_duet_the_notes_of_the_first_singer(self):
         with tempfile.TemporaryDirectory() as folder:
             text = "\n".join(["#BPM:300", "#GAP:0", "P1", ": 0 10 0 one", "- 12", ": 20 10 2 two",

@@ -100,9 +100,9 @@ def fold(semitones):
     return (np.asarray(semitones, dtype=float) + 6.0) % 12.0 - 6.0
 
 
-# A note line: type, start beat, length, pitch, and after one space the word
-# (which may start or end with spaces of its own)
-_NOTE_LINE_RE = re.compile(r"\s*([:*FRG])\s+(-?\d+)\s+(\d+)\s+(-?\d+)(?: (.*))?$")
+# A note line: type, start beat, length, pitch, and after one space (or tab)
+# the word, which may start or end with spaces of its own
+_NOTE_LINE_RE = re.compile(r"\s*([:*FRG])\s+(-?\d+)\s+(\d+)\s+(-?\d+)(?:[ \t](.*))?$")
 # The line that starts the part of a singer in a duet: "P1", "P 2"
 _SINGER_LINE_RE = re.compile(r"\s*P\s*(\d+)\s*$", re.IGNORECASE)
 
