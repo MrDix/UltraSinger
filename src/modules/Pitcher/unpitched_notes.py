@@ -233,7 +233,10 @@ def find_unpitched_notes(midi_segments: list[MidiSegment], times: np.ndarray,
             first += 1
             continue
         last = first
-        while last + 1 < len(midi_segments) and (unpitched[last + 1] or midi_segments[last + 1].note_type == "F"):
+        # (a long pause ends a passage, as it does where the notes are judged)
+        while (last + 1 < len(midi_segments)
+               and (unpitched[last + 1] or midi_segments[last + 1].note_type == "F")
+               and midi_segments[last + 1].start - midi_segments[last].end < NEW_PASSAGE_S):
             last += 1
         # (a hair under the length is the length: the times are sums of beats)
         if sum(segment.end - segment.start for segment in midi_segments[first:last + 1]) < MIN_PASSAGE_S - 1e-6:

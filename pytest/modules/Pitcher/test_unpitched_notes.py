@@ -188,6 +188,19 @@ class TestFindUnpitchedNotes(unittest.TestCase):
         segments[2] = _note(1.3, 1.9)
         self.assertEqual(find_unpitched_notes(segments, *frames), [False, True, True, False])
 
+    def test_a_long_pause_ends_a_passage(self):
+        """A shouted note at the end of a line and one at the start of the next line after a break
+        are no passage together."""
+        segments = [_note(0.0, 0.5), _note(0.5, 1.0), _note(1.0, 1.6), _note(11.6, 12.2), _note(12.2, 12.7),
+                    _note(12.7, 13.2)]
+        frames = _frames((0.0, 1.0, True, True), (1.0, 1.6, False, True), (11.6, 12.2, False, True),
+                         (12.2, 13.2, True, True))
+        self.assertEqual(find_unpitched_notes(segments, *frames), [False] * 6)
+        # without the break between them they are one
+        segments[3:] = [_note(1.8, 2.4), _note(2.4, 2.9), _note(2.9, 3.4)]
+        frames = _frames((0.0, 1.0, True, True), (1.0, 2.4, False, True), (2.4, 3.4, True, True))
+        self.assertEqual(find_unpitched_notes(segments, *frames), [False, False, True, True, False, False])
+
     def test_freestyle_notes_beside_them_belong_to_the_passage(self):
         segments = [_note(0.0, 0.4), _note(0.4, 1.2, note_type="F"), _note(1.2, 1.6), _note(1.6, 2.0)]
         frames = _frames((0.0, 0.4, True, True), (0.4, 1.6, False, True), (1.6, 2.0, True, True))
