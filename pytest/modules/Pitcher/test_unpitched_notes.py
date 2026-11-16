@@ -172,9 +172,29 @@ class TestJudgeNotes(unittest.TestCase):
 
 class TestFindUnpitchedNotes(unittest.TestCase):
     def test_a_passage_without_a_pitch(self):
+        segments = [_note(0.0, 0.4), _note(0.4, 0.8), _note(0.8, 1.2), _note(1.2, 1.6), _note(1.6, 2.0)]
+        frames = _frames((0.0, 0.4, True, True), (0.4, 1.6, False, True), (1.6, 2.0, True, True))
+        self.assertEqual(find_unpitched_notes(segments, *frames), [False, True, True, True, False])
+
+    def test_a_note_or_two_without_a_pitch_among_sung_ones_stay_sung(self):
+        """A passage without a pitch is a second long: shorter ones are quick or breathy syllables."""
         segments = [_note(0.0, 0.4), _note(0.4, 0.8), _note(0.8, 1.2), _note(1.2, 1.6)]
         frames = _frames((0.0, 0.4, True, True), (0.4, 1.2, False, True), (1.2, 1.6, True, True))
+        self.assertEqual(find_unpitched_notes(segments, *frames), [False, False, False, False])
+        # the length of the notes counts, not that of the pauses between them
+        segments = [_note(0.0, 0.4), _note(0.4, 0.8), _note(1.6, 1.9), _note(2.0, 2.4)]
+        frames = _frames((0.0, 0.4, True, True), (0.4, 1.9, False, True), (1.9, 2.4, True, True))
+        self.assertEqual(find_unpitched_notes(segments, *frames), [False, False, False, False])
+        segments[2] = _note(1.3, 1.9)
         self.assertEqual(find_unpitched_notes(segments, *frames), [False, True, True, False])
+
+    def test_freestyle_notes_beside_them_belong_to_the_passage(self):
+        segments = [_note(0.0, 0.4), _note(0.4, 1.2, note_type="F"), _note(1.2, 1.6), _note(1.6, 2.0)]
+        frames = _frames((0.0, 0.4, True, True), (0.4, 1.6, False, True), (1.6, 2.0, True, True))
+        self.assertEqual(find_unpitched_notes(segments, *frames), [False, False, True, False])
+        # a rap note is no part of it
+        segments[1] = _note(0.4, 1.2, note_type="R")
+        self.assertEqual(find_unpitched_notes(segments, *frames), [False, False, False, False])
 
     def test_quiet_frames_do_not_count(self):
         # no pitch, but nothing sung either: a note over a pause stays what its neighbours are
@@ -192,8 +212,8 @@ class TestFindUnpitchedNotes(unittest.TestCase):
                          [False, True, True, True, False, False, False])
 
     def test_freestyle_and_rap_notes_stay_what_they_are(self):
-        segments = [_note(0.0, 0.4, note_type="F"), _note(0.4, 0.8, note_type="R"), _note(0.8, 1.2)]
-        frames = _frames((0.0, 1.2, False, True))
+        segments = [_note(0.0, 0.4, note_type="F"), _note(0.4, 0.8, note_type="R"), _note(0.8, 2.0)]
+        frames = _frames((0.0, 2.0, False, True))
         self.assertEqual(find_unpitched_notes(segments, *frames), [False, False, True])
 
 
