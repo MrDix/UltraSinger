@@ -305,14 +305,17 @@ def _length_for_plain(found: LyricsInfo, length: Optional[float], duration: Opti
     ``_best_version``): the synced ones win when their version is at most
     ``_SAME_LENGTH_S`` further off the length of the audio (``duration``)
     than the plain ones. They must not be of another recording (see
-    ``other_recording``). The lyrics of a version that does not fit are not
-    fetched; those of one that does must be the same text as well, with at
-    least ``SAME_TEXT_SHARE`` of the words of the plain ones (see
+    ``other_recording``): than the audio, or, when its length is not known,
+    than the version of the plain lyrics, which stands for the recording
+    then. The lyrics of a version that does not fit are not fetched; those
+    of one that does must be the same text as well, with at least
+    ``SAME_TEXT_SHARE`` of the words of the plain ones (see
     ``_words_shared``).
     """
     plain = {"duration": found.duration, "syncedLyrics": None}
     synced = {"duration": length, "syncedLyrics": "synced"}
-    return _best_version([plain, synced], duration) is synced and not other_recording(length, duration)
+    recording = duration or found.duration
+    return _best_version([plain, synced], duration) is synced and not other_recording(length, recording)
 
 
 def _words_shared(text: str, other: str) -> float:
