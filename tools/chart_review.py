@@ -179,7 +179,7 @@ def review_lines(chart: ReviewChart, times: np.ndarray, midi: np.ndarray, voiced
     reports = []
     for line, indices in sorted(lines.items()):
         notes = [chart.notes[i] for i in indices]
-        report = LineReport(line, notes[0].start, notes[-1].end,
+        report = LineReport(line, min(note.start for note in notes), max(note.end for note in notes),
                             "".join(note.word for note in notes).replace("~", "").strip())
         in_scored = np.zeros(len(times), dtype=bool)
         in_any = np.zeros(len(times), dtype=bool)
@@ -192,7 +192,8 @@ def review_lines(chart: ReviewChart, times: np.ndarray, midi: np.ndarray, voiced
                 continue
             report.notes += 1
             in_scored[first:end] = True
-            on_pitch[first:end] = np.abs(fold(midi[first:end] - note.midi)) <= HIT_SEMITONES
+            # (where notes overlap, a frame is on pitch when it is on that of one of them)
+            on_pitch[first:end] |= np.abs(fold(midi[first:end] - note.midi)) <= HIT_SEMITONES
             if unpitched is not None and unpitched[index]:
                 report.unpitched += 1
             if left_out is not None:
@@ -285,6 +286,26 @@ def analyse_vocals(vocals: Path, chart: ReviewChart):
     return audio, times, midi, confidence, unpitched, left_out
 
 
+def chart_span(chart: ReviewChart) -> tuple[float, float]:
+    """The stretch (s) the pages of a chart show by default: from a second
+    before its first note to a second after the end of its last one."""
+    return (max(0.0, min(note.start for note in chart.notes) - 1.0),
+            max(note.end for note in chart.notes) + 1.0)
+
+
+def page_rows(start: float, end: float, row_seconds: float = 10.0, rows: int = 3) -> list[list[tuple[float, float]]]:
+    """The rows of each page from *start* to *end*, as (first second, last
+    second shown): a row ends with *end*, and the rows after it are left out."""
+    pages = []
+    page_start = start
+    while page_start < end:
+        spans = [(page_start + row * row_seconds, min(page_start + (row + 1) * row_seconds, end))
+                 for row in range(rows) if page_start + row * row_seconds < end]
+        pages.append(spans)
+        page_start += row_seconds * rows
+    return pages
+
+
 def render_pages(chart: ReviewChart, audio: np.ndarray, times: np.ndarray, midi: np.ndarray,
                  confidence: np.ndarray, unpitched: list[bool], out_dir: Path,
                  start: float, end: float, row_seconds: float = 10.0, rows: int = 3) -> list[str]:
@@ -309,16 +330,22 @@ def render_pages(chart: ReviewChart, audio: np.ndarray, times: np.ndarray, midi:
     breaks = [b.start for a, b in zip(chart.notes, chart.notes[1:]) if b.line != a.line]
 
     pages = []
-    page_start = start
-    while page_start < end:
+    for spans in page_rows(start, end, row_seconds, rows):
+        page_start = spans[0][0]
         figure, axes = plt.subplots(2 * rows, 1, figsize=(17.5, 5.6 * rows), dpi=100,
                                     gridspec_kw={"height_ratios": [2, 3] * rows})
-        for row in range(rows):
-            a, b = page_start + row * row_seconds, page_start + (row + 1) * row_seconds
-            shown = [(note, colour) for note, colour in zip(chart.notes, colours) if note.end > a and note.start < b]
+        for row in range(len(spans), rows):
+            # nothing asked for is left for these rows
+            axes[2 * row].set_axis_off()
+            axes[2 * row + 1].set_axis_off()
+        for row, (a, until) in enumerate(spans):
+            # every row has the same scale: its axis is a whole row long, whatever is shown of it
+            b = a + row_seconds
+            shown = [(note, colour) for note, colour in zip(chart.notes, colours)
+                     if note.end > a and note.start < until]
             # Spectrogram with the pitch track and the notes
             axis = axes[2 * row]
-            columns = (frame_times >= a) & (frame_times < b)
+            columns = (frame_times >= a) & (frame_times < until)
             if columns.any():
                 axis.pcolormesh(frame_times[columns], hz[band], level[np.ix_(band, columns)], cmap="magma",
                                 vmin=top - 60, vmax=top, shading="auto", rasterized=True)
@@ -327,12 +354,12 @@ def render_pages(chart: ReviewChart, audio: np.ndarray, times: np.ndarray, midi:
             axis.set_yticks([110, 220, 440, 880, 1760, 3520])
             axis.set_yticklabels(["A2", "A3", "A4", "A5", "A6", "A7"], fontsize=7)
             axis.minorticks_off()
-            inside = (times >= a) & (times < b)
+            inside = (times >= a) & (times < until)
             axis.scatter(times[inside & unsure], sung_hz[inside & unsure], s=3, c="#66ccff", alpha=0.5, linewidths=0)
             axis.scatter(times[inside & voiced], sung_hz[inside & voiced], s=5, c="#00ffff", linewidths=0)
             for note, colour in shown:
                 note_hz = 440.0 * 2 ** ((note.midi - 69) / 12)
-                axis.plot([max(note.start, a), min(note.end, b)], [note_hz, note_hz], color=colour, lw=2.4,
+                axis.plot([max(note.start, a), min(note.end, until)], [note_hz, note_hz], color=colour, lw=2.4,
                           solid_capstyle="butt")
             # Piano roll: the sung pitch against the notes, in the octave that is sung
             roll = axes[2 * row + 1]
@@ -346,10 +373,10 @@ def render_pages(chart: ReviewChart, audio: np.ndarray, times: np.ndarray, midi:
                 sung = sure & (times >= note.start) & (times < note.end)
                 target = float(np.median(midi[sung])) if sung.sum() >= 2 else centre
                 pitch = note.midi + 12 * round((target - note.midi) / 12)
-                roll.plot([max(note.start, a), min(note.end, b)], [pitch, pitch], color=colour, lw=5, alpha=0.75,
+                roll.plot([max(note.start, a), min(note.end, until)], [pitch, pitch], color=colour, lw=5, alpha=0.75,
                           solid_capstyle="butt")
-                roll.plot([note.start, note.start], [pitch - 0.45, pitch + 0.45], color=colour, lw=1.2)
                 if note.start >= a:
+                    roll.plot([note.start, note.start], [pitch - 0.45, pitch + 0.45], color=colour, lw=1.2)
                     roll.text(note.start, bottom + 0.2, note.word.strip() or "~", fontsize=8, rotation=55,
                               ha="left", va="bottom", clip_on=True)
             roll.scatter(times[inside & unsure], midi[inside & unsure], s=3, c="#bbbbbb", linewidths=0, zorder=3)
@@ -363,14 +390,13 @@ def render_pages(chart: ReviewChart, audio: np.ndarray, times: np.ndarray, midi:
                 axis.set_xticks(np.arange(np.ceil(a), b + 0.001, 1.0))
                 axis.tick_params(axis="x", labelsize=7, pad=1)
                 for line_break in breaks:
-                    if a <= line_break < b:
+                    if a <= line_break < until:
                         axis.axvline(line_break, color="#808080", lw=0.8, ls="--")
         figure.subplots_adjust(left=0.03, right=0.995, top=0.99, bottom=0.03, hspace=0.18)
         path = out_dir / f"page_{int(page_start):04d}.png"
         figure.savefig(path)
         plt.close(figure)
         pages.append(str(path))
-        page_start += row_seconds * rows
     return pages
 
 
@@ -390,9 +416,9 @@ def review(song: Path, out_dir: Path, vocals: Path | None = None, start: float |
     lines = review_lines(chart, times, midi, voiced, unpitched, left_out)
     written = []
     if pages:
-        first = max(0.0, chart.notes[0].start - 1.0) if start is None else start
-        last = chart.notes[-1].end + 1.0 if end is None else end
-        written = render_pages(chart, audio, times, midi, confidence, unpitched, out_dir, first, last)
+        first, last = chart_span(chart)
+        written = render_pages(chart, audio, times, midi, confidence, unpitched, out_dir,
+                               first if start is None else start, last if end is None else end)
     report = out_dir / "review.md"
     title = " - ".join(filter(None, (chart.headers.get("ARTIST"), chart.headers.get("TITLE")))) or chart_path.stem
     report.write_text(format_report(title, chart, lines, written), encoding="utf-8")

@@ -1007,12 +1007,14 @@ def run() -> tuple[str, Score, Score]:
     # a note to a tone the games' pitch detection mishears. Not for the notes
     # of the segmentation model (they have their pitch from the vocal stem
     # already), nor for the score-first chart of the ptAKF refit, whose
-    # pitches are meant to be the ones the games' pitch detection hears.
+    # pitches are meant to be the ones the games' pitch detection hears, nor
+    # for notes made from the pitch contour instead of the words.
     word_notes_on_vocals = (
         not settings.ignore_audio
         and settings.use_separated_vocal
         and not model_segmentation_used
         and not settings.ptakf_refit
+        and not settings.pitch_notes
     )
     if word_notes_on_vocals and settings.refine_from_vocal and settings.refine_pitch:
         from modules.Pitcher.steady_pitch import follow_steady_sung_pitch

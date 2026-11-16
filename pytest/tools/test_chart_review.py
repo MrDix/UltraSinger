@@ -10,7 +10,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import chart_review  # noqa: E402
-from chart_review import ReviewChart, ReviewNote, find_chart, find_vocals, format_report, load_chart, review_lines  # noqa: E402
+from chart_review import (  # noqa: E402
+    ReviewChart, ReviewNote, chart_span, find_chart, find_vocals, format_report, load_chart, page_rows, review_lines,
+)
 
 # Word ends are spaces at the end of the note lines
 CHART = "\n".join([
@@ -158,6 +160,22 @@ class TestReviewLines(unittest.TestCase):
         self.assertAlmostEqual(line.uncharted_s, 1.5, delta=0.02)
         self.assertEqual(line.remarks, ["1.5 s of singing between the notes"])
 
+    def test_overlapping_notes_do_not_depend_on_their_order(self):
+        """A frame within two notes is on pitch when it is on that of one of them."""
+        low, high = (":", 0.0, 1.0, 60, "one ", 0), (":", 0.0, 1.0, 66, "two ", 0)
+        frames = _frames((0.0, 1.0, 60.0))
+        for order in ((low, high), (high, low)):
+            with self.subTest(first=order[0][3]):
+                (line,) = review_lines(_chart(*order), *frames)
+                self.assertAlmostEqual(line.on_pitch_share, 1.0)
+                self.assertEqual((line.start, line.end), (0.0, 1.0))
+
+    def test_a_line_spans_all_its_notes(self):
+        chart = _chart((":", 0.0, 3.0, 60, "long ", 0), (":", 1.0, 2.0, 60, "short ", 0))
+        (line,) = review_lines(chart, *_frames((0.0, 3.0, 60.0)))
+        self.assertEqual((line.start, line.end), (0.0, 3.0))
+        self.assertAlmostEqual(line.uncharted_s, 0.0)
+
     def test_each_line_on_its_own(self):
         chart = _chart((":", 0.0, 1.0, 60, "first ", 0), (":", 1.0, 2.0, 60, "second ", 1))
         first, second = review_lines(chart, *_frames((0.0, 1.0, 60.0), (1.0, 2.0, 66.0)))
@@ -182,6 +200,23 @@ class TestFormatReport(unittest.TestCase):
         report = format_report("A Song", chart, review_lines(chart, *_frames((0.0, 1.0, 60.0))), [])
         self.assertIn("## Lines that stand out (0 of 1)\n\nNone.", report)
         self.assertNotIn("## Pages", report)
+
+
+class TestPages(unittest.TestCase):
+    def test_the_pages_of_a_chart_show_all_its_notes(self):
+        """Up to the end of the note that ends last, which need not be the last one."""
+        chart = _chart((":", 0.0, 1.0, 60, "a ", 0), (":", 25.0, 32.0, 60, "long ", 0), (":", 26.0, 27.0, 62, "b ", 0))
+        self.assertEqual(chart_span(chart), (0.0, 33.0))
+        self.assertEqual(chart_span(_chart((":", 5.5, 6.0, 60, "a ", 0))), (4.5, 7.0))
+
+    def test_rows_of_ten_seconds_three_to_a_page(self):
+        self.assertEqual(page_rows(0.0, 45.0), [[(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)],
+                                                [(30.0, 40.0), (40.0, 45.0)]])
+
+    def test_nothing_after_the_last_second_asked_for(self):
+        self.assertEqual(page_rows(60.0, 65.0), [[(60.0, 65.0)]])
+        self.assertEqual(page_rows(60.0, 70.0), [[(60.0, 70.0)]])
+        self.assertEqual(page_rows(60.0, 60.0), [])
 
 
 class TestMain(unittest.TestCase):

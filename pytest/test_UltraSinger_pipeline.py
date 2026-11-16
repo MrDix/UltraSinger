@@ -1699,6 +1699,13 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
                 self.assertNotIn("steady pitch", names)
                 self.assertIn("clear steps", names)
 
+    def test_notes_from_the_pitch_contour_are_no_word_notes(self):
+        names = [name for name, _ in self._passes(pitch_notes=True)]
+        self.assertNotIn("steady pitch", names)
+        self.assertNotIn("clear steps", names)
+        # the option still splits them
+        self.assertIn("vocal runs", [name for name, _ in self._passes(pitch_notes=True, vocal_runs_as_notes=True)])
+
     def test_no_steady_pitch_for_the_score_first_chart(self):
         names = [name for name, _ in self._passes(ptakf_refit=True)]
         self.assertEqual(names, ["freestyle", "refine", "refit"])

@@ -126,6 +126,32 @@ class TestSteadySungPitch(unittest.TestCase):
     def test_none_with_too_few_frames(self):
         self.assertIsNone(steady_sung_pitch(np.full(4, 72.0), np.ones(4, dtype=bool)))
 
+    def test_half_of_the_frames_an_octave_off_do_not_move_the_pitch(self):
+        """The median of the pitches themselves would lie between the two octaves, a tritone off."""
+        for midi in ([60.0, 60.0, 60.0, 72.0, 72.0, 72.0], [72.1, 60.0, 71.9, 60.1, 72.0, 59.9, 48.0, 60.0]):
+            with self.subTest(midi=midi):
+                sung = steady_sung_pitch(np.array(midi), np.ones(len(midi), dtype=bool))
+                self.assertAlmostEqual(sung % 12.0 if sung % 12.0 < 6.0 else sung % 12.0 - 12.0, 0.0, delta=0.06)
+
+    def test_a_note_sung_with_such_octave_errors_stays(self):
+        times = np.round(np.arange(0.0, 1.0, 0.01), 3)
+        semitones = np.where(np.arange(len(times)) % 2 == 0, 0.0, 12.0)
+        segment = _note("C4")
+        follow_steady_sung_pitch([segment], _track(semitones))
+        self.assertEqual(segment.note, "C4")
+
+    def test_frames_in_one_octave_give_their_median(self):
+        rng = np.random.default_rng(3)
+        for centre in (47.3, 60.0, 65.9, 71.5, 77.2):
+            midi = centre + rng.normal(0.0, 0.4, 40)
+            with self.subTest(centre=centre):
+                self.assertAlmostEqual(steady_sung_pitch(midi, np.ones(40, dtype=bool)), float(np.median(midi)),
+                                       places=6)
+
+    def test_frames_around_the_circle_are_not_steady(self):
+        midi = np.arange(60.0, 72.0)
+        self.assertIsNone(steady_sung_pitch(midi, np.ones(12, dtype=bool)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,11 +46,19 @@ def steady_sung_pitch(midi: np.ndarray, voiced: np.ndarray) -> float | None:
     if len(midi) < MIN_FRAMES or float(np.mean(voiced)) < MIN_VOICED_SHARE:
         return None
     sung = midi[voiced]
-    middle = float(np.median(sung))
-    # Octave errors of the pitch detection do not make the singing unsteady
-    if float(np.std(_folded(sung - middle))) > MAX_SPREAD:
+    # Octave errors of the pitch detection neither make the singing unsteady
+    # nor move its pitch: the frames are taken around the pitch class they
+    # gather at (their mean on the circle of the twelve classes). The median
+    # of the pitches themselves lies between the octaves when half of the
+    # frames are an octave off.
+    angles = sung * (2.0 * np.pi / 12.0)
+    centre = float(np.arctan2(np.mean(np.sin(angles)), np.mean(np.cos(angles)))) * 12.0 / (2.0 * np.pi)
+    around = _folded(sung - centre)
+    if float(np.std(around)) > MAX_SPREAD:
         return None
-    return middle
+    middle = centre + float(np.median(around))
+    # in the octave of most of the frames
+    return middle + 12.0 * round((float(np.median(sung)) - middle) / 12.0)
 
 
 def follow_steady_sung_pitch(midi_segments: list[MidiSegment], pitched_data: PitchedData | None) -> list[MidiSegment]:
