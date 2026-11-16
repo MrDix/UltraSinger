@@ -135,6 +135,13 @@ def split_freestyle_at_words(notes: list[PredictedNote], syllables: list[Syllabl
     the next word; a part shorter than ``MIN_FREESTYLE_WORD_S`` stays with the
     word before it. Pitched notes are not changed: those the model splits
     itself, where a note begins.
+
+    A note often starts before its first word does (the passage begins
+    before the alignment says so). That first stretch belongs to the first
+    word: as a part of its own it would have no word and would hold the last
+    word of the line before. It stays a part of its own only for a word that
+    starts before the note and after the note before it, which no other note
+    is there for.
     """
     word_starts = np.array(sorted(
         syllable.start_ms / 1000.0 for index, syllable in enumerate(syllables)
@@ -148,6 +155,10 @@ def split_freestyle_at_words(notes: list[PredictedNote], syllables: list[Syllabl
             for start in word_starts[first:last]:
                 if start - edges[-1] >= MIN_FREESTYLE_WORD_S:
                     edges.append(float(start))
+            before = result[-1].end - MIN_FREESTYLE_WORD_S if result else -np.inf
+            before = max(before, note.start - MAX_START_COST_MS / 1000.0)
+            if len(edges) > 1 and np.searchsorted(word_starts, before, side="left") == first:
+                del edges[1]  # no word for the stretch before the first word: it goes to that word
         edges.append(note.end)
         if len(edges) == 2:
             result.append(note)

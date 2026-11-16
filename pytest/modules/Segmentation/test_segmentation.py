@@ -478,6 +478,33 @@ class TestSplitFreestyleAtWords:
             (1.0, 2.0, 57, True), (2.0, 3.2, 57, True), (3.2, 4.0, 57, True)]
         assert [s.word for s in seg_lyrics.place_lyrics(parts, syllables)] == ["get ", "out ", "now "]
 
+    def test_the_stretch_before_the_first_word_goes_to_that_word(self):
+        """The passage starts before the alignment says so: no part without a word, which would hold
+        the last word of the line before as a continuation."""
+        notes = [PredictedNote(0.2, 0.8, 60, voiced=1.0), PredictedNote(1.0, 3.0, 57, freestyle=True),
+                 PredictedNote(3.1, 3.5, 62, voiced=1.0)]
+        syllables = _syllables(("zero ", 0.2, 0.8, True), ("a ", 1.5, 1.9, True), ("b ", 2.0, 2.4),
+                               ("c ", 2.5, 2.9), ("d ", 3.1, 3.5, True))
+        parts = seg_lyrics.split_freestyle_at_words(notes, syllables)
+        assert [(p.start, p.end) for p in parts] == [(0.2, 0.8), (1.0, 2.0), (2.0, 2.5), (2.5, 3.0), (3.1, 3.5)]
+        segments = seg_lyrics.place_lyrics(parts, syllables)
+        assert [(s.word, s.note_type, s.line_break_after) for s in segments] == [
+            ("zero ", ":", True), ("a ", "F", False), ("b ", "F", False), ("c ", "F", True), ("d ", ":", False)]
+
+    def test_a_word_that_starts_before_the_note_keeps_the_first_part(self):
+        notes = [PredictedNote(0.0, 0.4, 60, voiced=1.0), PredictedNote(1.0, 3.0, 57, freestyle=True)]
+        syllables = _syllables(("la ", 0.0, 0.4), ("x ", 0.7, 1.4), ("a ", 1.5, 2.1), ("b ", 2.2, 2.9))
+        parts = seg_lyrics.split_freestyle_at_words(notes, syllables)
+        assert [(p.start, p.end) for p in parts] == [(0.0, 0.4), (1.0, 1.5), (1.5, 2.2), (2.2, 3.0)]
+        assert [s.word for s in seg_lyrics.place_lyrics(parts, syllables)] == ["la ", "x ", "a ", "b "]
+
+    def test_a_word_sung_in_the_note_before_does_not_keep_the_first_part(self):
+        # "la" starts within the note before, which is there for it
+        notes = [PredictedNote(0.0, 0.9, 60, voiced=1.0), PredictedNote(1.0, 3.0, 57, freestyle=True)]
+        syllables = _syllables(("oh ", 0.0, 0.3), ("la ", 0.5, 0.9), ("a ", 1.5, 2.1), ("b ", 2.2, 2.9))
+        parts = seg_lyrics.split_freestyle_at_words(notes, syllables)
+        assert [(p.start, p.end) for p in parts] == [(0.0, 0.9), (1.0, 2.2), (2.2, 3.0)]
+
     def test_the_syllables_of_a_word_stay_in_one_note(self):
         notes = [PredictedNote(0.0, 2.0, 57, freestyle=True)]
         syllables = _syllables(("hur", 0.0, 0.5), ("ri", 0.5, 1.0), ("cane ", 1.0, 2.0))
