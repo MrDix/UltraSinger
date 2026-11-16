@@ -54,8 +54,10 @@ class ProcessData:
     synced_lyrics_other_language: Optional[str] = None  # Language of found synced lyrics not used: another one than the singing
     synced_lyrics_length: Optional[float] = None  # Length (s) of the recording of the synced lyrics, when LRCLIB knows it
     lyrics_source: Optional[str] = None  # Where the found lyrics come from (LyricsInfo.source)
-    # The user's lyrics file of the song (given, or lying next to the input file): no lookup then
+    # The user's lyrics file of the song (given, or lying next to the input file) and its
+    # lyrics (LyricsInfo), read once: no lookup then
     lyrics_file: Optional[str] = None
+    own_lyrics: Optional[object] = None
     # The lyrics the lookup before the transcription found (LyricsInfo): the transcription's lookup
     # takes them and does not ask the lyrics databases again
     lyrics_found: Optional[object] = None

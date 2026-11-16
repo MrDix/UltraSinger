@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, QThread, Signal
 
 from .config import LIMIT_SETTINGS, limit_setting, octave_consistency_choice
 from .cookie_file import copy_cookie_file, remove_cookie_file
-from .own_lyrics import write_own_lyrics
+from .own_lyrics import own_lyrics_path, write_own_lyrics
 from .uv_locator import find_uv
 
 logger = logging.getLogger(__name__)
@@ -510,9 +510,13 @@ class UltraSingerRunner(QObject):
         lyrics_text = config.get("lyrics_text")
         if isinstance(lyrics_text, str) and lyrics_text.strip():
             try:
-                args.extend(["--lyrics_file", str(write_own_lyrics(lyrics_text))])
+                lyrics_path = write_own_lyrics(lyrics_text)
             except OSError as exc:
-                logger.warning("Own lyrics not used: %s", exc)
+                # The conversion is told the file all the same: without it, it ends at once
+                # with an error instead of making the chart from other lyrics than the user's
+                logger.warning("Own lyrics not written: %s", exc)
+                lyrics_path = own_lyrics_path(lyrics_text)
+            args.extend(["--lyrics_file", str(lyrics_path)])
         if config.get("disable_reference_lyrics"):
             args.append("--disable_reference_lyrics")
         if config.get("disable_synced_lyrics_check"):

@@ -56,6 +56,16 @@ class TestOwnLyricsOfASong(unittest.TestCase):
         self.assertEqual(init_settings(_cli(args)).lyrics_file, str(path))
         init_settings(["-i", "test.mp3"])  # reset the shared settings
 
+    def test_lyrics_that_cannot_be_written_end_the_conversion(self):
+        """The conversion is told the file all the same: it ends with an error at once, instead of
+        making the chart from other lyrics than the user's."""
+        from unittest.mock import patch
+        with patch("src.gui.ultrasinger_runner.write_own_lyrics", side_effect=OSError("disk full")):
+            args = UltraSingerRunner().build_args({"lyrics_text": LYRICS}, "test.mp3")
+        path = Path(args[args.index("--lyrics_file") + 1])
+        self.assertEqual(path, own_lyrics.own_lyrics_path(LYRICS))
+        self.assertFalse(path.exists())
+
     def test_only_the_settings_of_one_song_have_the_field(self):
         form = ConversionSettingsForm({"lyrics_text": LYRICS})
         self.assertIsNone(form._lyrics_text)
@@ -70,6 +80,16 @@ class TestOwnLyricsOfASong(unittest.TestCase):
         self.assertEqual(dialog.get_overrides()["lyrics_text"], LYRICS)
         again = PerSongSettingsDialog(dict(_DEFAULTS), {"lyrics_text": LYRICS}, [])
         self.assertEqual(again._form._lyrics_text.toPlainText(), LYRICS)
+
+    def test_lyrics_in_the_global_settings_are_not_shown_as_the_song_s(self):
+        """No conversion uses them (see QueueManager): the field shows what the song has."""
+        with_global = {**_DEFAULTS, "lyrics_text": "lyrics of some other song"}
+        dialog = PerSongSettingsDialog(with_global, {}, [])
+        self.assertEqual(dialog._form._lyrics_text.toPlainText(), "")
+        self.assertNotIn("lyrics_text", dialog.get_overrides())
+        # the same text as in the global settings is still the song's own
+        dialog._form._lyrics_text.setPlainText("lyrics of some other song")
+        self.assertEqual(dialog.get_overrides()["lyrics_text"], "lyrics of some other song")
 
     def test_a_file_is_loaded_into_the_field(self):
         form = ConversionSettingsForm({}, per_song=True)
@@ -93,6 +113,19 @@ class TestOwnLyricsFiles(unittest.TestCase):
         self.assertEqual(own_lyrics.write_own_lyrics(f"  {LYRICS}\n"), first)
         self.assertNotEqual(own_lyrics.write_own_lyrics(LYRICS + "\nthird line"), first)
         self.assertEqual(len(list(own_lyrics.own_lyrics_folder().glob("*.txt"))), 2)
+
+    def test_a_file_is_there_complete_or_not_at_all(self):
+        """A write that fails leaves nothing behind that the next conversion would take for the lyrics."""
+        from unittest.mock import patch
+        with patch("src.gui.own_lyrics.os.replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                own_lyrics.write_own_lyrics("lyrics that are not written")
+        self.assertFalse(own_lyrics.own_lyrics_path("lyrics that are not written").exists())
+        self.assertEqual(list(own_lyrics.own_lyrics_folder().glob("*.part")), [])
+        # the next try writes them
+        path = own_lyrics.write_own_lyrics("lyrics that are not written")
+        self.assertEqual(path, own_lyrics.own_lyrics_path("lyrics that are not written"))
+        self.assertEqual(path.read_text(encoding="utf-8"), "lyrics that are not written")
 
     def test_files_no_conversion_used_for_long_are_removed(self):
         old = own_lyrics.write_own_lyrics("old lyrics")

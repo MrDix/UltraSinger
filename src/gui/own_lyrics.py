@@ -9,8 +9,11 @@ removed.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
+import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -43,8 +46,17 @@ def read_lyrics_text(path: str | Path) -> str:
         return raw.decode("cp1252", errors="replace")
 
 
+def own_lyrics_path(text: str) -> Path:
+    """The file the lyrics ``text`` are (to be) written to."""
+    data = text.strip().encode("utf-8")
+    return own_lyrics_folder() / f"{hashlib.sha256(data).hexdigest()[:16]}.txt"
+
+
 def write_own_lyrics(text: str) -> Path:
     """The file with the lyrics ``text`` for a conversion.
+
+    It is there complete or not at all: a file cut short by a failed write
+    would be taken for these lyrics the next time.
 
     Raises:
         OSError: The file cannot be written.
@@ -52,18 +64,25 @@ def write_own_lyrics(text: str) -> Path:
     folder = own_lyrics_folder()
     folder.mkdir(parents=True, exist_ok=True)
     _remove_old_files(folder)
-    data = text.strip().encode("utf-8")
-    path = folder / f"{hashlib.sha256(data).hexdigest()[:16]}.txt"
-    if not path.exists():
-        path.write_bytes(data)
-    else:
+    path = own_lyrics_path(text)
+    if path.exists():
         path.touch()  # in use again
+        return path
+    handle, part = tempfile.mkstemp(dir=folder, prefix=path.stem + ".", suffix=".part")
+    try:
+        with os.fdopen(handle, "wb") as file:
+            file.write(text.strip().encode("utf-8"))
+        os.replace(part, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(part)
+        raise
     return path
 
 
 def _remove_old_files(folder: Path) -> None:
     limit = time.time() - KEEP_DAYS * 86400
-    for path in folder.glob("*.txt"):
+    for path in [*folder.glob("*.txt"), *folder.glob("*.part")]:
         try:
             if path.stat().st_mtime < limit:
                 path.unlink()

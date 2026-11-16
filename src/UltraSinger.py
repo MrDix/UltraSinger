@@ -243,10 +243,10 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
     # (before anything is downloaded or made)
-    _check_lyrics_options()
+    lyrics_of_option = _check_lyrics_options()
 
     process_data = InitProcessData()
-    process_data.lyrics_file = _own_lyrics_file()
+    process_data.lyrics_file, process_data.own_lyrics = _own_lyrics(lyrics_of_option)
 
     process_data.process_data_paths.cache_folder_path = setup_cache_folder()
 
@@ -2035,16 +2035,19 @@ def is_url(path: str) -> bool:
     return path.lower().startswith(("http://", "https://"))
 
 
-def _check_lyrics_options() -> None:
-    """The lyrics file of ``--lyrics_file`` has to hold lyrics: no other lyrics
-    are looked up in its place, so a file that cannot be used ends the
-    conversion. A folder of ``--lyrics_sources_dir`` that is not there is
-    told (it may be a typing error), and the conversion goes on without it."""
+def _check_lyrics_options():
+    """The lyrics (LyricsInfo) of the file of ``--lyrics_file``, None without
+    the option. The file has to hold lyrics: no other lyrics are looked up in
+    its place, so a file that cannot be used ends the conversion. The lyrics
+    are read here once and kept: the file is not needed again. A folder of
+    ``--lyrics_sources_dir`` that is not there is told (it may be a typing
+    error), and the conversion goes on without it."""
     from modules.lyrics_sources import read_lyrics_file
 
+    lyrics = None
     if settings.lyrics_file:
         try:
-            read_lyrics_file(settings.lyrics_file)
+            lyrics = read_lyrics_file(settings.lyrics_file)
         except (OSError, ValueError) as error:
             print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} the lyrics file "
                   f"{blue_highlighted(settings.lyrics_file)} cannot be used ({error})")
@@ -2052,22 +2055,24 @@ def _check_lyrics_options() -> None:
     if settings.lyrics_sources_dir and not os.path.isdir(settings.lyrics_sources_dir):
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the folder of lyrics sources "
               f"{blue_highlighted(settings.lyrics_sources_dir)} does not exist: no lyrics source is asked")
+    return lyrics
 
 
-def _own_lyrics_file() -> str | None:
-    """The user's lyrics file of the song: the one given with ``--lyrics_file``
-    (see ``_check_lyrics_options``), else the one that lies next to a local
-    input file under its name. None for the re-pitch of an UltraStar txt,
-    which keeps the lyrics of its chart."""
-    from modules.lyrics_sources import sidecar_lyrics_file
+def _own_lyrics(lyrics_of_option=None) -> tuple:
+    """The user's lyrics file of the song and its lyrics (LyricsInfo): the one
+    given with ``--lyrics_file`` (``lyrics_of_option``, see
+    ``_check_lyrics_options``), else the one that lies next to a local input
+    file under its name. ``(None, None)`` when there is none, and for the
+    re-pitch of an UltraStar txt, which keeps the lyrics of its chart."""
+    from modules.lyrics_sources import sidecar_lyrics
 
     if settings.ignore_audio:
-        return None
-    if settings.lyrics_file:
-        return settings.lyrics_file
+        return None, None
+    if settings.lyrics_file and lyrics_of_option is not None:
+        return settings.lyrics_file, lyrics_of_option
     if settings.input_file_path and not is_url(settings.input_file_path) and os.path.isfile(settings.input_file_path):
-        return sidecar_lyrics_file(settings.input_file_path)
-    return None
+        return sidecar_lyrics(settings.input_file_path) or (None, None)
+    return None, None
 
 
 def _lyrics_language_check(lyrics_info, text: str, language, language_is_confident: bool):
@@ -2081,7 +2086,7 @@ def _lyrics_language_check(lyrics_info, text: str, language, language_is_confide
 def _lyrics_wanted(process_data: ProcessData) -> bool:
     """Whether the song gets lyrics from outside: from the user's file, or
     looked up by its artist and title."""
-    return bool(getattr(process_data, "lyrics_file", None)
+    return bool(getattr(process_data, "own_lyrics", None) is not None
                 or (settings.lyrics_lookup and process_data.media_info.artist and process_data.media_info.title))
 
 
@@ -2093,7 +2098,8 @@ def _lookup_lyrics(process_data: ProcessData):
     return find_song_lyrics(
         process_data.media_info.artist, process_data.media_info.title,
         duration=audio_length(process_data.process_data_paths.whisper_audio_path),
-        lyrics_file=getattr(process_data, "lyrics_file", None),
+        own_lyrics=getattr(process_data, "own_lyrics", None),
+        own_lyrics_file=getattr(process_data, "lyrics_file", None),
         sources_dir=settings.lyrics_sources_dir or default_sources_dir(),
         lookup=settings.lyrics_lookup,
     )

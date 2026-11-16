@@ -667,6 +667,12 @@ def other_recording(length: Optional[float], duration: Optional[float]) -> bool:
     return off > OTHER_RECORDING_S and off > OTHER_RECORDING_SHARE * duration
 
 
+def with_dot_time_tags(lyrics: str) -> str:
+    """LRC text with the hundredths of its time tags after a dot, as they are
+    read everywhere: "[01:23:45]" is "[01:23.45]"."""
+    return _COLON_TIME_TAG_RE.sub(r"[\1:\2.\3]", lyrics)
+
+
 def lrc_text(synced_lyrics: str) -> str:
     """The text of synced lyrics without their time tags, in the order it is
     sung: a line with several time tags ("[00:04.00][00:20.00] Again") comes

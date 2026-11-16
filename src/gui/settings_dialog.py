@@ -10,8 +10,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .config import _DEFAULTS
 from .models import LLMProvider
 from .settings_tab import ConversionSettingsForm
+
+# The settings that only a song has (see QueueManager._run_next)
+PER_SONG_ONLY = ("lyrics_text",)
 
 
 class PerSongSettingsDialog(QDialog):
@@ -49,6 +53,9 @@ class PerSongSettingsDialog(QDialog):
 
         # Merge global + overrides for initial display
         merged = {**global_config, **overrides}
+        # (a setting of one song has no global value: a conversion never uses one)
+        for key in PER_SONG_ONLY:
+            merged[key] = overrides.get(key, _DEFAULTS[key])
 
         self._form = ConversionSettingsForm(merged, per_song=True)
         self._form.set_llm_providers(
@@ -97,7 +104,7 @@ class PerSongSettingsDialog(QDialog):
         form_values = self._form.collect_config()
         overrides = {}
         for key, value in form_values.items():
-            global_value = self._global_config.get(key)
+            global_value = _DEFAULTS[key] if key in PER_SONG_ONLY else self._global_config.get(key)
             if value != global_value:
                 overrides[key] = value
         return overrides

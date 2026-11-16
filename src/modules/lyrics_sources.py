@@ -44,6 +44,7 @@ from modules.lrclib_client import (
     artist_matches,
     lrc_text,
     other_recording,
+    with_dot_time_tags,
     words_shared,
 )
 from modules.name_matching import titles_match
@@ -63,8 +64,8 @@ SOURCE_TIMEOUT_S = 20.0
 # A lyrics source in the file sets this to be asked before the lyrics databases
 BEFORE_DATABASES = "BEFORE_DATABASES"
 
-# The time tag of an LRC line: "[01:23.45]", "[1:23]"
-_TIME_TAG_RE = re.compile(r"^\s*\[\d+:\d+(?:[.:]\d+)?\]")
+# The time tag of an LRC line: "[01:23.45]", "[1:23]" ("[01:23:45]" is written with a dot first)
+_TIME_TAG_RE = re.compile(r"^\s*\[\d+:\d+(?:\.\d+)?\]")
 # A line that is only an ID tag of an LRC file: "[ar:Artist]", "[ti:Title]", "[by:Tool]"
 _ID_TAG_LINE_RE = re.compile(r"^\s*\[[A-Za-z]+:[^\]]*\]\s*$")
 # Lines that only an UltraStar chart has: its header tags and its notes
@@ -93,8 +94,10 @@ def lyrics_from_text(text: str, name: str, source: str = OWN_LYRICS_SOURCE, trus
 
     They are synced lyrics when most of its lines start with a time tag
     (LRC), else plain ones; the ID tags of an LRC file (``[ar:Artist]``) are
-    no lines of the lyrics. ``name`` is shown where found lyrics are named.
-    Look-alike letters of other scripts are replaced as in found lyrics.
+    no lines of the lyrics. Time tags with a colon before the hundredths
+    (``[01:23:45]``) are written with a dot. ``name`` is shown where found
+    lyrics are named. Look-alike letters of other scripts are replaced as
+    in found lyrics.
 
     Raises:
         ValueError: The text has no lyrics, or it is an UltraStar chart.
@@ -102,6 +105,7 @@ def lyrics_from_text(text: str, name: str, source: str = OWN_LYRICS_SOURCE, trus
     if is_ultrastar_chart(text):
         raise ValueError("it is an UltraStar chart, not a lyrics text")
     text = fold_lookalike_letters(text.replace("\r\n", "\n").replace("\r", "\n")).strip("\n")
+    text = with_dot_time_tags(text)
     kept = [line for line in text.split("\n") if not _ID_TAG_LINE_RE.match(line)]
     lines = [line for line in kept if line.strip()]
     if not lines:
@@ -142,11 +146,19 @@ def read_lyrics_file(path: str | os.PathLike) -> LyricsInfo:
 
 
 def sidecar_lyrics_file(media_path: str | os.PathLike) -> Optional[str]:
+    """The path of the lyrics file next to an audio or video file (see
+    ``sidecar_lyrics``), or None."""
+    found = sidecar_lyrics(media_path)
+    return found[0] if found else None
+
+
+def sidecar_lyrics(media_path: str | os.PathLike) -> Optional[tuple[str, LyricsInfo]]:
     """The lyrics file that lies next to an audio or video file under its
-    name (``Song.lrc``, then ``Song.txt``), or None. A text file that is an
-    UltraStar chart is none, nor is the file itself, nor a ``.txt`` file
-    that does not look like lyrics (fewer than ``MIN_SIDECAR_LINES`` lines,
-    or one longer than ``MAX_SIDECAR_LINE_CHARS``)."""
+    name (``Song.lrc``, then ``Song.txt``) and its lyrics, or None. A text
+    file that is an UltraStar chart is none, nor is the file itself, nor a
+    ``.txt`` file that does not look like lyrics (fewer than
+    ``MIN_SIDECAR_LINES`` lines, or one longer than
+    ``MAX_SIDECAR_LINE_CHARS``)."""
     media = Path(media_path)
     for suffix in SIDECAR_SUFFIXES:
         candidate = media.with_suffix(suffix)
@@ -160,7 +172,7 @@ def sidecar_lyrics_file(media_path: str | os.PathLike) -> Optional[str]:
         if suffix == ".txt" and (len(lines) < MIN_SIDECAR_LINES
                                  or any(len(line) > MAX_SIDECAR_LINE_CHARS for line in lines)):
             continue
-        return str(candidate)
+        return str(candidate), lyrics
     return None
 
 
@@ -186,10 +198,36 @@ class LyricsSource:
     path: str
 
 
+def _within_time(work: Callable, timeout_text: str, error_text: str):
+    """``(True, work())`` when the work of a lyrics source is done within
+    ``SOURCE_TIMEOUT_S``, else ``(False, None)``: it failed (reported with
+    ``error_text``) or takes too long (``timeout_text``; it is left behind,
+    in a thread that does not keep the program from ending)."""
+    result: dict = {}
+
+    def run():
+        try:
+            result["value"] = work()
+        except Exception as error:  # noqa: BLE001 - a broken source of the user must not stop the conversion
+            result["error"] = error
+
+    thread = threading.Thread(target=run, name="lyrics source", daemon=True)
+    thread.start()
+    thread.join(SOURCE_TIMEOUT_S)
+    if thread.is_alive():
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} {timeout_text} within {SOURCE_TIMEOUT_S:.0f} s")
+        return False, None
+    if "error" in result:
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} {error_text} ({result['error']!r})")
+        return False, None
+    return True, result.get("value")
+
+
 def load_lyrics_sources(folder: str | os.PathLike | None) -> list[LyricsSource]:
     """The lyrics sources in a folder: its ``*.py`` files with a
     ``find_lyrics`` function, by name (not those that start with ``_``). A
-    file that cannot be loaded is reported and left out."""
+    file that cannot be loaded, or takes longer than ``SOURCE_TIMEOUT_S`` to
+    load, is reported and left out."""
     if not folder or not os.path.isdir(folder):
         return []
     sources = []
@@ -200,15 +238,18 @@ def load_lyrics_sources(folder: str | os.PathLike | None) -> list[LyricsSource]:
         # and type hints look their module up); the same file name in two folders is two modules
         module_name = (f"ultrasinger_lyrics_source_{path.stem}_"
                        f"{hashlib.sha1(str(path.resolve()).encode('utf-8')).hexdigest()[:8]}")
-        try:
+        def load(path=path, module_name=module_name):
             spec = importlib.util.spec_from_file_location(module_name, path)
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
-        except Exception as error:  # noqa: BLE001 - a broken source of the user must not stop the conversion
+            return module
+
+        loaded, module = _within_time(
+            load, f"the lyrics source {blue_highlighted(path.name)} did not load",
+            f"the lyrics source {blue_highlighted(path.name)} could not be loaded")
+        if not loaded:
             sys.modules.pop(module_name, None)
-            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the lyrics source "
-                  f"{blue_highlighted(path.name)} could not be loaded ({error!r})")
             continue
         find = getattr(module, "find_lyrics", None)
         if not callable(find):
@@ -224,26 +265,9 @@ def load_lyrics_sources(folder: str | os.PathLike | None) -> list[LyricsSource]:
 
 def _answer(source: LyricsSource, artist: str, title: str, duration: Optional[float]):
     """What a source answers, None when it fails or takes too long."""
-    result: dict = {}
-
-    def ask():
-        try:
-            result["answer"] = source.find(artist, title, duration)
-        except Exception as error:  # noqa: BLE001 - see load_lyrics_sources
-            result["error"] = error
-
-    thread = threading.Thread(target=ask, name=f"lyrics source {source.name}", daemon=True)
-    thread.start()
-    thread.join(SOURCE_TIMEOUT_S)
-    if thread.is_alive():
-        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the lyrics source {blue_highlighted(source.name)} "
-              f"did not answer within {SOURCE_TIMEOUT_S:.0f} s")
-        return None
-    if "error" in result:
-        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the lyrics source {blue_highlighted(source.name)} "
-              f"failed ({result['error']!r})")
-        return None
-    return result.get("answer")
+    return _within_time(lambda: source.find(artist, title, duration),
+                        f"the lyrics source {blue_highlighted(source.name)} did not answer",
+                        f"the lyrics source {blue_highlighted(source.name)} failed")[1]
 
 
 def _names_fit(answer: dict, artist: str, title: str) -> bool:
@@ -287,15 +311,20 @@ def lyrics_of_sources(sources: list[LyricsSource], artist: str, title: str, dura
 
     With ``instead_of``, the plain lyrics a lyrics database has: only synced
     lyrics of the same text (``SAME_TEXT_SHARE`` of the words of the plain
-    ones) that are not of another recording (see ``other_recording``).
+    ones) that are not of another recording (see ``other_recording``): than
+    the audio, or, when its length is not known, than the version of the
+    plain lyrics.
     """
+    recording = duration
+    if not recording and instead_of is not None and isinstance(instead_of.duration, (int, float)):
+        recording = instead_of.duration
     for source in sources:
         print(f"{ULTRASINGER_HEAD} Asking the lyrics source {blue_highlighted(source.name)}")
         lyrics = lyrics_of_source(source, artist, title, duration)
         if lyrics is None:
             continue
         if instead_of is not None:
-            if not lyrics.synced_lyrics or other_recording(lyrics.duration, duration):
+            if not lyrics.synced_lyrics or other_recording(lyrics.duration, recording):
                 continue
             if words_shared(instead_of.plain_lyrics or "", lyrics.plain_lyrics or "") < SAME_TEXT_SHARE:
                 print(f"{ULTRASINGER_HEAD} The synced lyrics of {blue_highlighted(source.name)} are another "
@@ -326,13 +355,13 @@ def lyrics_sources(folder: str | os.PathLike | None) -> list[LyricsSource]:
 
 
 def find_song_lyrics(artist: str, title: str, duration: Optional[float] = None,
-                     lyrics_file: str | os.PathLike | None = None,
+                     own_lyrics: Optional[LyricsInfo] = None, own_lyrics_file: str | os.PathLike | None = None,
                      sources_dir: str | os.PathLike | None = None, lookup: bool = True) -> Optional[LyricsInfo]:
     """The lyrics of a song, from wherever they are to be had.
 
-    1. The user's ``lyrics_file``: its lyrics are the lyrics of the song, and
-       nothing is looked up. A file that cannot be used is reported, and the
-       lyrics are looked up.
+    1. The user's ``own_lyrics`` (read from ``own_lyrics_file`` before, see
+       ``read_lyrics_file``): they are the lyrics of the song, and nothing is
+       looked up.
     2. With ``lookup``: the lyrics sources in ``sources_dir`` that are asked
        before the lyrics databases, the lyrics databases (see
        ``lrclib_client.search_lyrics``), then the other lyrics sources: for
@@ -342,15 +371,9 @@ def find_song_lyrics(artist: str, title: str, duration: Optional[float] = None,
     ``duration`` is the length of the audio in seconds, if known. Returns
     None when there are no lyrics.
     """
-    if lyrics_file:
-        try:
-            lyrics = read_lyrics_file(lyrics_file)
-        except (OSError, ValueError) as error:
-            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the lyrics file "
-                  f"{blue_highlighted(str(lyrics_file))} cannot be used ({error})")
-        else:
-            report_own_lyrics(lyrics, lyrics_file)
-            return lyrics
+    if own_lyrics is not None:
+        report_own_lyrics(own_lyrics, own_lyrics_file or own_lyrics.track_name)
+        return own_lyrics
     if not lookup or not (artist or "").strip() or not (title or "").strip():
         return None
     sources = lyrics_sources(sources_dir)

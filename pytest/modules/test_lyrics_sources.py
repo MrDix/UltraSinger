@@ -73,6 +73,16 @@ class TestLyricsFromText(unittest.TestCase):
         # a section label is no ID tag
         self.assertEqual(lyrics_from_text("[Chorus]\n" + PLAIN, "a").plain_lyrics, "[Chorus]\n" + PLAIN)
 
+    def test_times_with_a_colon_before_the_hundredths(self):
+        colon = "[00:10:00] first line of the song\n[00:14:50] second line of it\n[00:20:00] third line after a gap"
+        lyrics = lyrics_from_text(colon, "Song.lrc")
+        self.assertEqual(lyrics.synced_lyrics, SYNCED)
+        self.assertEqual(lyrics.plain_lyrics.splitlines(),
+                         ["first line of the song", "second line of it", "third line after a gap"])
+        # also among lines written with a dot
+        mixed = lyrics_from_text("[00:10.00] one\n[00:14:50] two\n[00:20.00] three", "a")
+        self.assertEqual(mixed.plain_lyrics.splitlines(), ["one", "two", "three"])
+
     def test_line_ends_of_any_kind(self):
         lyrics = lyrics_from_text(PLAIN.replace("\n", "\r\n") + "\r\n", "a")
         self.assertEqual(lyrics.plain_lyrics, PLAIN)
@@ -129,6 +139,15 @@ class TestSidecarLyricsFile(unittest.TestCase):
             # synced lyrics come first
             (Path(folder) / "Band - Song.lrc").write_text(SYNCED, encoding="utf-8")
             self.assertEqual(sidecar_lyrics_file(audio), str(Path(folder) / "Band - Song.lrc"))
+
+    def test_the_file_comes_with_its_lyrics(self):
+        with tempfile.TemporaryDirectory() as folder:
+            audio = Path(folder) / "Song.mp3"
+            audio.write_bytes(b"x")
+            self.assertIsNone(lyrics_sources.sidecar_lyrics(audio))
+            (Path(folder) / "Song.lrc").write_text(SYNCED, encoding="utf-8")
+            path, lyrics = lyrics_sources.sidecar_lyrics(audio)
+        self.assertEqual((path, lyrics.synced_lyrics, lyrics.trusted), (str(Path(folder) / "Song.lrc"), SYNCED, True))
 
     def test_a_chart_or_an_empty_file_is_none(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -199,6 +218,20 @@ class TestLoadLyricsSources(unittest.TestCase):
         self.assertEqual(out, "")
         # the same file name in two folders: two sources
         self.assertEqual((first.find("a", "t", None), second.find("a", "t", None)), ("la la la", "na na na"))
+
+    def test_a_source_that_takes_too_long_to_load_is_left_out(self):
+        """A source may ask a server while it is loaded: the conversion does not wait for it."""
+        with tempfile.TemporaryDirectory() as folder:
+            _source_file(folder, "a_slow.py", "import time\ntime.sleep(1.0)\n"
+                                              "def find_lyrics(artist, title, duration):\n    return None\n")
+            _source_file(folder, "b_good.py", "def find_lyrics(artist, title, duration):\n    return None\n")
+            with patch.object(lyrics_sources, "SOURCE_TIMEOUT_S", 0.05):
+                started = time.monotonic()
+                sources, out = _quiet(load_lyrics_sources, folder)
+        self.assertEqual([source.name for source in sources], ["b_good"])
+        self.assertLess(time.monotonic() - started, 0.8)
+        self.assertIn("a_slow.py", out)
+        self.assertIn("did not load", out)
 
     def test_no_folder_no_sources(self):
         self.assertEqual(load_lyrics_sources(None), [])
@@ -296,6 +329,19 @@ class TestLyricsOfSources(unittest.TestCase):
                 lyrics, _ = _quiet(lyrics_of_sources, [_source(answer)], "B", "S", 200.0, instead_of=plain)
                 self.assertEqual(lyrics is not None, taken)
 
+    def test_without_the_length_of_the_audio_the_version_of_the_plain_lyrics_counts(self):
+        plain = LyricsInfo(track_name="S", artist_name="B", plain_lyrics=PLAIN, duration=200.0)
+        for length, taken in ((300.0, False), (205.0, True), (None, True)):
+            with self.subTest(length=length):
+                lyrics, _ = _quiet(lyrics_of_sources, [_source({"lyrics": SYNCED, "duration": length})], "B", "S",
+                                   None, instead_of=plain)
+                self.assertEqual(lyrics is not None, taken)
+        # plain lyrics without a length either: nothing to compare with
+        unknown = LyricsInfo(track_name="S", artist_name="B", plain_lyrics=PLAIN, duration="200")
+        lyrics, _ = _quiet(lyrics_of_sources, [_source({"lyrics": SYNCED, "duration": 300.0})], "B", "S", None,
+                           instead_of=unknown)
+        self.assertIsNotNone(lyrics)
+
 
 class TestFindSongLyrics(unittest.TestCase):
     def _find(self, database=None, sources=(), **kwargs):
@@ -307,35 +353,27 @@ class TestFindSongLyrics(unittest.TestCase):
             lyrics, out = _quiet(find_song_lyrics, "The Band", "A Song", 200.0, **kwargs)
         return lyrics, search, out
 
-    def test_your_lyrics_file_and_nothing_else(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "mine.lrc"
-            path.write_text(SYNCED, encoding="utf-8")
-            lyrics, search, out = self._find(database=LyricsInfo("S", "B", plain_lyrics="other"),
-                                             sources=[_source(PLAIN, before=True)], lyrics_file=path)
-        self.assertEqual((lyrics.source, lyrics.synced_lyrics, lyrics.trusted), (OWN_LYRICS_SOURCE, SYNCED, True))
+    def test_your_own_lyrics_and_nothing_else(self):
+        own = lyrics_from_text(SYNCED, "mine.lrc")
+        lyrics, search, out = self._find(database=LyricsInfo("S", "B", plain_lyrics="other"),
+                                         sources=[_source(PLAIN, before=True)], own_lyrics=own,
+                                         own_lyrics_file="D:/lyrics/mine.lrc")
+        self.assertIs(lyrics, own)
         search.assert_not_called()
         self.assertIn("Found lyrics in your file", out)
         self.assertIn("mine.lrc", out)
+        self.assertNotIn("D:/lyrics", out)
         self.assertIn("[plain (14 words), synced]", out)
 
-    def test_your_lyrics_file_also_without_a_lookup_or_names(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "mine.txt"
-            path.write_text(PLAIN, encoding="utf-8")
-            lyrics, search, _ = self._find(lyrics_file=path, lookup=False)
-            self.assertEqual(lyrics.plain_lyrics, PLAIN)
-            with patch.object(lyrics_sources.lrclib_client, "search_lyrics") as search:
-                lyrics, _ = _quiet(find_song_lyrics, "", "", None, lyrics_file=path)
-            self.assertEqual(lyrics.plain_lyrics, PLAIN)
-            search.assert_not_called()
-
-    def test_a_lyrics_file_that_cannot_be_used_is_reported_and_the_lyrics_are_looked_up(self):
-        found = LyricsInfo("S", "B", synced_lyrics=SYNCED)
-        with tempfile.TemporaryDirectory() as folder:
-            lyrics, search, out = self._find(database=found, lyrics_file=Path(folder) / "none.txt")
-        self.assertIs(lyrics, found)
-        self.assertIn("cannot be used", out)
+    def test_your_own_lyrics_also_without_a_lookup_or_names(self):
+        own = lyrics_from_text(PLAIN, "mine.txt")
+        lyrics, search, _ = self._find(own_lyrics=own, lookup=False)
+        self.assertIs(lyrics, own)
+        with patch.object(lyrics_sources.lrclib_client, "search_lyrics") as search:
+            lyrics, out = _quiet(find_song_lyrics, "", "", None, own_lyrics=own)
+        self.assertIs(lyrics, own)
+        search.assert_not_called()
+        self.assertIn("mine.txt", out)  # (the name the lyrics came with, when no file is told)
 
     def test_no_lookup_no_lyrics(self):
         lyrics, search, _ = self._find(database=LyricsInfo("S", "B", plain_lyrics=PLAIN),
