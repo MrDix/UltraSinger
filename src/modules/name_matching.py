@@ -162,6 +162,33 @@ _NUMBER_WORDS = frozenset("part pt vol volume no nr number chapter act movement 
 # A part designation with its separator or brackets, to search without it
 _PART_SUFFIX_RE = re.compile(
     rf"\s*[,:;\-–—]?\s*[(\[{{]?\s*\b(?:part|pt)\b\.?\s*(?:{_PART_NUMBER})\s*[)\]}}]?\s*$", re.IGNORECASE)
+# What marks a title as a cover, in brackets: "Somebody Cover", "Cover",
+# "Somebody Cover Version" (group 1: what stands before the word) ...
+_COVER_END_RE = re.compile(r"(?:(\S.*?)\s+)?cover(?:\s+version)?", re.IGNORECASE | re.DOTALL)
+# ... and "Cover by Somebody", "Covered by Somebody", "Acoustic Cover Version
+# by Somebody" (group 1: who it is by)
+_COVER_BY_RE = re.compile(r"(?:\S.*\s)?cover(?:ed)?(?:\s+version)?\s+by\s+(\S.*)", re.IGNORECASE | re.DOTALL)
+# Words that tell the kind of a cover and no artist: what is played or sung,
+# how, by whom, in which language ("Somebody Vocal Cover" names Somebody,
+# "Female Cover" nobody)
+_COVER_KINDS = frozenset(
+    "vocal vocals acoustic piano guitar violin cello ukulele drum drums bass instrumental orchestral acapella "
+    "acappella capella lofi 8bit chiptune nightcore slowed reverb epic christmas kpop jpop live female male full "
+    "short english german spanish french italian portuguese dutch swedish "
+    "norwegian danish finnish polish russian ukrainian turkish greek japanese korean chinese mandarin cantonese "
+    "hindi arabic hebrew indonesian thai vietnamese".split())
+# Words that tell its style, but end the names of artists too ("Some Punk
+# Band"): they name nobody only among themselves and the kinds ("Metal
+# Cover", "Full Band Cover", "Pop Punk Cover")
+_COVER_STYLES = frozenset(
+    "band rock pop punk metal jazz folk country rap reggae blues emo hardcore metalcore orchestra choir".split())
+# What is left of a kind of cover when its words are taken away ("The Drums
+# Cover"): no name either
+_ARTICLES = frozenset(("the", "a", "an"))
+# "Stripped" at the end of a title, in brackets or after a dash: a
+# stripped-down recording of the song
+_STRIPPED = r"stripped(?:\s+(?:down|back))?"
+_STRIPPED_RE = re.compile(rf"\s*(?:[(\[{{]\s*{_STRIPPED}\s*[)\]}}]|\s[-–—]\s+{_STRIPPED})\s*$", re.IGNORECASE)
 
 
 def _part_number(name: str) -> str:
@@ -192,6 +219,67 @@ def title_without_part(title: str) -> str:
     if shorter == s:
         shorter = _PART_SUFFIX_RE.sub("", s)
     shorter = shorter.strip(" ,:;-–—")
+    return shorter if shorter and shorter != s else ""
+
+
+def cover_of(title: str) -> tuple[str, str] | None:
+    """The song a title marks as a cover, and the artist its mark names:
+    ("Title", "Somebody") for "Title (Somebody Cover)", "Title [Cover by
+    Somebody]" or "Title (Somebody Vocal Cover)", ("Title", "") for "Title
+    (Cover)". None for a title without such a mark.
+
+    The mark is a bracketed part that only additions follow (see
+    strip_title_additions), when it ends with the word "cover" or "cover
+    version" or names who the cover is by ("Title (Acoustic Cover Version
+    by Somebody)"); the song is the title before it, without its additions.
+    Titles are written both ways: "Somebody Cover" names who covers the
+    song, or whose song is covered. Words that only tell the kind of the
+    cover name nobody (see _named_in_cover_mark). A subtitle like "(Take
+    Cover)" reads as a mark too; a title like "Cover Me" or "Title
+    (Undercover)" has none.
+    """
+    title = title or ""
+    for brackets in reversed(list(_BRACKETS_RE.finditer(title))):
+        part = brackets.group(0)[1:-1].strip()
+        mark = _COVER_BY_RE.fullmatch(part) or _COVER_END_RE.fullmatch(part)
+        # (a title of one letter, to see whether all that follows the mark is an addition to it)
+        if mark is not None and strip_title_additions("x" + title[brackets.end():]) == "x":
+            song = strip_title_additions(title[:brackets.start()])
+            return (song, _named_in_cover_mark(mark.group(1) or "")) if song else None
+    return None
+
+
+def _named_in_cover_mark(name: str) -> str:
+    """The artist that the words of a cover mark name: without the words
+    after the name that tell the kind of the cover ("Somebody Vocal" names
+    Somebody), and "" when all of them tell its kind or its style ("Piano",
+    "Female Vocal", "Metal", "Full Band", "A Cappella"): nobody is searched
+    under such a name. A style after other words stays, as the end of a
+    name: "Some Punk Band"."""
+    words = name.split()
+    # without case and punctuation: "Lo-Fi" is "lofi"
+    plain = [re.sub(r"[\W_]", "", word).casefold() for word in words]
+    while words:
+        if plain[-2:] in (["a", "cappella"], ["a", "capella"]):
+            kind_words = 2
+        elif not plain[-1] or plain[-1] in _COVER_KINDS:
+            # (punctuation alone joins kinds, or a kind to the name: "Slowed + Reverb", "Somebody & Piano")
+            kind_words = 1
+        else:
+            break
+        del words[-kind_words:], plain[-kind_words:]
+    if all(not word or word in _COVER_KINDS or word in _COVER_STYLES or word in _ARTICLES for word in plain):
+        # (an article alone is the rest of a kind: "The Drums Cover")
+        return ""
+    return " ".join(words).rstrip(" ,;:-")
+
+
+def title_without_stripped(title: str) -> str:
+    """The title (without its additions) before a "(Stripped)" or
+    "- Stripped" at its end, to search for the song itself with: a
+    stripped-down recording has its lyrics; "" when it ends with none."""
+    s = strip_title_additions(title)
+    shorter = _STRIPPED_RE.sub("", s).strip()
     return shorter if shorter and shorter != s else ""
 
 

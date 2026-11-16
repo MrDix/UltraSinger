@@ -324,6 +324,8 @@ def run() -> tuple[str, Score, Score]:
                 process_data.media_info.artist, process_data.media_info.title,
                 duration=audio_length(process_data.process_data_paths.whisper_audio_path),
             )
+            # (kept for the lookup of the transcription: the same search, of the same audio)
+            process_data.lyrics_found = early_lyrics_info
             early_synced = early_lyrics_info.synced_lyrics if early_lyrics_info is not None else None
             if early_synced or (early_lyrics_info is not None and early_lyrics_info.plain_lyrics):
                 process_data.lyrics_source = getattr(early_lyrics_info, "source", "LRCLIB")
@@ -2388,8 +2390,10 @@ def TranscribeAudio(process_data):
         try:
             from modules.lrclib_client import search_lyrics
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
-            # (not the found lyrics that the singing did not have: the ones that replaced them)
-            lyrics_info = process_data.lyrics_instead or search_lyrics(
+            # (not the found lyrics that the singing did not have: the ones that replaced them).
+            # What the lookup before the transcription found is not searched again; when it
+            # found nothing (or failed), the lyrics databases are asked once more.
+            lyrics_info = process_data.lyrics_instead or process_data.lyrics_found or search_lyrics(
                 process_data.media_info.artist, process_data.media_info.title,
                 duration=audio_length(process_data.process_data_paths.whisper_audio_path),
             )
