@@ -893,6 +893,32 @@ class TestCoverLyrics(unittest.TestCase):
                 result, _ = self._find(answer)
                 self.assertEqual((result.track_name, result.instrumental), ("Song Title (Somebody Cover)", True))
 
+    def test_the_cover_listed_only_without_the_additions_to_its_title_comes_first(self):
+        """The search with the additions lists only the song it covers, the one without them the cover
+        itself: its own lyrics are taken, whatever the other ones are."""
+        title = "Song Title (Take Cover) (Official Video)"
+        own = _version(200.0, synced=False, track="Song Title (Take Cover)")
+        other = _version(200.0, track="Song Title")
+        result, requests = self._find(lambda params: [other] if "Official" in str(params) else [own],
+                                      title=title, duration=200.0)
+        self.assertEqual((result.track_name, result.synced_lyrics), ("Song Title (Take Cover)", None))
+        self.assertEqual(len(requests), 4)
+
+    def test_the_covered_song_after_both_searches_under_the_title_of_the_cover(self):
+        title = "Song Title (Somebody Cover) (Official Video)"
+        for where, answer in (
+                ("listed by both", lambda params: [_version(201.0)]),
+                ("listed by the search with the additions", lambda params: [_version(201.0)]
+                 if "Official" in str(params) else []),
+                ("listed by the search without them", lambda params: []
+                 if "Official" in str(params) else [_version(201.0)])):
+            with self.subTest(where=where):
+                result, requests = self._find(answer, title=title)
+                self.assertEqual(result.track_name, "Song Title")
+                self.assertEqual(requests, [("Some Artist", title), f"Some Artist {title}",
+                                            ("Some Artist", "Song Title (Somebody Cover)"),
+                                            "Some Artist Song Title (Somebody Cover)"])
+
     def test_an_instrumental_cover_found_by_an_earlier_search_stays(self):
         """The search with the additions to the title lists the cover as instrumental, the one without
         them only the song it covers: its lyrics are not taken."""
@@ -1252,6 +1278,33 @@ class TestSecondDatabaseSearches(unittest.TestCase):
         self.assertEqual(searches, ["Some Artist Song Title (Somebody Cover) (Official Video)",
                                     "Some Artist Song Title (Somebody Cover)", "Some Artist Song Title",
                                     "Somebody Song Title"])
+
+    def test_the_cover_listed_only_without_the_additions_to_its_title_comes_first(self):
+        """The search with the additions lists only the song it covers: its lyrics are not fetched
+        before the search without them, which lists the cover itself."""
+        title = "Song Title (Take Cover) (Official Video)"
+
+        def songs(searched):
+            return [_second_db_song(1)] if "Official" in searched else [
+                _second_db_song(2, name="Song Title (Take Cover)", duration_s=330.0)]
+        result, searches, fetched = self._find(title, songs, {1: _second_db_lrc(100), 2: _second_db_lrc(200)})
+        self.assertEqual(result.track_name, "Song Title (Take Cover)")
+        self.assertEqual(searches, [f"Some Artist {title}", "Some Artist Song Title (Take Cover)"])
+        self.assertEqual(len(fetched), 1)
+
+    def test_the_covered_song_after_both_searches_under_the_title_of_the_cover(self):
+        title = "Song Title (Somebody Cover) (Official Video)"
+        for where, songs in (
+                ("listed by both", lambda searched: [_second_db_song(1)]),
+                ("listed by the search with the additions",
+                 lambda searched: [_second_db_song(1)] if "Official" in searched else []),
+                ("listed by the search without them",
+                 lambda searched: [] if "Official" in searched else [_second_db_song(1)])):
+            with self.subTest(where=where):
+                result, searches, fetched = self._find(title, songs, {1: _second_db_lrc(100)})
+                self.assertEqual(result.track_name, "Song Title")
+                self.assertEqual(searches, [f"Some Artist {title}", "Some Artist Song Title (Somebody Cover)"])
+                self.assertEqual(len(fetched), 1)
 
     def test_a_version_with_the_title_of_the_cover_comes_first(self):
         """Before the song it covers, however close that one is in length."""
