@@ -314,7 +314,8 @@ def _length_for_plain(found: LyricsInfo, length: Optional[float], duration: Opti
     """
     plain = {"duration": found.duration, "syncedLyrics": None}
     synced = {"duration": length, "syncedLyrics": "synced"}
-    recording = duration or found.duration
+    # (the length of an entry is what the database sent: only a number is one)
+    recording = duration or (found.duration if isinstance(found.duration, (int, float)) else None)
     return _best_version([plain, synced], duration) is synced and not other_recording(length, recording)
 
 

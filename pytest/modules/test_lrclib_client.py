@@ -1140,10 +1140,12 @@ class TestSyncedLyricsForPlainOnes(unittest.TestCase):
                                            lyrics={7: _synced(_lines(15))}, duration=None)
                 self.assertEqual(result.source == "music.163.com", taken)
                 self.assertEqual(sum("/song/lyric" in url for url in asked), int(taken))
-        # no length of the plain lyrics either: nothing to compare with
-        result, _ = self._find(songs=[_second_db_song(7, duration_s=200.0)], lyrics={7: _synced(_lines(15))},
-                               lrclib_length=None, duration=None)
-        self.assertEqual(result.source, "music.163.com")
+        # no length of the plain lyrics either (none, or one that is no number): nothing to compare with
+        for length in (None, 0, "300"):
+            with self.subTest(lrclib_length=length):
+                result, _ = self._find(songs=[_second_db_song(7, duration_s=200.0)],
+                                       lyrics={7: _synced(_lines(15))}, lrclib_length=length, duration=None)
+                self.assertEqual(result.source, "music.163.com")
 
     def test_lyrics_without_times_are_not_taken(self):
         songs = [_second_db_song(1), _second_db_song(2, duration_s=301.0)]
