@@ -209,16 +209,20 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
 
     A cover ("Title (Somebody Cover)", see ``cover_of``) has the lyrics of
     the song itself. When the searches list nothing under the title of the
-    cover (with the additions to it, and without), the song it covers counts
-    as a result of them (see
-    ``_is_covered_song``); a result with the title of the cover always
-    comes first, also one without lyrics (the cover is known as
-    instrumental, and stays that). When nothing is found with the title of the cover (also
-    without its additions), the title without the cover mark is searched:
-    by our artist and by the one the mark names (the artist of the song
-    and the covering one, whichever is which). A stripped-down recording
-    ("Title (Stripped)", see ``title_without_stripped``) is then searched
-    without that mark as well.
+    cover (with the additions to it, and without), the song it covers
+    counts as a result of them (see ``_is_covered_song``); a result with
+    the title of the cover always comes first, also one without lyrics (the
+    cover is known as instrumental, and stays that). When nothing is found
+    with the title of the cover (also without its additions), the title
+    without the cover mark is searched: by our artist and by the one the
+    mark names (the artist of the song and the covering one, whichever is
+    which). A stripped-down recording ("Title (Stripped)", see
+    ``title_without_stripped``) is then searched without that mark as well.
+
+    The two databases are asked one after the other, and each applies these
+    rules to its own answers: lyrics of the song a cover covers that LRCLIB
+    has are taken as lyrics of any other song of LRCLIB are, without asking
+    the second database whether it lists the cover under its own title.
 
     When LRCLIB has no lyrics of the song (and does not know it as
     instrumental), far too few for the length of the audio (see
