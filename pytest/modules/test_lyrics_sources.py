@@ -58,6 +58,21 @@ class TestLyricsFromText(unittest.TestCase):
         self.assertIsNotNone(lyrics_from_text("[ar:Band]\n" + SYNCED, "a").synced_lyrics)
         self.assertIsNone(lyrics_from_text("[00:01.00] intro\n" + PLAIN, "a").synced_lyrics)
 
+    def test_the_id_tags_of_an_lrc_file_are_no_lyrics(self):
+        tags = "[ar:The Band]\n[ti:A Song]\n[al:An Album]\n[by:a player]"
+        # only tags (a file a player wrote for a song it has no lyrics of): no lyrics
+        with self.assertRaises(ValueError):
+            lyrics_from_text(tags, "Song.lrc")
+        # more tags than lines with times: still synced lyrics
+        lyrics = lyrics_from_text(tags + "\n[00:10.00] first line\n[00:14.00] second line", "Song.lrc")
+        self.assertIsNotNone(lyrics.synced_lyrics)
+        self.assertEqual(lyrics.plain_lyrics.splitlines(), ["first line", "second line"])
+        # tags above plain lines are left out of them
+        lyrics = lyrics_from_text(tags + "\n" + PLAIN, "Song.txt")
+        self.assertEqual((lyrics.plain_lyrics, lyrics.synced_lyrics), (PLAIN, None))
+        # a section label is no ID tag
+        self.assertEqual(lyrics_from_text("[Chorus]\n" + PLAIN, "a").plain_lyrics, "[Chorus]\n" + PLAIN)
+
     def test_line_ends_of_any_kind(self):
         lyrics = lyrics_from_text(PLAIN.replace("\n", "\r\n") + "\r\n", "a")
         self.assertEqual(lyrics.plain_lyrics, PLAIN)
@@ -169,6 +184,21 @@ class TestLoadLyricsSources(unittest.TestCase):
         self.assertIn("broken.py", out)
         self.assertIn("boom", out)
         self.assertIn("has no find_lyrics function", out)
+
+    def test_a_source_is_a_module_python_knows(self):
+        """Data classes and type hints look up the module of their class."""
+        body = ("from __future__ import annotations\n"
+                "from dataclasses import dataclass\n\n\n"
+                "@dataclass\nclass Hit:\n    text: str\n    length: float | None = None\n\n\n"
+                "def find_lyrics(artist, title, duration):\n    return Hit('la la la').text\n")
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as other:
+            _source_file(folder, "typed.py", body)
+            _source_file(other, "typed.py", body.replace("la la la", "na na na"))
+            (first,), out = _quiet(load_lyrics_sources, folder)
+            (second,), _ = _quiet(load_lyrics_sources, other)
+        self.assertEqual(out, "")
+        # the same file name in two folders: two sources
+        self.assertEqual((first.find("a", "t", None), second.find("a", "t", None)), ("la la la", "na na na"))
 
     def test_no_folder_no_sources(self):
         self.assertEqual(load_lyrics_sources(None), [])

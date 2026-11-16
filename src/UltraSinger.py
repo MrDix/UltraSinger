@@ -242,6 +242,9 @@ def run() -> tuple[str, Score, Score]:
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
+    # (before anything is downloaded or made)
+    _check_lyrics_options()
+
     process_data = InitProcessData()
     process_data.lyrics_file = _own_lyrics_file()
 
@@ -2032,11 +2035,12 @@ def is_url(path: str) -> bool:
     return path.lower().startswith(("http://", "https://"))
 
 
-def _own_lyrics_file() -> str | None:
-    """The user's lyrics file of the song: the one given with ``--lyrics_file``
-    (it has to hold lyrics: no other lyrics are looked up in its place), else
-    the one that lies next to a local input file under its name."""
-    from modules.lyrics_sources import read_lyrics_file, sidecar_lyrics_file
+def _check_lyrics_options() -> None:
+    """The lyrics file of ``--lyrics_file`` has to hold lyrics: no other lyrics
+    are looked up in its place, so a file that cannot be used ends the
+    conversion. A folder of ``--lyrics_sources_dir`` that is not there is
+    told (it may be a typing error), and the conversion goes on without it."""
+    from modules.lyrics_sources import read_lyrics_file
 
     if settings.lyrics_file:
         try:
@@ -2045,6 +2049,21 @@ def _own_lyrics_file() -> str | None:
             print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} the lyrics file "
                   f"{blue_highlighted(settings.lyrics_file)} cannot be used ({error})")
             sys.exit(1)
+    if settings.lyrics_sources_dir and not os.path.isdir(settings.lyrics_sources_dir):
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the folder of lyrics sources "
+              f"{blue_highlighted(settings.lyrics_sources_dir)} does not exist: no lyrics source is asked")
+
+
+def _own_lyrics_file() -> str | None:
+    """The user's lyrics file of the song: the one given with ``--lyrics_file``
+    (see ``_check_lyrics_options``), else the one that lies next to a local
+    input file under its name. None for the re-pitch of an UltraStar txt,
+    which keeps the lyrics of its chart."""
+    from modules.lyrics_sources import sidecar_lyrics_file
+
+    if settings.ignore_audio:
+        return None
+    if settings.lyrics_file:
         return settings.lyrics_file
     if settings.input_file_path and not is_url(settings.input_file_path) and os.path.isfile(settings.input_file_path):
         return sidecar_lyrics_file(settings.input_file_path)

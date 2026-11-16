@@ -820,7 +820,7 @@ The lyrics are a text file, plain lines or LRC lines with times:
 [00:16.90] second line of it
 ```
 
-Lines with times are used like found synced lyrics (the times are checked against the singing, see above), plain lines like found plain lyrics (their lines are placed by the transcription). The text is read as UTF-8, else in the Western European encoding of Windows. Section labels (`[Chorus]`), repeat marks and backing vocals in brackets are read as in found lyrics.
+Lines with times are used like found synced lyrics (the times are checked against the singing, see above), plain lines like found plain lyrics (their lines are placed by the transcription). The text is read as UTF-8, else in the Western European encoding of Windows. Section labels (`[Chorus]`), repeat marks and backing vocals in brackets are read as in found lyrics; the ID tags of an LRC file (`[ar:Artist]`) are no lyrics. The re-pitch of an UltraStar txt keeps the lyrics of its chart and uses no lyrics file.
 
 - **Next to the audio file:** a file under the name of the input file is used on its own: `Song.lrc` (first) or `Song.txt` next to `Song.mp3`. A `.txt` file has to look like lyrics (at least four lines, none longer than 300 characters); an UltraStar chart of that name is no lyrics file and is left alone.
 - **On the command line:** `--lyrics_file path/to/lyrics.txt`, also for a link. A file that cannot be used (missing, empty, an UltraStar chart) ends the conversion with an error, since no other lyrics are looked up in its place.

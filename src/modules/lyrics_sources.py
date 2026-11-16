@@ -25,9 +25,11 @@ one in the settings folder), never a folder of a song.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import re
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +65,8 @@ BEFORE_DATABASES = "BEFORE_DATABASES"
 
 # The time tag of an LRC line: "[01:23.45]", "[1:23]"
 _TIME_TAG_RE = re.compile(r"^\s*\[\d+:\d+(?:[.:]\d+)?\]")
+# A line that is only an ID tag of an LRC file: "[ar:Artist]", "[ti:Title]", "[by:Tool]"
+_ID_TAG_LINE_RE = re.compile(r"^\s*\[[A-Za-z]+:[^\]]*\]\s*$")
 # Lines that only an UltraStar chart has: its header tags and its notes
 _CHART_HEADER_RE = re.compile(r"^#(?:TITLE|ARTIST|BPM|GAP|MP3|AUDIO)\s*:", re.IGNORECASE)
 _CHART_NOTE_RE = re.compile(r"^[:*FRG]\s+-?\d+\s+\d+\s+-?\d+(?:\s|$)")
@@ -88,7 +92,8 @@ def lyrics_from_text(text: str, name: str, source: str = OWN_LYRICS_SOURCE, trus
     """The lyrics that a text holds.
 
     They are synced lyrics when most of its lines start with a time tag
-    (LRC), else plain ones. ``name`` is shown where found lyrics are named.
+    (LRC), else plain ones; the ID tags of an LRC file (``[ar:Artist]``) are
+    no lines of the lyrics. ``name`` is shown where found lyrics are named.
     Look-alike letters of other scripts are replaced as in found lyrics.
 
     Raises:
@@ -97,7 +102,8 @@ def lyrics_from_text(text: str, name: str, source: str = OWN_LYRICS_SOURCE, trus
     if is_ultrastar_chart(text):
         raise ValueError("it is an UltraStar chart, not a lyrics text")
     text = fold_lookalike_letters(text.replace("\r\n", "\n").replace("\r", "\n")).strip("\n")
-    lines = [line for line in text.split("\n") if line.strip()]
+    kept = [line for line in text.split("\n") if not _ID_TAG_LINE_RE.match(line)]
+    lines = [line for line in kept if line.strip()]
     if not lines:
         raise ValueError("it has no text")
     timed = sum(1 for line in lines if _TIME_TAG_RE.match(line))
@@ -107,7 +113,8 @@ def lyrics_from_text(text: str, name: str, source: str = OWN_LYRICS_SOURCE, trus
             raise ValueError("its lines have times, but no text")
         return LyricsInfo(track_name=name, artist_name="", plain_lyrics=plain, synced_lyrics=text,
                           source=source, trusted=trusted)
-    return LyricsInfo(track_name=name, artist_name="", plain_lyrics=text, source=source, trusted=trusted)
+    return LyricsInfo(track_name=name, artist_name="", plain_lyrics="\n".join(kept).strip("\n"),
+                      source=source, trusted=trusted)
 
 
 def read_lyrics_file(path: str | os.PathLike) -> LyricsInfo:
@@ -189,11 +196,17 @@ def load_lyrics_sources(folder: str | os.PathLike | None) -> list[LyricsSource]:
     for path in sorted(Path(folder).glob("*.py")):
         if path.name.startswith("_"):
             continue
+        # A module of its own name, known to Python while it is loaded and after (dataclasses
+        # and type hints look their module up); the same file name in two folders is two modules
+        module_name = (f"ultrasinger_lyrics_source_{path.stem}_"
+                       f"{hashlib.sha1(str(path.resolve()).encode('utf-8')).hexdigest()[:8]}")
         try:
-            spec = importlib.util.spec_from_file_location(f"ultrasinger_lyrics_source_{path.stem}", path)
+            spec = importlib.util.spec_from_file_location(module_name, path)
             module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
             spec.loader.exec_module(module)
         except Exception as error:  # noqa: BLE001 - a broken source of the user must not stop the conversion
+            sys.modules.pop(module_name, None)
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the lyrics source "
                   f"{blue_highlighted(path.name)} could not be loaded ({error!r})")
             continue

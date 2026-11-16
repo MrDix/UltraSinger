@@ -32,9 +32,10 @@ class TestLyricsFileOption(unittest.TestCase):
             path = os.path.join(folder, "mine.txt")
             with open(path, "w", encoding="utf-8") as file:
                 file.write(LYRICS)
-            with patch.object(us.settings, "lyrics_file", path):
+            with patch.object(us.settings, "lyrics_file", path), patch.object(us.settings, "ignore_audio", False):
+                us._check_lyrics_options()
                 self.assertEqual(us._own_lyrics_file(), path)
-            for name, content in (("none.txt", None), ("empty.txt", ""),
+            for name, content in (("none.txt", None), ("empty.txt", ""), ("tags.lrc", "[ar:Band]\n[ti:Song]\n"),
                                   ("chart.txt", "#TITLE:Song\n#BPM:300\n: 0 4 60 word\nE\n")):
                 broken = os.path.join(folder, name)
                 if content is not None:
@@ -43,15 +44,50 @@ class TestLyricsFileOption(unittest.TestCase):
                 out = io.StringIO()
                 with self.subTest(name=name), patch.object(us.settings, "lyrics_file", broken), \
                         contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as stop:
-                    us._own_lyrics_file()
+                    us._check_lyrics_options()
                 self.assertEqual(stop.exception.code, 1)
                 self.assertIn("cannot be used", out.getvalue())
+
+    def test_a_file_that_cannot_be_used_ends_the_run_before_anything_is_downloaded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = io.StringIO()
+            with patch.object(us.settings, "lyrics_file", os.path.join(folder, "none.txt")), \
+                    patch.object(us, "InitProcessData", side_effect=AssertionError("the input was prepared")), \
+                    contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as stop:
+                us.run()
+        self.assertEqual(stop.exception.code, 1)
+        self.assertIn("cannot be used", out.getvalue())
+
+    def test_a_folder_of_lyrics_sources_that_is_not_there_is_told(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for sources_dir, told in ((os.path.join(folder, "Lyrcs"), True), (folder, False), (None, False)):
+                out = io.StringIO()
+                with self.subTest(sources_dir=sources_dir), patch.object(us.settings, "lyrics_file", None), \
+                        patch.object(us.settings, "lyrics_sources_dir", sources_dir), contextlib.redirect_stdout(out):
+                    us._check_lyrics_options()
+                self.assertEqual("does not exist" in out.getvalue(), told)
+
+    def test_the_re_pitch_of_a_chart_keeps_its_lyrics(self):
+        """No lyrics file is used (or reported) when only the pitches of an UltraStar txt are made anew."""
+        with tempfile.TemporaryDirectory() as folder:
+            chart = os.path.join(folder, "Band - Song.txt")
+            with open(chart, "w", encoding="utf-8") as file:
+                file.write("#TITLE:Song\n#BPM:300\n: 0 4 60 word\nE\n")
+            lyrics = os.path.join(folder, "Band - Song.lrc")
+            with open(lyrics, "w", encoding="utf-8") as file:
+                file.write("[00:01.00] hello world")
+            with patch.object(us.settings, "ignore_audio", True), patch.object(us.settings, "input_file_path", chart):
+                with patch.object(us.settings, "lyrics_file", None):
+                    self.assertIsNone(us._own_lyrics_file())
+                with patch.object(us.settings, "lyrics_file", lyrics):
+                    self.assertIsNone(us._own_lyrics_file())
 
     def test_the_file_next_to_a_local_input_file(self):
         with tempfile.TemporaryDirectory() as folder:
             audio = os.path.join(folder, "Band - Song.mp3")
             open(audio, "wb").close()
-            with patch.object(us.settings, "lyrics_file", None), patch.object(us.settings, "input_file_path", audio):
+            with patch.object(us.settings, "lyrics_file", None), patch.object(us.settings, "input_file_path", audio), \
+                    patch.object(us.settings, "ignore_audio", False):
                 self.assertIsNone(us._own_lyrics_file())
                 sidecar = os.path.join(folder, "Band - Song.lrc")
                 with open(sidecar, "w", encoding="utf-8") as file:
