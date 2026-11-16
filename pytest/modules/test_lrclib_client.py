@@ -880,11 +880,18 @@ class TestCoverLyrics(unittest.TestCase):
         self.assertEqual(result.track_name, "Song Title")
         self.assertEqual(len(requests), 2)
 
-    def test_the_covered_song_for_a_cover_listed_without_lyrics(self):
+    def test_a_cover_listed_as_instrumental_stays_instrumental(self):
+        """A piano cover has no singing: the lyrics of the song it covers are not taken for it, in the
+        search that lists it nor in the later one without the cover mark."""
         instrumental = _lrclib_entry(track="Song Title (Somebody Cover)", artist="Some Artist", plain=None,
                                      instrumental=True)
-        result, _ = self._find(lambda params: [instrumental, _version(201.0)])
-        self.assertEqual((result.track_name, result.instrumental), ("Song Title", False))
+        for where, answer in (
+                ("in one answer", lambda params: [instrumental, _version(201.0)]),
+                ("the song only without the mark",
+                 lambda params: [_version(201.0)] if "Cover" not in str(params) else [instrumental])):
+            with self.subTest(where=where):
+                result, _ = self._find(answer)
+                self.assertEqual((result.track_name, result.instrumental), ("Song Title (Somebody Cover)", True))
 
     def test_words_that_tell_the_kind_of_the_cover_are_no_artist(self):
         """Nobody is searched under "Female" or "Metal", and nothing listed under such a name is taken."""
@@ -1192,10 +1199,14 @@ class TestSecondDatabaseSearches(unittest.TestCase):
         result, _, fetched = self._find(title, songs, {1: _second_db_lrc(100), 2: _second_db_lrc(200)})
         self.assertEqual(result.track_name, title)
         self.assertEqual(len(fetched), 1)
-        # listed without lyrics: the song it covers
+        # listed without lyrics: taken for an instrumental cover, the song it covers is not fetched
         result, _, fetched = self._find(title, songs, {1: _second_db_lrc(100)})
+        self.assertIsNone(result)
+        self.assertEqual(len(fetched), 1)
+        self.assertIn("id=2&", fetched[0])
+        # not listed at all: the song it covers
+        result, _, fetched = self._find(title, songs[:1], {1: _second_db_lrc(100)})
         self.assertEqual(result.track_name, "Song Title")
-        self.assertEqual(len(fetched), 2)
 
     def test_words_that_tell_the_kind_of_the_cover_are_not_searched(self):
         result, searches, _ = self._find("Song Title (Female Cover)", [], {})

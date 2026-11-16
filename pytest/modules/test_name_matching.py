@@ -259,6 +259,24 @@ class TestTitlesMatch(unittest.TestCase):
         self.assertTrue(titles_match("(Untitled)", "(Untitled)"))
 
 
+class TestNamedInCoverMark(unittest.TestCase):
+    """What is left of the words of a cover mark as the name of an artist."""
+
+    def test_an_article_alone_names_nobody(self):
+        self.assertEqual(cover_of("Song (The Drums Cover)"), ("Song", ""))
+        self.assertEqual(cover_of("Song (A Capella Cover)"), ("Song", ""))
+        self.assertEqual(cover_of("Song (The Somebodies Cover)"), ("Song", "The Somebodies"))
+
+    def test_more_kinds_of_covers(self):
+        for mark in ("K-Pop Cover", "8-Bit Cover", "Christmas Cover", "Slowed Cover", "Epic Orchestral Cover"):
+            with self.subTest(mark=mark):
+                self.assertEqual(cover_of(f"Song ({mark})"), ("Song", ""))
+
+    def test_punctuation_after_the_name_is_left_out(self):
+        self.assertEqual(cover_of("Song (Somebody, Piano Cover)"), ("Song", "Somebody"))
+        self.assertEqual(cover_of("Song (Some Body - Acoustic Cover)"), ("Song", "Some Body"))
+
+
 class TestCoverOf(unittest.TestCase):
     """The song a title marks as a cover, and the artist its mark names."""
 

@@ -173,7 +173,8 @@ _COVER_BY_RE = re.compile(r"(?:\S.*\s)?cover(?:ed)?(?:\s+version)?\s+by\s+(\S.*)
 # "Female Cover" nobody)
 _COVER_KINDS = frozenset(
     "vocal vocals acoustic piano guitar violin cello ukulele drum drums bass instrumental orchestral acapella "
-    "acappella lofi live female male full short english german spanish french italian portuguese dutch swedish "
+    "acappella capella lofi 8bit chiptune nightcore slowed reverb epic christmas kpop jpop live female male full "
+    "short english german spanish french italian portuguese dutch swedish "
     "norwegian danish finnish polish russian ukrainian turkish greek japanese korean chinese mandarin cantonese "
     "hindi arabic hebrew indonesian thai vietnamese".split())
 # Words that tell its style, but end the names of artists too ("Some Punk
@@ -181,6 +182,9 @@ _COVER_KINDS = frozenset(
 # Cover", "Full Band Cover", "Pop Punk Cover")
 _COVER_STYLES = frozenset(
     "band rock pop punk metal jazz folk country rap reggae blues emo hardcore metalcore orchestra choir".split())
+# What is left of a kind of cover when its words are taken away ("The Drums
+# Cover"): no name either
+_ARTICLES = frozenset(("the", "a", "an"))
 # "Stripped" at the end of a title, in brackets or after a dash: a
 # stripped-down recording of the song
 _STRIPPED = r"stripped(?:\s+(?:down|back))?"
@@ -256,11 +260,15 @@ def _named_in_cover_mark(name: str) -> str:
     # without case and punctuation: "Lo-Fi" is "lofi"
     plain = [re.sub(r"[\W_]", "", word).casefold() for word in words]
     while words:
-        kind_words = 1 if plain[-1] in _COVER_KINDS else 2 if plain[-2:] == ["a", "cappella"] else 0
+        kind_words = (1 if plain[-1] in _COVER_KINDS
+                      else 2 if plain[-2:] in (["a", "cappella"], ["a", "capella"]) else 0)
         if not kind_words:
             break
         del words[-kind_words:], plain[-kind_words:]
-    return "" if all(word in _COVER_KINDS or word in _COVER_STYLES for word in plain) else " ".join(words)
+    if all(word in _COVER_KINDS or word in _COVER_STYLES or word in _ARTICLES for word in plain):
+        # (an article alone is the rest of a kind: "The Drums Cover")
+        return ""
+    return " ".join(words).rstrip(" ,;:-")
 
 
 def title_without_stripped(title: str) -> str:

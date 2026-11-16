@@ -208,10 +208,11 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
     rules a version out.
 
     A cover ("Title (Somebody Cover)", see ``cover_of``) has the lyrics of
-    the song itself. When a search lists no lyrics under the title of the
+    the song itself. When a search lists nothing under the title of the
     cover, the song it covers counts as a result of that search (see
     ``_is_covered_song``); a result with the title of the cover always
-    comes first. When nothing is found with the title of the cover (also
+    comes first, also one without lyrics (the cover is known as
+    instrumental, and stays that). When nothing is found with the title of the cover (also
     without its additions), the title without the cover mark is searched:
     by our artist and by the one the mark names (the artist of the song
     and the covering one, whichever is which). A stripped-down recording
@@ -339,13 +340,19 @@ def _find_on_lrclib(artist: str, title: str, duration: Optional[float], verbose:
             # The song was found, as instrumental: the title before the dash
             # can be another song
             break
+        if named is not None and found is not None:
+            # The cover itself is listed, as instrumental (a piano cover): the
+            # lyrics of the song it covers are not sung in it
+            continue
         if how and verbose:
             print(f"{ULTRASINGER_HEAD} Searching LRCLIB again {how}: {blue_highlighted(wanted)}")
         results = _search_title(artist, wanted, song, duration, max_off, named, answers)
         with_lyrics = [result for result in results if result.has_lyrics]
-        if not with_lyrics and covered is not None and song in (title, stripped):
-            # Nothing is listed under the title of the cover: the song it covers
-            # counts, in the same answers (they are kept: nothing is asked again)
+        if not results and covered is not None and song in (title, stripped):
+            # Nothing is listed under the title of the cover (an entry without
+            # lyrics is one: the cover is known as instrumental): the song it
+            # covers counts, in the same answers (they are kept: nothing is
+            # asked again)
             with_lyrics = [result for result in _search_title(artist, wanted, song, duration, max_off, named,
                                                               answers, covered=covered) if result.has_lyrics]
         if with_lyrics:
@@ -688,8 +695,9 @@ def _find_on_second_db(artist: str, title: str, duration: Optional[float],
     is searched without its mark, by our artist and by the one the mark
     names (see ``cover_of``), and a stripped-down recording without that
     mark (see ``title_without_stripped``). Only results whose artist and
-    title match are taken (see ``_names_match``), for a cover after them
-    also those of the song it covers (see ``_is_covered_song``); their
+    title match are taken (see ``_names_match``), for a cover that no
+    search lists under its own title those of the song it covers (see
+    ``_is_covered_song``); their
     lyrics are fetched in the order of their length's distance to the audio
     (``duration``), at most ``_SECOND_DB_LYRICS`` per search and each
     version once; the first with lyrics wins, with ``synced_only`` the
@@ -709,6 +717,7 @@ def _find_on_second_db(artist: str, title: str, duration: Optional[float],
             seen.add(searched.casefold())
             searches.append((searched, song))
     asked = set()  # the versions whose lyrics were fetched: a later search may list them again
+    own_title_listed = False  # a cover: whether a search listed a version under its own title
     for searched, song in searches:
         params = urllib.parse.urlencode({"s": searched, "type": 1, "limit": _SECOND_DB_RESULTS})
         # One try: an unreachable second database must not hold up the lookup
@@ -725,9 +734,12 @@ def _find_on_second_db(artist: str, title: str, duration: Optional[float],
         listed.sort(key=lambda version: _length_off(version, duration))
         versions = [version for version in listed if _names_match(version, artist, song)]
         if covered is not None and song in (title, stripped):
-            # After the versions under the title of the cover: the song it covers
-            versions += [version for version in listed
-                         if version not in versions and _is_covered_song(version, *covered)]
+            own_title_listed = own_title_listed or bool(versions)
+            if not own_title_listed:
+                # Nothing is listed under the title of the cover (in no search
+                # so far): the song it covers counts. A version of the cover
+                # itself without lyrics is taken for an instrumental cover.
+                versions = [version for version in listed if _is_covered_song(version, *covered)]
         for version in versions[:_SECOND_DB_LYRICS]:
             asked.add(version["id"])
             synced, plain = _second_db_lyrics(version)
