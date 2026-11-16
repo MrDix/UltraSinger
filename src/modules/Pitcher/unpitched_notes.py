@@ -31,8 +31,9 @@ How the notes are judged, in the separated vocal stem:
    the song), which reads calmer than a zigzag.
 
 Notes that are freestyle already (backing vocals of the lyrics, the
-segmentation model's freestyle notes) count as neighbours and stay as they
-are; rap notes too.
+segmentation model's freestyle notes) count as neighbours and stay
+freestyle; next to notes without a pitch they go to the pitch of that run,
+so a passage is charted on one height. Rap notes stay as they are.
 """
 
 import math
@@ -217,22 +218,35 @@ def find_unpitched_notes(midi_segments: list[MidiSegment], times: np.ndarray,
 
 def as_freestyle(midi_segments: list[MidiSegment], unpitched: list[bool]) -> list[MidiSegment]:
     """The notes with the *unpitched* ones as freestyle notes, each run of
-    them on the pitch of the last sung note before it (of the first sung
-    note of the song for a run at its start)."""
+    freestyle notes with one of them on one pitch: that of the last sung
+    note before it (of the first sung note of the song for a run at its
+    start; in a song without a sung note, the middle one of their pitches).
+
+    Freestyle notes that were there before (of the lyrics, of a segmentation
+    model) and stand in such a run go to its pitch with it, so a passage
+    never jumps between two heights; a run of them alone stays as it is.
+    """
     sung = [segment.note for segment, flag in zip(midi_segments, unpitched)
             if not flag and segment.note_type in JUDGED_TYPES]
-    if not sung:
-        return [replace(segment, note_type="F") if flag else segment
-                for segment, flag in zip(midi_segments, unpitched)]
-    result = []
-    pitch = sung[0]
-    for segment, flag in zip(midi_segments, unpitched):
-        if flag:
-            result.append(replace(segment, note_type="F", note=pitch))
+    marked = sorted((segment.note for segment, flag in zip(midi_segments, unpitched) if flag),
+                    key=librosa.note_to_midi)
+    result = list(midi_segments)
+    if not marked:
+        return result
+    pitch = sung[0] if sung else marked[len(marked) // 2]
+    index = 0
+    while index < len(result):
+        if not unpitched[index] and result[index].note_type != "F":
+            if result[index].note_type in JUDGED_TYPES:
+                pitch = result[index].note
+            index += 1
             continue
-        if segment.note_type in JUDGED_TYPES:
-            pitch = segment.note
-        result.append(segment)
+        end = index
+        while end < len(result) and (unpitched[end] or result[end].note_type == "F"):
+            end += 1
+        if any(unpitched[index:end]):
+            result[index:end] = [replace(segment, note_type="F", note=pitch) for segment in result[index:end]]
+        index = end
     return result
 
 

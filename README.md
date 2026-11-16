@@ -812,7 +812,7 @@ A note counts as sung when, in the separated vocal, most of its loud frames have
 
 On 100 songs with hand-made charts, 1.8 % of the notes that are charted with a pitch there became freestyle, most of them in a few songs with shouted choruses; in more than half of the songs none did. On an annotated set of metal vocals (two hours from 57 songs), four fifths of the screamed stretches were judged to be without a pitch, and 6 % of the cleanly sung ones — nearly all of those in a few songs with large choirs, which the pitch detection cannot follow and whose partials blur. In songs with harsh vocals, between a tenth and four fifths of the notes become freestyle.
 
-Freestyle notes also come from words in brackets in the lyrics (backing vocals) and from a [segmentation model](#model-based-note-segmentation---segmentation_model); those stay as they are. The detection needs the separated vocal. The pitch refinement does not re-pitch freestyle notes, and they do not count in the score the GAP is searched with.
+Freestyle notes also come from words in brackets in the lyrics (backing vocals) and from a [segmentation model](#model-based-note-segmentation---segmentation_model); those stay freestyle notes, and next to notes without a pitch they are charted on one height with them. The detection needs the separated vocal. The pitch refinement does not re-pitch freestyle notes, and they do not count in the score the GAP is searched with.
 
 ```commandline
 -i XYZ --disable_freestyle_detection

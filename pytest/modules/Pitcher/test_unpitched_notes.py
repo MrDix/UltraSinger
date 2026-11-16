@@ -210,15 +210,33 @@ class TestAsFreestyle(unittest.TestCase):
         result = as_freestyle(segments, [True, False])
         self.assertEqual([(s.note_type, s.note) for s in result], [("F", "D4"), (":", "D4")])
 
-    def test_without_any_sung_note_the_pitches_stay(self):
-        segments = [_note(0.0, 0.3, note="A5"), _note(0.3, 0.6, note="D4")]
-        result = as_freestyle(segments, [True, True])
-        self.assertEqual([(s.note_type, s.note) for s in result], [("F", "A5"), ("F", "D4")])
+    def test_without_any_sung_note_all_go_to_the_middle_one_of_their_pitches(self):
+        segments = [_note(0.0, 0.3, note="A5"), _note(0.3, 0.6, note="D4"), _note(0.6, 0.9, note="F4")]
+        result = as_freestyle(segments, [True, True, True])
+        self.assertEqual([(s.note_type, s.note) for s in result], [("F", "F4"), ("F", "F4"), ("F", "F4")])
 
-    def test_freestyle_notes_of_the_lyrics_keep_their_pitch_and_give_none(self):
-        segments = [_note(0.0, 0.3, note="D4"), _note(0.3, 0.6, note="B4", note_type="F"), _note(0.6, 0.9, note="A5")]
-        result = as_freestyle(segments, [False, False, True])
-        self.assertEqual([(s.note_type, s.note) for s in result], [(":", "D4"), ("F", "B4"), ("F", "D4")])
+    def test_freestyle_notes_within_a_run_go_to_its_pitch(self):
+        """Those of the lyrics or of a segmentation model: the passage does not jump between two heights."""
+        segments = [_note(0.0, 0.3, note="D4"), _note(0.3, 0.6, note="B4", note_type="F"), _note(0.6, 0.9, note="A5"),
+                    _note(0.9, 1.2, note="E3", note_type="F"), _note(1.2, 1.5, note="G4")]
+        result = as_freestyle(segments, [False, False, True, False, False])
+        self.assertEqual([(s.note_type, s.note) for s in result],
+                         [(":", "D4"), ("F", "D4"), ("F", "D4"), ("F", "D4"), (":", "G4")])
+
+    def test_a_run_of_earlier_freestyle_notes_alone_stays_and_gives_no_pitch(self):
+        segments = [_note(0.0, 0.3, note="D4"), _note(0.3, 0.6, note="B4", note_type="F"),
+                    _note(0.6, 0.9, note="E3", note_type="F"), _note(0.9, 1.2, note="G4", note_type="R"),
+                    _note(1.2, 1.5, note="A5")]
+        result = as_freestyle(segments, [False, False, False, False, True])
+        self.assertEqual([(s.note_type, s.note) for s in result],
+                         [(":", "D4"), ("F", "B4"), ("F", "E3"), ("R", "G4"), ("F", "D4")])
+        self.assertIs(result[1], segments[1])
+
+    def test_nothing_without_a_pitch_changes_nothing(self):
+        segments = [_note(0.0, 0.3, note="D4"), _note(0.3, 0.6, note="B4", note_type="F")]
+        result = as_freestyle(segments, [False, False])
+        self.assertEqual(result, segments)
+        self.assertIsNot(result, segments)
 
     def test_the_given_notes_are_not_changed(self):
         segment = _note(0.0, 0.3, note="A5")
