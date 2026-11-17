@@ -46,6 +46,9 @@ class QueueManager(QObject):
     stage_changed = Signal(str)
     item_result_info = Signal(str, dict)  # item_id, result_info dict
 
+    # A song that could not be started (see _run_next): item_id
+    _item_not_started = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._items: list[QueueItem] = []
@@ -67,6 +70,11 @@ class QueueManager(QObject):
         # avoiding races with add_item/remove_item/cancel_all.
         self._runner.finished.connect(
             self._on_item_finished, Qt.ConnectionType.QueuedConnection
+        )
+        # Queued too: a song that cannot be started ends from the event loop, as
+        # one whose conversion ended (many of them in a row are no call in a call)
+        self._item_not_started.connect(
+            self._on_item_not_started, Qt.ConnectionType.QueuedConnection
         )
 
     @property
@@ -297,7 +305,7 @@ class QueueManager(QObject):
                     f"[Queue] ERROR: The lyrics of this song could not be saved "
                     f"for its conversion ({error}) - not converted."
                 )
-                self._on_item_finished(1)
+                self._item_not_started.emit(next_item.id)
                 return
 
         # Preferred path: the bgutil PO-token provider. When it runs, plain
@@ -632,6 +640,12 @@ class QueueManager(QObject):
             if not folder.endswith(("cache", "cache/", "cache\\")):
                 info["output_folder"] = folder
             return
+
+    def _on_item_not_started(self, item_id: str):
+        """End the song that could not be started as a failed one, then run next."""
+        item = self._current_item
+        if item is not None and item.id == item_id and item.status == "running":
+            self._on_item_finished(1)
 
     def _on_item_finished(self, exit_code: int):
         """Handle completion of a single item, then run next."""

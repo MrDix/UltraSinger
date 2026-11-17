@@ -57,6 +57,8 @@ class TestOwnLyricsInTheQueue:
         other = manager.add_item(str(audio), "file", "Song without")
         with patch("src.gui.queue_manager.write_own_lyrics", side_effect=OSError("disk full")):
             manager.start_all()
+            manager._runner.start.assert_not_called()
+            _app.processEvents()  # (the song ends from the event loop)
         assert (song.status, song.exit_code) == ("failed", 1)
         assert any("could not be saved" in line and "disk full" in line for line in lines)
         assert (song.id, "failed") in statuses
@@ -64,6 +66,46 @@ class TestOwnLyricsInTheQueue:
         assert other.status == "running"
         manager._runner.start.assert_called_once()
         assert "--lyrics_file" not in _started_args(manager)
+
+    def test_a_long_row_of_such_songs_ends_one_by_one(self, tmp_path):
+        """Each ends from the event loop: the row is no call in a call that gets too deep."""
+        audio = tmp_path / "song.mp3"
+        audio.write_bytes(b"x")
+        manager = _manager()
+        songs = []
+        for number in range(600):
+            song = manager.add_item(str(audio), "file", f"Song {number}")
+            song.settings_overrides = {"lyrics_text": LYRICS}
+            songs.append(song)
+        finished = []
+        manager.queue_finished.connect(lambda failed, cancelled: finished.append((failed, cancelled)))
+        with patch("src.gui.queue_manager.write_own_lyrics", side_effect=OSError("disk full")):
+            manager.start_all()
+            for _ in range(700):
+                if finished:
+                    break
+                _app.processEvents()
+        assert finished == [(600, False)]
+        assert {song.status for song in songs} == {"failed"}
+        manager._runner.start.assert_not_called()
+
+    def test_cancel_all_while_such_a_song_ends(self, tmp_path):
+        audio = tmp_path / "song.mp3"
+        audio.write_bytes(b"x")
+        manager = _manager()
+        song = manager.add_item(str(audio), "file", "Song with lyrics")
+        song.settings_overrides = {"lyrics_text": LYRICS}
+        other = manager.add_item(str(audio), "file", "Song without")
+        finished = []
+        manager.queue_finished.connect(lambda failed, cancelled: finished.append((failed, cancelled)))
+        with patch("src.gui.queue_manager.write_own_lyrics", side_effect=OSError("disk full")):
+            manager.start_all()
+            manager.cancel_all()
+            _app.processEvents()
+        assert (song.status, other.status) == ("failed", "cancelled")
+        assert finished == [(1, False)]
+        manager._runner.start.assert_not_called()
+        assert not manager._running
 
     def test_lyrics_in_the_global_settings_are_no_song_s_lyrics(self, tmp_path):
         audio = tmp_path / "song.mp3"
