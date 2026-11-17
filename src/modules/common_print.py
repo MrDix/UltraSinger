@@ -157,7 +157,20 @@ def print_help() -> None:
                             and fetches verified reference lyrics to correct Whisper transcription errors.
                             When LRCLIB has no lyrics of the song, far too few, only plain ones, or ones
                             with few of the transcribed words, the lyrics database of music.163.com is asked
-                            too.
+                            too. A lyrics file of your own (--lyrics_file) is used all the same.
+    --lyrics_file           Your own lyrics of the song: a text file with plain lines, or LRC lines with
+                            times ("[01:23.45] line"). They are used instead of a lookup - for a song no
+                            lyrics database knows, or one whose found lyrics are wrong. Default: the file
+                            that lies next to the input file under its name (Song.mp3: Song.lrc, then
+                            Song.txt when it looks like lyrics: at least four lines, none longer than 300
+                            characters, no UltraStar chart), if there is one.
+    --lyrics_sources_dir    Folder of lyrics sources of your own: Python files with a function
+                            find_lyrics(artist, title, duration) that returns the lyrics as text (plain or
+                            LRC) or None. They are asked for lyrics the lyrics databases do not have, or
+                            before them with BEFORE_DATABASES = True in the file. A source is a program
+                            that runs with your rights: only put files there that you trust. Default: the
+                            folder lyrics_sources in the settings folder (~/.ultrasinger); not asked with
+                            --disable_lyrics_lookup.
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain precise
                             word-level timing — dramatically improving lyrics coverage and timing accuracy.

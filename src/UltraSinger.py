@@ -213,6 +213,8 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Octave shift: {settings.octave_shift:+d}')}")
     if not settings.lyrics_lookup:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Lyrics lookup disabled')}")
+    if settings.lyrics_file:
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Lyrics from the file {settings.lyrics_file}')}")
     if settings.llm_correct_lyrics:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'LLM lyric correction enabled (model: {settings.llm_model})')}")
     if settings.remote_stt:
@@ -240,7 +242,11 @@ def run() -> tuple[str, Score, Score]:
     if settings.write_settings_info:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Settings info file will be written')}")
 
+    # (before anything is downloaded or made)
+    lyrics_of_option = _check_lyrics_options()
+
     process_data = InitProcessData()
+    process_data.lyrics_file, process_data.own_lyrics = _own_lyrics(lyrics_of_option)
 
     process_data.process_data_paths.cache_folder_path = setup_cache_folder()
 
@@ -314,16 +320,10 @@ def run() -> tuple[str, Score, Score]:
     # expensive Whisper transcription entirely (~2 min saved per song).
     # Language detection uses Whisper tiny (~2-3s) when not explicitly set.
     if (not settings.ignore_audio
-            and settings.lyrics_lookup
             and not settings.disable_reference_lyrics
-            and process_data.media_info.artist
-            and process_data.media_info.title):
+            and _lyrics_wanted(process_data)):
         try:
-            from modules.lrclib_client import search_lyrics
-            early_lyrics_info = search_lyrics(
-                process_data.media_info.artist, process_data.media_info.title,
-                duration=audio_length(process_data.process_data_paths.whisper_audio_path),
-            )
+            early_lyrics_info = _lookup_lyrics(process_data)
             # (kept for the lookup of the transcription: the same search, of the same audio)
             process_data.lyrics_found = early_lyrics_info
             early_synced = early_lyrics_info.synced_lyrics if early_lyrics_info is not None else None
@@ -357,8 +357,8 @@ def run() -> tuple[str, Score, Score]:
                 # Lyrics in another language than the (confidently known) sung
                 # language are another version of the song - aligning them
                 # would put wrong words onto the vocals.
-                use_lyrics, lyrics_language = check_lyrics_language(
-                    early_synced, process_data.media_info.language, language_is_confident,
+                use_lyrics, lyrics_language = _lyrics_language_check(
+                    early_lyrics_info, early_synced, process_data.media_info.language, language_is_confident,
                 )
                 if not use_lyrics:
                     process_data.synced_lyrics_other_language = lyrics_language
@@ -385,8 +385,8 @@ def run() -> tuple[str, Score, Score]:
                            if settings.check_synced_lyrics and not remote_first else "")
                     )
             if early_plain and (whisper_skipped or remote_first):
-                use_lyrics, lyrics_language = check_lyrics_language(
-                    early_plain, process_data.media_info.language, language_is_confident,
+                use_lyrics, lyrics_language = _lyrics_language_check(
+                    early_lyrics_info, early_plain, process_data.media_info.language, language_is_confident,
                 )
                 if use_lyrics:
                     if lyrics_language:
@@ -1156,6 +1156,7 @@ def run() -> tuple[str, Score, Score]:
             phoneme_word_starts_result=phoneme_word_starts_result,
             lyrics_source=process_data.lyrics_source,
             lyrics_heard=process_data.lyrics_heard,
+            lyrics_file=process_data.lyrics_file,
         )
 
     # Cleanup
@@ -1373,11 +1374,13 @@ def _write_settings_info_file(
         phoneme_word_starts_result: str | None = None,
         lyrics_source: str | None = None,
         lyrics_heard: str | None = None,
+        lyrics_file: str | None = None,
 ) -> None:
     """Write ultrasinger_parameter.info with all conversion settings and score results.
 
     ``lyrics_source`` names where the found lyrics come from (LRCLIB when not given),
-    ``lyrics_heard`` how many of the transcribed words they had (see ``_lyrics_the_singing_has``).
+    ``lyrics_heard`` how many of the transcribed words they had (see ``_lyrics_the_singing_has``),
+    ``lyrics_file`` the user's lyrics file of the song, when there is one.
     """
     from datetime import datetime, timezone
 
@@ -1631,6 +1634,8 @@ def _write_settings_info_file(
             # Lyrics Lookup
             f.write("[Lyrics Lookup]\n")
             f.write(f"  Enabled:                  {settings.lyrics_lookup}\n")
+            f.write(f"  Lyrics file:              {lyrics_file or 'none'}\n")
+            f.write(f"  Lyrics sources folder:    {settings.lyrics_sources_dir or 'default'}\n")
             if lyrics_lookup_result is not None:
                 f.write(f"  Words corrected:          {lyrics_lookup_result.words_corrected}\n")
                 f.write(f"  Words kept:               {lyrics_lookup_result.words_kept}\n")
@@ -2028,6 +2033,76 @@ def create_audio_chunks(process_data):
 def is_url(path: str) -> bool:
     """Whether the input (-i) is a link to a video, not a local file."""
     return path.lower().startswith(("http://", "https://"))
+
+
+def _check_lyrics_options():
+    """The lyrics (LyricsInfo) of the file of ``--lyrics_file``, None without
+    the option. The file has to hold lyrics: no other lyrics are looked up in
+    its place, so a file that cannot be used ends the conversion. The lyrics
+    are read here once and kept: the file is not needed again. A folder of
+    ``--lyrics_sources_dir`` that is not there is told (it may be a typing
+    error), and the conversion goes on without it."""
+    from modules.lyrics_sources import read_lyrics_file
+
+    lyrics = None
+    if settings.lyrics_file:
+        try:
+            lyrics = read_lyrics_file(settings.lyrics_file)
+        except (OSError, ValueError) as error:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} the lyrics file "
+                  f"{blue_highlighted(settings.lyrics_file)} cannot be used ({error})")
+            sys.exit(1)
+    if settings.lyrics_sources_dir and not os.path.isdir(settings.lyrics_sources_dir):
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the folder of lyrics sources "
+              f"{blue_highlighted(settings.lyrics_sources_dir)} does not exist: no lyrics source is asked")
+    return lyrics
+
+
+def _own_lyrics(lyrics_of_option=None) -> tuple:
+    """The user's lyrics file of the song and its lyrics (LyricsInfo): the one
+    given with ``--lyrics_file`` (``lyrics_of_option``, see
+    ``_check_lyrics_options``), else the one that lies next to a local input
+    file under its name. ``(None, None)`` when there is none, and for the
+    re-pitch of an UltraStar txt, which keeps the lyrics of its chart."""
+    from modules.lyrics_sources import sidecar_lyrics
+
+    if settings.ignore_audio:
+        return None, None
+    if settings.lyrics_file and lyrics_of_option is not None:
+        return settings.lyrics_file, lyrics_of_option
+    if settings.input_file_path and not is_url(settings.input_file_path) and os.path.isfile(settings.input_file_path):
+        return sidecar_lyrics(settings.input_file_path) or (None, None)
+    return None, None
+
+
+def _lyrics_language_check(lyrics_info, text: str, language, language_is_confident: bool):
+    """``check_lyrics_language`` for found lyrics. Lyrics the user gave for the
+    song are used whatever language the audio was taken for (see
+    ``LyricsInfo.trusted``); the language they look like is still told."""
+    use_lyrics, lyrics_language = check_lyrics_language(text, language, language_is_confident)
+    return use_lyrics or getattr(lyrics_info, "trusted", False) is True, lyrics_language
+
+
+def _lyrics_wanted(process_data: ProcessData) -> bool:
+    """Whether the song gets lyrics from outside: from the user's file, or
+    looked up by its artist and title."""
+    return bool(getattr(process_data, "own_lyrics", None) is not None
+                or (settings.lyrics_lookup and process_data.media_info.artist and process_data.media_info.title))
+
+
+def _lookup_lyrics(process_data: ProcessData):
+    """The lyrics of the song (LyricsInfo or None): of the user's file, else
+    of the lyrics databases and the user's lyrics sources."""
+    from modules.lyrics_sources import default_sources_dir, find_song_lyrics
+
+    return find_song_lyrics(
+        process_data.media_info.artist, process_data.media_info.title,
+        duration=audio_length(process_data.process_data_paths.whisper_audio_path),
+        own_lyrics=getattr(process_data, "own_lyrics", None),
+        own_lyrics_file=getattr(process_data, "lyrics_file", None),
+        sources_dir=settings.lyrics_sources_dir or default_sources_dir(),
+        lookup=settings.lyrics_lookup,
+    )
 
 
 def InitProcessData():
@@ -2437,17 +2512,14 @@ def TranscribeAudio(process_data):
 
     # Lyrics lookup correction (before LLM — uses verified reference lyrics)
     lyrics_lookup_result = None
-    if settings.lyrics_lookup and process_data.media_info.artist and process_data.media_info.title:
+    if _lyrics_wanted(process_data):
         try:
-            from modules.lrclib_client import search_lyrics
             from modules.Speech_Recognition.lyrics_corrector import correct_transcription_from_lyrics
             # (not the found lyrics that the singing did not have: the ones that replaced them).
             # What the lookup before the transcription found is not searched again; when it
             # found nothing (or failed), the lyrics databases are asked once more.
-            lyrics_info = process_data.lyrics_instead or process_data.lyrics_found or search_lyrics(
-                process_data.media_info.artist, process_data.media_info.title,
-                duration=audio_length(process_data.process_data_paths.whisper_audio_path),
-            )
+            lyrics_info = (process_data.lyrics_instead or process_data.lyrics_found
+                           or _lookup_lyrics(process_data))
             synced_lyrics = lyrics_info.synced_lyrics if lyrics_info is not None else None
             plain_lyrics = lyrics_info.plain_lyrics if lyrics_info is not None else None
             if synced_lyrics or plain_lyrics:
@@ -2464,8 +2536,8 @@ def TranscribeAudio(process_data):
             for kind, text in (("synced", synced_lyrics), ("plain", plain_lyrics)):
                 if not text:
                     continue
-                use_lyrics, lyrics_language = check_lyrics_language(
-                    text, process_data.media_info.language, language_is_confident,
+                use_lyrics, lyrics_language = _lyrics_language_check(
+                    lyrics_info, text, process_data.media_info.language, language_is_confident,
                 )
                 if not use_lyrics:
                     print(
@@ -3237,6 +3309,10 @@ def init_settings(argv: list[str]) -> Settings:
             settings.segmentation_model_token = arg or None
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
+        elif opt == "--lyrics_file":
+            settings.lyrics_file = arg or None
+        elif opt == "--lyrics_sources_dir":
+            settings.lyrics_sources_dir = arg or None
         elif opt in ("--disable_reference_lyrics"):
             settings.disable_reference_lyrics = True
         elif opt in ("--no_metadata_tags"):
@@ -3439,6 +3515,8 @@ def arg_options():
         "segmentation_model_token=",
         "disable_lead_vocal_pitch",
         "disable_lyrics_lookup",
+        "lyrics_file=",
+        "lyrics_sources_dir=",
         "disable_reference_lyrics",
         "no_metadata_tags",
         "disable_freestyle_detection",

@@ -78,7 +78,7 @@ _SPARSE_MIN_LENGTH_S = 60.0
 # at least this many times their words
 FULLER_SHARE = 1.5
 # Its synced lyrics replace plain ones of LRCLIB only when they have at
-# least this share of their words (see _words_shared): the same text, and
+# least this share of their words (see words_shared): the same text, and
 # not much less of it. Of 30 songs that both databases have, its text had at
 # least 78 % of the words of LRCLIB's in all but one (60 %, of a text a third
 # shorter; median: 95 %); the text of another song never had more than 6 %
@@ -122,8 +122,12 @@ class LyricsInfo:
     synced_lyrics: Optional[str] = None
     duration: Optional[float] = None
     instrumental: bool = False
-    # Where the lyrics come from: "LRCLIB" or SECOND_DB_NAME
+    # Where the lyrics come from: "LRCLIB", SECOND_DB_NAME, the name of a lyrics
+    # source of the user, or lyrics_sources.OWN_LYRICS_SOURCE
     source: str = "LRCLIB"
+    # Lyrics the user gave for this song: they are the lyrics of the song,
+    # whatever language a look at the audio takes it for
+    trusted: bool = False
 
     @property
     def has_lyrics(self) -> bool:
@@ -267,7 +271,7 @@ def find_lyrics(artist: str, title: str, duration: Optional[float] = None,
         return fits
 
     def text_fits(other: LyricsInfo) -> bool:
-        shared = _words_shared(found.plain_lyrics, lrc_text(other.synced_lyrics))
+        shared = words_shared(found.plain_lyrics, lrc_text(other.synced_lyrics))
         fits = shared >= SAME_TEXT_SHARE
         judged.append(f"The synced lyrics on {SECOND_DB_NAME} have {'' if fits else 'only '}{shared:.0%} "
                       f"of the words of the plain ones")
@@ -310,7 +314,7 @@ def _length_for_plain(found: LyricsInfo, length: Optional[float], duration: Opti
     then. The lyrics of a version that does not fit are not fetched; those
     of one that does must be the same text as well, with at least
     ``SAME_TEXT_SHARE`` of the words of the plain ones (see
-    ``_words_shared``).
+    ``words_shared``).
     """
     plain = {"duration": found.duration, "syncedLyrics": None}
     synced = {"duration": length, "syncedLyrics": "synced"}
@@ -319,7 +323,7 @@ def _length_for_plain(found: LyricsInfo, length: Optional[float], duration: Opti
     return _best_version([plain, synced], duration) is synced and not other_recording(length, recording)
 
 
-def _words_shared(text: str, other: str) -> float:
+def words_shared(text: str, other: str) -> float:
     """The share of the words of ``text`` that ``other`` has too, in the
     same order: those in a sure pair with a word of it (two words in a row
     that both texts have, compared without case, accents and punctuation;
@@ -565,7 +569,7 @@ def _names_match(entry: dict, artist: str, title: str) -> bool:
     found_title = entry.get("trackName") or ""
 
     def match(wanted_artist: str, wanted_track: str) -> bool:
-        return _artist_matches(found_artist, wanted_artist) and titles_match(found_title, wanted_track)
+        return artist_matches(found_artist, wanted_artist) and titles_match(found_title, wanted_track)
 
     return match(artist, title) or match(strip_title_additions(title), artist)
 
@@ -590,7 +594,7 @@ def _is_covered_song(entry: dict, song: str, artists: list[str]) -> bool:
     found_title = entry.get("trackName") or ""
 
     def one_of_ours(name: str) -> bool:
-        return any(_artist_matches(name, artist) for artist in artists)
+        return any(artist_matches(name, artist) for artist in artists)
 
     found_cover = cover_of(found_title)
     if found_cover is not None:
@@ -603,7 +607,7 @@ def _is_covered_song(entry: dict, song: str, artists: list[str]) -> bool:
     return one_of_ours(found_artist) and titles_match(found_title, song)
 
 
-def _artist_matches(found: str, wanted: str) -> bool:
+def artist_matches(found: str, wanted: str) -> bool:
     """The same artist, also when one credit names more artists than the
     other ("Artist" and "Artist & Guest" or "Artist, Guest") or a leading
     "The". Not a longer name: "Band" is not "Band Tribute"."""
@@ -661,6 +665,12 @@ def other_recording(length: Optional[float], duration: Optional[float]) -> bool:
         return False
     off = abs(length - duration)
     return off > OTHER_RECORDING_S and off > OTHER_RECORDING_SHARE * duration
+
+
+def with_dot_time_tags(lyrics: str) -> str:
+    """LRC text with the hundredths of its time tags after a dot, as they are
+    read everywhere: "[01:23:45]" is "[01:23.45]"."""
+    return _COLON_TIME_TAG_RE.sub(r"[\1:\2.\3]", lyrics)
 
 
 def lrc_text(synced_lyrics: str) -> str:
@@ -916,7 +926,7 @@ def _names_of_song(words: str, version: dict) -> Optional[str]:
     title, artist = version["trackName"], version["artistName"]
     if titles_match(words, title):
         return "title"
-    if _artist_matches(words, artist):
+    if artist_matches(words, artist):
         return "artist"
     halves = words.split(" - ", 1)
     if len(halves) == 2 and any(titles_match(half, title) for half in halves):

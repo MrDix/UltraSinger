@@ -63,6 +63,8 @@ This will help me a lot to keep this project alive and improve it.
     - [Format Version](#format-version)
     - [Line Break Timing](#line-break-timing)
     - [Cache Folder](#cache-folder)
+    - [Your Own Lyrics](#your-own-lyrics)
+    - [Lyrics Sources of Your Own](#lyrics-sources-of-your-own)
     - [Freestyle Detection](#freestyle-detection)
     - [🧪 Experimental Features](#-experimental-features)
       - [Library Triage Tool](#library-triage-tool)
@@ -349,6 +351,11 @@ _Not all options working now!_
                             lyrics to correct Whisper transcription errors. No API key needed. When LRCLIB
                             has no lyrics of the song, far too few, only plain ones, or ones with few of the
                             transcribed words, the lyrics database of music.163.com is asked too.
+    --lyrics_file           Your own lyrics of the song: a text file with plain lines or LRC lines with
+                            times. Used instead of a lookup. Default: the file next to the input file under
+                            its name (Song.mp3: Song.lrc, then Song.txt), if there is one.
+    --lyrics_sources_dir    Folder of lyrics sources of your own (Python files with a find_lyrics function).
+                            Default: lyrics_sources in the settings folder (~/.ultrasinger).
     --disable_reference_lyrics  Disable the reference-lyrics-first pipeline. When LRCLIB provides synced
                             (timestamped) lyrics, they are used with wav2vec2 forced alignment to obtain
                             precise word-level timing — dramatically improving lyrics coverage and timing
@@ -801,6 +808,54 @@ It is also asked when the lyrics of LRCLIB have few of the words a transcription
 **Words sung on a held vowel:** A singer often changes the word on a held note: "your" for a moment, then "eyes" held for seconds on the same vowel. The alignment listens for the letters of the words and keeps such a note with the first word, so the next word starts only at its end. After the lyrics are placed, a phoneme recognizer (wav2vec2, many languages) aligns the sounds of the words of each line, as eSpeak NG spells them, accepting vowels that a singer colors differently. A word whose sounds clearly start at least 0.25 s earlier, inside the word before, starts there: the notes of the word before from that time on become its notes. On 100 benchmark songs with hand-made charts in five languages, 202 of the 233 word starts it moved came closer to the reference chart, and the share of them within 0.25 s of it went from 24 % to 87 %; over whole songs, the median share of word starts within 0.1 s of the reference rose from 83.2 % to 84.6 % (61 songs better, 4 worse). It needs the separated vocal and downloads the phoneme model (about 1.3 GB) on first use; languages without phonemes are left as they are. Turn it off with `--disable_phoneme_word_starts` (GUI: Settings → "Phoneme Word Starts").
 
 The GUI's quality badge shows LRCLIB lyrics availability (✅ Synced lyrics / ⚠️ Plain lyrics only / 📝 No lyrics) so you can see at a glance whether the reference-lyrics-first pipeline will be used. It searches as a conversion of the video does: with the artist and title that the conversion takes from the video and looks up in the song database, and with the length of the video.
+
+### Your Own Lyrics
+
+For a song that no lyrics database knows, or one whose found lyrics are wrong, give UltraSinger the lyrics yourself. They are used instead of a lookup: nothing is searched, and what you give is taken as the lyrics of the song (also when the audio is taken for another language).
+
+The lyrics are a text file, plain lines or LRC lines with times:
+
+```
+[00:12.40] first line of the song
+[00:16.90] second line of it
+```
+
+Lines with times are used like found synced lyrics (the times are checked against the singing, see above), plain lines like found plain lyrics (their lines are placed by the transcription). The text is read as UTF-8, else in the Western European encoding of Windows. Section labels (`[Chorus]`), repeat marks and backing vocals in brackets are read as in found lyrics; the ID tags of an LRC file (`[ar:Artist]`) are no lyrics. The re-pitch of an UltraStar txt keeps the lyrics of its chart and uses no lyrics file.
+
+- **Next to the audio file:** a file under the name of the input file is used on its own: `Song.lrc` (first) or `Song.txt` next to `Song.mp3`. A `.txt` file has to look like lyrics (at least four lines, none longer than 300 characters); an UltraStar chart of that name is no lyrics file and is left alone.
+- **On the command line:** `--lyrics_file path/to/lyrics.txt`, also for a link. A file that cannot be used (missing, empty, an UltraStar chart) ends the conversion with an error, since no other lyrics are looked up in its place.
+- **In the GUI:** the settings of a song in the queue (the gear on its row) have the field **Own Lyrics**: paste the lyrics, or load a file. They belong to that song only, and a saved queue file keeps them.
+
+```commandline
+-i "Song.mp3" --lyrics_file "lyrics of the song.lrc"
+```
+
+### Lyrics Sources of Your Own
+
+Lyrics can also come from a source of your own: a collection of lyrics on your disk, or a service you have access to. A lyrics source is a small Python file in the folder `lyrics_sources` of the settings folder (`~/.ultrasinger/lyrics_sources`; GUI: Settings → **Lyrics Sources** → Open Folder; another folder with `--lyrics_sources_dir`). Each `*.py` file there (not those that start with `_`) is one source:
+
+```python
+NAME = "My lyrics collection"     # shown where found lyrics are reported (default: the file name)
+BEFORE_DATABASES = False          # True: asked before the lyrics databases
+
+def find_lyrics(artist, title, duration):
+    """artist and title of the song, the length of its audio in seconds (None when unknown)."""
+    path = f"D:/Lyrics/{artist} - {title}.lrc"
+    try:
+        with open(path, encoding="utf-8") as file:
+            return file.read()    # plain lines, or LRC lines with times
+    except OSError:
+        return None               # no lyrics of this song
+```
+
+`find_lyrics` returns the lyrics as text, `None`, or a dict `{"lyrics": text, "artist": ..., "title": ..., "duration": seconds}` when the source knows whose lyrics they are and how long that version is: lyrics of a song with another name are not taken, and the length tells lyrics of another recording.
+
+- By default a source is asked for what the lyrics databases do not have: for lyrics when they have none, and for synced lyrics when they have only plain ones (then only synced lyrics of the same text are taken, as from the second lyrics database). With `BEFORE_DATABASES = True` it is asked first, and the databases only when it has nothing.
+- Its lyrics are treated like found ones: checked against the language of the singing, their times against the transcription.
+- A source that fails, or takes longer than 20 seconds to load or to answer, is reported and left out for the rest of the conversion, which goes on.
+- No source is asked while the lyrics lookup is off (`--disable_lyrics_lookup`).
+
+**A lyrics source is a program that runs with your rights.** Only put files into that folder that you wrote or trust. UltraSinger only ever loads sources from the folder you name, never from the folder of a song or a download.
 
 ### Freestyle Detection
 

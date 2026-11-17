@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, Qt, Signal
 
 from .models import QueueItem
+from .own_lyrics import write_own_lyrics
 from .ultrasinger_runner import UltraSingerRunner
 
 if TYPE_CHECKING:
@@ -45,6 +46,9 @@ class QueueManager(QObject):
     stage_changed = Signal(str)
     item_result_info = Signal(str, dict)  # item_id, result_info dict
 
+    # A song that could not be started (see _run_next): item_id
+    _item_not_started = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._items: list[QueueItem] = []
@@ -66,6 +70,11 @@ class QueueManager(QObject):
         # avoiding races with add_item/remove_item/cancel_all.
         self._runner.finished.connect(
             self._on_item_finished, Qt.ConnectionType.QueuedConnection
+        )
+        # Queued too: a song that cannot be started ends from the event loop, as
+        # one whose conversion ended (many of them in a row are no call in a call)
+        self._item_not_started.connect(
+            self._on_item_not_started, Qt.ConnectionType.QueuedConnection
         )
 
     @property
@@ -263,6 +272,8 @@ class QueueManager(QObject):
         # from --video_url for an intercepted download) and, unlike a
         # --language, does not trust it to reject lyrics.
         merged = {**self._global_config, **next_item.settings_overrides}
+        # Own lyrics are those of one song: a value in the global settings never applies
+        merged["lyrics_text"] = next_item.settings_overrides.get("lyrics_text") or ""
 
         next_item.resolved_config = dict(merged)
 
@@ -281,6 +292,21 @@ class QueueManager(QObject):
             f"[Queue] Starting: {next_item.title}"
         )
         self.line_output.emit("")
+
+        # The song's own lyrics have to be there for its conversion, which would
+        # make the chart from other lyrics and report success without them:
+        # the song fails here, before anything is downloaded or started
+        lyrics_text = merged["lyrics_text"]
+        if isinstance(lyrics_text, str) and lyrics_text.strip():
+            try:
+                write_own_lyrics(lyrics_text)
+            except OSError as error:
+                self.line_output.emit(
+                    f"[Queue] ERROR: The lyrics of this song could not be saved "
+                    f"for its conversion ({error}) - not converted."
+                )
+                self._item_not_started.emit(next_item.id)
+                return
 
         # Preferred path: the bgutil PO-token provider. When it runs, plain
         # yt-dlp (with the plugin; no cookies needed) downloads any URL in
@@ -525,8 +551,9 @@ class QueueManager(QObject):
             info["language"] = new_lang
             return
 
-        # Lyrics found (on LRCLIB or the second lyrics database) — parse what types are available
-        m = re.search(r"Found lyrics on \S+:.*\[(.*?)\]"
+        # Lyrics found (on a lyrics database, on a lyrics source of the user, or
+        # in the user's own lyrics file) — parse what types are available
+        m = re.search(r"Found lyrics (?:on|in) [^:]+:.*\[(.*?)\]"
                       r"(?:, (\d+(?:\.\d+)?) s long \(the audio: (\d+(?:\.\d+)?) s\))?", clean)
         if m:
             details = m.group(1).lower()
@@ -613,6 +640,12 @@ class QueueManager(QObject):
             if not folder.endswith(("cache", "cache/", "cache\\")):
                 info["output_folder"] = folder
             return
+
+    def _on_item_not_started(self, item_id: str):
+        """End the song that could not be started as a failed one, then run next."""
+        item = self._current_item
+        if item is not None and item.id == item_id and item.status == "running":
+            self._on_item_finished(1)
 
     def _on_item_finished(self, exit_code: int):
         """Handle completion of a single item, then run next."""
