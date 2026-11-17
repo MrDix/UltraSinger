@@ -852,7 +852,7 @@ def find_lyrics(artist, title, duration):
 
 - By default a source is asked for what the lyrics databases do not have: for lyrics when they have none, and for synced lyrics when they have only plain ones (then only synced lyrics of the same text are taken, as from the second lyrics database). With `BEFORE_DATABASES = True` it is asked first, and the databases only when it has nothing.
 - Its lyrics are treated like found ones: checked against the language of the singing, their times against the transcription.
-- A source that fails, or takes longer than 20 seconds to load or to answer, is reported and left out; the conversion goes on.
+- A source that fails, or takes longer than 20 seconds to load or to answer, is reported and left out for the rest of the conversion, which goes on.
 - No source is asked while the lyrics lookup is off (`--disable_lyrics_lookup`).
 
 **A lyrics source is a program that runs with your rights.** Only put files into that folder that you wrote or trust. UltraSinger only ever loads sources from the folder you name, never from the folder of a song or a download.

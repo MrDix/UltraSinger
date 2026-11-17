@@ -329,6 +329,50 @@ class TestLyricsOfSources(unittest.TestCase):
         self.assertNotIn("Three", out)
         self.assertEqual(_quiet(lyrics_of_sources, [], "B", "S", None)[0], None)
 
+    def test_a_source_that_failed_is_not_asked_again(self):
+        """A conversion looks lyrics up twice: it does not wait a second time for a source that
+        failed or did not answer."""
+        asked = []
+
+        def slow(artist, title, duration):
+            asked.append("slow")
+            time.sleep(1.0)
+
+        def broken(artist, title, duration):
+            asked.append("broken")
+            raise RuntimeError("no connection")
+
+        def silent(artist, title, duration):
+            asked.append("silent")
+
+        sources = [_source(slow, "Slow"), _source(broken, "Broken"), _source(silent, "Silent")]
+        with patch.object(lyrics_sources, "SOURCE_TIMEOUT_S", 0.05):
+            _, first = _quiet(lyrics_of_sources, sources, "B", "S", None)
+            _, second = _quiet(lyrics_of_sources, sources, "B", "S", None)
+        self.assertEqual(asked, ["slow", "broken", "silent", "silent"])
+        self.assertEqual([source.failed for source in sources], [True, True, False])
+        self.assertIn("did not answer", first)
+        self.assertIn("failed", first)
+        # (a source without lyrics of the song has not failed, and the others are not named again)
+        self.assertIn("Silent", second)
+        self.assertNotIn("Slow", second)
+        self.assertNotIn("Broken", second)
+
+    def test_a_failed_source_is_one_of_this_run(self):
+        """The sources of a folder are loaded once and kept: so is what failed."""
+        with tempfile.TemporaryDirectory() as folder:
+            _source_file(folder, "broken.py", "CALLS = []\n"
+                                              "def find_lyrics(artist, title, duration):\n"
+                                              "    CALLS.append(title)\n"
+                                              "    raise RuntimeError('no connection')\n")
+            with patch.object(lyrics_sources.lrclib_client, "search_lyrics", return_value=None) as search:
+                for _ in range(2):
+                    self.assertIsNone(_quiet(find_song_lyrics, "The Band", "A Song", 200.0, sources_dir=folder)[0])
+            source, = lyrics_sources.lyrics_sources(folder)
+            self.assertTrue(source.failed)
+            self.assertEqual(sys.modules[source.find.__module__].CALLS, ["A Song"])
+            self.assertEqual(search.call_count, 2)
+
     def test_instead_of_plain_lyrics_only_synced_ones_of_the_same_text(self):
         plain = LyricsInfo(track_name="S", artist_name="B", plain_lyrics=PLAIN, duration=200.0)
         other_text = "[00:10.00] words of another song\n[00:14.00] that has other lines\n[00:20.00] all of them"

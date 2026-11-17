@@ -191,11 +191,16 @@ class LyricsSource:
     ``NAME`` in the file names the source where found lyrics are reported
     (default: the file name), ``BEFORE_DATABASES = True`` lets it be asked
     before the lyrics databases instead of for what they do not have.
+
+    ``failed`` is set when the source failed or did not answer in time: it
+    is not asked again in this run (a conversion looks lyrics up twice, and
+    would wait for it once more).
     """
     name: str
     find: Callable
     before_databases: bool
     path: str
+    failed: bool = False
 
 
 def _within_time(work: Callable, timeout_text: str, error_text: str):
@@ -265,10 +270,14 @@ def load_lyrics_sources(folder: str | os.PathLike | None) -> list[LyricsSource]:
 
 
 def _answer(source: LyricsSource, artist: str, title: str, duration: Optional[float]):
-    """What a source answers, None when it fails or takes too long."""
-    return _within_time(lambda: source.find(artist, title, duration),
-                        f"the lyrics source {blue_highlighted(source.name)} did not answer",
-                        f"the lyrics source {blue_highlighted(source.name)} failed")[1]
+    """What a source answers, None when it fails or takes too long: it is
+    marked as failed then (see ``LyricsSource``)."""
+    answered, answer = _within_time(lambda: source.find(artist, title, duration),
+                                    f"the lyrics source {blue_highlighted(source.name)} did not answer",
+                                    f"the lyrics source {blue_highlighted(source.name)} failed")
+    if not answered:
+        source.failed = True
+    return answer
 
 
 def _names_fit(answer: dict, artist: str, title: str) -> bool:
@@ -308,7 +317,8 @@ def lyrics_of_source(source: LyricsSource, artist: str, title: str,
 
 def lyrics_of_sources(sources: list[LyricsSource], artist: str, title: str, duration: Optional[float],
                       instead_of: Optional[LyricsInfo] = None) -> Optional[LyricsInfo]:
-    """The lyrics of the first of the sources that has some.
+    """The lyrics of the first of the sources that has some. A source that
+    failed before in this run is not asked (see ``LyricsSource``).
 
     With ``instead_of``, the plain lyrics a lyrics database has: only synced
     lyrics of the same text (``SAME_TEXT_SHARE`` of the words of the plain
@@ -320,6 +330,8 @@ def lyrics_of_sources(sources: list[LyricsSource], artist: str, title: str, dura
     if not recording and instead_of is not None and isinstance(instead_of.duration, (int, float)):
         recording = instead_of.duration
     for source in sources:
+        if source.failed:
+            continue
         print(f"{ULTRASINGER_HEAD} Asking the lyrics source {blue_highlighted(source.name)}")
         lyrics = lyrics_of_source(source, artist, title, duration)
         if lyrics is None:

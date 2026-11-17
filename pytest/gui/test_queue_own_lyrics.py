@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -43,6 +43,27 @@ class TestOwnLyricsInTheQueue:
         args = _started_args(manager)
         assert Path(args[args.index("--lyrics_file") + 1]).read_text(encoding="utf-8") == LYRICS
         assert song.resolved_config["lyrics_text"] == LYRICS
+
+    def test_a_song_whose_lyrics_cannot_be_saved_fails_before_it_starts(self, tmp_path):
+        """Its conversion would make the chart from other lyrics and report success."""
+        audio = tmp_path / "song.mp3"
+        audio.write_bytes(b"x")
+        manager = _manager()
+        lines, statuses = [], []
+        manager.line_output.connect(lines.append)
+        manager.item_status_changed.connect(lambda item_id, status: statuses.append((item_id, status)))
+        song = manager.add_item(str(audio), "file", "Song with lyrics")
+        song.settings_overrides = {"lyrics_text": LYRICS}
+        other = manager.add_item(str(audio), "file", "Song without")
+        with patch("src.gui.queue_manager.write_own_lyrics", side_effect=OSError("disk full")):
+            manager.start_all()
+        assert (song.status, song.exit_code) == ("failed", 1)
+        assert any("could not be saved" in line and "disk full" in line for line in lines)
+        assert (song.id, "failed") in statuses
+        # the queue goes on with the next song, which is the only one that was started
+        assert other.status == "running"
+        manager._runner.start.assert_called_once()
+        assert "--lyrics_file" not in _started_args(manager)
 
     def test_lyrics_in_the_global_settings_are_no_song_s_lyrics(self, tmp_path):
         audio = tmp_path / "song.mp3"

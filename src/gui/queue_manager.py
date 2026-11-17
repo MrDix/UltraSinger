@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, Qt, Signal
 
 from .models import QueueItem
+from .own_lyrics import write_own_lyrics
 from .ultrasinger_runner import UltraSingerRunner
 
 if TYPE_CHECKING:
@@ -283,6 +284,21 @@ class QueueManager(QObject):
             f"[Queue] Starting: {next_item.title}"
         )
         self.line_output.emit("")
+
+        # The song's own lyrics have to be there for its conversion, which would
+        # make the chart from other lyrics and report success without them:
+        # the song fails here, before anything is downloaded or started
+        lyrics_text = merged["lyrics_text"]
+        if isinstance(lyrics_text, str) and lyrics_text.strip():
+            try:
+                write_own_lyrics(lyrics_text)
+            except OSError as error:
+                self.line_output.emit(
+                    f"[Queue] ERROR: The lyrics of this song could not be saved "
+                    f"for its conversion ({error}) - not converted."
+                )
+                self._on_item_finished(1)
+                return
 
         # Preferred path: the bgutil PO-token provider. When it runs, plain
         # yt-dlp (with the plugin; no cookies needed) downloads any URL in
