@@ -817,6 +817,7 @@ def run() -> tuple[str, Score, Score]:
             lead_vocal_pitch=settings.lead_vocal_pitch,
             cache_folder=process_data.process_data_paths.cache_folder_path,
             force_cpu=settings.force_cpu,
+            split_words=settings.hyphenation,
         ) if model_path else None
         if model_result:
             process_data.midi_segments = model_result.segments

@@ -87,6 +87,7 @@ def segment_with_model(
     lead_vocal_pitch: bool = False,
     cache_folder: str | None = None,
     force_cpu: bool = False,
+    split_words: bool = True,
 ) -> ModelSegmentation | None:
     """Predict notes on the separated vocal and place the existing lyrics onto them.
 
@@ -102,6 +103,9 @@ def segment_with_model(
     stem the pitches came from, so later steps that compare the notes with the
     singing can use the same one. Notes that their pitch track covers well keep
     their pitch in the later pitch refinement (see ``lock_pitches``).
+
+    Without ``split_words`` (hyphenation switched off) the words are placed
+    whole, not in syllables.
     """
     if not model_path or not os.path.isfile(model_path):
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} segmentation model not found: "
@@ -139,7 +143,7 @@ def segment_with_model(
         if not notes:
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} model found no notes - keeping word-based notes")
             return None
-        syllables = syllables_from_segments(midi_segments, language)
+        syllables = syllables_from_segments(midi_segments, language, split_words)
         notes = split_freestyle_at_words(notes, syllables)
         segments = place_lyrics(notes, syllables)
         if not segments:

@@ -324,7 +324,8 @@ _Not all options working now!_
     [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 120)
     --octave                Shift all notes by N octaves after pitch detection (e.g., --octave 1 for up, --octave -1 for down)
-    --disable_hyphenation   Disable word hyphenation. Hyphenation is enabled by default.
+    --disable_hyphenation   Disable word hyphenation: words are not split into syllables (also not on the
+                            notes of a segmentation model). Hyphenation is enabled by default.
     --disable_separation    Disable track separation. Track separation is enabled by default.
     --disable_onset_correction  Disable onset-based timing correction. Enabled by default.
     --disable_phoneme_word_starts  Do not move word starts by their sounds. Enabled by default: a word sung
@@ -624,7 +625,10 @@ Without `--language`, Whisper finds the language of the song before it transcrib
 Is on by default. Can also be deactivated if hyphenation does not produce
 anything useful. Note that the word is simply split,
 without paying attention to whether the separated word really
-starts at the place or is heard. To disable:
+starts at the place or is heard. With a
+[segmentation model](#model-based-note-segmentation---segmentation_model), the syllables are placed
+on the notes the model hears, and a word on several notes shows the syllables it is spoken with.
+To disable (all words stay whole, with or without a model):
 
 ```commandline
 -i XYZ --disable_hyphenation
@@ -1046,6 +1050,8 @@ To share one model between computers, keep it in a (private) GitHub repository a
 ```commandline
 -i XYZ --segmentation_model_repo owner/models-repo
 ```
+**Syllables on the notes of a word:** the hyphenation that splits the words knows where a word is broken in print. It leaves short words whole ("only", "baby", "never") and splits off no single letter ("a-way"), so a word sung on two notes showed as `only` `~`. A word is therefore spread over its notes in as many syllables as it is spoken with (counted from its phonemes by eSpeak NG, which comes with UltraSinger): `on` `ly`. The words stay on the notes they were on, and a word on one note stays whole. Measured on 100 songs with hand-made reference charts: of the English words that a reference chart writes on two or more syllable notes, 81 % have as many in the generated chart (41 % before); German 90 % (88 %), Spanish 91 % (85 %), Italian 82 % (69 %). With `--disable_hyphenation` the words are placed whole.
+
 **Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). The pitch refinement and the game-score report then compare the notes with the lead stem as well. Where the lead stem has no tone, the full vocal stem counts instead (for the refinement in notes without a detected tone, for the game score in every moment without one): the separation takes a chorus sung by several voices for backing vocals, and its notes would otherwise score as all missed. On a 100-song benchmark this raised the median agreement with hand-made charts by about 1.7 points, mainly on songs with several voices. The separation needs about 2.2 GB of free GPU memory; with less it is skipped, since it would run in shared system memory and take very long, and the note pitches come from the full vocal stem.
 
 #### ptAKF Chart Refit (`--ptakf_refit`)

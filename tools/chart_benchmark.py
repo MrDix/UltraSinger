@@ -102,6 +102,17 @@ an error; case, accents, apostrophes and punctuation are ignored:
 ``word_start_100_pct`` / ``word_start_250_pct``
     Found words whose generated start lies within 100 / 250 ms of the
     reference start.
+
+How a word is spread over its notes is compared too. A syllable note is a
+note with a text of its own, not a "~" continuation:
+
+``syllable_notes_pct``
+    Found words that the reference writes on two or more syllable notes
+    ("ba" "by") and the generated chart writes on as many: its syllables
+    are on notes of their own, not "baby" "~".
+``syllable_extra_pct``
+    Found words that the reference writes on one syllable note and the
+    generated chart on several: a word cut where it is sung as one.
 """
 
 from __future__ import annotations
@@ -157,7 +168,7 @@ SUMMARY_METRICS = [
     "ref_coverage_pct", "extra_time_pct", "freestyle_charted_pct", "oracle_pitch_pct",
     "vocal_hits_ref_pct", "vocal_hits_gen_pct",
     "lyrics_agreement_pct", "lyrics_agree_pct", "lyrics_words_found_pct",
-    "word_start_100_pct", "word_start_250_pct",
+    "word_start_100_pct", "word_start_250_pct", "syllable_notes_pct", "syllable_extra_pct",
 ]
 
 
@@ -454,6 +465,7 @@ class ChartWord:
     """A word as the games display it, with the time span of every note sung on it."""
     text: str  # normalized, see normalize_word()
     spans: list[tuple[float, float]]  # (start_ms, end_ms) per note
+    syllables: int = 1  # notes with a text of their own (not "~"); 0: the note has several words
 
     @property
     def start_ms(self) -> float:
@@ -478,9 +490,13 @@ def load_words(path: str | Path, shift_ms: float = 0.0) -> list[ChartWord]:
     text extend the current word. A note that carries several words shares its
     time among them by their length. Words that are empty after normalization
     (punctuation only) are dropped.
+
+    ``ChartWord.syllables`` counts the notes that add text to the word; it is
+    0 for a word that shares a note with another word (its syllables cannot
+    be told from its notes).
     """
     parsed = parse_ultrastar(path)
-    words: list[list] = []  # [raw text, spans]
+    words: list[list] = []  # [raw text, spans, syllable notes, shares a note]
     new_word = True
     for raw in absolute_chart_text(read_chart_text(path)).splitlines():
         line = raw.strip()
@@ -517,14 +533,16 @@ def load_words(path: str | Path, shift_ms: float = 0.0) -> list[ChartWord]:
             if k == 0 and words and not new_word and not text[:1].isspace():
                 words[-1][0] += token
                 words[-1][1].append(span)
+                words[-1][2] += 1
+                words[-1][3] = words[-1][3] or len(tokens) > 1
             else:
-                words.append([token, [span]])
+                words.append([token, [span], 1, len(tokens) > 1])
         new_word = text[-1:].isspace()
     out = []
-    for raw_text, spans in words:
+    for raw_text, spans, syllables, shared in words:
         key = normalize_word(raw_text)
         if key:
-            out.append(ChartWord(key, spans))
+            out.append(ChartWord(key, spans, 0 if shared else syllables))
     return out
 
 
@@ -572,7 +590,7 @@ def align_words(ref: list[ChartWord], gen: list[ChartWord]) -> list[tuple[int, i
 
 
 LYRICS_METRICS = ("lyrics_agreement_pct", "lyrics_agree_pct", "lyrics_words_found_pct",
-                  "word_start_100_pct", "word_start_250_pct")
+                  "word_start_100_pct", "word_start_250_pct", "syllable_notes_pct", "syllable_extra_pct")
 
 
 def lyrics_metrics(ref: list[ChartWord], gen: list[ChartWord]) -> dict:
@@ -590,6 +608,10 @@ def lyrics_metrics(ref: list[ChartWord], gen: list[ChartWord]) -> dict:
     both = r_on & (g >= 0)
     pairs = align_words(ref, gen)
     dt = np.array([abs(gen[j].start_ms - ref[i].start_ms) for i, j in pairs])
+    # Words whose syllable notes are known on both sides (no note shared with another word)
+    counted = [(ref[i].syllables, gen[j].syllables) for i, j in pairs if ref[i].syllables and gen[j].syllables]
+    several = [g == r for r, g in counted if r >= 2]
+    one = [g > 1 for r, g in counted if r == 1]
     return {
         **counts,
         "lyrics_agreement_pct": _pct(float(same.sum() / r_on.sum())) if r_on.any() else None,
@@ -597,6 +619,8 @@ def lyrics_metrics(ref: list[ChartWord], gen: list[ChartWord]) -> dict:
         "lyrics_words_found_pct": _pct(len(pairs) / len(ref)),
         "word_start_100_pct": _pct(float(np.mean(dt <= 100))) if len(dt) else None,
         "word_start_250_pct": _pct(float(np.mean(dt <= 250))) if len(dt) else None,
+        "syllable_notes_pct": _pct(float(np.mean(several))) if several else None,
+        "syllable_extra_pct": _pct(float(np.mean(one))) if one else None,
     }
 
 

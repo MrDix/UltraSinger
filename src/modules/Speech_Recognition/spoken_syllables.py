@@ -62,7 +62,9 @@ class SpokenSyllables:
             self._counts[word] = None
         if not asked:
             return
-        answers = self._backend.phonemize(asked, separator=Separator(phone=" ", word=" | "), strip=True)
+        # (in small letters: a short word in capitals is read as an abbreviation, "IT" as "I T")
+        answers = self._backend.phonemize([word.lower() for word in asked],
+                                          separator=Separator(phone=" ", word=" | "), strip=True)
         if len(answers) != len(asked):  # (an empty answer was dropped: no count for these words)
             return
         for word, phonemes in zip(asked, answers):

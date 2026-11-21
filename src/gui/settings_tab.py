@@ -472,6 +472,8 @@ class ConversionSettingsForm(QWidget):
         card.add_toggle_row("Hyphenation", self._hyphenation,
                            "Split words into syllables (e.g., 'beautiful' → 'beau-ti-ful'). "
                            "Required by most karaoke games for proper syllable highlighting. "
+                           "With a segmentation model, a word sung on several notes shows the "
+                           "syllables it is spoken with ('on' 'ly' instead of 'only' '~'). "
                            "Disable only if you want whole-word notes.",
                            reset_callback=lambda: self._hyphenation.setChecked(
                                _DEFAULTS["hyphenation"]))

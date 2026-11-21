@@ -38,7 +38,8 @@ MIN_FREESTYLE_WORD_S = 0.1  # shortest part of a freestyle note that is cut at i
 # has vowel groups ("ra-di-o"). Not where eSpeak NG counts the vowels of a group one by one that
 # are sung as one syllable (Italian "mio", "cuore"); measured for these languages only.
 INNER_CUT_LANGUAGES = frozenset(("en", "de", "es"))
-# Ways to spread the parts of a syllable over its notes that are tried one by one (more: in order)
+# Ways to spread the parts of a syllable over its notes that are all compared (with more of them,
+# each part takes the nearest note that is left, one part after the other)
 MAX_SPREADS = 5000
 
 _WORD_RE = re.compile(r"[\w'’-]+", re.UNICODE)
@@ -174,11 +175,13 @@ def _word_tokens(core: str, hyph, spoken, inner: bool) -> list[tuple[str, tuple[
     return tokens if "".join(text for text, _ in tokens) == core else [(part, ()) for part in base]
 
 
-def syllables_from_segments(segments: list[MidiSegment], language: str | None) -> list[Syllable]:
+def syllables_from_segments(segments: list[MidiSegment], language: str | None,
+                            split_words: bool = True) -> list[Syllable]:
     """Word/syllable tokens with times from word segments, hyphenated further.
 
     A syllable that is spoken with more syllables than the hyphenation gives
-    it carries them in ``parts`` (see ``_word_tokens``).
+    it carries them in ``parts`` (see ``_word_tokens``). Without
+    ``split_words`` every word stays whole.
     """
     tokens: list[list] = []  # [text, start_ms, end_ms, line_start]
     line_start = True
@@ -195,6 +198,8 @@ def syllables_from_segments(segments: list[MidiSegment], language: str | None) -
         if getattr(seg, "line_break_after", False):
             line_start = True
 
+    if not split_words:
+        return [Syllable(text, a, b, ls) for text, a, b, ls in tokens]
     hyph = _hyphenator(language)
     code = (language or "en").lower()[:2]
     spoken = spoken_syllables(code)
@@ -248,8 +253,13 @@ def spread_parts(parts: tuple[str, ...], starts_ms: list[float], end_ms: float) 
     span = end_ms - starts_ms[0]
     expected = [starts_ms[0] + span * sum(len(q) for q in parts[:k]) / total for k in range(count)]
     pairs = min(notes, count) - 1
-    if math.comb(max(notes, count) - 1, pairs) > MAX_SPREADS:
-        chosen = [(k, k) for k in range(1, pairs + 1)]  # (note, part): one after the other
+    if notes >= count and math.comb(notes - 1, pairs) > MAX_SPREADS:
+        chosen, low = [], 1  # (note, part)
+        for k in range(1, count):
+            # (the parts after this one still need a note each)
+            note = min(range(low, notes - (count - 1 - k)), key=lambda i: abs(starts_ms[i] - expected[k]))
+            chosen.append((note, k))
+            low = note + 1
     elif notes >= count:
         best = min(combinations(range(1, notes), pairs),
                    key=lambda picked: sum(abs(starts_ms[i] - expected[k + 1]) for k, i in enumerate(picked)))
