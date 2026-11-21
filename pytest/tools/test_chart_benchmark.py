@@ -521,6 +521,17 @@ class TestLyricsMetrics:
         assert m["syllable_extra_pct"] == 50.0  # "love" of love and mind
         assert m["syllable_notes_pct"] == 0.0  # more syllable notes than the reference are not the same either
 
+    def test_a_word_cut_short_has_no_known_syllable_notes(self):
+        """The words before a second voice that is appended to the chart: a word that loses notes there
+        may have lost a syllable note."""
+        words = self._syllables(("baby", 2, 2), ("only", 2, 3), ("love", 1, 1))
+        # "only" starts at 1000 ms with notes at 1000, 1100 and 1200
+        cut = cb.words_before(words, 1150)
+        assert [(w.text, w.syllables, len(w.spans)) for w in cut] == [("baby", 2, 2), ("only", 0, 2)]
+        assert cb.words_before(words, 5000) == words
+        assert cb.words_before(words, 0) == []
+        assert cb.lyrics_metrics(cut, self._syllables(("baby", 2, 2), ("only", 1, 2)))["syllable_notes_pct"] == 100.0
+
     def test_only_found_words_with_known_syllable_notes_count(self):
         ref = self._syllables(("baby", 2, 2), ("only", 2, 2), ("radio", 0, 1), ("gone", 2, 2))
         gen = self._syllables(("baby", 0, 1), ("only", 2, 2), ("radio", 3, 3))

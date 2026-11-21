@@ -235,6 +235,11 @@ class TestSpreadParts:
         # a run of short notes, then a held one
         assert spread_parts(("Ma", "ma"), [0, 100, 200, 300, 400], 2000) == ["Ma", "~", "~", "~", "ma"]
 
+    def test_the_spaces_around_the_text_are_no_letters(self):
+        """The space after a word must not move its syllables to other notes."""
+        for parts in (("on", "ly"), ("on", "ly "), ("on", "ly   "), (" on", "ly ")):
+            assert [text.strip() for text in spread_parts(parts, [0, 1000, 1200], 3000)] == ["on", "~", "ly"], parts
+
     def test_the_parts_keep_their_order(self):
         texts = spread_parts(("ma", "te", "ri", "al"), [0, 100, 200, 300, 400, 500, 600, 700], 800)
         assert [t for t in texts if t != "~"] == ["ma", "te", "ri", "al"]

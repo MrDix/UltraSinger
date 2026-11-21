@@ -318,17 +318,18 @@ def spread_parts(parts: tuple[str, ...], starts_ms: list[float], end_ms: float) 
     """The texts of the notes of a syllable that is spoken with the syllables ``parts``.
 
     The first note keeps the first part. Each further part is expected where
-    its share of the letters begins in the time of the notes; as many parts
-    as there are notes for get a note of their own, those nearest to where
-    they are expected. A part without a note joins the part before it, a note
-    without a part stays "~".
+    its share of the letters begins in the time of the notes (the spaces
+    around the text are no letters); as many parts as there are notes for
+    get a note of their own, those nearest to where they are expected. A part
+    without a note joins the part before it, a note without a part stays "~".
     """
     notes, count = len(starts_ms), len(parts)
     if notes < 2 or count < 2:
         return ["".join(parts)] + ["~"] * (notes - 1)
-    total = sum(len(part) for part in parts) or 1
+    letters = [len(part.strip()) for part in parts]
+    total = sum(letters) or 1
     span = end_ms - starts_ms[0]
-    expected = [starts_ms[0] + span * sum(len(q) for q in parts[:k]) / total for k in range(count)]
+    expected = [starts_ms[0] + span * sum(letters[:k]) / total for k in range(count)]
     pairs = min(notes, count) - 1
     if notes >= count and math.comb(notes - 1, pairs) > MAX_SPREADS:
         chosen, low = [], 1  # (note, part)

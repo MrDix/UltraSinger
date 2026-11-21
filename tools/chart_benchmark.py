@@ -589,6 +589,20 @@ def align_words(ref: list[ChartWord], gen: list[ChartWord]) -> list[tuple[int, i
     return pairs[::-1]
 
 
+def words_before(words: list[ChartWord], end_ms: float) -> list[ChartWord]:
+    """The words with only their notes that start before ``end_ms``.
+
+    A word without such a note is left out. A word that loses notes may have
+    lost a syllable note: its ``syllables`` are no longer known (0).
+    """
+    kept = []
+    for word in words:
+        spans = [span for span in word.spans if span[0] < end_ms]
+        if spans:
+            kept.append(word if len(spans) == len(word.spans) else replace(word, spans=spans, syllables=0))
+    return kept
+
+
 LYRICS_METRICS = ("lyrics_agreement_pct", "lyrics_agree_pct", "lyrics_words_found_pct",
                   "word_start_100_pct", "word_start_250_pct", "syllable_notes_pct", "syllable_extra_pct")
 
@@ -872,8 +886,7 @@ def evaluate_song(song: dict, run_dir: Path, min_ref_fit: float, plots: bool) ->
     ref_words = load_words(song["txt"], offset)
     if appended_start_ms is not None:
         # the lyrics are compared for the first voice only (the chart has one text track)
-        ref_words = [replace(w, spans=[s for s in w.spans if s[0] < appended_start_ms]) for w in ref_words]
-        ref_words = [w for w in ref_words if w.spans]
+        ref_words = words_before(ref_words, appended_start_ms)
     metrics.update(lyrics_metrics(ref_words, load_words(gen_txt)))
     reliable = fit is not None and fit * 100 >= min_ref_fit
     row = {"id": song["id"], "status": "ok" if reliable else "unreliable_reference",
