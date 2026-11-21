@@ -48,6 +48,7 @@ class SpokenSyllables:
         self._backend = _espeak_backend(voice)
         self._counts: dict[str, int | None] = {}
         self._tails: dict[str, int | None] = {}
+        self._ng: dict[str, bool | None] = {}
 
     def count_many(self, words) -> None:
         """Look up the words that are not known yet, in one go."""
@@ -56,7 +57,7 @@ class SpokenSyllables:
         new = sorted({word for word in words if word not in self._counts})
         asked = [word for word in new if 0 < len(word) <= MAX_WORD_LETTERS and re.search(r"[^\W\d_]", word)]
         for word in new:
-            self._counts[word] = self._tails[word] = None
+            self._counts[word] = self._tails[word] = self._ng[word] = None
         if not asked:
             return
         # (in small letters: a short word in capitals is read as an abbreviation, "IT" as "I T")
@@ -65,11 +66,12 @@ class SpokenSyllables:
         if len(answers) != len(asked):  # (an empty answer was dropped: no count for these words)
             return
         for word, phonemes in zip(asked, answers):
-            vowel = [_SYLLABIC in phoneme or any(letter in _VOWEL_SOUNDS for letter in phoneme)
-                     for phoneme in phonemes.replace("|", " ").split()]
+            sounds = phonemes.replace("|", " ").split()
+            vowel = [_SYLLABIC in sound or any(letter in _VOWEL_SOUNDS for letter in sound) for sound in sounds]
             if any(vowel):
                 self._counts[word] = sum(vowel)
                 self._tails[word] = vowel[::-1].index(True)
+                self._ng[word] = any("ŋ" in sound for sound in sounds[:len(sounds) - 1 - self._tails[word]])
 
     def count(self, word: str) -> int | None:
         """Syllables the word is spoken with, None when that is not known."""
@@ -82,6 +84,13 @@ class SpokenSyllables:
         if word not in self._tails:
             self.count_many([word])
         return self._tails[word]
+
+    def ng(self, word: str) -> bool | None:
+        """Whether the word has the one sound of "ng" before its last vowel sound: "singing" has,
+        "plunging" (n and a soft g) has not (None: not known)."""
+        if word not in self._ng:
+            self.count_many([word])
+        return self._ng[word]
 
 
 def spoken_syllables(language: str | None) -> SpokenSyllables | None:
@@ -121,13 +130,14 @@ def _vowel_groups(low: str) -> list[tuple[int, int]]:
     return groups
 
 
-def _consonant_cut(low: str, start: int, end: int) -> int:
-    """Where the consonants low[start:end] between two vowel groups are cut."""
+def _consonant_cut(low: str, start: int, end: int, ng: bool | None = None) -> int:
+    """Where the consonants low[start:end] between two vowel groups are cut
+    (``ng``: see ``split_word``)."""
     if end == start:
         return start
     if end - start >= 2 and low[end - 1:] in _LE_ENDINGS:
         return end - 2  # "peo-ple", "lit-tle"
-    if low[start:end] == "ng" and low[end:] in ("ing", "ings", "in"):
+    if ng is not False and low[start:end] == "ng" and low[end:] in ("ing", "ings", "in", "in'", "in’"):
         return end  # "sing-ing"
     units: list[int] = []  # start of each consonant sound
     i = start
@@ -157,7 +167,7 @@ def _inner_cuts(low: str, start: int, end: int) -> list[int]:
 
 
 def split_word(word: str, count: int | None, parts: list[str] | None = None, count_of=None,
-               inner: bool = True, tail: int | None = None) -> list[str]:
+               inner: bool = True, tail: int | None = None, ng: bool | None = None) -> list[str]:
     """The word in syllables, up to ``count`` of them.
 
     ``parts`` are its syllables by the hyphenation (None or one part when it
@@ -172,7 +182,10 @@ def split_word(word: str, count: int | None, parts: list[str] | None = None, cou
     Without ``inner`` no vowel group is cut ("ra-dio" stays two parts).
     ``tail`` is the number of consonant sounds the word ends with: with more
     of them than there are letters after a last "e", that "e" is not spoken
-    and makes no syllable ("re-al-ize", not "rea-li-ze").
+    and makes no syllable ("rea-lize", not "rea-li-ze"). ``ng`` tells whether
+    an "ng" before the ending "-ing" is one sound, which stays together
+    ("sing-ing"); False for two sounds ("plun-ging"), None when not known
+    (taken for one sound).
     """
     parts = parts if parts and "".join(parts) == word else [word]
     if not count or len(word) > MAX_WORD_LETTERS:
@@ -186,11 +199,11 @@ def split_word(word: str, count: int | None, parts: list[str] | None = None, cou
         finer = [piece for part in parts for piece in _cut(part, count_of(part) or 1, inner)]
         if len(finer) == count:
             return finer
-    split = _cut(word, count, inner, tail)
+    split = _cut(word, count, inner, tail, ng)
     return split if len(split) > len(parts) else parts
 
 
-def _cut(word: str, count: int, inner: bool = True, tail: int | None = None) -> list[str]:
+def _cut(word: str, count: int, inner: bool = True, tail: int | None = None, ng: bool | None = None) -> list[str]:
     """The word cut between its vowel groups into up to ``count`` parts."""
     if count < 2:
         return [word]
@@ -207,7 +220,7 @@ def _cut(word: str, count: int, inner: bool = True, tail: int | None = None) -> 
         runs.pop()
         groups[-2:] = [(groups[-2][0], b)]
     # One cut between each two vowel groups; cuts[k] lies before group k + 1
-    cuts = [_consonant_cut(low, a_end, b_start) for (_, a_end), (b_start, _) in zip(groups, groups[1:])]
+    cuts = [_consonant_cut(low, a_end, b_start, ng) for (_, a_end), (b_start, _) in zip(groups, groups[1:])]
     # More vowel groups than syllables: a silent "e" is no syllable ("love-ly", "some-times", "a-lone")
     while len(cuts) + 1 > count:
         lone_e = [k for k, (a, b) in enumerate(groups) if low[a:b] == "e"]

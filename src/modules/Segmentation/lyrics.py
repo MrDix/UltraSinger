@@ -140,7 +140,7 @@ def _spoken_split(word: str, own: list[str], spoken, inner: bool) -> list[str]:
     """The word in the syllables it is spoken with (see ``split_word``), ``own`` when that fails."""
     try:
         new = split_word(word, spoken.count(word), own if len(own) > 1 else None, spoken.count, inner,
-                         spoken.tail(word))
+                         spoken.tail(word), spoken.ng(word))
     except Exception:  # noqa: BLE001 - the hyphenation alone then
         return own
     return new if "".join(new) == word else own
@@ -292,7 +292,8 @@ def syllables_from_segments(segments: list[MidiSegment], language: str | None,
         trail = " " if text.endswith(" ") else ""
         if len(word_tokens) < 2 or "".join(part for part, _ in word_tokens) != core:
             finer = word_tokens[0][1] if len(word_tokens) == 1 and word_tokens[0][0] == core else ()
-            out.append(Syllable(text, a, b, ls, _with_edges(finer, lead, trail)))
+            # (the text is kept as it is, also with more than one space at its end: so are its parts)
+            out.append(Syllable(text, a, b, ls, _with_edges(finer, lead, text[len(text.rstrip()):])))
             continue
         total = sum(len(part) for part, _ in word_tokens)
         t0, done = a, 0

@@ -34,6 +34,7 @@ class _Spoken:
     def __init__(self, counts=None, tails=None):
         self.counts = COUNTS if counts is None else counts
         self.tails = tails or {}
+        self.soft_ng: set[str] | None = None  # words whose "ng" is two sounds
         self.asked: list[str] = []
 
     def count_many(self, words):
@@ -44,6 +45,9 @@ class _Spoken:
 
     def tail(self, word):
         return self.tails.get(word.lower())
+
+    def ng(self, word):
+        return self.soft_ng is None or word.lower() not in self.soft_ng
 
 
 @pytest.fixture
@@ -101,6 +105,21 @@ class TestSpokenSyllablesOfAWord:
         """The hyphenation cuts "you're" in two; it is spoken, and now placed, as one."""
         syl = _syllables("you're ", "o'clock ")
         assert [(s.text, s.parts) for s in syl] == [("you're ", ()), ("o'", ()), ("clock ", ())]
+
+    def test_the_spaces_at_the_end_of_a_word_stay_as_they_are(self, spoken):
+        """A word with two spaces after it keeps them, and its syllables are still spread over its notes."""
+        syl = syllables_from_segments([_seg("only  ", 0.0, 1.0), _seg("love ", 1.2, 1.6)], "en")
+        assert [(s.text, s.parts) for s in syl] == [("only  ", ("on", "ly  ")), ("love ", ())]
+        segs = place_lyrics(_notes((0.0, 0.5), (0.5, 1.0), (1.2, 1.6)), syl)
+        assert [s.word for s in segs] == ["on", "ly  ", "love "]
+
+    def test_ng_of_two_sounds_is_cut(self, monkeypatch):
+        counter = _Spoken(counts={"singing": 2, "plunging": 2})
+        counter.soft_ng = {"plunging"}
+        monkeypatch.setattr(seg_lyrics, "_hyphenator", lambda language: None)
+        monkeypatch.setattr(seg_lyrics, "spoken_syllables", lambda language: counter)
+        syl = _syllables("singing ", "plunging ")
+        assert [s.parts for s in syl] == [("sing", "ing "), ("plun", "ging ")]
 
     def test_punctuation_and_spaces_stay_at_the_edges(self, spoken):
         syl = syllables_from_segments([_seg(" (only, ", 0.0, 1.0), _seg("\"Baby\" ", 1.0, 2.0)], "en")

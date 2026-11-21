@@ -100,6 +100,16 @@ class TestSplitWord:
     def test_ng_stays_together_before_the_ending_ing(self, word, expected):
         assert cut(word, 2) == expected
 
+    def test_ng_before_an_ending_with_an_apostrophe(self):
+        assert cut("singin'", 2) == "sing-in'"
+        assert cut("bringin’", 2) == "bring-in’"
+
+    def test_ng_of_two_sounds_is_cut_between_them(self):
+        """A soft g: "plunging" is n and a sound of its own, not the one sound of "singing"."""
+        assert cut("plunging", 2, ng=False) == "plun-ging"
+        assert cut("plunging", 2, ng=True) == "plung-ing"
+        assert cut("singing", 2, ng=None) == "sing-ing"
+
     def test_no_cut_inside_a_vowel_group_when_not_asked_for(self):
         assert cut("radio", 3, inner=False) == "ra-dio"
         assert cut("going", 2, inner=False) == "going"
@@ -220,6 +230,12 @@ class TestSpokenSyllables:
         assert [spoken.tail(word) for word in ("realize", "maybe", "times", "little")] == [1, 0, 2, 0]
         assert spoken.tail("shh") is None and spoken.tail("...") is None
 
+    def test_the_one_sound_of_ng_before_the_last_vowel_sound(self):
+        spoken, _ = _counter({"singing": "s ɪ ŋ ɪ ŋ", "plunging": "p l ʌ n dʒ ɪ ŋ", "bringin": "b ɹ ɪ ŋ ɪ n",
+                              "king": "k ɪ ŋ", "shh": "ʃ"})
+        assert [spoken.ng(word) for word in ("singing", "plunging", "bringin", "king")] == [True, False, True, False]
+        assert spoken.ng("shh") is None
+
     def test_words_are_asked_in_small_letters(self):
         """A short word in capitals would be read letter by letter ("IT" as "I T")."""
         spoken, backend = _counter({"it": "ɪ t", "baby": "b eɪ b i"})
@@ -261,6 +277,7 @@ class TestSpokenSyllablesOfALanguage:
         spoken.count_many(["only", "baby", "love", "radio", "everyone"])
         assert [spoken.count(word) for word in ("only", "baby", "love", "radio", "everyone")] == [2, 2, 1, 3, 3]
         assert (spoken.tail("realize"), spoken.tail("maybe")) == (1, 0)
+        assert (spoken.ng("singing"), spoken.ng("plunging")) == (True, False)
         assert split_word("realize", spoken.count("realize"), tail=spoken.tail("realize")) == ["rea", "lize"]
         assert split_word("only", spoken.count("only")) == ["on", "ly"]
         assert split_word("everyone", spoken.count("everyone"), ["every", "one"], spoken.count) == ["eve", "ry", "one"]
