@@ -1730,6 +1730,24 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
                  segmentation_model="model.pt", calculate_score=True)
         self.assertEqual(scored, {"audio": "lead.wav", "tones": [24, 31]})
 
+    def test_the_model_places_whole_words_without_hyphenation(self):
+        for hyphenation in (True, False):
+            asked = {}
+
+            def segment(segments, **kwargs):
+                asked.update(kwargs)
+                return SimpleNamespace(segments=segments, pitch_audio_path="stem.wav")
+
+            process_data = _process_data()
+            process_data.process_data_paths.vocals_audio_file_path = "stem.wav"
+            with self.subTest(hyphenation=hyphenation), patch.object(us, "_stem_pitch_track", return_value=None), \
+                    patch("modules.Segmentation.segmenter.segment_with_model", side_effect=segment), \
+                    patch("ultrastar_score.detect_pitch_frames", return_value=[]):
+                pitched = _pitch_track([(0.0, 0.24, "C4"), (0.40, 0.64, "E4")])
+                _run(process_data, pitched, _transcription(self.WORDS, "en"), bpm_override=60.0,
+                     segmentation_model="model.pt", hyphenation=hyphenation)
+                self.assertIs(asked["split_words"], hyphenation)
+
     def test_model_notes_from_the_lead_vocal(self):
         # The freestyle detection listens to the whole vocal stem, the vocal runs
         # to the lead vocal the note pitches are from; model notes keep their pitch

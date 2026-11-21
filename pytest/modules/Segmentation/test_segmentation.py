@@ -624,6 +624,20 @@ class TestSegmenter:
         assert [s.word for s in result.segments] == ["hel", "lo "]
         assert result.pitch_audio_path == str(vocal)
 
+    def test_whole_words_without_splitting(self, tmp_path, monkeypatch, fake_hyphen):
+        model = tmp_path / "m.pt"
+        save_model(model, SegNet())
+        vocal = tmp_path / "v.wav"
+        vocal.write_bytes(b"x")
+        import modules.Segmentation.decode as dec
+        import modules.Segmentation.features as feats
+        monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(16000, np.float32))
+        monkeypatch.setattr(feats, "analyse_vocal", lambda y: _analysis(200))
+        monkeypatch.setattr(dec, "decode_notes", lambda *a, **k: _notes((0.0, 0.5), (0.6, 1.0)))
+        result = segmenter.segment_with_model([_seg("hello ", 0, 1)], str(vocal), str(model), "en",
+                                              split_words=False)
+        assert [s.word for s in result.segments] == ["hello", "~ "]
+
     def test_a_freestyle_note_of_the_model_gets_a_note_for_each_word(self, tmp_path, monkeypatch, fake_hyphen):
         model = tmp_path / "m.pt"
         save_model(model, SegNet())

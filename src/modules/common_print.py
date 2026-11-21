@@ -97,7 +97,8 @@ def print_help() -> None:
     [post-processing]
     --bpm                   Override auto-detected BPM with a manual value (e.g., --bpm 340)
     --octave                Shift all notes by N octaves after pitch detection (e.g., --octave 1 for up, --octave -1 for down)
-    --disable_hyphenation   Disable word hyphenation. Hyphenation is enabled by default.
+    --disable_hyphenation   Disable word hyphenation: words are not split into syllables (also not on the
+                            notes of a segmentation model). Hyphenation is enabled by default.
     --disable_separation    Disable track separation. Track separation is enabled by default.
     --disable_karaoke       Disable creation of karaoke style txt file. Karaoke is enabled by default.
     --disable_onset_correction  Disable onset-based timing correction. Enabled by default.

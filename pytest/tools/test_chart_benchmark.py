@@ -432,6 +432,16 @@ class TestLoadWords:
                          extra_headers=["#RELATIVE:YES"])
         assert _words(p) == [("one", 1000), ("two", 1500), ("three", 1800)]
 
+    def test_syllable_notes_are_the_notes_with_a_text_of_their_own(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 2 60 ba", ": 2 2 62 by ", ": 4 2 60 on", ": 6 2 62 ~", ": 8 2 64 ly",
+                                             ": 10 2 60 ~ ", ": 12 2 60 mind", ": 14 2 62 ~ ", ": 16 2 60 oh"])
+        assert [(w.text, w.syllables, len(w.spans)) for w in cb.load_words(p)] == \
+            [("baby", 2, 2), ("only", 2, 4), ("mind", 1, 2), ("oh", 1, 1)]
+
+    def test_no_syllable_count_for_words_that_share_a_note(self, tmp_path):
+        p = _write_chart(tmp_path / "a.txt", [": 0 4 60 oh ba", ": 4 2 62 by ", ": 6 2 60 you"])
+        assert [(w.text, w.syllables) for w in cb.load_words(p)] == [("oh", 0), ("baby", 0), ("you", 1)]
+
 
 class TestAlignWords:
     def test_order_preserving(self):
@@ -485,6 +495,49 @@ class TestLyricsMetrics:
     def test_no_reference_words(self):
         m = cb.lyrics_metrics([], self._ref())
         assert m["lyrics_agreement_pct"] is None and m["gen_words"] == 4
+        assert m["syllable_notes_pct"] is None and m["syllable_extra_pct"] is None
+
+    @staticmethod
+    def _syllables(*words):
+        """Words one after the other, each as (text, syllable notes, notes)."""
+        out = []
+        for k, (text, syllables, notes) in enumerate(words):
+            spans = [(k * 1000 + i * 100, k * 1000 + i * 100 + 90) for i in range(notes)]
+            out.append(cb.ChartWord(text, [(float(a), float(b)) for a, b in spans], syllables))
+        return out
+
+    def test_syllables_on_notes_of_their_own(self):
+        ref = self._syllables(("baby", 2, 2), ("only", 2, 3), ("radio", 3, 3), ("love", 1, 1), ("mind", 1, 3))
+        gen = self._syllables(("baby", 2, 2), ("only", 1, 3), ("radio", 2, 3), ("love", 1, 1), ("mind", 1, 3))
+        m = cb.lyrics_metrics(ref, gen)
+        assert m["syllable_notes_pct"] == pytest.approx(33.3, abs=0.1)  # "baby" of baby, only, radio
+        assert m["syllable_extra_pct"] == 0.0
+        assert cb.lyrics_metrics(ref, ref)["syllable_notes_pct"] == 100.0
+
+    def test_a_word_cut_where_the_reference_sings_one_syllable(self):
+        ref = self._syllables(("love", 1, 2), ("mind", 1, 2), ("baby", 2, 2))
+        gen = self._syllables(("love", 2, 2), ("mind", 1, 2), ("baby", 3, 3))
+        m = cb.lyrics_metrics(ref, gen)
+        assert m["syllable_extra_pct"] == 50.0  # "love" of love and mind
+        assert m["syllable_notes_pct"] == 0.0  # more syllable notes than the reference are not the same either
+
+    def test_a_word_cut_short_has_no_known_syllable_notes(self):
+        """The words before a second voice that is appended to the chart: a word that loses notes there
+        may have lost a syllable note."""
+        words = self._syllables(("baby", 2, 2), ("only", 2, 3), ("love", 1, 1))
+        # "only" starts at 1000 ms with notes at 1000, 1100 and 1200
+        cut = cb.words_before(words, 1150)
+        assert [(w.text, w.syllables, len(w.spans)) for w in cut] == [("baby", 2, 2), ("only", 0, 2)]
+        assert cb.words_before(words, 5000) == words
+        assert cb.words_before(words, 0) == []
+        assert cb.lyrics_metrics(cut, self._syllables(("baby", 2, 2), ("only", 1, 2)))["syllable_notes_pct"] == 100.0
+
+    def test_only_found_words_with_known_syllable_notes_count(self):
+        ref = self._syllables(("baby", 2, 2), ("only", 2, 2), ("radio", 0, 1), ("gone", 2, 2))
+        gen = self._syllables(("baby", 0, 1), ("only", 2, 2), ("radio", 3, 3))
+        m = cb.lyrics_metrics(ref, gen)
+        assert m["syllable_notes_pct"] == 100.0  # "only" alone: "baby" and "radio" share a note, "gone" is missing
+        assert m["syllable_extra_pct"] is None
 
 
 # ── library discovery ────────────────────────────────────────────────────────

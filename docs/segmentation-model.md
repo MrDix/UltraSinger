@@ -17,7 +17,8 @@ because sung notes sag below their written pitch (scoops into the note, a
 falling end, vibrato). The lyrics from the usual sources (synced lyrics or
 Whisper, with forced alignment) are split into syllables and placed onto the
 predicted notes in order of time; a syllable held over several notes gets `~`
-continuations. A hyphen chain such as `ooh-ooh-oh` is sung piece by piece
+continuations, or, when it is spoken with several syllables that the
+hyphenation did not split ("only", "baby"), these syllables on its notes. A hyphen chain such as `ooh-ooh-oh` is sung piece by piece
 (`ooh-` `ooh-` `oh`). Syllables that get no note of their own join the note
 before or after them, in their order and never across the start of a line.
 Lines without a predicted note, such as those after the last one, are left
