@@ -6,18 +6,27 @@ programme gives every note either a new syllable or a "~" continuation of the
 previous one. Syllables without a matching note are merged, in order, into the
 note before or after them, never across the start of a line. Lines that the
 model has no note for, such as those after the last note, are left out.
+
+The hyphenation that splits the words knows where a word is broken in print,
+and leaves many words whole that are sung on two notes ("only", "baby",
+"never"). So a syllable that got several notes and is spoken with more than
+one syllable (see ``spoken_syllables``) is spread over its notes afterwards:
+"on" "ly" instead of "only" "~". Where the words are placed stays as it is.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, replace
+from itertools import combinations
 
 import librosa
 import numpy as np
 
 from modules.Midi.MidiSegment import MidiSegment
 from modules.Segmentation.decode import PredictedNote
+from modules.Speech_Recognition.spoken_syllables import spoken_syllables, split_word
 
 DROP_COST_MS = 600.0      # cost of a syllable that gets no note of its own
 CONTINUE_COST_MS = 150.0  # base cost of a "~" continuation note
@@ -25,6 +34,12 @@ MAX_START_COST_MS = 2500.0
 MAX_SKIP = 3              # syllables that may be merged in one step
 BAND_MS = 8000.0          # only syllables this close to a note are candidates
 MIN_FREESTYLE_WORD_S = 0.1  # shortest part of a freestyle note that is cut at its words
+# Languages in which a vowel group is cut where the word is spoken with more vowel sounds than it
+# has vowel groups ("ra-di-o"). Not where eSpeak NG counts the vowels of a group one by one that
+# are sung as one syllable (Italian "mio", "cuore"); measured for these languages only.
+INNER_CUT_LANGUAGES = frozenset(("en", "de", "es"))
+# Ways to spread the parts of a syllable over its notes that are tried one by one (more: in order)
+MAX_SPREADS = 5000
 
 _WORD_RE = re.compile(r"[\w'’-]+", re.UNICODE)
 _EDGES_RE = re.compile(r"(\W*)(.*?)(\W*)", re.DOTALL)  # punctuation before, word, punctuation after
@@ -36,6 +51,8 @@ class Syllable:
     start_ms: float
     end_ms: float
     line_start: bool = False
+    # The text in the syllables it is spoken with, when those are more than one ("on", "ly ")
+    parts: tuple[str, ...] = ()
 
 
 def _hyphenator(language: str | None):
@@ -88,8 +105,81 @@ def _syllable_parts(core: str, hyph) -> list[str]:
     return parts
 
 
+def _chain_words(core: str) -> list[str]:
+    """The words of a hyphen chain that may be cut into syllables (see ``_syllable_parts``)."""
+    words = (_EDGES_RE.fullmatch(piece).group(2) for piece in _hyphen_chain(core))
+    return [word for word in words if "-" not in word and _WORD_RE.fullmatch(word)]
+
+
+def _word_tokens(core: str, hyph, spoken, inner: bool) -> list[tuple[str, tuple[str, ...]]]:
+    """The syllables of a word for the placement, each with the syllables it is
+    spoken with when those are more than one: (text, parts).
+
+    They are the syllables of the hyphenation (``_syllable_parts``), as
+    before, so the words are placed as before. Where the word is spoken with
+    more syllables than the hyphenation gives it, those syllables are cut
+    further (``split_word``); where that cuts the word at other places than
+    the hyphenation, the whole word is one syllable with its spoken ones.
+    """
+    base = _syllable_parts(core, hyph)
+    if spoken is None:
+        return [(part, ()) for part in base]
+    tokens: list[tuple[str, tuple[str, ...]]] = []
+    for piece in _hyphen_chain(core):
+        lead, word, trail = _EDGES_RE.fullmatch(piece).groups()
+        mine = _syllable_parts(piece, hyph)
+        if "-" in word or not _WORD_RE.fullmatch(word):
+            tokens.extend((part, ()) for part in mine)
+            continue
+        own = [part[len(lead) if k == 0 else 0:len(part) - (len(trail) if k == len(mine) - 1 else 0)]
+               for k, part in enumerate(mine)]
+        try:
+            new = split_word(word, spoken.count(word), own if len(own) > 1 else None, spoken.count, inner)
+        except Exception:  # noqa: BLE001 - the hyphenation alone then
+            new = own
+        if new == own or "".join(new) != word:
+            tokens.extend((part, ()) for part in mine)
+            continue
+        # The new syllables of each syllable of the hyphenation, when every one of those ends
+        # where a new one ends; else (and for fewer new ones: "you-'re") the word is one syllable
+        ends, total = set(), 0
+        for part in new:
+            total += len(part)
+            ends.add(total)
+        total, finer, start = 0, [], 0
+        for part in own:
+            total += len(part)
+            if total not in ends:
+                finer = None
+                break
+            pieces = []
+            while start < len(new) and sum(len(q) for q in pieces) < len(part):
+                pieces.append(new[start])
+                start += 1
+            finer.append(pieces)
+        if finer is None or len(new) < len(own):
+            parts = [lead + new[0]] + new[1:-1] + [new[-1] + trail] if len(new) > 1 else []
+            tokens.append((piece, tuple(parts)))
+            continue
+        for k, (part, pieces) in enumerate(zip(mine, finer)):
+            if len(pieces) < 2:
+                tokens.append((part, ()))
+                continue
+            pieces = list(pieces)
+            if k == 0:
+                pieces[0] = lead + pieces[0]
+            if k == len(mine) - 1:
+                pieces[-1] += trail
+            tokens.append((part, tuple(pieces)))
+    return tokens if "".join(text for text, _ in tokens) == core else [(part, ()) for part in base]
+
+
 def syllables_from_segments(segments: list[MidiSegment], language: str | None) -> list[Syllable]:
-    """Word/syllable tokens with times from word segments, hyphenated further."""
+    """Word/syllable tokens with times from word segments, hyphenated further.
+
+    A syllable that is spoken with more syllables than the hyphenation gives
+    it carries them in ``parts`` (see ``_word_tokens``).
+    """
     tokens: list[list] = []  # [text, start_ms, end_ms, line_start]
     line_start = True
     for seg in segments:
@@ -106,23 +196,73 @@ def syllables_from_segments(segments: list[MidiSegment], language: str | None) -
             line_start = True
 
     hyph = _hyphenator(language)
+    code = (language or "en").lower()[:2]
+    spoken = spoken_syllables(code)
+    if spoken is not None:
+        try:  # (all words in one go: asking for them one by one takes much longer)
+            spoken.count_many(word for text, *_ in tokens for word in _chain_words(text.strip()))
+        except Exception:  # noqa: BLE001 - the hyphenation alone then
+            spoken = None
     out: list[Syllable] = []
     for text, a, b, ls in tokens:
         core = text.strip()
-        parts = _syllable_parts(core, hyph)
-        if len(parts) < 2 or "".join(parts) != core:
-            out.append(Syllable(text, a, b, ls))
-            continue
+        word_tokens = _word_tokens(core, hyph, spoken, code in INNER_CUT_LANGUAGES)
         lead = text[: len(text) - len(text.lstrip())]
         trail = " " if text.endswith(" ") else ""
-        total = sum(len(p) for p in parts)
-        t0 = a
-        for k, part in enumerate(parts):
-            t1 = a + (b - a) * sum(len(q) for q in parts[: k + 1]) / total
-            out.append(Syllable((lead if k == 0 else "") + part + (trail if k == len(parts) - 1 else ""),
-                                t0, t1, ls and k == 0))
+        if len(word_tokens) < 2 or "".join(part for part, _ in word_tokens) != core:
+            finer = word_tokens[0][1] if len(word_tokens) == 1 and word_tokens[0][0] == core else ()
+            out.append(Syllable(text, a, b, ls, _with_edges(finer, lead, trail)))
+            continue
+        total = sum(len(part) for part, _ in word_tokens)
+        t0, done = a, 0
+        for k, (part, finer) in enumerate(word_tokens):
+            done += len(part)
+            t1 = a + (b - a) * done / total
+            first, last = k == 0, k == len(word_tokens) - 1
+            out.append(Syllable((lead if first else "") + part + (trail if last else ""), t0, t1, ls and first,
+                                _with_edges(finer, lead if first else "", trail if last else "")))
             t0 = t1
     return out
+
+
+def _with_edges(parts: tuple[str, ...], lead: str, trail: str) -> tuple[str, ...]:
+    """The parts of a syllable with the spaces of its text around them."""
+    if len(parts) < 2:
+        return ()
+    return (lead + parts[0],) + tuple(parts[1:-1]) + (parts[-1] + trail,)
+
+
+def spread_parts(parts: tuple[str, ...], starts_ms: list[float], end_ms: float) -> list[str]:
+    """The texts of the notes of a syllable that is spoken with the syllables ``parts``.
+
+    The first note keeps the first part. Each further part is expected where
+    its share of the letters begins in the time of the notes; as many parts
+    as there are notes for get a note of their own, those nearest to where
+    they are expected. A part without a note joins the part before it, a note
+    without a part stays "~".
+    """
+    notes, count = len(starts_ms), len(parts)
+    if notes < 2 or count < 2:
+        return ["".join(parts)] + ["~"] * (notes - 1)
+    total = sum(len(part) for part in parts) or 1
+    span = end_ms - starts_ms[0]
+    expected = [starts_ms[0] + span * sum(len(q) for q in parts[:k]) / total for k in range(count)]
+    pairs = min(notes, count) - 1
+    if math.comb(max(notes, count) - 1, pairs) > MAX_SPREADS:
+        chosen = [(k, k) for k in range(1, pairs + 1)]  # (note, part): one after the other
+    elif notes >= count:
+        best = min(combinations(range(1, notes), pairs),
+                   key=lambda picked: sum(abs(starts_ms[i] - expected[k + 1]) for k, i in enumerate(picked)))
+        chosen = [(i, k + 1) for k, i in enumerate(best)]
+    else:
+        best = min(combinations(range(1, count), pairs),
+                   key=lambda picked: sum(abs(starts_ms[i + 1] - expected[k]) for i, k in enumerate(picked)))
+        chosen = [(i + 1, k) for i, k in enumerate(best)]
+    texts = ["~"] * notes
+    edges = [0] + [k for _, k in chosen] + [count]
+    for (note, _), a, b in zip([(0, 0)] + chosen, edges, edges[1:]):
+        texts[note] = "".join(parts[a:b])
+    return texts
 
 
 def split_freestyle_at_words(notes: list[PredictedNote], syllables: list[Syllable]) -> list[PredictedNote]:
@@ -285,6 +425,7 @@ def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[
         return []
     texts: list[str] = []
     line_starts: set[int] = set()
+    whole: dict[int, int] = {}  # note that carries a syllable alone -> that syllable
     prev_j = -1
     prev_head = -1        # index of the note that carries syllable prev_j
     prev_end_ms = 0.0     # end of the last note carrying prev_j (incl. continuations)
@@ -298,9 +439,12 @@ def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[
                                        syllables[j].line_start)
             for s in gap[:split]:
                 texts[prev_head] += s.text
+                whole.pop(prev_head, None)
             head = "".join(s.text for s in gap[resume:])
             tail_line = any(s.line_start for s in gap[resume:])
             texts.append(head + syllables[j].text)
+            if not head:
+                whole[i] = j
             if tail_line or syllables[j].line_start:
                 line_starts.add(i)
             prev_j, prev_head = j, i
@@ -316,6 +460,15 @@ def place_lyrics(notes: list[PredictedNote], syllables: list[Syllable]) -> list[
         tail = "".join(s.text for s in rest)
         last = max((i for i, t in enumerate(texts) if t != "~"), default=len(texts) - 1)
         texts[last] = (texts[last].rstrip() + " " + tail.lstrip()) if texts[last] != "~" else tail
+        whole.pop(last, None)
+    # A syllable on several notes that is spoken with several syllables: these on its notes
+    for i, j in whole.items():
+        last = i
+        while last + 1 < len(texts) and texts[last + 1] == "~":
+            last += 1
+        if last > i and len(syllables[j].parts) > 1 and "".join(syllables[j].parts) == texts[i]:
+            texts[i:last + 1] = spread_parts(syllables[j].parts, [n.start * 1000 for n in notes[i:last + 1]],
+                                             notes[last].end * 1000)
     # The trailing space marks a word boundary and belongs to the LAST note of
     # the syllable group: "mind" "~" "~ " rather than "mind " "~" "~".
     for i, text in enumerate(texts):
