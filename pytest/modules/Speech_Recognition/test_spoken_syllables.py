@@ -73,6 +73,33 @@ class TestSplitWord:
         assert cut("hour", 2) == "hour"
         assert cut("yeah", 2) == "yeah"
 
+    @pytest.mark.parametrize("word, count, tail, expected", [
+        ("realize", 3, 1, "rea-lize"), ("experience", 4, 2, "ex-pe-ri-ence"), ("create", 2, 1, "create"),
+        ("realized", 3, 2, "rea-lized"), ("alone", 2, 1, "a-lone"),
+    ])
+    def test_a_last_e_that_is_not_spoken_makes_no_syllable(self, word, count, tail, expected):
+        """The word ends in more consonant sounds than it has letters after the "e"."""
+        assert cut(word, count, tail=tail) == expected
+
+    @pytest.mark.parametrize("word, count, tail, expected", [
+        ("maybe", 2, 0, "may-be"), ("wanted", 2, 1, "wan-ted"), ("little", 2, 0, "lit-tle"),
+        ("settled", 2, 1, "set-tled"), ("roses", 2, 1, "ro-ses"), ("Liebe", 2, 0, "Lie-be"),
+    ])
+    def test_a_last_e_that_is_spoken_is_a_syllable(self, word, count, tail, expected):
+        assert cut(word, count, tail=tail) == expected
+
+    def test_without_the_sounds_at_the_end_a_last_e_counts_as_it_is_written(self):
+        assert cut("realize", 3) == "rea-li-ze"
+        # with them, the hyphenation's two parts stay: the word cannot be cut into more
+        assert split_word("realize", 3, ["real", "ize"], tail=1) == ["real", "ize"]
+
+    @pytest.mark.parametrize("word, expected", [
+        ("singing", "sing-ing"), ("ringing", "ring-ing"), ("hanging", "hang-ing"), ("bringin", "bring-in"),
+        ("finger", "fin-ger"), ("engine", "en-gine"), ("angry", "an-gry"),
+    ])
+    def test_ng_stays_together_before_the_ending_ing(self, word, expected):
+        assert cut(word, 2) == expected
+
     def test_no_cut_inside_a_vowel_group_when_not_asked_for(self):
         assert cut("radio", 3, inner=False) == "ra-dio"
         assert cut("going", 2, inner=False) == "going"
@@ -187,6 +214,12 @@ class TestSpokenSyllables:
         assert (spoken.count("baby"), spoken.count("love"), spoken.count("only")) == (2, 1, 2)
         assert len(backend.asked) == 2
 
+    def test_the_consonant_sounds_a_word_ends_with(self):
+        spoken, _ = _counter({"realize": "ɹ iː ə l aɪ z", "maybe": "m eɪ b i", "times": "t aɪ m z",
+                              "little": "l ɪ ɾ əl", "shh": "ʃ"})
+        assert [spoken.tail(word) for word in ("realize", "maybe", "times", "little")] == [1, 0, 2, 0]
+        assert spoken.tail("shh") is None and spoken.tail("...") is None
+
     def test_words_are_asked_in_small_letters(self):
         """A short word in capitals would be read letter by letter ("IT" as "I T")."""
         spoken, backend = _counter({"it": "ɪ t", "baby": "b eɪ b i"})
@@ -227,5 +260,7 @@ class TestSpokenSyllablesOfALanguage:
             pytest.skip("eSpeak NG cannot be used here")
         spoken.count_many(["only", "baby", "love", "radio", "everyone"])
         assert [spoken.count(word) for word in ("only", "baby", "love", "radio", "everyone")] == [2, 2, 1, 3, 3]
+        assert (spoken.tail("realize"), spoken.tail("maybe")) == (1, 0)
+        assert split_word("realize", spoken.count("realize"), tail=spoken.tail("realize")) == ["rea", "lize"]
         assert split_word("only", spoken.count("only")) == ["on", "ly"]
         assert split_word("everyone", spoken.count("everyone"), ["every", "one"], spoken.count) == ["eve", "ry", "one"]

@@ -11,7 +11,9 @@ The hyphenation that splits the words knows where a word is broken in print,
 and leaves many words whole that are sung on two notes ("only", "baby",
 "never"). So a syllable that got several notes and is spoken with more than
 one syllable (see ``spoken_syllables``) is spread over its notes afterwards:
-"on" "ly" instead of "only" "~". Where the words are placed stays as it is.
+"on" "ly" instead of "only" "~". The syllables that are placed stay those of
+the hyphenation, so the words are placed as before (but for the few words
+named at ``_word_tokens``).
 """
 
 from __future__ import annotations
@@ -112,6 +114,38 @@ def _chain_words(core: str) -> list[str]:
     return [word for word in words if "-" not in word and _WORD_RE.fullmatch(word)]
 
 
+def _refined(own: list[str], new: list[str]) -> list[list[str]] | None:
+    """The parts of ``new`` that each part of ``own`` is made of, None when a
+    part of ``own`` ends inside a part of ``new`` (``new`` cuts the word at
+    other places)."""
+    ends, total = set(), 0
+    for part in new:
+        total += len(part)
+        ends.add(total)
+    total, finer, start = 0, [], 0
+    for part in own:
+        total += len(part)
+        if total not in ends:
+            return None
+        pieces, length = [], 0
+        while start < len(new) and length < len(part):
+            pieces.append(new[start])
+            length += len(new[start])
+            start += 1
+        finer.append(pieces)
+    return finer
+
+
+def _spoken_split(word: str, own: list[str], spoken, inner: bool) -> list[str]:
+    """The word in the syllables it is spoken with (see ``split_word``), ``own`` when that fails."""
+    try:
+        new = split_word(word, spoken.count(word), own if len(own) > 1 else None, spoken.count, inner,
+                         spoken.tail(word))
+    except Exception:  # noqa: BLE001 - the hyphenation alone then
+        return own
+    return new if "".join(new) == word else own
+
+
 def _word_tokens(core: str, hyph, spoken, inner: bool) -> list[tuple[str, tuple[str, ...]]]:
     """The syllables of a word for the placement, each with the syllables it is
     spoken with when those are more than one: (text, parts).
@@ -119,8 +153,11 @@ def _word_tokens(core: str, hyph, spoken, inner: bool) -> list[tuple[str, tuple[
     They are the syllables of the hyphenation (``_syllable_parts``), as
     before, so the words are placed as before. Where the word is spoken with
     more syllables than the hyphenation gives it, those syllables are cut
-    further (``split_word``); where that cuts the word at other places than
-    the hyphenation, the whole word is one syllable with its spoken ones.
+    further (``split_word``). Two kinds of words are placed as one syllable
+    instead of the syllables of the hyphenation: a word whose spoken syllables
+    cut it at other places than the hyphenation, and a word that the
+    hyphenation cuts at an apostrophe and that is spoken with fewer syllables
+    ("you-'re").
     """
     base = _syllable_parts(core, hyph)
     if spoken is None:
@@ -134,30 +171,13 @@ def _word_tokens(core: str, hyph, spoken, inner: bool) -> list[tuple[str, tuple[
             continue
         own = [part[len(lead) if k == 0 else 0:len(part) - (len(trail) if k == len(mine) - 1 else 0)]
                for k, part in enumerate(mine)]
-        try:
-            new = split_word(word, spoken.count(word), own if len(own) > 1 else None, spoken.count, inner)
-        except Exception:  # noqa: BLE001 - the hyphenation alone then
-            new = own
-        if new == own or "".join(new) != word:
+        new = _spoken_split(word, own, spoken, inner)
+        if new == own:
             tokens.extend((part, ()) for part in mine)
             continue
         # The new syllables of each syllable of the hyphenation, when every one of those ends
         # where a new one ends; else (and for fewer new ones: "you-'re") the word is one syllable
-        ends, total = set(), 0
-        for part in new:
-            total += len(part)
-            ends.add(total)
-        total, finer, start = 0, [], 0
-        for part in own:
-            total += len(part)
-            if total not in ends:
-                finer = None
-                break
-            pieces = []
-            while start < len(new) and sum(len(q) for q in pieces) < len(part):
-                pieces.append(new[start])
-                start += 1
-            finer.append(pieces)
+        finer = _refined(own, new)
         if finer is None or len(new) < len(own):
             parts = [lead + new[0]] + new[1:-1] + [new[-1] + trail] if len(new) > 1 else []
             tokens.append((piece, tuple(parts)))
@@ -175,13 +195,49 @@ def _word_tokens(core: str, hyph, spoken, inner: bool) -> list[tuple[str, tuple[
     return tokens if "".join(text for text, _ in tokens) == core else [(part, ()) for part in base]
 
 
+def _piece_parts(texts: list[str], spoken, inner: bool) -> list[tuple[str, ...]]:
+    """For a word that comes in pieces (the syllables an earlier hyphenation
+    cut it into: "na", "tion "), the spoken syllables of each piece, () for a
+    piece that is one.
+
+    The word is counted as a whole: a piece is no word ("tion" alone would
+    be read as two syllables). Nothing where its spoken syllables cut it at
+    other places than its pieces, or where they are no more than its pieces.
+    """
+    none: list[tuple[str, ...]] = [()] * len(texts)
+    if spoken is None:
+        return none
+    cores = [text.strip() for text in texts]
+    lead, word, trail = _EDGES_RE.fullmatch("".join(cores)).groups()
+    if not word or "-" in word or not _WORD_RE.fullmatch(word):
+        return none
+    own = list(cores)
+    own[0] = own[0][len(lead):]
+    own[-1] = own[-1][:len(own[-1]) - len(trail)]
+    if not all(own) or "".join(own) != word:
+        return none
+    new = _spoken_split(word, own, spoken, inner)
+    finer = _refined(own, new)
+    if finer is None or len(new) <= len(own):
+        return none
+    parts: list[tuple[str, ...]] = []
+    for k, (text, pieces) in enumerate(zip(texts, finer)):
+        if len(pieces) > 1:
+            before = text[:len(text) - len(text.lstrip())] + (lead if k == 0 else "")
+            after = (trail if k == len(texts) - 1 else "") + text[len(text.rstrip()):]
+            pieces = [before + pieces[0]] + pieces[1:-1] + [pieces[-1] + after]
+        parts.append(tuple(pieces) if len(pieces) > 1 and "".join(pieces) == text else ())
+    return parts
+
+
 def syllables_from_segments(segments: list[MidiSegment], language: str | None,
                             split_words: bool = True) -> list[Syllable]:
     """Word/syllable tokens with times from word segments, hyphenated further.
 
     A syllable that is spoken with more syllables than the hyphenation gives
-    it carries them in ``parts`` (see ``_word_tokens``). Without
-    ``split_words`` every word stays whole.
+    it carries them in ``parts`` (see ``_word_tokens``; for a word that comes
+    in several segments, see ``_piece_parts``). Without ``split_words`` every
+    word stays whole.
     """
     tokens: list[list] = []  # [text, start_ms, end_ms, line_start]
     line_start = True
@@ -202,16 +258,36 @@ def syllables_from_segments(segments: list[MidiSegment], language: str | None,
         return [Syllable(text, a, b, ls) for text, a, b, ls in tokens]
     hyph = _hyphenator(language)
     code = (language or "en").lower()[:2]
+    inner = code in INNER_CUT_LANGUAGES
+    # The tokens of each word: a token without a space at its end goes on in the next one (the
+    # words of a transcription come in the syllables of its hyphenation), but not into a new line
+    words: list[list[int]] = []
+    for k, (text, _, _, ls) in enumerate(tokens):
+        if words and not ls and not tokens[k - 1][0][-1:].isspace():
+            words[-1].append(k)
+        else:
+            words.append([k])
     spoken = spoken_syllables(code)
     if spoken is not None:
         try:  # (all words in one go: asking for them one by one takes much longer)
-            spoken.count_many(word for text, *_ in tokens for word in _chain_words(text.strip()))
+            spoken.count_many(word for group in words
+                              for text in {"".join(tokens[k][0].strip() for k in group)}
+                              | {tokens[k][0].strip() for k in group}
+                              for word in _chain_words(text))
         except Exception:  # noqa: BLE001 - the hyphenation alone then
             spoken = None
+    pieces: dict[int, tuple[str, ...]] = {}  # token of a word in several tokens -> its spoken syllables
+    for group in words:
+        if len(group) > 1:
+            pieces.update(zip(group, _piece_parts([tokens[k][0] for k in group], spoken, inner)))
     out: list[Syllable] = []
-    for text, a, b, ls in tokens:
+    for k, (text, a, b, ls) in enumerate(tokens):
         core = text.strip()
-        word_tokens = _word_tokens(core, hyph, spoken, code in INNER_CUT_LANGUAGES)
+        # (a piece of a word is no word: it has the syllables of the hyphenation, as before)
+        word_tokens = _word_tokens(core, hyph, None if k in pieces else spoken, inner)
+        if k in pieces and len(word_tokens) == 1 and word_tokens[0][0] == core:
+            out.append(Syllable(text, a, b, ls, pieces[k]))
+            continue
         lead = text[: len(text) - len(text.lstrip())]
         trail = " " if text.endswith(" ") else ""
         if len(word_tokens) < 2 or "".join(part for part, _ in word_tokens) != core:
@@ -264,6 +340,8 @@ def spread_parts(parts: tuple[str, ...], starts_ms: list[float], end_ms: float) 
         best = min(combinations(range(1, notes), pairs),
                    key=lambda picked: sum(abs(starts_ms[i] - expected[k + 1]) for k, i in enumerate(picked)))
         chosen = [(i, k + 1) for k, i in enumerate(best)]
+    elif math.comb(count - 1, pairs) > MAX_SPREADS:
+        chosen = [(k, k) for k in range(1, notes)]  # one part after the other, the rest on the last note
     else:
         best = min(combinations(range(1, count), pairs),
                    key=lambda picked: sum(abs(starts_ms[i + 1] - expected[k]) for i, k in enumerate(picked)))

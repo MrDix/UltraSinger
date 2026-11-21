@@ -14,7 +14,8 @@ from modules.Segmentation.decode import PredictedNote
 from modules.Segmentation.lyrics import Syllable, place_lyrics, spread_parts, syllables_from_segments
 
 COUNTS = {"only": 2, "baby": 2, "love": 1, "radio": 3, "everyone": 3, "every": 2, "one": 1, "you're": 1,
-          "dancing": 2, "hello": 2, "material": 4, "ma": 1, "te": 1, "rial": 1, "mio": 2, "o'clock": 2}
+          "dancing": 2, "hello": 2, "material": 4, "ma": 1, "te": 1, "rial": 1, "mio": 2, "o'clock": 2,
+          "nation": 2, "na": 1, "tion": 2, "realize": 3, "oh": 1}
 
 
 class _Hyphenator:
@@ -30,8 +31,9 @@ class _Hyphenator:
 class _Spoken:
     """Stands in for the syllable counts of eSpeak NG."""
 
-    def __init__(self, counts=None):
+    def __init__(self, counts=None, tails=None):
         self.counts = COUNTS if counts is None else counts
+        self.tails = tails or {}
         self.asked: list[str] = []
 
     def count_many(self, words):
@@ -39,6 +41,9 @@ class _Spoken:
 
     def count(self, word):
         return self.counts.get(word.lower())
+
+    def tail(self, word):
+        return self.tails.get(word.lower())
 
 
 @pytest.fixture
@@ -109,6 +114,53 @@ class TestSpokenSyllablesOfAWord:
         _syllables("only ", "love-baby ", "(everyone) ", "... ")
         assert sorted(spoken.asked) == ["baby", "everyone", "love", "only"]
 
+    def test_a_last_e_that_is_not_spoken(self, monkeypatch):
+        """The sounds a word ends with reach the cut: "realize" has no syllable "ze"."""
+        counter = _Spoken(tails={"realize": 1})
+        monkeypatch.setattr(seg_lyrics, "_hyphenator", lambda language: None)
+        monkeypatch.setattr(seg_lyrics, "spoken_syllables", lambda language: counter)
+        assert [(s.text, s.parts) for s in _syllables("realize ")] == [("realize ", ("rea", "lize "))]
+        counter.tails.clear()
+        assert [(s.text, s.parts) for s in _syllables("realize ")] == [("realize ", ("rea", "li", "ze "))]
+
+
+class TestWordsThatComeInPieces:
+    """Without found lyrics the words of the transcription come in the syllables of its hyphenation."""
+
+    def test_a_piece_is_not_counted_as_a_word(self, spoken):
+        """The piece "tion" alone would be read as two syllables; "nation" has two, and comes in two pieces."""
+        syl = syllables_from_segments([_seg("na", 0.0, 0.3), _seg("tion ", 0.3, 1.0), _seg("love ", 1.0, 1.5)], "en")
+        assert [(s.text, s.parts) for s in syl] == [("na", ()), ("tion ", ()), ("love ", ())]
+        assert [(s.start_ms, s.end_ms) for s in syl] == [(0, 300), (300, 1000), (1000, 1500)]
+
+    def test_a_piece_with_several_spoken_syllables_carries_them(self, spoken):
+        syl = syllables_from_segments([_seg(' "every', 0.0, 0.6), _seg('one" ', 0.6, 1.0)], "en")
+        assert [(s.text, s.parts) for s in syl] == [(' "every', (' "eve', "ry")), ('one" ', ())]
+
+    def test_pieces_cut_at_other_places_than_the_spoken_syllables_stay(self, spoken):
+        syl = syllables_from_segments([_seg("mat", 0.0, 0.3), _seg("erial ", 0.3, 1.0)], "en")
+        assert [(s.text, s.parts) for s in syl] == [("mat", ()), ("erial ", ())]
+
+    def test_the_last_piece_of_a_line_does_not_go_on_in_the_next_line(self, spoken):
+        syl = syllables_from_segments([_seg("oh", 0.0, 0.3, line_break=True), _seg("only ", 0.5, 1.0)], "en")
+        assert [(s.text, s.parts) for s in syl] == [("oh", ()), ("only ", ("on", "ly "))]
+
+    def test_the_word_and_its_pieces_are_looked_up_in_the_one_go(self, spoken):
+        syllables_from_segments([_seg("every", 0.0, 0.6), _seg("one ", 0.6, 1.0), _seg("only ", 1.0, 1.5)], "en")
+        assert sorted(spoken.asked) == ["every", "everyone", "one", "only"]
+
+    def test_without_counts_the_pieces_as_they_come(self, monkeypatch):
+        monkeypatch.setattr(seg_lyrics, "_hyphenator", lambda language: _Hyphenator())
+        monkeypatch.setattr(seg_lyrics, "spoken_syllables", lambda language: None)
+        syl = syllables_from_segments([_seg("every", 0.0, 0.6), _seg("one ", 0.6, 1.0)], "en")
+        assert [(s.text, s.parts) for s in syl] == [("every", ()), ("one ", ())]
+
+    def test_on_the_notes(self, spoken):
+        segments = [_seg("na", 0.0, 0.3), _seg("tion ", 0.3, 1.0), _seg("every", 1.2, 1.8), _seg("one ", 1.8, 2.2)]
+        notes = _notes((0.0, 0.3), (0.3, 0.6), (0.6, 1.0), (1.2, 1.5), (1.5, 1.8), (1.8, 2.2))
+        placed = place_lyrics(notes, syllables_from_segments(segments, "en"))
+        assert [s.word for s in placed] == ["na", "tion", "~ ", "eve", "ry", "one "]
+
     def test_no_vowel_group_is_cut_in_a_language_it_is_not_measured_for(self, spoken):
         english = syllables_from_segments([_seg("radio ", 0, 1), _seg("mio ", 1, 2)], "en")
         italian = syllables_from_segments([_seg("radio ", 0, 1), _seg("mio ", 1, 2)], "it")
@@ -177,6 +229,11 @@ class TestSpreadParts:
     def test_one_note_or_one_part(self):
         assert spread_parts(("on", "ly "), [0], 500) == ["only "]
         assert spread_parts(("love ",), [0, 300], 500) == ["love ", "~"]
+
+    def test_very_many_parts_take_the_notes_one_after_the_other(self, monkeypatch):
+        monkeypatch.setattr(seg_lyrics, "MAX_SPREADS", 0)
+        assert spread_parts(("a", "b", "c", "d"), [0.0, 100.0], 400) == ["a", "bcd"]
+        assert spread_parts(("a", "b", "c", "d"), [0.0, 100.0, 200.0], 400) == ["a", "b", "cd"]
 
     def test_all_parts_are_there_once(self):
         for notes in range(1, 9):

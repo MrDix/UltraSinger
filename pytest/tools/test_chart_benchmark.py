@@ -435,7 +435,8 @@ class TestLoadWords:
     def test_syllable_notes_are_the_notes_with_a_text_of_their_own(self, tmp_path):
         p = _write_chart(tmp_path / "a.txt", [": 0 2 60 ba", ": 2 2 62 by ", ": 4 2 60 on", ": 6 2 62 ~", ": 8 2 64 ly",
                                              ": 10 2 60 ~ ", ": 12 2 60 mind", ": 14 2 62 ~ ", ": 16 2 60 oh"])
-        assert [(w.text, w.syllables, len(w.spans)) for w in cb.load_words(p)] ==             [("baby", 2, 2), ("only", 2, 4), ("mind", 1, 2), ("oh", 1, 1)]
+        assert [(w.text, w.syllables, len(w.spans)) for w in cb.load_words(p)] == \
+            [("baby", 2, 2), ("only", 2, 4), ("mind", 1, 2), ("oh", 1, 1)]
 
     def test_no_syllable_count_for_words_that_share_a_note(self, tmp_path):
         p = _write_chart(tmp_path / "a.txt", [": 0 4 60 oh ba", ": 4 2 62 by ", ": 6 2 60 you"])
