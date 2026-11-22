@@ -787,6 +787,16 @@ def run() -> tuple[str, Score, Score]:
         else:
             phoneme_word_starts_result = "not run, it needs the separated vocal"
 
+    # Word starts where the transcription heard the words: with the notes of a
+    # segmentation model (see heard_starts), as a part of the lyrics placement.
+    # Only for words placed from reference lyrics: the words of a transcription
+    # already are where it heard them.
+    heard_word_starts_result = None
+    if settings.heard_word_starts:
+        heard_word_starts_result = ("not run, the model segmentation was not used"
+                                    if settings.segmentation_model or settings.segmentation_model_repo
+                                    else "not run, it needs a segmentation model")
+
     # Create audio chunks after transcribed_data is finalized
     if settings.create_audio_chunks:
         create_audio_chunks(process_data)
@@ -816,6 +826,9 @@ def run() -> tuple[str, Score, Score]:
         if not model_path:
             from modules.Segmentation.model_source import fetch_model
             model_path = fetch_model(settings.segmentation_model_repo, settings.segmentation_model_token)
+        heard_words = None
+        if settings.heard_word_starts and reference_first_used:
+            heard_words = process_data.transcription_words
         model_result = segment_with_model(
             process_data.midi_segments,
             vocals_path=process_data.process_data_paths.vocals_audio_file_path,
@@ -826,11 +839,23 @@ def run() -> tuple[str, Score, Score]:
             cache_folder=process_data.process_data_paths.cache_folder_path,
             force_cpu=settings.force_cpu,
             split_words=settings.hyphenation,
+            heard_words=heard_words,
         ) if model_path else None
         if model_result:
             process_data.midi_segments = model_result.segments
             note_pitch_audio = model_result.pitch_audio_path
             model_segmentation_used = True
+            heard_starts = getattr(model_result, "heard_starts", None)
+            if heard_starts is not None:
+                heard_word_starts_result = f"{heard_starts} words start where they were heard"
+            elif not settings.heard_word_starts:
+                pass
+            elif not reference_first_used:
+                heard_word_starts_result = "not run, the words were not placed from reference lyrics"
+            elif not heard_words:
+                heard_word_starts_result = "not run, there are no transcribed words"
+            else:
+                heard_word_starts_result = "not run, the comparison with the transcription failed"
 
     # Split notes at pitch change boundaries (melismas, runs)
     # (Skip when reference_first, pitch_notes or the segmentation model is active —
@@ -1181,6 +1206,7 @@ def run() -> tuple[str, Score, Score]:
             model_segmentation_used=model_segmentation_used,
             pitch_context_result=pitch_context_result,
             phoneme_word_starts_result=phoneme_word_starts_result,
+            heard_word_starts_result=heard_word_starts_result,
             lyrics_source=process_data.lyrics_source,
             lyrics_heard=process_data.lyrics_heard,
             lyrics_file=process_data.lyrics_file,
@@ -1438,6 +1464,7 @@ def _write_settings_info_file(
         model_segmentation_used: bool = False,
         pitch_context_result: "PitchContextResult | None" = None,
         phoneme_word_starts_result: str | None = None,
+        heard_word_starts_result: str | None = None,
         lyrics_source: str | None = None,
         lyrics_heard: str | None = None,
         lyrics_file: str | None = None,
@@ -1608,6 +1635,8 @@ def _write_settings_info_file(
             f.write(f"  Onset correction:         {settings.onset_correction}\n")
             phoneme_note = f" ({phoneme_word_starts_result})" if phoneme_word_starts_result else ""
             f.write(f"  Phoneme word starts:      {settings.phoneme_word_starts}{phoneme_note}\n")
+            heard_note = f" ({heard_word_starts_result})" if heard_word_starts_result else ""
+            f.write(f"  Heard word starts:        {settings.heard_word_starts}{heard_note}\n")
             f.write(f"  Syllable split:           {settings.syllable_split}\n")
             f.write(f"  Vocal gap fill:           {settings.vocal_gap_fill}\n")
             f.write(f"  Pitch-change split:       {settings.pitch_change_split}\n")
@@ -3352,6 +3381,8 @@ def init_settings(argv: list[str]) -> Settings:
             settings.onset_correction = False
         elif opt in ("--disable_phoneme_word_starts"):
             settings.phoneme_word_starts = False
+        elif opt in ("--disable_heard_word_starts"):
+            settings.heard_word_starts = False
         elif opt in ("--disable_synced_lyrics_check"):
             settings.check_synced_lyrics = False
         elif opt in ("--syllable_split"):
@@ -3586,6 +3617,7 @@ def arg_options():
         "disable_octave_consistency",
         "disable_onset_correction",
         "disable_phoneme_word_starts",
+        "disable_heard_word_starts",
         "disable_synced_lyrics_check",
         "syllable_split",
         "vocal_gap_fill",

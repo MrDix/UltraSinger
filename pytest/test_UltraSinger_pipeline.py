@@ -1751,6 +1751,100 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
                  segmentation_model="model.pt", calculate_score=True)
         self.assertEqual(scored, {"audio": "lead.wav", "tones": [24, 31]})
 
+    _HEARD_WORDS = [("hello ", 1.0, 1.3), ("world ", 1.5, 1.8)]
+
+    def _heard_word_starts(self, lyrics=True, heard=_HEARD_WORDS, model=lambda words: 2, **settings_values):
+        """What the model segmentation was asked with, and the line of the info file.
+
+        ``lyrics``: plain lyrics are found and placed (else the transcription makes the notes),
+        ``heard``: the words of the transcription, ``model``: the number of words the model
+        segmentation says it started where they were heard, from the words it got (None: it
+        made no notes)."""
+        asked = {}
+
+        def segment(segments, **kwargs):
+            asked.update(kwargs)
+            count = model(kwargs.get("heard_words"))
+            if count is None:
+                return None
+            return SimpleNamespace(segments=segments, pitch_audio_path="stem.wav",
+                                   heard_starts=count if kwargs.get("heard_words") else None)
+
+        def transcribe(process_data):
+            process_data.transcription_words = list(heard)
+            process_data.transcribed_data = [_syllable(*word) for word in self._HEARD_WORDS]
+            process_data.media_info.language = "en"
+            if lyrics:
+                process_data.plain_lyrics = "hello world"
+            return None, None
+
+        process_data = _process_data()
+        process_data.process_data_paths.vocals_audio_file_path = "stem.wav"
+        # (the phoneme word starts would listen to the vocal stem, which is no file here)
+        values = dict(segmentation_model="model.pt", write_settings_info=True, phoneme_word_starts=False)
+        values.update(settings_values)
+        with patch.object(us, "_stem_pitch_track", return_value=None), \
+                patch("modules.Segmentation.segmenter.segment_with_model", side_effect=segment), \
+                patch("ultrastar_score.detect_pitch_frames", return_value=[]):
+            _, _, files = _run(process_data, _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5),
+                               transcribe, plain_align=_aligned, **values)
+        line = [x for x in files["ultrasinger_parameter.info"].splitlines() if "Heard word starts:" in x]
+        return asked, line[0].split(":", 1)[1].strip()
+
+    def test_the_model_gets_the_transcribed_words_for_the_word_starts(self):
+        asked, line = self._heard_word_starts()
+        self.assertEqual(asked["heard_words"], self._HEARD_WORDS)
+        self.assertEqual(line, "True (2 words start where they were heard)")
+
+    def test_no_heard_word_starts_when_switched_off(self):
+        asked, line = self._heard_word_starts(heard_word_starts=False)
+        self.assertIsNone(asked["heard_words"])
+        self.assertEqual(line, "False")
+
+    def test_no_heard_word_starts_for_the_words_of_the_transcription(self):
+        """The chart's words are the transcription itself: they already are where it heard them."""
+        asked, line = self._heard_word_starts(lyrics=False)
+        self.assertIsNone(asked["heard_words"])
+        self.assertEqual(line, "True (not run, the words were not placed from reference lyrics)")
+
+    def test_the_info_file_says_why_no_word_starts_were_compared(self):
+        _, line = self._heard_word_starts(heard=[])
+        self.assertEqual(line, "True (not run, there are no transcribed words)")
+        # the model segmentation got the words and says nothing of them: the comparison failed
+        asked = {}
+
+        def failed(segments, **kwargs):
+            asked.update(kwargs)
+            return SimpleNamespace(segments=segments, pitch_audio_path="stem.wav", heard_starts=None)
+
+        process_data = _process_data()
+        process_data.process_data_paths.vocals_audio_file_path = "stem.wav"
+
+        def transcribe(data):
+            data.transcription_words = list(self._HEARD_WORDS)
+            data.transcribed_data = [_syllable(*word) for word in self._HEARD_WORDS]
+            data.media_info.language = "en"
+            data.plain_lyrics = "hello world"
+            return None, None
+
+        with patch.object(us, "_stem_pitch_track", return_value=None), \
+                patch("modules.Segmentation.segmenter.segment_with_model", side_effect=failed), \
+                patch("ultrastar_score.detect_pitch_frames", return_value=[]):
+            _, _, files = _run(process_data, _pitch_track([(1.0, 1.4, "C4"), (1.5, 2.0, "D4")], length=2.5),
+                               transcribe, plain_align=_aligned, segmentation_model="model.pt",
+                               write_settings_info=True, phoneme_word_starts=False)
+        self.assertEqual(asked["heard_words"], self._HEARD_WORDS)
+        self.assertIn("Heard word starts:        True (not run, the comparison with the transcription failed)\n",
+                      files["ultrasinger_parameter.info"])
+
+    def test_the_info_file_says_when_the_model_segmentation_was_not_used(self):
+        _, line = self._heard_word_starts(model=lambda words: None)
+        self.assertEqual(line, "True (not run, the model segmentation was not used)")
+        _, line = self._heard_word_starts(use_separated_vocal=False)
+        self.assertEqual(line, "True (not run, the model segmentation was not used)")
+        _, line = self._heard_word_starts(segmentation_model=None)
+        self.assertEqual(line, "True (not run, it needs a segmentation model)")
+
     def test_the_model_places_whole_words_without_hyphenation(self):
         for hyphenation in (True, False):
             asked = {}

@@ -50,6 +50,7 @@ _DEFAULTS = {
     "octave_consistency": "model",  # "model" (segmentation-model notes only), "all" or "off"
     "disable_onset_correction": False,
     "disable_phoneme_word_starts": False,
+    "disable_heard_word_starts": False,
     "disable_denoise_track_noise": False,
     "denoise_nr": 20,
     "denoise_nf": -80,

@@ -107,6 +107,10 @@ def print_help() -> None:
                             starts where a phoneme recognizer hears its sounds begin, not at the end of
                             the held note. Needs the separated vocal and found lyrics; downloads a
                             phoneme model (about 1.3 GB) on first use.
+    --disable_heard_word_starts  Do not start words where the transcription heard them. Enabled by default:
+                            with a segmentation model and found lyrics, a word that the alignment of the
+                            lyrics starts where no note of the model begins starts where the
+                            transcription heard it, when a note begins there.
     --disable_quantization  Disable key quantization. Key quantization is enabled by default and removes slides and out-of-key notes.
     --disable_vocal_center  Disable vocal-centre octave correction. Enabled by default.
     --octave_snap           Fold isolated single-note octave spikes back onto the melody line

@@ -624,6 +624,50 @@ class TestSegmenter:
         assert [s.word for s in result.segments] == ["hel", "lo "]
         assert result.pitch_audio_path == str(vocal)
 
+    def _model_and_notes(self, tmp_path, monkeypatch, *spans):
+        model = tmp_path / "m.pt"
+        save_model(model, SegNet())
+        vocal = tmp_path / "v.wav"
+        vocal.write_bytes(b"x")
+        import modules.Segmentation.decode as dec
+        import modules.Segmentation.features as feats
+        monkeypatch.setattr(feats, "load_vocal", lambda p: np.zeros(16000, np.float32))
+        monkeypatch.setattr(feats, "analyse_vocal", lambda y: _analysis(200))
+        monkeypatch.setattr(dec, "decode_notes", lambda *a, **k: _notes(*spans))
+        return str(vocal), str(model)
+
+    def test_a_word_starts_where_the_transcription_heard_it(self, tmp_path, monkeypatch, fake_hyphen):
+        """The alignment starts "you" late in the held note, where no note begins; one begins
+        where it was heard."""
+        vocal, model = self._model_and_notes(tmp_path, monkeypatch, (0.0, 0.4), (0.5, 1.2), (1.3, 1.9))
+        words = [_seg("oh ", 0.0, 1.0), _seg("you ", 1.05, 1.9)]
+        heard = [("Oh", 0.02, 0.4), ("you", 0.52, 1.0)]
+        alone = segmenter.segment_with_model(words, vocal, model, "en")
+        assert [s.word for s in alone.segments] == ["oh", "~ ", "you "] and alone.heard_starts is None
+        result = segmenter.segment_with_model(words, vocal, model, "en", heard_words=heard)
+        assert [s.word for s in result.segments] == ["oh ", "you", "~ "]
+        assert result.heard_starts == 1
+        assert [(s.start, s.end) for s in result.segments] == [(s.start, s.end) for s in alone.segments]
+
+    def test_heard_words_that_change_nothing(self, tmp_path, monkeypatch, fake_hyphen):
+        vocal, model = self._model_and_notes(tmp_path, monkeypatch, (0.0, 0.4), (0.5, 1.2), (1.3, 1.9))
+        words = [_seg("oh ", 0.0, 1.2), _seg("you ", 1.3, 1.9)]
+        result = segmenter.segment_with_model(words, vocal, model, "en", heard_words=[("oh", 0.0, 0.4), ("you", 1.31, 1.8)])
+        assert [s.word for s in result.segments] == ["oh", "~ ", "you "] and result.heard_starts == 0
+        # a note begins at the aligned start as well as at the heard one: the word stays
+        result = segmenter.segment_with_model(words, vocal, model, "en", heard_words=[("oh", 0.0, 0.4), ("you", 0.52, 1.0)])
+        assert [s.word for s in result.segments] == ["oh", "~ ", "you "] and result.heard_starts == 0
+        assert segmenter.segment_with_model(words, vocal, model, "en", heard_words=[]).heard_starts is None
+
+    def test_the_notes_are_kept_when_the_heard_words_fail(self, tmp_path, monkeypatch, fake_hyphen, capsys):
+        vocal, model = self._model_and_notes(tmp_path, monkeypatch, (0.0, 0.4), (0.5, 1.2), (1.3, 1.9))
+        import modules.Segmentation.heard_starts as heard_starts
+        monkeypatch.setattr(heard_starts, "start_where_heard", lambda *a, **k: 1 / 0)
+        result = segmenter.segment_with_model([_seg("oh ", 0.0, 1.2), _seg("you ", 1.3, 1.9)], vocal, model, "en",
+                                              heard_words=[("you", 0.52, 1.0)])
+        assert [s.word for s in result.segments] == ["oh", "~ ", "you "] and result.heard_starts is None
+        assert "were not compared with the transcription" in capsys.readouterr().out
+
     def test_whole_words_without_splitting(self, tmp_path, monkeypatch, fake_hyphen):
         model = tmp_path / "m.pt"
         save_model(model, SegNet())

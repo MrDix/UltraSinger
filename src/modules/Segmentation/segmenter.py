@@ -29,6 +29,7 @@ def _get_model(path: str, device: str):
 class ModelSegmentation(NamedTuple):
     segments: list[MidiSegment]
     pitch_audio_path: str  # the stem the note pitches were taken from (lead or full vocal)
+    heard_starts: int | None = None  # words started where a transcription heard them (None: not looked at)
 
 
 class LeadStem(NamedTuple):
@@ -88,6 +89,7 @@ def segment_with_model(
     cache_folder: str | None = None,
     force_cpu: bool = False,
     split_words: bool = True,
+    heard_words: list[tuple[str, float, float]] | None = None,
 ) -> ModelSegmentation | None:
     """Predict notes on the separated vocal and place the existing lyrics onto them.
 
@@ -105,7 +107,10 @@ def segment_with_model(
     their pitch in the later pitch refinement (see ``lock_pitches``).
 
     Without ``split_words`` (hyphenation switched off) the words are placed
-    whole, not in syllables.
+    whole, not in syllables. With ``heard_words``, the words of a
+    transcription as (text, start s, end s), a word starts where it was heard
+    when a note begins there and none where the alignment put the word (see
+    ``heard_starts``).
     """
     if not model_path or not os.path.isfile(model_path):
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} segmentation model not found: "
@@ -144,6 +149,15 @@ def segment_with_model(
             print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} model found no notes - keeping word-based notes")
             return None
         syllables = syllables_from_segments(midi_segments, language, split_words)
+        heard_starts = None
+        if heard_words:
+            try:
+                from modules.Segmentation.heard_starts import start_where_heard
+
+                syllables, heard_starts = start_where_heard(syllables, heard_words, [n.start * 1000 for n in notes])
+            except Exception as e:  # noqa: BLE001 - the words keep their starts
+                print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} the word starts were not compared with "
+                      f"the transcription ({e!r})")
         notes = split_freestyle_at_words(notes, syllables)
         segments = place_lyrics(notes, syllables)
         if not segments:
@@ -154,7 +168,9 @@ def segment_with_model(
         freestyle = sum(1 for s in segments if s.note_type == "F")
         print(f"{ULTRASINGER_HEAD} Model segmentation: {len(segments)} notes "
               f"({freestyle} freestyle, {locked} with a well-tracked pitch) from {len(syllables)} syllables")
-        return ModelSegmentation(segments, pitch_audio_path)
+        if heard_starts:
+            print(f"{ULTRASINGER_HEAD} {heard_starts} words start where the transcription heard them")
+        return ModelSegmentation(segments, pitch_audio_path, heard_starts)
     except Exception as e:  # noqa: BLE001 - fail open, never lose the chart
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} model segmentation failed ({e!r}) "
               f"- keeping word-based notes")

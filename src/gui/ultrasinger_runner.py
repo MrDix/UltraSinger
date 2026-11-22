@@ -528,6 +528,8 @@ class UltraSingerRunner(QObject):
             args.append("--disable_onset_correction")
         if config.get("disable_phoneme_word_starts"):
             args.append("--disable_phoneme_word_starts")
+        if config.get("disable_heard_word_starts"):
+            args.append("--disable_heard_word_starts")
         if config.get("disable_denoise_track_noise"):
             args.append("--disable_denoise_track_noise")
         if not config.get("hyphenation", True):
