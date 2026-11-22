@@ -172,11 +172,16 @@ def example_rows(example: dict, min_notes: int = MIN_NOTES) -> SongRows | None:
 
 
 def find_examples(data: Path) -> list[Path]:
-    """The example files of ``data``: the work folder of train_segmentation.py or its data folder."""
-    files = sorted(data.glob("*.npz"))
-    if not files and (data / "data").is_dir():
-        files = sorted((data / "data").glob("*.npz"))
-    return files
+    """The example files of ``data``: the work folder of train_segmentation.py or its data folder.
+
+    A work folder keeps its examples in ``data``, and they are taken from
+    there: the work folder itself is where the documented command writes the
+    model (a ``.npz`` file as well), which is no example. A folder without
+    examples in a ``data`` folder is taken for the folder of the examples.
+    """
+    inner = data / "data"
+    files = sorted(inner.glob("*.npz")) if inner.is_dir() else []
+    return files or sorted(data.glob("*.npz"))
 
 
 def excluded_ids(values: list[str] | None) -> set[str]:
@@ -355,7 +360,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("training needs scikit-learn (it is installed with UltraSinger: run this tool "
                          "with UltraSinger's Python)") from None
 
-    files = find_examples(data)
+    # (never the model file of an earlier run, wherever --out puts it)
+    files = [f for f in find_examples(data) if f.resolve() != out.resolve()]
     excluded = excluded_ids(args.exclude)
     if excluded:
         kept = [f for f in files if f.stem not in excluded]

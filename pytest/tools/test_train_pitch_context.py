@@ -146,6 +146,19 @@ class TestExamples:
         assert tp.find_examples(tmp_path / "data") == [path]
         assert tp.find_examples(tmp_path / "data" / "..") == [tmp_path / "data" / ".." / "data" / "tr_0001.npz"]
 
+    def test_a_model_file_in_the_work_folder_is_no_example(self, tmp_path):
+        """The documented command writes the model into the work folder, beside the
+        folder of the examples; the next run must not take it for the examples."""
+        examples = [_write(tmp_path / "data", f"tr_{i:04d}", _example(60 + i)) for i in range(3)]
+        (tmp_path / "pitch_context.npz").write_bytes(b"the model of an earlier run")
+        assert tp.find_examples(tmp_path) == examples
+        assert tp.find_examples(tmp_path / "data") == examples
+        # examples that lie in the given folder itself are found, also beside an empty "data"
+        flat = tmp_path / "flat"
+        direct = [_write(flat, "tr_0001", _example(63))]
+        (flat / "data").mkdir()
+        assert tp.find_examples(flat) == direct
+
     def test_excluded_names(self, tmp_path):
         listed = tmp_path / "bench.json"
         listed.write_text(json.dumps(["tr_0003", "tr_0004.npz"]), encoding="utf-8")
@@ -235,6 +248,22 @@ class TestTraining:
         Other._predictors[0][0].nodes["is_leaf"] = 1
         with pytest.raises(RuntimeError, match="do not predict what scikit-learn predicts"):
             tp.export_trees([Other() for _ in range(2 * len(SHIFTS))], np.zeros((5, 40), np.float32))
+
+    def test_a_second_run_finds_the_examples_again(self, tmp_path, capsys):
+        """The first run leaves its model file where the second one looks for examples."""
+        work = tmp_path / "work"
+        for i in range(4):
+            _write(work / "data", f"tr_{i:04d}", _example(70 + i))
+        options = ["--trees", "3", "--val-fraction", "0"]
+        for out in (work / "pitch_context.npz",            # the documented command
+                    work / "data" / "pitch_context.npz"):  # the model among the examples
+            for run in ("first", "second"):
+                assert tp.main(["--data", str(work), "--out", str(out), *options]) == 0, run
+                printed = capsys.readouterr().out
+                assert "4 usable songs of 4" in printed and "skipped" not in printed, run
+        assert tp.main(["--data", str(work / "data"), "--out", str(work / "data" / "pitch_context.npz"),
+                        *options]) == 0
+        assert "4 usable songs of 4" in capsys.readouterr().out
 
     def test_the_model_stays_outside_the_repository(self, trained):
         folder, _ = trained
