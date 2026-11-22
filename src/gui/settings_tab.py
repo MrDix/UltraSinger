@@ -568,6 +568,20 @@ class ConversionSettingsForm(QWidget):
                            reset_callback=lambda: self._phoneme_word_starts.setChecked(
                                not _DEFAULTS["disable_phoneme_word_starts"]))
 
+        # Heard word starts
+        self._heard_word_starts = ToggleSwitch(
+            checked=not self._config.get("disable_heard_word_starts", False)
+        )
+        card.add_toggle_row("Heard Word Starts", self._heard_word_starts,
+                           "The lyrics are placed by matching their letters to the "
+                           "singing, which often starts a word late on a held note. "
+                           "Where a word was placed at a time at which no note of the "
+                           "segmentation model begins, and the transcription heard it "
+                           "start at a time at which one does, the word starts there. "
+                           "Works with a segmentation model and found lyrics.",
+                           reset_callback=lambda: self._heard_word_starts.setChecked(
+                               not _DEFAULTS["disable_heard_word_starts"]))
+
         # Lyrics lookup
         self._lyrics_lookup = ToggleSwitch(
             checked=not self._config.get("disable_lyrics_lookup", False)
@@ -1876,6 +1890,7 @@ class ConversionSettingsForm(QWidget):
             "octave_consistency": self._octave_consistency.currentData(),
             "disable_onset_correction": not self._onset_correction.isChecked(),
             "disable_phoneme_word_starts": not self._phoneme_word_starts.isChecked(),
+            "disable_heard_word_starts": not self._heard_word_starts.isChecked(),
             "disable_denoise_track_noise": not self._denoise.isChecked(),
             "denoise_nr": self._denoise_nr.value(),
             "denoise_nf": self._denoise_nf.value(),

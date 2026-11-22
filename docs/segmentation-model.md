@@ -21,6 +21,9 @@ continuations, or, when it is spoken with several syllables that the
 hyphenation did not split ("only", "baby"), these syllables on its notes. A hyphen chain such as `ooh-ooh-oh` is sung piece by piece
 (`ooh-` `ooh-` `oh`). Syllables that get no note of their own join the note
 before or after them, in their order and never across the start of a line.
+Before the placement, a word that the alignment starts at a time at which no
+predicted note begins starts where the transcription heard it, when a note
+begins there (`--disable_heard_word_starts` turns this off).
 Lines without a predicted note, such as those after the last one, are left
 out; they are mostly lyrics that the recording does not sing.
 

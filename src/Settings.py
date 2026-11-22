@@ -43,6 +43,7 @@ class Settings:
     onset_correction = True  # Snap note start times to detected audio onsets
     check_synced_lyrics = True  # Check the times of synced lyrics by the words of a transcription (runs one)
     phoneme_word_starts = True  # Start a word sung on the held vowel of the word before where its sounds begin (phoneme recognizer)
+    heard_word_starts = True  # Start a word where the transcription heard it, when a note of the segmentation model begins there and none where the alignment put the word
     syllable_split = False  # Preserve syllable-level note splits at pitch changes
     vocal_gap_fill = False  # Fill un-transcribed vocal gaps with placeholder notes
     pitch_change_split = True  # Split notes at pitch change boundaries (melismas, runs)
