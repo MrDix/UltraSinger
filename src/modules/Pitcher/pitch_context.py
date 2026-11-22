@@ -75,6 +75,7 @@ MIN_FRAMES = 2  # confident pitch frames a note needs to be judged
 MAX_FRAME_DISTANCE = 1.5
 DEFAULT_FRAME_MS = 16.0
 PITCHED_TYPES = (":", "*")  # freestyle and rap notes are charted without a sung pitch
+_LOWEST_PITCH, _HIGHEST_PITCH = 0, 127  # MIDI: what a note can be moved to
 
 _MAJOR_SCALE = np.array([1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1], bool)
 _NEIGHBOURS = (-2, -1, 1, 2)
@@ -572,6 +573,10 @@ def correct_note_pitches(midi_segments: list, pitched_data, model_path: str | No
         shifts = predict_shifts(
             model, [segment.start * 1000.0 for segment in notes], [segment.end * 1000.0 for segment in notes],
             pitches, PitchTrack.from_pitched_data(pitched_data), strength)
+        # A note at the edge of the pitches there are stays inside them: a pitch below
+        # MIDI 0 or above 127 has a name, but the MIDI file of the song cannot hold it
+        shifts = [int(shift) if _LOWEST_PITCH <= pitch + int(shift) <= _HIGHEST_PITCH else 0
+                  for pitch, shift in zip(pitches, shifts)]
         # (the new names first: no note is changed when one of them fails)
         moved = [(segment, librosa.midi_to_note(pitch + int(shift)))
                  for segment, pitch, shift in zip(notes, pitches, shifts) if shift]

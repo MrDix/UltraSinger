@@ -831,6 +831,35 @@ class TestCorrectNotePitches:
         assert [_midi(s) for s in segments] == [67, 62, 65, 60]
         assert (result.notes, result.moved) == (4, 2)
 
+    def test_a_note_stays_inside_the_pitches_there_are(self, tmp_path, monkeypatch):
+        """A pitch below MIDI 0 or above 127 has a name, but the MIDI file of the song
+        cannot be written with it: such a note keeps its pitch and does not count as moved."""
+        def convert(pitches, shifts):
+            segments = [MidiSegment(librosa.midi_to_note(pitch), i * 1.0, i + 0.5, "la ")
+                        for i, pitch in enumerate(pitches)]
+            monkeypatch.setattr(pitch_context, "predict_shifts", lambda *args: np.array(shifts))
+            result, out = _quiet(correct_note_pitches, segments, _notes()[1], _model_file(tmp_path), "strong")
+            return [_midi(s) for s in segments], result.moved, out
+
+        pitches, moved, out = convert([0, 1, 60, 126, 127], [-1, -2, 1, 2, 1])
+        assert pitches == [0, 1, 61, 126, 127] and moved == 1
+        assert "of 5 note pitches moved (1 up, 0 down)" in out
+        # up to the edge a note moves
+        pitches, moved, out = convert([0, 1, 60, 126, 127], [0, -1, 0, 1, 0])
+        assert pitches == [0, 0, 60, 127, 127] and moved == 2
+        assert "of 5 note pitches moved (1 up, 1 down)" in out
+
+    def test_the_highest_note_is_not_moved_out_of_the_midi_file(self, tmp_path):
+        from modules.Midi.midi_creator import create_midi_instrument
+
+        segments = [MidiSegment(librosa.midi_to_note(127), 0.0, 0.5, "one "),
+                    MidiSegment(librosa.midi_to_note(126), 0.6, 1.0, "two ")]
+        sung = _pitched_data([(0.0, 0.5, 127.5), (0.6, 1.0, 126.5)])
+        result, _ = _quiet(correct_note_pitches, segments, sung, _model_file(tmp_path), "strong")
+        assert [_midi(s) for s in segments] == [127, 127] and result.moved == 1
+        instrument, _ = _quiet(create_midi_instrument, segments)
+        assert [note.pitch for note in instrument.notes] == [127, 127]
+
     def test_the_order_of_the_notes_does_not_matter(self, tmp_path):
         segments, sung = _notes()
         shuffled = [segments[2], segments[0], segments[3], segments[1]]
