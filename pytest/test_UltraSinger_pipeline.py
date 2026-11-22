@@ -13,6 +13,7 @@ from unittest.mock import patch
 import librosa
 
 import src.UltraSinger as us
+from modules.Pitcher.pitch_context import PitchContextResult
 from modules.Speech_Recognition.reference_lyrics_aligner import (
     LyricsOfOtherRecording,
     PlainLyricsPlacement,
@@ -1659,9 +1660,19 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
         def segment(segments, **kwargs):
             return SimpleNamespace(segments=segments, pitch_audio_path=model)
 
+        def pitch_context(segments, track, model_path, strength):
+            calls.append(("pitch context", track))
+            return PitchContextResult(True, notes=len(segments))
+
+        def golden(segments, **kwargs):
+            calls.append(("golden notes", None))
+            return segments
+
         if model:
             settings_values["segmentation_model"] = "model.pt"
         with patch.object(us, "_stem_pitch_track", side_effect=stem_track), \
+                patch("modules.Pitcher.pitch_context.correct_note_pitches", side_effect=pitch_context), \
+                patch("modules.Ultrastar.golden_notes.mark_golden_notes", side_effect=golden), \
                 patch("modules.Pitcher.unpitched_notes.mark_unpitched_notes", side_effect=freestyle), \
                 patch("modules.Pitcher.steady_pitch.follow_steady_sung_pitch", side_effect=steady), \
                 patch("modules.Pitcher.vocal_runs.split_notes_at_vocal_runs", side_effect=runs), \
@@ -1754,3 +1765,144 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
         self.assertEqual(self._passes(model="lead.wav", vocal_runs_as_notes=True),
                          [("freestyle", "stem.wav"), ("refine", "lead.wav"), ("vocal runs", "lead.wav")])
         self.assertEqual(self._passes(model="lead.wav"), [("freestyle", "stem.wav"), ("refine", "lead.wav")])
+
+    def test_the_pitch_context_is_the_last_step_that_changes_pitches(self):
+        # for model notes, in the pitch track of the stem their pitches are from; this
+        # file stands in for the model file (the step itself is replaced here)
+        self.assertEqual(
+            self._passes(model="lead.wav", vocal_runs_as_notes=True, golden_notes=True,
+                         pitch_context="balanced", pitch_context_model=__file__),
+            [("freestyle", "stem.wav"), ("refine", "lead.wav"), ("vocal runs", "lead.wav"),
+             ("pitch context", "lead.wav"), ("golden notes", None)])
+        self.assertEqual(self._passes(model="stem.wav", pitch_context="strong", pitch_context_model=__file__),
+                         [("freestyle", "stem.wav"), ("refine", "stem.wav"), ("pitch context", "stem.wav")])
+
+    def test_no_pitch_context_unless_it_is_switched_on(self):
+        # a model file alone does nothing
+        names = [name for name, _ in self._passes(model="lead.wav", pitch_context_model=__file__)]
+        self.assertNotIn("pitch context", names)
+
+    def test_no_pitch_context_for_word_based_notes(self):
+        names = [name for name, _ in self._passes(pitch_context="strong", pitch_context_model=__file__)]
+        self.assertNotIn("pitch context", names)
+        self.assertNotIn("pitch context", [name for name, _ in self._passes(
+            use_separated_vocal=False, pitch_context="strong", pitch_context_model=__file__)])
+
+    def test_no_pitch_context_for_the_score_first_chart(self):
+        names = [name for name, _ in self._passes(model="lead.wav", ptakf_refit=True, pitch_context="strong",
+                                                  pitch_context_model=__file__)]
+        self.assertEqual(names, ["freestyle", "refine", "refit"])
+
+    def test_the_stem_is_not_pitched_for_a_missing_model_file(self):
+        self.assertEqual(self._passes(model="lead.wav", pitch_context="strong", pitch_context_model="missing.npz"),
+                         [("freestyle", "stem.wav"), ("refine", "lead.wav"), ("pitch context", None)])
+
+
+class TestNotePitchesFromContext(unittest.TestCase):
+    """--pitch_context in run(): with a real (tiny) model file and the real step."""
+
+    WORDS = [("one ", 0.0, 0.24), ("two ", 0.40, 0.64), ("three ", 0.80, 1.04)]
+
+    @staticmethod
+    def _model_file(folder):
+        """A model that promises most for one semitone up when a note's frames lie
+        more than 0.3 semitones above its pitch, and for staying otherwise."""
+        import numpy as np
+        from modules.Pitcher.pitch_context import FEATURE_NAMES, N_OUTPUTS, SHIFTS, PitchContextModel
+
+        nodes, roots = [], []
+        for output in range(N_OUTPUTS):
+            roots.append(len(nodes))
+            if output == SHIFTS.index(1):
+                first = len(nodes)
+                nodes += [(FEATURE_NAMES.index("frames_p50"), 0.3, first + 1, first + 2, 0.0),
+                          (-1, 0.0, 0, 0, 0.0), (-1, 0.0, 0, 0, 1.0)]
+            else:
+                nodes.append((-1, 0.0, 0, 0, 0.5 if output == SHIFTS.index(0) else 0.0))
+        feature, threshold, left, right, value = zip(*nodes)
+        path = os.path.join(folder, "pitch_context.npz")
+        PitchContextModel(feature=feature, threshold=threshold, left=left, right=right,
+                          missing_left=[False] * len(nodes), value=value, tree_root=roots,
+                          tree_output=list(range(N_OUTPUTS)), baseline=np.zeros(N_OUTPUTS)).save(path)
+        return path
+
+    def _convert(self, model_notes=True, stem_track="sung", **settings_values):
+        """The notes run() wrote, its output and info file. The first note is sung
+        half a semitone sharp, the second on its pitch, the third (sung sharp too)
+        is a freestyle note."""
+        process_data = _process_data()
+        process_data.process_data_paths.vocals_audio_file_path = "stem.wav"
+        sharp = float(librosa.midi_to_hz(60.5))
+        sung = _pitch_track([(0.0, 0.24, "C4"), (0.40, 0.64, "E4"), (0.80, 1.04, "C4")])
+        sung.frequencies = [sharp if hz and not 0.39 < t < 0.65 else hz
+                            for t, hz in zip(sung.times, sung.frequencies)]
+
+        def segment(segments, **kwargs):
+            segments[2].note_type = "F"
+            return SimpleNamespace(segments=segments, pitch_audio_path="stem.wav")
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(
+                us, "_stem_pitch_track", side_effect=lambda data, path: sung if stem_track == "sung" else None))
+            stack.enter_context(patch("ultrastar_score.detect_pitch_frames", return_value=[]))
+            if model_notes:
+                stack.enter_context(patch("modules.Segmentation.segmenter.segment_with_model", side_effect=segment))
+                settings_values["segmentation_model"] = "model.pt"
+            pitched = _pitch_track([(0.0, 0.24, "C4"), (0.40, 0.64, "E4"), (0.80, 1.04, "C4")])
+            notes, out, files = _run(process_data, pitched, _transcription(self.WORDS, "en"), bpm_override=60.0,
+                                     write_settings_info=True, **settings_values)
+        return [note[3] for note in notes], out, files["ultrasinger_parameter.info"]
+
+    def test_notes_move_and_freestyle_notes_stay(self):
+        with tempfile.TemporaryDirectory() as folder:
+            model = self._model_file(folder)
+            for strength in ("balanced", "strong"):
+                with self.subTest(strength=strength):
+                    notes, out, info = self._convert(pitch_context=strength, pitch_context_model=model)
+                    self.assertEqual([int(librosa.note_to_midi(note)) for note in notes], [61, 64, 60])
+                    self.assertIn(f"Note pitches from their musical context ({strength}): pitch_context.npz", out)
+                    self.assertIn("of 2 note pitches moved (1 up, 0 down)", out)
+                    self.assertIn(f"  Pitch context:            {strength} (pitch_context.npz): "
+                                  "1 of 2 note pitches moved\n", info)
+
+    def test_off_by_default(self):
+        with tempfile.TemporaryDirectory() as folder:
+            notes, out, info = self._convert(pitch_context_model=self._model_file(folder))
+        self.assertEqual(notes, ["C4", "E4", "C4"])
+        self.assertNotIn("itch context", out)
+        self.assertIn("  Pitch context:            off\n", info)
+
+    def test_without_a_model_file_the_conversion_says_so_and_goes_on(self):
+        for model, reason in ((None, "no model file is set (--pitch_context_model)"),
+                              (os.path.join("no", "such", "model.npz"), "model file not found")):
+            with self.subTest(model=model):
+                notes, out, info = self._convert(pitch_context="strong", pitch_context_model=model)
+                self.assertEqual(notes, ["C4", "E4", "C4"])
+                self.assertIn(f"pitch context not applied: {reason}", out)
+                self.assertIn("the note pitches stay as they are", out)
+                self.assertIn("Pitch context:            strong (", info)
+                self.assertIn(f"not applied ({reason}", info)
+
+    def test_a_file_that_is_no_model_leaves_the_notes_as_they_are(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "pitch_context.npz")
+            with open(path, "wb") as f:
+                f.write(b"not a model")
+            notes, out, _ = self._convert(pitch_context="strong", pitch_context_model=path)
+        self.assertEqual(notes, ["C4", "E4", "C4"])
+        self.assertIn("is not a pitch context model file", out)
+
+    def test_without_a_pitch_track_the_notes_stay(self):
+        with tempfile.TemporaryDirectory() as folder:
+            notes, out, _ = self._convert(stem_track=None, pitch_context="strong",
+                                          pitch_context_model=self._model_file(folder))
+        self.assertEqual(notes, ["C4", "E4", "C4"])
+        self.assertIn("pitch context not applied: no pitch track of the vocal", out)
+
+    def test_only_for_the_notes_of_a_segmentation_model(self):
+        with tempfile.TemporaryDirectory() as folder:
+            notes, out, info = self._convert(model_notes=False, pitch_context="strong",
+                                             pitch_context_model=self._model_file(folder))
+        self.assertEqual(notes, ["C4", "E4", "C4"])
+        self.assertIn("pitch context not applied: the notes are not from a segmentation model", out)
+        self.assertIn("not applied (the notes are not from a segmentation model)", info)
