@@ -444,6 +444,18 @@ class TestChooseShifts:
         shifts = predict_shifts(_toy_model(), [0.0, 2000.0], [500.0, 2500.0], [60, 60], track, "strong")
         assert shifts.tolist() == [1, 0]
 
+    def test_a_note_that_is_not_at_the_pitch_of_its_frames_stays(self):
+        """Another step put it there (the pitch refinement moves a note to the tone the
+        games' pitch detection hears): the model has seen no such note."""
+        assert pitch_context.MAX_FRAME_DISTANCE == 1.5
+        # sung at 61.4, 61.6 and 63: 1.4, 1.6 and 3 semitones above the note; the toy
+        # model promises most for one semitone up in all three
+        track = _track([(0.0, 0.5, 61.4), (1.0, 1.5, 61.6), (2.0, 2.5, 63.0)])
+        starts, ends = [0.0, 1000.0, 2000.0], [500.0, 1500.0, 2500.0]
+        assert predict_shifts(_toy_model(), starts, ends, [60, 60, 60], track, "strong").tolist() == [1, 0, 0]
+        # octaves aside: a note charted an octave above its frames is at their pitch
+        assert predict_shifts(_toy_model(), starts, ends, [72, 72, 72], track, "strong").tolist() == [1, 0, 0]
+
     def test_the_same_notes_get_the_same_shifts(self):
         track = _track([(0.0, 0.5, 60.5), (0.6, 0.9, 62.0)])
         args = (_toy_model(), [0.0, 600.0], [500.0, 900.0], [60, 62], track, "strong")
@@ -511,6 +523,13 @@ class TestCorrectNotePitches:
         sung = _pitched_data([(0.0, 0.5, 60.5), (0.6, 1.0, 60.0)])
         _quiet(correct_note_pitches, segments, sung, _model_file(tmp_path), "strong")
         assert [_midi(s) for s in segments] == [73, 72]
+
+    def test_a_note_the_refinement_moved_away_from_its_frames_stays(self, tmp_path):
+        segments, sung = _notes()
+        segments[0].note = "G4"  # sung around C4: seven semitones from its frames
+        result, _ = _quiet(correct_note_pitches, segments, sung, _model_file(tmp_path), "strong")
+        assert [_midi(s) for s in segments] == [67, 62, 65, 60]
+        assert (result.notes, result.moved) == (4, 2)
 
     def test_the_order_of_the_notes_does_not_matter(self, tmp_path):
         segments, sung = _notes()

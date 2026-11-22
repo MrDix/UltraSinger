@@ -157,11 +157,12 @@ def print_help() -> None:
     --pitch_context         off|balanced|strong, default off. With a segmentation model and a pitch context model
                             (--pitch_context_model): move single notes by up to two semitones, from the pitch that
                             was sung to the pitch a hand-made chart would write, judged from the note's pitch
-                            frames, its neighbour notes and the song's key. balanced moves about one note in eight:
+                            frames, its neighbour notes and the song's key. balanced moves about one note in twelve:
                             more notes exactly on the charted pitch, as many within one semitone of it. strong
-                            moves about one note in five: the most exact pitches, a few less within one semitone.
-                            The octave of a note stays; freestyle notes are never touched. Without a usable model
-                            file the conversion says so and goes on without it.
+                            moves about one note in seven: the most exact pitches, a few less within one semitone.
+                            The octave of a note stays; freestyle notes and notes that are not at the pitch of
+                            their pitch frames are never touched. Without a usable model file the conversion
+                            says so and goes on without it.
     --pitch_context_model   Path to a trained pitch context model (.npz). Train your own on your UltraStar library
                             with tools/train_pitch_context.py (see docs/pitch-context-model.md). No model is shipped.
                             Only used together with --pitch_context balanced or strong.

@@ -352,11 +352,12 @@ _Not all options working now!_
     --pitch_context         off|balanced|strong, default off. With a segmentation model and a pitch context model
                             (--pitch_context_model): move single notes by up to two semitones, from the pitch that
                             was sung to the pitch a hand-made chart would write, judged from the note's pitch
-                            frames, its neighbour notes and the song's key. balanced moves about one note in eight:
+                            frames, its neighbour notes and the song's key. balanced moves about one note in twelve:
                             more notes exactly on the charted pitch, as many within one semitone of it. strong
-                            moves about one note in five: the most exact pitches, a few less within one semitone.
-                            The octave of a note stays; freestyle notes are never touched. Without a usable model
-                            file the conversion says so and goes on without it.
+                            moves about one note in seven: the most exact pitches, a few less within one semitone.
+                            The octave of a note stays; freestyle notes and notes that are not at the pitch of
+                            their pitch frames are never touched. Without a usable model file the conversion
+                            says so and goes on without it.
     --pitch_context_model   Path to a trained pitch context model (.npz). Train your own on your UltraStar library
                             with tools/train_pitch_context.py (see docs/pitch-context-model.md). No model is shipped.
                             Only used together with --pitch_context balanced or strong.
@@ -1073,23 +1074,23 @@ A note of the [segmentation model](#model-based-note-segmentation---segmentation
 
 With `--pitch_context`, a second small model moves single notes by up to two semitones. It judges each note from how its pitch frames lie around its pitch, from the two notes before and after it, and from the song as a whole (how often each pitch class is sung, the best-fitting scale, the tuning). Off by default; there are two strengths:
 
-- `balanced` moves about one note in eight. More notes are exactly on the pitch of a hand-made chart, and as many as before within one semitone of it (the tolerance of the games on Medium).
-- `strong` moves about one note in five. It gains the most exact pitches and gives a little of the agreement within one semitone for them.
+- `balanced` moves about one note in twelve. More notes are exactly on the pitch of a hand-made chart, and as many as before within one semitone of it (the tolerance of the games on Medium).
+- `strong` moves about one note in seven. It gains the most exact pitches and gives a little of the agreement within one semitone for them.
 
 Measured on 100 songs with hand-made reference charts, with a model trained on 1255 other songs (change against the same charts without the step, in points; the value without the step in brackets):
 
 | | `balanced` | `strong` |
 |---|---|---|
-| Reference note time with exactly the reference pitch (68.6 %) | +2.0 | +5.0 |
-| ... within one semitone of it (82.7 %) | ±0.0 | −0.9 |
-| ... within two semitones of it (87.2 %) | +0.2 | +0.1 |
-| The original singing, scored on the chart with no tolerance (68.6 %) | −0.3 | −1.1 |
-| ... with one semitone tolerance (88.6 %) | +0.5 | −0.2 |
-| ... with two semitones tolerance (94.2 %) | +0.3 | +0.1 |
-| Notes moved | 12 % | 18 % |
-| Songs with more / fewer exact pitches | 75 / 23 | 87 / 13 |
+| Reference note time with exactly the reference pitch (68.6 %) | +3.1 | +5.7 |
+| ... within one semitone of it (82.7 %) | +0.1 | −0.6 |
+| ... within two semitones of it (87.2 %) | ±0.0 | ±0.0 |
+| Sung pitch inside the notes exactly on the note (68.6 %) | −0.5 | −1.4 |
+| ... within one semitone of it (88.6 %) | −0.3 | −0.9 |
+| ... within two semitones of it (94.2 %) | −0.3 | −0.4 |
+| Notes moved | 8.5 % | 14.7 % |
+| Songs with more / fewer exact pitches | 94 / 6 | 96 / 4 |
 
-So the step is a trade, not a pure gain: the chart reads more like a hand-made one, while a moved note leaves the pitch that was actually sung. On Medium and Easy the score of the original singing hardly changes; scored with no tolerance it drops a little. Convert a song with and without it and compare.
+So the step is a trade, not a pure gain: the chart reads more like a hand-made one, while a moved note leaves the pitch that was actually sung. The game score of the original singing, as UltraSinger prints it, was measured on 25 other songs: with `balanced` it drops by 0.1 (Easy), 0.3 (Medium) and 0.1 (Hard) points, with `strong` by 0.1, 0.6 and 0.3. Convert a song with and without the step and compare.
 
 No model is shipped. Train your own with `tools/train_pitch_context.py` from the same extracted examples as the segmentation model; it needs no audio and no GPU and takes a few minutes. Keep the model private.
 
@@ -1099,7 +1100,7 @@ No model is shipped. Train your own with `tools/train_pitch_context.py` from the
 -i XYZ --segmentation_model D:\Models\segmentation.pt --pitch_context balanced --pitch_context_model D:\Models\pitch_context.npz
 ```
 
-GUI: Settings → Experimental Features → "Pitch Context Model" and "Pitch Context" (also in the settings of a single song). The step only runs for the notes of a segmentation model and is the last one that changes pitches; it is skipped for the `score` chart style, whose pitches are meant to be the ones the games' pitch detection hears. A note keeps its octave, and freestyle notes are never touched. Without a usable model file, or when anything goes wrong, the conversion says so and keeps the note pitches as they are.
+GUI: Settings → Experimental Features → "Pitch Context Model" and "Pitch Context" (also in the settings of a single song). The step only runs for the notes of a segmentation model and is the last one that changes pitches; it is skipped for the `score` chart style, whose pitches are meant to be the ones the games' pitch detection hears. A note keeps its octave. Freestyle notes are never touched, and neither are notes that another step moved away from the pitch of their pitch frames (the pitch refinement moves a note to the tone the games' pitch detection hears; pulling it back would cost game score). Without a usable model file, or when anything goes wrong, the conversion says so and keeps the note pitches as they are.
 
 #### ptAKF Chart Refit (`--ptakf_refit`)
 

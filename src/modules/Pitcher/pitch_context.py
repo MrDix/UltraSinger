@@ -17,6 +17,12 @@ time the shifted pitch would be within one semitone of a hand-made chart,
 and on what share it would be exactly on it. A note moves when a shift
 promises more than staying, by a margin that the chosen strength sets.
 
+Only a note that is at the pitch of its frames is judged. A note that
+another step moved away from them stays where that step put it: the pitch
+refinement moves a note to the tone the games' pitch detection hears, and
+pulling it back to the sung pitch costs game score and agreement with
+hand-made charts alike.
+
 Training (``tools/train_pitch_context.py``) and the conversion share the
 feature code of this module, so a model always sees the features it was
 trained on. A model file holds gradient-boosted regression trees as plain
@@ -44,8 +50,8 @@ _KEEP = SHIFTS.index(0)
 # The strengths of the setting: how much being exactly on the charted pitch
 # counts next to being within one semitone of it (the tolerance most games
 # score with), and by how much a shift has to beat staying.
-# "balanced" moves about one note in eight and keeps the agreement within one
-# semitone; "strong" moves about one in five, gains the most exact pitches
+# "balanced" moves about one note in twelve and keeps the agreement within one
+# semitone; "strong" moves about one in seven, gains the most exact pitches
 # and gives a little of the agreement within one semitone for them.
 STRENGTH_OFF = "off"
 STRENGTHS = {
@@ -59,6 +65,12 @@ MIN_HZ = 40.0
 # The pitch a note gets from its confident pitch frames (as modules.Segmentation.decode)
 NOTE_PITCH_PERCENTILE = 60
 MIN_FRAMES = 2  # confident pitch frames a note needs to be judged
+# A note that lies further than this from the pitch of its frames (semitones,
+# octaves aside) was put there by another step: the pitch refinement moves a
+# note to the tone the games' pitch detection hears in it. The model has seen
+# no such note - in training every note has the pitch of its frames - and
+# would mostly pull it back to the frames. Such a note stays as it is.
+MAX_FRAME_DISTANCE = 1.5
 DEFAULT_FRAME_MS = 16.0
 PITCHED_TYPES = (":", "*")  # freestyle and rap notes are charted without a sung pitch
 
@@ -372,7 +384,7 @@ def load_model(path: str | Path) -> PitchContextModel:
                                ("tree_output", "i"), ("baseline", "f")):
                 if arrays[name].dtype.kind != kind:
                     raise ValueError(f"the array '{name}' has a wrong type")
-            info = json.loads(str(data["info"][()])) if "info" in data else {}
+            info = json.loads(str(data["info"][()])) if "info" in data.files else {}
             return PitchContextModel(**arrays, info=info if isinstance(info, dict) else {})
     except (OSError, EOFError, KeyError, IndexError, TypeError, ValueError, zipfile.BadZipFile) as e:
         # (a pickle is a ValueError of numpy: "Cannot load file containing pickled data")
@@ -401,10 +413,13 @@ def choose_shifts(within_one: np.ndarray, exact: np.ndarray, strength: str) -> n
 def predict_shifts(model: PitchContextModel, starts_ms, ends_ms, pitches, track: PitchTrack,
                    strength: str) -> np.ndarray:
     """The shift (semitones) of each pitched note of a song; see ``note_features``
-    for the notes. A note without enough confident pitch frames stays."""
+    for the notes. A note without enough confident pitch frames stays, and so
+    does a note that is not at the pitch of its frames (``MAX_FRAME_DISTANCE``)."""
     features, judged = note_features(starts_ms, ends_ms, pitches, track)
     if not len(features):
         return np.zeros(0, dtype=np.int64)
+    with np.errstate(invalid="ignore"):  # (no frames: no distance, not judged anyway)
+        judged &= np.abs(features[:, FEATURE_NAMES.index("frames_p60")]) <= MAX_FRAME_DISTANCE
     within_one, exact = model.predict(features)
     return np.where(judged, choose_shifts(within_one, exact, strength), 0)
 
