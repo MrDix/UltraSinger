@@ -94,10 +94,12 @@ track of the stem their pitches come from (the lead vocal when the
   in it. The model has seen no such note (in training every note has the
   pitch of its frames) and would mostly pull it back to the sung pitch, which
   costs game score and agreement with hand-made charts alike (see below).
-* Skipped with the ptAKF refit (`--ptakf_refit`), which the `score` chart
-  style switches on: its pitches are meant to be the ones the games' pitch
-  detection hears. The `score` chart style with `--disable_ptakf_refit` has
-  no refit, so the step runs there.
+* Skipped when the ptAKF refit (`--ptakf_refit`, which the `score` chart
+  style switches on) made the notes: their pitches are meant to be the ones
+  the games' pitch detection hears. The `score` chart style with
+  `--disable_ptakf_refit` has no refit, so the step runs there; it also runs
+  when the refit was asked for but could not run and kept the notes as they
+  were (it says so in the console).
 * It **fails open**: without a model file, with a file that is no model, without
   a pitch track or on any error, the conversion prints the reason and keeps
   the note pitches as they are. The settings info file

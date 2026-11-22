@@ -1623,8 +1623,11 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
 
     WORDS = [("one ", 0.0, 0.24), ("two ", 0.40, 0.64)]
 
-    def _passes(self, model=None, **settings_values):
-        """The passes run() ran, in order, each with the stem its pitch track was of."""
+    def _passes(self, model=None, refit_fails=None, **settings_values):
+        """The passes run() ran, in order, each with the stem its pitch track was of.
+
+        ``refit_fails``: the error the ptAKF refit runs into (the real refit then keeps
+        the notes it was given); without one the refit makes new notes."""
         process_data = _process_data()
         process_data.process_data_paths.vocals_audio_file_path = "stem.wav"
         calls = []
@@ -1655,7 +1658,14 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
 
         def refit(segments, **kwargs):
             calls.append(("refit", kwargs["vocal_audio_path"]))
-            return segments
+            return list(segments)  # (new notes come in a new list)
+
+        def failing_refit(segments, vocal_audio_path, *args):
+            calls.append(("refit", vocal_audio_path))
+            raise refit_fails
+
+        refit_patch = (patch("modules.Refinement.ptakf_refit._refit", side_effect=failing_refit) if refit_fails
+                       else patch("modules.Refinement.ptakf_refit.refit_notes_ptakf", side_effect=refit))
 
         def segment(segments, **kwargs):
             return SimpleNamespace(segments=segments, pitch_audio_path=model)
@@ -1678,7 +1688,7 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
                 patch("modules.Pitcher.vocal_runs.split_notes_at_vocal_runs", side_effect=runs), \
                 patch("modules.Pitcher.vocal_runs.split_notes_at_clear_steps", side_effect=clear_steps), \
                 patch("modules.Refinement.refine_from_vocal.refine_notes", side_effect=refine), \
-                patch("modules.Refinement.ptakf_refit.refit_notes_ptakf", side_effect=refit), \
+                refit_patch, \
                 patch("modules.Segmentation.segmenter.segment_with_model", side_effect=segment), \
                 patch("ultrastar_score.detect_pitch_frames", return_value=[]):
             pitched = _pitch_track([(0.0, 0.24, "C4"), (0.40, 0.64, "E4")])
@@ -1793,6 +1803,35 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
                                                   pitch_context_model=__file__)]
         self.assertEqual(names, ["freestyle", "refine", "refit"])
 
+    def test_the_pitch_context_runs_when_the_refit_kept_the_notes(self):
+        """The refit fails open: without its package, with notes that do not match the
+        chart it parses, or on any error the notes stay as they were. They are not refit
+        then, and the step is not skipped for a refit that did not happen."""
+        for error in (ImportError("No module named 'ultrastar_score'"), OSError("no audio"),
+                      ValueError("note count mismatch")):
+            with self.subTest(error=error):
+                self.assertEqual(
+                    self._passes(model="lead.wav", refit_fails=error, ptakf_refit=True, pitch_context="strong",
+                                 pitch_context_model=__file__),
+                    [("freestyle", "stem.wav"), ("refine", "lead.wav"), ("refit", "lead.wav"),
+                     ("pitch context", "lead.wav")])
+
+    def test_a_refit_that_keeps_the_notes_hands_back_the_list_it_was_given(self):
+        """What run() tells a refit that did nothing by."""
+        from modules.Refinement import ptakf_refit
+
+        notes = [us.MidiSegment("C4", 0.0, 0.5, "one "), us.MidiSegment("E4", 0.6, 1.0, "two ")]
+        new_notes = [us.MidiSegment("D4", 0.0, 0.5, "one ")]
+        with contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(ptakf_refit, "_refit", side_effect=ImportError("no scoring package")):
+                self.assertIs(ptakf_refit.refit_notes_ptakf(notes, "vocals.wav", 120.0), notes)
+            with patch.object(ptakf_refit, "_refit", return_value=notes):  # e.g. the note count mismatch
+                self.assertIs(ptakf_refit.refit_notes_ptakf(notes, "vocals.wav", 120.0), notes)
+            with patch.object(ptakf_refit, "_refit", return_value=new_notes):
+                self.assertIs(ptakf_refit.refit_notes_ptakf(notes, "vocals.wav", 120.0), new_notes)
+            empty = []
+            self.assertIs(ptakf_refit.refit_notes_ptakf(empty, "vocals.wav", 120.0), empty)
+
     def test_the_pitch_context_runs_for_the_score_chart_style_without_the_refit(self):
         # The refit is what the step is skipped with; the chart style only switches it on
         settings = us.init_settings(["-i", "test.mp3", "--chart_style", "score", "--disable_ptakf_refit"])
@@ -1807,10 +1846,19 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
         out = io.StringIO()
         with patch.object(us.settings, "ptakf_refit", True), patch.object(us.settings, "chart_style", "singable"), \
                 contextlib.redirect_stdout(out):
-            result = us._note_pitches_from_context(_process_data(), "lead.wav", True)
+            result = us._note_pitches_from_context(_process_data(), "lead.wav", True, notes_refit=True)
         self.assertFalse(result.applied)
         self.assertEqual(result.reason, "the notes are refit to the games' pitch detection (ptAKF refit)")
         self.assertIn(f"pitch context not applied: {result.reason}", out.getvalue())
+
+    def test_a_refit_that_kept_the_notes_is_not_named_as_the_reason(self):
+        # the refit is switched on but made no notes: the step goes on (here to its model file)
+        out = io.StringIO()
+        with patch.object(us.settings, "ptakf_refit", True), patch.object(us.settings, "pitch_context", "strong"), \
+                patch.object(us.settings, "pitch_context_model", None), contextlib.redirect_stdout(out):
+            result = us._note_pitches_from_context(_process_data(), "lead.wav", True, notes_refit=False)
+        self.assertEqual(result.reason, "no model file is set (--pitch_context_model)")
+        self.assertNotIn("refit", out.getvalue())
 
     def test_the_stem_is_not_pitched_for_a_missing_model_file(self):
         self.assertEqual(self._passes(model="lead.wav", pitch_context="strong", pitch_context_model="missing.npz"),

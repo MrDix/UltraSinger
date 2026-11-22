@@ -993,6 +993,7 @@ def run() -> tuple[str, Score, Score]:
     # ptAKF chart refit — rebuild note boundaries and pitches from the
     # scorer's own detector (score-first chart). Same vocal-only rule as
     # the refinement pass above.
+    notes_refit = False  # whether the refit made the notes that are there now
     if (
         not settings.ignore_audio
         and settings.ptakf_refit
@@ -1000,7 +1001,7 @@ def run() -> tuple[str, Score, Score]:
     ):
         from modules.Refinement.ptakf_refit import refit_notes_ptakf
 
-        process_data.midi_segments = refit_notes_ptakf(
+        refit_segments = refit_notes_ptakf(
             process_data.midi_segments,
             vocal_audio_path=note_pitch_audio,
             bpm=process_data.media_info.bpm,
@@ -1010,6 +1011,11 @@ def run() -> tuple[str, Score, Score]:
             language=process_data.media_info.language,
             pitch_frames=pitch_frames,
         )
+        # The refit fails open: when it cannot run (its package is missing, the
+        # notes do not match the chart it parses, any error) it hands back the
+        # very list it was given; new notes come in a new list
+        notes_refit = refit_segments is not process_data.midi_segments
+        process_data.midi_segments = refit_segments
 
     # A note made from a word that is charted beside the pitch the singing
     # clearly stays on takes that pitch. After the refinement, which can move
@@ -1072,7 +1078,7 @@ def run() -> tuple[str, Score, Score]:
     pitch_context_result = None
     if settings.pitch_context != PITCH_CONTEXT_OFF:
         pitch_context_result = _note_pitches_from_context(
-            process_data, note_pitch_audio, model_segmentation_used)
+            process_data, note_pitch_audio, model_segmentation_used, notes_refit)
 
     # Golden notes — mark long held notes the singing stays on, spread over
     # the song, as golden ("*") bonus notes. Runs last, on the final note
@@ -1222,23 +1228,25 @@ def _stem_pitch_track(process_data: ProcessData, stem_path: str) -> PitchedData 
 
 
 def _note_pitches_from_context(process_data: ProcessData, note_pitch_audio: str,
-                               model_segmentation_used: bool) -> "PitchContextResult":
+                               model_segmentation_used: bool, notes_refit: bool = False) -> "PitchContextResult":
     """Run the pitch context step (``--pitch_context``) where it applies; the
     notes that move are changed in place.
 
     Only for the notes of the segmentation model: the step is trained and
     measured on their pitches, the upper middle of the pitch frames inside a
-    note. Not with the ptAKF refit (``settings.ptakf_refit``, which the score
-    chart style switches on unless ``--disable_ptakf_refit`` is given): its
-    pitches are meant to be the ones the games' pitch detection hears. The
-    notes are compared with the pitch track of the stem their pitches come from.
+    note. Not for notes the ptAKF refit made (``notes_refit``; the score chart
+    style switches the refit on unless ``--disable_ptakf_refit`` is given):
+    their pitches are meant to be the ones the games' pitch detection hears.
+    A refit that was asked for but kept the notes as they were (it fails
+    open) is no reason to skip the step. The notes are compared with the
+    pitch track of the stem their pitches come from.
     """
     from modules.Pitcher.pitch_context import PitchContextResult, correct_note_pitches
 
     reason = None
     if not model_segmentation_used:
         reason = "the notes are not from a segmentation model"
-    elif settings.ptakf_refit:
+    elif notes_refit:
         reason = "the notes are refit to the games' pitch detection (ptAKF refit)"
     if reason:
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} pitch context not applied: {reason}")
