@@ -21,9 +21,10 @@ A note whose pitch another step set on purpose stays where that step put
 it. The pitch refinement moves a note to the tone the games' pitch detection
 hears in it, in about half of the cases by one semitone, and marks the note
 (``MidiSegment.pitch_refined``): the model, which only knows notes at the
-pitch they were sung on, would move about half of these back to the sung
-pitch and undo what the refinement was for. A note that lies far from its
-frames without such a mark stays as well.
+pitch they were sung on, would move about half of the notes it moved by one
+semitone, most of them back to the sung pitch, and undo what the refinement
+was for. A note that lies far from its frames without such a mark stays as
+well.
 
 Training (``tools/train_pitch_context.py``) and the conversion share the
 feature code of this module, so a model always sees the features it was

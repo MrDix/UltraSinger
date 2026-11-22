@@ -893,15 +893,15 @@ class ConversionSettingsForm(QWidget):
                      "early still is the note of the scale it belongs to; the model judges "
                      "that from the note's pitch frames, the notes around it and the song's "
                      "key. 'Off' (default): the notes keep the sung pitch. 'Balanced': moves "
-                     "about one note in twelve; more notes are exactly on the pitch of a "
+                     "about one note in eighteen; more notes are exactly on the pitch of a "
                      "hand-made chart, as many as before within one semitone of it. 'Strong': "
-                     "moves about one note in seven; the most notes exactly on the charted "
+                     "moves about one note in nine; the most notes exactly on the charted "
                      "pitch, a few less within one semitone (the tolerance of the games on "
                      "Medium). The singer's own game score drops a little with both, more "
                      "with 'Strong'. A note keeps its octave; freestyle notes are never "
-                     "touched, nor notes that another step moved away from the pitch of "
-                     "their pitch frames. Without a usable model file the conversion says "
-                     "so and goes on without it.",
+                     "touched, nor the notes the pitch refinement moved to the tone the "
+                     "games' pitch detection hears. Without a usable model file the "
+                     "conversion says so and goes on without it.",
                      reset_callback=lambda: self._set_pitch_context(_DEFAULTS["pitch_context"]))
 
         self._vocal_gap_fill = ToggleSwitch(

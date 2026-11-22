@@ -98,12 +98,14 @@ track of the stem their pitches come from (the lead vocal when the
 * A note **keeps its octave**: it moves by at most two semitones from where it is.
 * A note without at least two confident pitch frames stays as it is, and it
   is no neighbour of the notes around it.
-* A note that is **not at the pitch of its frames** stays as it is: more than
-  1.5 semitones away from them, octaves aside. Another step put it there: the
-  pitch refinement moves a note to the tone the games' pitch detection hears
-  in it. The model has seen no such note (in training every note has the
-  pitch of its frames) and would mostly pull it back to the sung pitch, which
-  costs game score and agreement with hand-made charts alike (see below).
+* A note **the pitch refinement moved** stays where that put it. The
+  refinement moves a note that scores badly to the tone the games' pitch
+  detection hears in it, in about half of the cases by one semitone, and marks
+  it. The model only knows notes at the pitch they were sung on: it would move
+  about half of the notes the refinement moved by one semitone, most of them
+  back to the sung pitch, and undo what the refinement was for (see below).
+* Any other note that is **not at the pitch of its frames** stays as well:
+  more than 1.5 semitones away from them, octaves aside.
 * Skipped when the ptAKF refit (`--ptakf_refit`, which the `score` chart
   style switches on) made the notes: their pitches are meant to be the ones
   the games' pitch detection hears. The `score` chart style with
@@ -113,8 +115,8 @@ track of the stem their pitches come from (the lead vocal when the
 * It **fails open**: without a model file, with a file that is no model, without
   a pitch track or on any error, the conversion prints the reason and keeps
   the note pitches as they are. The settings info file
-  (`--write_settings_info`) names the strength, the model file and how many
-  note pitches moved.
+  (`--write_settings_info`) names the strength, the model file, how many note
+  pitches moved and how many notes of the pitch refinement were left alone.
 
 ## What it gives
 
@@ -125,55 +127,70 @@ charts without the step, in points.
 
 | | without | `balanced` | `strong` |
 |---|---|---|---|
-| Reference note time with exactly the reference pitch | 68.6 % | +3.1 | +5.8 |
-| ... within one semitone of it | 82.7 % | +0.1 | −0.7 |
+| Reference note time with exactly the reference pitch | 68.6 % | +2.3 | +4.5 |
+| ... within one semitone of it | 82.7 % | ±0.0 | −0.5 |
 | ... within two semitones of it | 87.2 % | ±0.0 | ±0.0 |
-| Sung pitch inside the notes exactly on the note | 68.6 % | −0.5 | −1.4 |
-| ... within one semitone of it | 88.6 % | −0.4 | −0.9 |
-| ... within two semitones of it | 94.2 % | −0.3 | −0.4 |
-| Notes moved | | 8.5 % | 14.8 % |
+| Game score of the original singing, Easy | 85.3 % | −0.1 | −0.2 |
+| ... Medium | 79.0 % | −0.3 | −0.6 |
+| ... Hard | 59.8 % | −0.4 | −1.0 |
+| Notes moved | | 5.6 % | 11.1 % |
 
 Songs that gain / lose more than 0.05 points:
 
 | | `balanced` | `strong` |
 |---|---|---|
-| Exactly the reference pitch | 97 / 3 | 97 / 3 |
-| Within one semitone | 56 / 35 | 17 / 78 |
-| Within two semitones | 42 / 34 | 39 / 38 |
-| Sung pitch exactly on the note | 21 / 74 | 13 / 85 |
-| Sung pitch within one semitone | 15 / 77 | 1 / 97 |
-| Sung pitch within two semitones | 3 / 86 | 3 / 88 |
+| Exactly the reference pitch | 92 / 7 | 96 / 4 |
+| Within one semitone | 47 / 38 | 10 / 84 |
+| Within two semitones | 30 / 29 | 34 / 35 |
+| Game score, Easy | 14 / 62 | 12 / 71 |
+| Game score, Medium | 14 / 77 | 3 / 92 |
+| Game score, Hard | 22 / 74 | 6 / 87 |
 
-"Sung pitch inside the notes" is the share of the confident pitch frames of
-the separated vocal inside the notes that lie within the tolerance of their
-note (octaves ignored): what the original singer would score, as the pitch
-tracker hears the singing.
-
-The **game score** of the original singing, as UltraSinger prints it (the
-games' own pitch detection on the vocal), was measured on 25 other songs
-that have no reference chart:
+The **game score** is the one UltraSinger prints: the games' own pitch
+detection on the separated vocal, scoring the original singing on the chart.
+On 25 other songs, which have no reference chart, it changes like this:
 
 | | without | `balanced` | `strong` |
 |---|---|---|---|
 | Easy | 87.9 % | −0.1 | −0.1 |
-| Medium | 82.1 % | −0.2 | −0.6 |
+| Medium | 82.1 % | −0.2 | −0.4 |
 | Hard | 68.4 % | −0.1 | −0.2 |
 
 It is a trade, not a pure gain. The chart agrees more often with what a
 charter writes, most of all in the exact pitch, which is what a chart looks
 like on screen. A moved note leaves the pitch that was actually sung, so the
 original singing scores a little less on it. Single songs can lose: of the
-100 songs, the worst three lost 5.9, 1.6 and 0.5 points of exact agreement
-with `balanced` and 8.8, 3.6 and 0.5 with `strong`; the best gained 12.8 and
-17.1. Nine in ten songs gain about half a point or more with `balanced` and
-about 1.2 points or more with `strong`.
+100 songs, the worst three lost 4.1, 0.8 and 0.3 points of exact agreement
+with `balanced` and 7.5, 3.8 and 0.2 with `strong`; the best gained 10.8 and
+13.2. Nine in ten songs gain 0.1 points or more with `balanced` and about
+0.7 or more with `strong`.
 
-Without the rule that leaves notes alone which are not at the pitch of their
-frames, the same model gains less exact agreement (+2.0 and +5.1) and fares
-worse within one semitone (−0.1 and −0.9), 23 and 14 songs lose exact
-agreement instead of 3 and 3, and the game score drops by up to 1.1 points
-(`balanced`, Hard) and 1.2 points (`strong`, Hard) instead of 0.2 and 0.6 at
-most.
+The step was applied to the finished charts of these songs, with the notes
+the pitch refinement had moved told from each chart and its vocal stem. For
+78 of the 100 songs the note pitches come from the lead vocal, whose stem
+was not kept: the vocal stem stands in for it there, also for the game
+score. On the 22 songs where everything is as in a conversion, the numbers
+are much the same: exact pitch +2.3 and +4.2, within one semitone +0.1 and
+−0.4, game score on Medium −0.2 and −0.5.
+
+### Why the notes of the pitch refinement stay
+
+About one note in ten is moved by the pitch refinement, a good half of them
+by one semitone. By its distance to the sung pitch, such a note looks like
+one that was sung a little off, and the model moved about half of them, four
+in five of those back to the pitch that was sung. Hand-made charts have these
+notes on the sung pitch more often than on the refinement's, so that raised
+the agreement (exact pitch +3.1 and +5.8 instead of +2.3 and +4.5). But it
+undid what the refinement is for: the game score dropped by 0.2, 0.3 and 0.6
+points (Easy, Medium, Hard) with `balanced` and by 0.3, 0.8 and 1.1 with
+`strong`, instead of 0.1, 0.3 and 0.4 and 0.2, 0.6 and 1.0. A step that is
+there to raise the game score should not be undone by one that runs after
+it, so its notes stay. (With the pitch refinement switched off,
+`--disable_refine_pitch`, no note carries its mark.)
+
+Without any of these rules, the notes the refinement moved further away are
+pulled back as well: 23 and 14 songs lose exact agreement, and on the 25
+songs the game score on Hard drops by 1.1 and 1.2 points.
 
 ## Training
 
@@ -219,9 +236,10 @@ the hand-made chart, generated notes do not.
 | `--seed` | 0 | Seed of the held-out choice and of the training |
 
 A small library is enough to start with: a model trained on 80 songs gave
-most of the gain of the one trained on 1255 (exact pitch +2.5 and +5.3
-instead of +3.1 and +5.8 in the table above). More songs make it somewhat
-better and more careful; it then moves fewer notes for a larger gain. Songs
+most of the gain of the one trained on 1255 (exact pitch +1.9 and +4.2
+instead of +2.3 and +4.5 in the table above). More songs make it somewhat
+better and more careful: it then moves fewer notes for a larger gain, and
+costs less game score (on Hard 0.4 and 1.0 points instead of 0.8 and 1.3). Songs
 whose chart is poorly timed against the recording teach the model wrong
 pitches; `--min-ref-fit` leaves them out.
 
