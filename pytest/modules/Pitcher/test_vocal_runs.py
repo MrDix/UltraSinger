@@ -102,6 +102,17 @@ class TestSplitNotesAtVocalRuns(unittest.TestCase):
         result = split_notes_at_vocal_runs([_held(note_type="*")], _flip(-2.0), bpm=120.0)
         self.assertEqual([seg.note_type for seg in result], ["*", "*", "*"])
 
+    def test_pieces_of_a_note_the_refinement_set_carry_its_mark(self):
+        # the pieces are placed from the note's pitch: the pitch context step leaves them alone too
+        refined = _held()
+        refined.pitch_refined = True
+        flips = split_notes_at_vocal_runs([refined], _flip(-2.0), bpm=120.0)
+        self.assertEqual([seg.pitch_refined for seg in flips], [True, True, True])
+        steps = split_notes_at_vocal_runs([refined], _track((0.0, 0.5, 0.0), (0.5, 1.0, -2.0)), bpm=120.0)
+        self.assertEqual([seg.pitch_refined for seg in steps], [True, True])
+        self.assertEqual([seg.pitch_refined for seg in split_notes_at_vocal_runs([_held()], _flip(-2.0), bpm=120.0)],
+                         [False, False, False])
+
     def test_unconfident_frames_are_not_used(self):
         track = _flip(-2.0)
         track.confidence = [0.5] * len(track.confidence)

@@ -198,6 +198,25 @@ class TestRefinePitchWithUscore:
         result, _ = self._run_refinement(segments, scores, hit_ratio_threshold=0.5, fallback_audio_path="full.wav")
         assert result[0].note == "E4"
 
+    def test_a_corrected_note_is_marked(self):
+        """Its pitch is the one the games' detection hears now, not the sung one: the
+        pitch context step leaves such a note alone, also one semitone from the singing."""
+        segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a "),
+                    MidiSegment(note="C4", start=1.0, end=2.0, word="b "),
+                    MidiSegment(note="C4", start=2.0, end=3.0, word="c "),
+                    MidiSegment(note="C4", start=3.0, end=4.0, word="d ", pitch_locked=True)]
+        note_scores = [
+            FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[25] * 10),  # heard a semitone up
+            FakeNoteScore(beats_hit=9, beats_total=10, detected_tones=[24] * 10),  # scores well: stays
+            FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[31] * 10),  # heard a fifth up
+            FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10),  # locked: stays
+        ]
+        assert not any(s.pitch_refined for s in segments)
+        result, corrections = self._run_refinement(segments, note_scores, hit_ratio_threshold=0.5)
+        assert corrections == 2
+        assert [s.note for s in result] == ["C♯4", "C4", "G3", "C4"]
+        assert [s.pitch_refined for s in result] == [True, False, True, False]
+
     def test_locked_pitch_is_kept(self):
         segments = [MidiSegment(note="C4", start=0.0, end=1.0, word="a ", pitch_locked=True)]
         note_scores = [FakeNoteScore(beats_hit=1, beats_total=10, detected_tones=[26] * 10)]
