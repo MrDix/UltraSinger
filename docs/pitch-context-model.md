@@ -87,8 +87,10 @@ track of the stem their pitches come from (the lead vocal when the
   in it. The model has seen no such note (in training every note has the
   pitch of its frames) and would mostly pull it back to the sung pitch, which
   costs game score and agreement with hand-made charts alike (see below).
-* Not for the `score` chart style (`--chart_style score` / `--ptakf_refit`),
-  whose pitches are meant to be the ones the games' pitch detection hears.
+* Skipped with the ptAKF refit (`--ptakf_refit`), which the `score` chart
+  style switches on: its pitches are meant to be the ones the games' pitch
+  detection hears. The `score` chart style with `--disable_ptakf_refit` has
+  no refit, so the step runs there.
 * It **fails open**: without a model file, with a file that is no model, without
   a pitch track or on any error, the conversion prints the reason and keeps
   the note pitches as they are. The settings info file
@@ -215,11 +217,14 @@ example can be left out by name with `--exclude` here.
 ## The model file
 
 The model is a set of gradient-boosted regression trees, stored as plain
-arrays of numbers in a numpy `.npz` archive of about 2 MB. It is read with
-pickle switched off, so loading a model file never runs code; a pickle, an
-archive of another program or arrays that are no trees are refused, and the
-conversion then goes on without the step. Predicting needs only numpy, and
-the same notes and pitch track always give the same result.
+arrays of numbers in a numpy `.npz` archive of about 2 MB. Loading a model
+file never runs code: nothing in it is unpickled, and every array is checked
+before it is read (numbers of the expected kind, and exactly as much data as
+its header names, so a crafted file cannot ask for more memory than its
+size). A pickle, an archive of another program or arrays that are no trees
+are refused, and the conversion then goes on without the step. Predicting
+needs only numpy, and the same notes and pitch track always give the same
+result.
 
 Training uses scikit-learn, which is installed with UltraSinger (librosa
 depends on it), and exports its trees into that file. The

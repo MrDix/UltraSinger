@@ -1793,6 +1793,25 @@ class TestNotesComparedWithTheVocalStem(unittest.TestCase):
                                                   pitch_context_model=__file__)]
         self.assertEqual(names, ["freestyle", "refine", "refit"])
 
+    def test_the_pitch_context_runs_for_the_score_chart_style_without_the_refit(self):
+        # The refit is what the step is skipped with; the chart style only switches it on
+        settings = us.init_settings(["-i", "test.mp3", "--chart_style", "score", "--disable_ptakf_refit"])
+        self.assertEqual((settings.chart_style, settings.ptakf_refit), ("score", False))
+        self.assertTrue(us.init_settings(["-i", "test.mp3", "--chart_style", "score"]).ptakf_refit)
+        us.init_settings(["-i", "test.mp3"])  # reset the shared settings
+        names = [name for name, _ in self._passes(model="lead.wav", chart_style="score", ptakf_refit=False,
+                                                  pitch_context="strong", pitch_context_model=__file__)]
+        self.assertEqual(names, ["freestyle", "refine", "pitch context"])
+
+    def test_the_reason_names_the_refit(self):
+        out = io.StringIO()
+        with patch.object(us.settings, "ptakf_refit", True), patch.object(us.settings, "chart_style", "singable"), \
+                contextlib.redirect_stdout(out):
+            result = us._note_pitches_from_context(_process_data(), "lead.wav", True)
+        self.assertFalse(result.applied)
+        self.assertEqual(result.reason, "the notes are refit to the games' pitch detection (ptAKF refit)")
+        self.assertIn(f"pitch context not applied: {result.reason}", out.getvalue())
+
     def test_the_stem_is_not_pitched_for_a_missing_model_file(self):
         self.assertEqual(self._passes(model="lead.wav", pitch_context="strong", pitch_context_model="missing.npz"),
                          [("freestyle", "stem.wav"), ("refine", "lead.wav"), ("pitch context", None)])

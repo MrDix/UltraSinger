@@ -1228,9 +1228,10 @@ def _note_pitches_from_context(process_data: ProcessData, note_pitch_audio: str,
 
     Only for the notes of the segmentation model: the step is trained and
     measured on their pitches, the upper middle of the pitch frames inside a
-    note. Not for the score-first chart of the ptAKF refit, whose pitches are
-    meant to be the ones the games' pitch detection hears. The notes are
-    compared with the pitch track of the stem their pitches come from.
+    note. Not with the ptAKF refit (``settings.ptakf_refit``, which the score
+    chart style switches on unless ``--disable_ptakf_refit`` is given): its
+    pitches are meant to be the ones the games' pitch detection hears. The
+    notes are compared with the pitch track of the stem their pitches come from.
     """
     from modules.Pitcher.pitch_context import PitchContextResult, correct_note_pitches
 
@@ -1238,7 +1239,7 @@ def _note_pitches_from_context(process_data: ProcessData, note_pitch_audio: str,
     if not model_segmentation_used:
         reason = "the notes are not from a segmentation model"
     elif settings.ptakf_refit:
-        reason = "the notes are refit to the games' pitch detection (score chart style)"
+        reason = "the notes are refit to the games' pitch detection (ptAKF refit)"
     if reason:
         print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} pitch context not applied: {reason}")
         return PitchContextResult(False, reason=reason)
