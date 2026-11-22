@@ -316,6 +316,43 @@ class TestModel:
         features = np.random.default_rng(0).normal(size=(50, N_FEATURES)).astype(np.float32)
         assert np.array_equal(np.hstack(loaded.predict(features)), np.hstack(model.predict(features)))
 
+    def test_each_save_writes_through_a_file_of_its_own(self, tmp_path, monkeypatch):
+        """Two trainings that write the same model file must not share a temporary file."""
+        path = tmp_path / "model.npz"
+        _toy_model(up=0.2).save(path)
+        (tmp_path / "model.npz.part").write_bytes(b"left by an older version")
+        beside, write = [], np.savez_compressed
+
+        def watched(file, **arrays):
+            beside.append(sorted(set(os.listdir(tmp_path)) - {"model.npz", "model.npz.part"}))
+            return write(file, **arrays)
+
+        monkeypatch.setattr(pitch_context.np, "savez_compressed", watched)
+        _toy_model(up=0.7).save(path)
+        _toy_model(up=0.9).save(path)
+        first, second = beside
+        assert len(first) == len(second) == 1 and first != second
+        assert all(name.startswith("model.npz.") and name.endswith(".part") for name in first + second)
+        # put in place in one step, nothing of its own left, nothing else touched
+        assert sorted(os.listdir(tmp_path)) == ["model.npz", "model.npz.part"]
+        assert (tmp_path / "model.npz.part").read_bytes() == b"left by an older version"
+        assert load_model(path).value.max() == 0.9
+
+    def test_a_failed_save_keeps_the_model_that_was_there(self, tmp_path, monkeypatch):
+        path = tmp_path / "model.npz"
+        _toy_model(up=0.2).save(path)
+        before = path.read_bytes()
+
+        def fail(file, **arrays):
+            file.write(b"half a model")
+            raise OSError("no space left")
+
+        monkeypatch.setattr(pitch_context.np, "savez_compressed", fail)
+        with pytest.raises(OSError, match="no space left"):
+            _toy_model(up=0.9).save(path)
+        assert os.listdir(tmp_path) == ["model.npz"]
+        assert path.read_bytes() == before
+
     def test_the_file_holds_no_pickle(self, tmp_path):
         path = tmp_path / "model.npz"
         _toy_model().save(path)

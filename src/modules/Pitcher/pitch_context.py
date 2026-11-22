@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -344,11 +345,16 @@ class PitchContextModel:
         return out[:, :len(SHIFTS)], out[:, len(SHIFTS):]
 
     def save(self, path: str | Path) -> None:
-        """Write the model file (through a temporary file: never a half-written model)."""
+        """Write the model file through a temporary file in its folder, put in its
+        place in one step: there is never a half-written model. Each save has a
+        temporary file of its own, so two trainings that write the same model
+        file do not write into each other's (the one that ends last stays).
+        Where files have permission bits, the model is readable by its owner
+        only, as temporary files are."""
         path = Path(path)
-        tmp = path.with_name(path.name + ".part")
+        handle, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".part")
         try:
-            with open(tmp, "wb") as f:  # a file object, so numpy does not append ".npz" to the name
+            with os.fdopen(handle, "wb") as f:  # a file object, so numpy does not append ".npz" to the name
                 np.savez_compressed(
                     f, kind=np.array(MODEL_KIND), format=np.array(MODEL_FORMAT, dtype=np.int64),
                     features=np.array(FEATURE_NAMES), shifts=np.array(SHIFTS, dtype=np.int64),
@@ -358,8 +364,12 @@ class PitchContextModel:
                     baseline=self.baseline, info=np.array(json.dumps(_plain(self.info))),
                 )
             os.replace(tmp, path)
-        finally:
-            tmp.unlink(missing_ok=True)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
 
 def _plain(value):
