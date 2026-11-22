@@ -4,6 +4,8 @@ import contextlib
 import io
 import os
 import pickle
+import struct
+import tracemalloc
 import zipfile
 
 import librosa
@@ -385,6 +387,146 @@ class TestFilesThatAreNoModel:
                 {"threshold": lambda threshold: threshold.reshape(-1, 1)},
         ):
             self._refused(self._changed(tmp_path, **changes))
+
+
+def _array_file(descr: str, shape: tuple, data: bytes, version: int = 1) -> bytes:
+    """The bytes of an array file whose header names ``shape``, whatever its data is."""
+    out = io.BytesIO()
+    write_header = np.lib.format.write_array_header_1_0 if version == 1 else np.lib.format.write_array_header_2_0
+    write_header(out, {"descr": descr, "fortran_order": False, "shape": shape})
+    return out.getvalue() + data
+
+
+class TestCraftedModelFiles:
+    """A model file is read from a path a user was given: whatever it holds, the
+    loader says "no model" and asks for no more memory than the file is large."""
+
+    @staticmethod
+    def _crafted(tmp_path, **members) -> str:
+        """A model archive with the given members (name -> bytes) put in place of its own."""
+        good = tmp_path / "good.npz"
+        _toy_model().save(good)
+        with zipfile.ZipFile(good) as archive:
+            files = {name: archive.read(name) for name in archive.namelist()}
+        files.update({f"{name}.npy": data for name, data in members.items()})
+        path = tmp_path / "crafted.npz"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+        return str(path)
+
+    @staticmethod
+    def _refused(path) -> float:
+        """Loading ``path`` raises ValueError; returns the most memory it held meanwhile (MB)."""
+        tracemalloc.start()
+        try:
+            with pytest.raises(ValueError, match="not a pitch context model file"):
+                load_model(path)
+            return tracemalloc.get_traced_memory()[1] / 1e6
+        finally:
+            tracemalloc.stop()
+
+    def test_the_helper_makes_a_model_that_loads(self, tmp_path):
+        nodes = len(_toy_model().value)
+        path = self._crafted(tmp_path, value=_array_file("<f8", (nodes,), _toy_model().value.tobytes()))
+        assert np.array_equal(load_model(path).value, _toy_model().value)
+
+    def test_a_header_that_names_more_values_than_the_file_holds(self, tmp_path):
+        """numpy makes the array a header names before it reads the data: 2.4 GB here,
+        and for the larger one more memory than there is (a MemoryError)."""
+        for shape in ((3 * 10 ** 8,), (10 ** 11,), (10 ** 6, 10 ** 6)):
+            path = self._crafted(tmp_path, threshold=_array_file("<f8", shape, b"\0" * 64))
+            assert self._refused(path) < 50, shape
+
+    def test_no_array_is_trusted_by_its_header(self, tmp_path):
+        huge = {
+            "kind": _array_file("<U1000000000", (), b"\0" * 64),
+            "format": _array_file("<i8", (10 ** 10,), b"\0" * 64),
+            "features": _array_file("<U14", (10 ** 9,), b"\0" * 56),
+            "shifts": _array_file("<i8", (10 ** 10,), b"\0" * 40),
+            "info": _array_file("<U2", (10 ** 10,), b"\0" * 8),
+            "missing_left": _array_file("|b1", (10 ** 12,), b"\0" * 12),
+            "tree_root": _array_file("<i4", (10 ** 11,), b"\0" * 40),
+        }
+        for name, data in huge.items():
+            assert self._refused(self._crafted(tmp_path, **{name: data})) < 50, name
+
+    def test_an_array_with_other_data_than_its_header_names(self, tmp_path):
+        value = _toy_model().value
+        for data in (value.tobytes() + b"\0" * 8,          # more data than values
+                     value.tobytes()[:-8],                 # less
+                     b""):
+            self._refused(self._crafted(tmp_path, value=_array_file("<f8", (len(value),), data)))
+        # nothing of a size of zero, and no size below zero
+        self._refused(self._crafted(tmp_path, value=_array_file("<V0", (len(value),), b"")))
+        self._refused(self._crafted(tmp_path, value=_array_file("<f8", (-1,), b"")))
+
+    def test_an_array_of_another_kind_or_shape(self, tmp_path):
+        value = _toy_model().value
+        for name, data in (
+                ("value", _array_file("<i8", (len(value),), value.astype("<i8").tobytes())),
+                ("kind", _array_file("<i8", (), b"\0" * 8)),
+                ("format", _array_file("<f8", (), b"\0" * 8)),
+                ("format", _array_file("<i8", (1,), np.array([1], "<i8").tobytes())),
+                ("info", _array_file("<f8", (), b"\0" * 8)),
+                ("info", _array_file("|O", (), b"\0" * 8)),
+                ("value", b"not an array file at all"),
+                ("value", b"\x93NUMPY\x03\x00" + _array_file("<f8", (len(value),), value.tobytes())[8:])):
+            self._refused(self._crafted(tmp_path, **{name: data}))
+
+    def test_a_long_or_deeply_nested_info(self, tmp_path, monkeypatch):
+        def info(text):
+            return _array_file(f"<U{len(text)}", (), np.array(text).tobytes())
+
+        # far longer than what a training writes
+        self._refused(self._crafted(tmp_path, info=info("[" * 100_000 + "]" * 100_000)))
+        self._refused(self._crafted(tmp_path, info=info(" " * 70_000 + "{}")))
+        # short enough to be read: it is refused, or (where the JSON reader gets through
+        # the nesting) it is no description of a model and left out; no other error
+        nested = self._crafted(tmp_path, info=info("[" * 30_000 + "]" * 30_000))
+        try:
+            assert load_model(nested).info == {}
+        except ValueError as error:
+            assert "not a pitch context model file" in str(error)
+        self._refused(self._crafted(tmp_path, info=info("{no json")))
+        # whatever the JSON reader raises
+        for error in (RecursionError("maximum recursion depth exceeded"), MemoryError()):
+            def fail(text, error=error):
+                raise error
+
+            monkeypatch.setattr(pitch_context.json, "loads", fail)
+            self._refused(self._crafted(tmp_path, info=info("{}")))
+
+    def test_a_damaged_archive(self, tmp_path):
+        good = tmp_path / "good.npz"
+        _toy_model().save(good)
+        data = good.read_bytes()
+        cut = tmp_path / "cut.npz"
+        cut.write_bytes(data[:len(data) // 2])
+        self._refused(cut)
+        # a member whose packed data is damaged (the archive's list of members is whole)
+        with zipfile.ZipFile(good) as archive:
+            entry = archive.getinfo("value.npy")
+        name_length, extra_length = struct.unpack("<HH", data[entry.header_offset + 26:entry.header_offset + 30])
+        packed = entry.header_offset + 30 + name_length + extra_length
+        damaged = bytearray(data)
+        damaged[packed:packed + entry.compress_size] = b"\xff" * entry.compress_size
+        broken = tmp_path / "broken.npz"
+        broken.write_bytes(bytes(damaged))
+        self._refused(broken)
+
+    def test_a_model_of_another_byte_order_or_header_version(self, tmp_path):
+        """Not crafted: a model written on another machine or by another numpy."""
+        model = _toy_model(up=0.7)
+        path = self._crafted(
+            tmp_path,
+            value=_array_file(">f8", (len(model.value),), model.value.astype(">f8").tobytes()),
+            left=_array_file(">i4", (len(model.left),), model.left.astype(">i4").tobytes()),
+            threshold=_array_file("<f8", (len(model.threshold),), model.threshold.tobytes(), version=2))
+        loaded = load_model(path)
+        features = np.random.default_rng(1).normal(size=(20, N_FEATURES)).astype(np.float32)
+        assert np.array_equal(np.hstack(loaded.predict(features)), np.hstack(model.predict(features)))
+        assert loaded.value.dtype == np.float64 and loaded.value.dtype.isnative
 
 
 # ── Decision ──────────────────────────────────────────────────────────────

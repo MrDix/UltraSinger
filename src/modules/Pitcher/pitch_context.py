@@ -34,6 +34,7 @@ shipped; everyone trains their own from their UltraStar song library.
 from __future__ import annotations
 
 import json
+import math
 import os
 import zipfile
 from dataclasses import dataclass, field
@@ -105,6 +106,7 @@ MODEL_KIND = "ultrasinger-pitch-context"
 N_OUTPUTS = 2 * len(SHIFTS)
 _MAX_TREE_DEPTH = 64
 _MAX_MODEL_BYTES = 512 * 1024 * 1024  # unpacked; a real model has a few megabytes
+_MAX_TEXT_BYTES = 256 * 1024  # of the names and of the info of a model (text takes 4 bytes a character)
 _PREDICT_CHUNK = 256  # notes predicted at once (bounds the memory of the tree walk)
 
 
@@ -357,38 +359,79 @@ def _plain(value):
     return value
 
 
+# The arrays of a model file: the kind of their numbers and their number of dimensions
+_MODEL_ARRAYS = {
+    "feature": ("i", 1), "threshold": ("f", 1), "left": ("i", 1), "right": ("i", 1),
+    "missing_left": ("b", 1), "value": ("f", 1), "tree_root": ("i", 1), "tree_output": ("i", 1),
+    "baseline": ("f", 1),
+}
+
+
+def _read_array(archive: zipfile.ZipFile, name: str, kind: str, ndim: int,
+                max_bytes: int = _MAX_MODEL_BYTES) -> np.ndarray:
+    """The array ``name`` of a model archive, read only when it is what it says.
+
+    numpy makes an array as large as the shape in its header names before it
+    reads any data, so a header that names billions of values asks for that
+    much memory, whatever the size of the file. The header is read first here:
+    the array must be of numbers of the expected ``kind`` (never of Python
+    objects, which would be unpickled) and its data must be exactly the rest
+    of the archive member, at most ``max_bytes``.
+    """
+    entry = archive.getinfo(name + ".npy")
+    with archive.open(entry) as member:
+        version = np.lib.format.read_magic(member)
+        if version == (1, 0):
+            shape, fortran_order, dtype = np.lib.format.read_array_header_1_0(member)
+        elif version == (2, 0):
+            shape, fortran_order, dtype = np.lib.format.read_array_header_2_0(member)
+        else:
+            raise ValueError(f"the array '{name}' is of an unknown format")
+        if dtype.hasobject or dtype.kind != kind or dtype.itemsize == 0 or len(shape) != ndim:
+            raise ValueError(f"the array '{name}' has a wrong type")
+        size = math.prod(shape) * dtype.itemsize
+        if size != entry.file_size - member.tell():
+            raise ValueError(f"the array '{name}' is not as large as its header says")
+        if size > max_bytes:
+            raise ValueError(f"the array '{name}' is too large")
+        data = member.read(size)
+    if len(data) != size:
+        raise ValueError(f"the array '{name}' is cut off")
+    array = np.frombuffer(data, dtype=dtype).reshape(shape, order="F" if fortran_order else "C")
+    return array.astype(dtype.newbyteorder("="))  # (a copy in the byte order of this machine)
+
+
 def load_model(path: str | Path) -> PitchContextModel:
     """Read a model file. Raises ValueError for a file that is none.
 
-    The file is a numpy archive of number and text arrays and is read with
-    ``allow_pickle=False``: nothing in it is ever executed, and a pickle (or
-    an archive that holds one) is refused.
+    The file is a numpy ``.npz`` archive of number and text arrays. Each array
+    is checked before it is read (see ``_read_array``): nothing in the file is
+    ever executed, a pickle or an archive that holds one is refused, and a
+    crafted file cannot make the loader ask for more memory than the file's size.
     """
     try:
-        data = np.load(str(path), allow_pickle=False)
-        if not isinstance(data, np.lib.npyio.NpzFile):
-            raise ValueError("not an archive of arrays")
-        with data:
-            if sum(entry.file_size for entry in data.zip.infolist()) > _MAX_MODEL_BYTES:
+        with zipfile.ZipFile(str(path)) as archive:
+            if sum(entry.file_size for entry in archive.infolist()) > _MAX_MODEL_BYTES:
                 raise ValueError("too large")
-            if str(data["kind"][()]) != MODEL_KIND or int(data["format"][()]) != MODEL_FORMAT:
+            file_kind = _read_array(archive, "kind", "U", 0, _MAX_TEXT_BYTES)
+            file_format = _read_array(archive, "format", "i", 0, _MAX_TEXT_BYTES)
+            if str(file_kind[()]) != MODEL_KIND or int(file_format[()]) != MODEL_FORMAT:
                 raise ValueError(f"not format {MODEL_FORMAT}")
-            if (tuple(str(name) for name in data["features"]) != FEATURE_NAMES
-                    or tuple(int(d) for d in data["shifts"]) != SHIFTS):
+            features = _read_array(archive, "features", "U", 1, _MAX_TEXT_BYTES)
+            shifts = _read_array(archive, "shifts", "i", 1, _MAX_TEXT_BYTES)
+            if (tuple(str(name) for name in features) != FEATURE_NAMES
+                    or tuple(int(d) for d in shifts) != SHIFTS):
                 raise ValueError("made for other note features than this version uses; train a new one")
-            arrays = {name: data[name] for name in (
-                "feature", "threshold", "left", "right", "missing_left", "value",
-                "tree_root", "tree_output", "baseline")}
-            for name, kind in (("feature", "i"), ("threshold", "f"), ("left", "i"), ("right", "i"),
-                               ("missing_left", "b"), ("value", "f"), ("tree_root", "i"),
-                               ("tree_output", "i"), ("baseline", "f")):
-                if arrays[name].dtype.kind != kind:
-                    raise ValueError(f"the array '{name}' has a wrong type")
-            info = json.loads(str(data["info"][()])) if "info" in data.files else {}
-            return PitchContextModel(**arrays, info=info if isinstance(info, dict) else {})
-    except (OSError, EOFError, KeyError, IndexError, TypeError, ValueError, zipfile.BadZipFile) as e:
-        # (a pickle is a ValueError of numpy: "Cannot load file containing pickled data")
-        raise ValueError(f"{path} is not a pitch context model file ({e})") from e
+            arrays = {name: _read_array(archive, name, kind, ndim)
+                      for name, (kind, ndim) in _MODEL_ARRAYS.items()}
+            info = {}
+            if "info.npy" in archive.namelist():
+                info = json.loads(str(_read_array(archive, "info", "U", 0, _MAX_TEXT_BYTES)[()]))
+        return PitchContextModel(**arrays, info=info if isinstance(info, dict) else {})
+    except Exception as e:  # noqa: BLE001 - whatever a file makes the readers raise, it is no model
+        # (e.g. zipfile.BadZipFile for a pickle or any other file that is no archive,
+        # RecursionError for an info nested too deeply, MemoryError, zlib.error)
+        raise ValueError(f"{path} is not a pitch context model file ({e!r})") from e
 
 
 # ---------------------------------------------------------------------------
