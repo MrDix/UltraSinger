@@ -106,7 +106,7 @@ MODEL_KIND = "ultrasinger-pitch-context"
 # one semitone of the charted pitch, then for each shift the share exactly on it
 N_OUTPUTS = 2 * len(SHIFTS)
 _MAX_TREE_DEPTH = 64
-_MAX_MODEL_BYTES = 512 * 1024 * 1024  # unpacked; a real model has a few megabytes
+_MAX_MODEL_BYTES = 64 * 1024 * 1024  # unpacked; a real model unpacks to about 5 MB
 _MAX_TEXT_BYTES = 256 * 1024  # of the names and of the info of a model (text takes 4 bytes a character)
 _PREDICT_CHUNK = 256  # notes predicted at once (bounds the memory of the tree walk)
 
@@ -412,7 +412,8 @@ def _read_array(archive: zipfile.ZipFile, name: str, kind: str, ndim: int,
     if len(data) != size:
         raise ValueError(f"the array '{name}' is cut off")
     array = np.frombuffer(data, dtype=dtype).reshape(shape, order="F" if fortran_order else "C")
-    return array.astype(dtype.newbyteorder("="))  # (a copy in the byte order of this machine)
+    # (in the byte order of this machine: a copy only when the file has the other one)
+    return array if dtype.isnative else array.astype(dtype.newbyteorder("="))
 
 
 def load_model(path: str | Path) -> PitchContextModel:
@@ -421,7 +422,8 @@ def load_model(path: str | Path) -> PitchContextModel:
     The file is a numpy ``.npz`` archive of number and text arrays. Each array
     is checked before it is read (see ``_read_array``): nothing in the file is
     ever executed, a pickle or an archive that holds one is refused, and a
-    crafted file cannot make the loader ask for more memory than the file's size.
+    file may unpack to ``_MAX_MODEL_BYTES`` at most, so a crafted file cannot
+    make the loader hold much more than that.
     """
     try:
         with zipfile.ZipFile(str(path)) as archive:
