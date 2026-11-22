@@ -483,8 +483,9 @@ class TestCraftedModelFiles:
     loader says "no model" and asks for no more memory than the file is large."""
 
     @staticmethod
-    def _crafted(tmp_path, **members) -> str:
-        """A model archive with the given members (name -> bytes) put in place of its own."""
+    def _crafted(tmp_path, packed: dict | None = None, **members) -> str:
+        """A model archive with the given members (name -> bytes) put in place of its
+        own; ``packed`` names the compression of single members (file name -> method)."""
         good = tmp_path / "good.npz"
         _toy_model().save(good)
         with zipfile.ZipFile(good) as archive:
@@ -493,16 +494,18 @@ class TestCraftedModelFiles:
         path = tmp_path / "crafted.npz"
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
             for name, data in files.items():
-                archive.writestr(name, data)
+                archive.writestr(name, data, (packed or {}).get(name))
         return str(path)
 
     @staticmethod
-    def _refused(path) -> float:
-        """Loading ``path`` raises ValueError; returns the most memory it held meanwhile (MB)."""
+    def _refused(path, reason: str = "") -> float:
+        """Loading ``path`` raises ValueError, which names ``reason``; returns the most
+        memory the loading held meanwhile (MB)."""
         tracemalloc.start()
         try:
-            with pytest.raises(ValueError, match="not a pitch context model file"):
+            with pytest.raises(ValueError, match="not a pitch context model file") as refusal:
                 load_model(path)
+            assert reason in str(refusal.value)
             return tracemalloc.get_traced_memory()[1] / 1e6
         finally:
             tracemalloc.stop()
@@ -515,22 +518,27 @@ class TestCraftedModelFiles:
     @pytest.mark.parametrize("method", ["ZIP_BZIP2", "ZIP_LZMA"])
     def test_a_member_packed_in_another_way_is_not_unpacked(self, tmp_path, method):
         """Python unpacks a chunk of such a member at once, whatever its size: a few
-        hundred bytes of bzip2 stand for hundreds of megabytes of zeros."""
-        good = tmp_path / "good.npz"
-        _toy_model().save(good)
-        with zipfile.ZipFile(good) as archive:
-            files = {name: archive.read(name) for name in archive.namelist()}
-        header = _array_file("<U1", (), b"")[:128]
-        files["kind.npy"] = header + bytes(200 * 1024 * 1024)
-        path = tmp_path / "packed.npz"
+        hundred bytes of bzip2 stand for megabytes of zeros. Such a member is refused
+        for the way it is packed, before a byte of it is read."""
+        reason = "the array 'kind' is packed in a way a model file never is"
         try:
-            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-                for name, data in files.items():
-                    archive.writestr(name, data, getattr(zipfile, method) if name == "kind.npy" else None)
+            # the model's own array, right in everything but the way it is packed
+            own = self._crafted(tmp_path, packed={"kind.npy": getattr(zipfile, method)})
+            assert self._refused(own, reason) < 20
+            # and one that unpacks to 32 MB; the file as a whole stays below what a model
+            # file may unpack to, so it is not refused for its size
+            zeros = _array_file("<U1", (), b"")[:128] + bytes(32 * 1024 * 1024)
+            packed = self._crafted(tmp_path, packed={"kind.npy": getattr(zipfile, method)}, kind=zeros)
         except (RuntimeError, NotImplementedError):
             pytest.skip(f"{method} is not available here")
-        assert path.stat().st_size < 1024 * 1024
-        assert self._refused(str(path)) < 20
+        assert os.path.getsize(packed) < 1024 * 1024
+        with zipfile.ZipFile(packed) as archive:
+            assert sum(entry.file_size for entry in archive.infolist()) < pitch_context._MAX_MODEL_BYTES
+        assert self._refused(packed, reason) < 20
+
+    def test_a_file_that_unpacks_to_more_than_a_model_is_refused_for_its_size(self, tmp_path):
+        large = _array_file("<U1", (), b"")[:128] + bytes(pitch_context._MAX_MODEL_BYTES)
+        assert self._refused(self._crafted(tmp_path, kind=large), "too large") < 20
 
     def test_a_header_that_names_more_values_than_the_file_holds(self, tmp_path):
         """numpy makes the array a header names before it reads the data: 2.4 GB here,
