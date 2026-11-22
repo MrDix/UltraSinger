@@ -64,6 +64,10 @@ _DEFAULTS = {
     "segmentation_model_repo": "",
     "segmentation_model_token": "",  # stored in system keyring, never written to config.json
     "lead_vocal_pitch": True,
+    # Note pitches from their musical context: "off", "balanced" or "strong";
+    # needs a trained pitch context model (tools/train_pitch_context.py)
+    "pitch_context": "off",
+    "pitch_context_model": "",
     # Training window (Train... next to the Segmentation Model setting)
     "training_library": "",
     "training_workdir": "",

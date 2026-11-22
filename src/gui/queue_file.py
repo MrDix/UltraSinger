@@ -75,7 +75,7 @@ PER_SONG_SETTINGS = frozenset(
 # model it names could run code, and a server would get the API key.
 _NOT_IMPORTED = frozenset({
     "ffmpeg_path", "musescore_path", "cache_folder", "segmentation_model",
-    "segmentation_model_repo", "whisper_model", "whisper_align_model",
+    "segmentation_model_repo", "pitch_context_model", "whisper_model", "whisper_align_model",
     "audio_separator_model", "demucs_model", "remote_stt_api_base_url",
     "remote_stt_model",
 })
@@ -89,6 +89,7 @@ _IMPORT_VALUES = {
     "language_mode": ("auto", "manual"),
     "language": re.compile(r"[a-z]{2,3}"),
     "octave_consistency": ("model", "all", "off"),
+    "pitch_context": ("off", "balanced", "strong"),
     "format_version": ("0.3.0", "1.0.0", "1.1.0", "1.2.0"),
     "linebreak_timing": ("yass", "usdx", "after_last_note"),
     "pitcher": ("swiftf0", "fcpe"),

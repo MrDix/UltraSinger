@@ -462,6 +462,7 @@ class TestImport:
             "musescore_path": "C:/Tools/mscore.exe",
             "segmentation_model": "C:/models/x.pt",
             "segmentation_model_repo": "someone/models",
+            "pitch_context_model": "C:/models/x.npz",
             "whisper_align_model": "someone/align",
             "remote_stt_api_base_url": "https://collector.invalid/v1",
             "cache_folder": "C:/cache",
@@ -476,18 +477,19 @@ class TestImport:
         [imported], problems = read_queue_file(path, imported=True)
         assert imported.settings_overrides == {"language_mode": "manual", "language": "de",
                                                "remote_stt": True}
-        assert len(problems) == 7 and all("not imported" in p for p in problems)
+        assert len(problems) == 8 and all("not imported" in p for p in problems)
 
     def test_an_imported_file_sets_only_values_the_dialog_offers(self, tmp_path):
         """Such a text goes into the command line and into names of cache files: a path
         in it could send a file of the conversion elsewhere."""
         good = {"transcriber": "qwen3", "whisper_compute_type": "int8",
                 "language_mode": "manual", "language": "de", "octave_consistency": "all",
-                "format_version": "1.0.0", "linebreak_timing": "usdx", "pitcher": "fcpe",
+                "pitch_context": "balanced", "format_version": "1.0.0", "linebreak_timing": "usdx", "pitcher": "fcpe",
                 "separator_backend": "demucs", "chart_style": "score",
                 "bpm_override": "120,5", "octave_shift": "-2", "llm_provider_id": "0a1b2c3d"}
         bad = {"transcriber": "../x", "whisper_compute_type": "/../../x", "language_mode": "x",
-               "language": "../../x", "octave_consistency": "x", "format_version": "9.9",
+               "language": "../../x", "octave_consistency": "x", "pitch_context": "x",
+               "format_version": "9.9",
                "linebreak_timing": "x", "pitcher": "C:\\x", "separator_backend": "x",
                "chart_style": "x", "bpm_override": "1e9", "octave_shift": "../1",
                "llm_provider_id": "../../x"}
@@ -497,7 +499,7 @@ class TestImport:
         assert kept.settings_overrides == good
         assert cleaned.settings_overrides == {}
         assert sum("a value the per-song settings do not offer" in p for p in problems) == 10
-        assert problems[-1] == "entry 2 'Artist - Song Title': 3 more settings ignored"
+        assert problems[-1] == "entry 2 'Artist - Song Title': 4 more settings ignored"
         # The saved queue keeps what the user set
         [_, restored], _ = read_queue_file(path)
         assert restored.settings_overrides == bad
@@ -553,7 +555,7 @@ class TestPerSongSettings:
                          if isinstance(_DEFAULTS.get(key, ""), str)}
         assert text_settings - queue_file._NOT_IMPORTED == {
             "transcriber", "whisper_compute_type", "language_mode", "language",
-            "octave_consistency", "format_version", "linebreak_timing", "bpm_override",
+            "octave_consistency", "pitch_context", "format_version", "linebreak_timing", "bpm_override",
             "octave_shift", "pitcher", "separator_backend", "chart_style", "llm_provider_id",
             "lyrics_text",
         }
@@ -576,6 +578,7 @@ class TestPerSongSettings:
         assert set(values) == text_settings - queue_file._NOT_IMPORTED
         assert set(values["transcriber"]) == data(form._transcriber)
         assert set(values["octave_consistency"]) == data(form._octave_consistency)
+        assert set(values["pitch_context"]) == data(form._pitch_context)
         assert set(values["linebreak_timing"]) == data(form._linebreak_timing)
         assert set(values["whisper_compute_type"]) == {
             "" if text == "auto" else text for text in texts(form._whisper_compute)}
