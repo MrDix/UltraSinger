@@ -407,6 +407,15 @@ class TestFilesThatAreNoModel:
             load_model(other)
         self._refused(self._changed(tmp_path, shifts=np.array([-1, 0, 1])))
 
+    def test_a_model_with_more_nodes_than_any_real_one_is_refused(self, monkeypatch):
+        """The check of the trees takes memory for every node: there is a limit to them."""
+        nodes = len(_toy_model().value)
+        monkeypatch.setattr(pitch_context, "_MAX_NODES", nodes)
+        _toy_model()
+        monkeypatch.setattr(pitch_context, "_MAX_NODES", nodes - 1)
+        with pytest.raises(ValueError, match="more nodes than any real one"):
+            _toy_model()
+
     def test_arrays_that_are_no_trees_are_refused(self, tmp_path):
         def root_points_to_itself(left):
             left = left.copy()

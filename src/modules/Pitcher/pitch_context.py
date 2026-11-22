@@ -107,6 +107,7 @@ MODEL_KIND = "ultrasinger-pitch-context"
 N_OUTPUTS = 2 * len(SHIFTS)
 _MAX_TREE_DEPTH = 64
 _MAX_MODEL_BYTES = 64 * 1024 * 1024  # unpacked; a real model unpacks to about 5 MB
+_MAX_NODES = 2_000_000  # of all trees of a model together; a real model has about 200 000
 _MAX_TEXT_BYTES = 256 * 1024  # of the names and of the info of a model (text takes 4 bytes a character)
 _PREDICT_CHUNK = 256  # notes predicted at once (bounds the memory of the tree walk)
 
@@ -280,6 +281,8 @@ class PitchContextModel:
             raise ValueError("the arrays of the model have a wrong shape")
         if nodes == 0 or any(len(a) != nodes for a in per_node):
             raise ValueError("the node arrays of the model differ in length")
+        if nodes > _MAX_NODES:
+            raise ValueError("the model has more nodes than any real one")
         if len(self.tree_root) == 0 or len(self.tree_root) != len(self.tree_output):
             raise ValueError("the tree arrays of the model differ in length")
         if self.baseline.shape != (N_OUTPUTS,) or not np.isfinite(self.baseline).all():
@@ -421,9 +424,10 @@ def load_model(path: str | Path) -> PitchContextModel:
 
     The file is a numpy ``.npz`` archive of number and text arrays. Each array
     is checked before it is read (see ``_read_array``): nothing in the file is
-    ever executed, a pickle or an archive that holds one is refused, and a
-    file may unpack to ``_MAX_MODEL_BYTES`` at most, so a crafted file cannot
-    make the loader hold much more than that.
+    ever executed, and a pickle or an archive that holds one is refused. A
+    file may unpack to ``_MAX_MODEL_BYTES`` and hold ``_MAX_NODES`` nodes at
+    most: the most a crafted file can make the loader hold, before it is
+    refused or loaded, is a few hundred megabytes.
     """
     try:
         with zipfile.ZipFile(str(path)) as archive:

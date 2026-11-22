@@ -228,8 +228,9 @@ arrays of numbers in a numpy `.npz` archive of about 2 MB. Loading a model
 file never runs code: nothing in it is unpickled, and every array is checked
 before it is read: numbers of the expected kind, packed the way numpy packs
 them, and exactly as much data as its header names. A model file may unpack
-to 64 MB at most (a real one unpacks to about 5 MB), so a crafted file cannot
-make the loader hold much more than that. A pickle, an archive of another program or arrays that are no trees
+to 64 MB and hold two million tree nodes at most (a real one unpacks to about
+5 MB and has about 200 000 nodes), so a crafted file can make the loader hold
+a few hundred megabytes at the very most. A pickle, an archive of another program or arrays that are no trees
 are refused, and the conversion then goes on without the step. Predicting
 needs only numpy, and the same notes and pitch track always give the same
 result.
