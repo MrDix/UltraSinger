@@ -71,6 +71,7 @@ This will help me a lot to keep this project alive and improve it.
       - [Chart Benchmark Tool](#chart-benchmark-tool)
       - [Chart Review Tool](#chart-review-tool)
       - [Model-Based Note Segmentation](#model-based-note-segmentation---segmentation_model)
+      - [Note Pitches from Their Musical Context](#note-pitches-from-their-musical-context---pitch_context)
       - [LLM Lyric Correction](#llm-lyric-correction---llm_correct)
       - [Remote Speech-to-Text](#remote-speech-to-text---remote_stt)
       - [Syllable-Level Note Splitting](#syllable-level-note-splitting---syllable_split)
@@ -348,6 +349,17 @@ _Not all options working now!_
                             melismatic songs with runs and slides. Notes are segmented by pitch stability, then
                             split at word boundaries so each word gets its own note. When lyrics lookup is active,
                             reference lyrics fill remaining placeholder notes. Disabled by default.
+    --pitch_context         off|balanced|strong, default off. With a segmentation model and a pitch context model
+                            (--pitch_context_model): move single notes by up to two semitones, from the pitch that
+                            was sung to the pitch a hand-made chart would write, judged from the note's pitch
+                            frames, its neighbour notes and the song's key. balanced moves about one note in eight:
+                            more notes exactly on the charted pitch, as many within one semitone of it. strong
+                            moves about one note in five: the most exact pitches, a few less within one semitone.
+                            The octave of a note stays; freestyle notes are never touched. Without a usable model
+                            file the conversion says so and goes on without it.
+    --pitch_context_model   Path to a trained pitch context model (.npz). Train your own on your UltraStar library
+                            with tools/train_pitch_context.py (see docs/pitch-context-model.md). No model is shipped.
+                            Only used together with --pitch_context balanced or strong.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup. Enabled by default, fetches verified reference
                             lyrics to correct Whisper transcription errors. No API key needed. When LRCLIB
                             has no lyrics of the song, far too few, only plain ones, or ones with few of the
@@ -765,6 +777,7 @@ When enabled, UltraSinger writes a `ultrasinger_parameter.info` file to the outp
 - LRCLIB lyrics availability (synced / plain / none)
 - LLM correction results and score breakdown
 - Whether a segmentation model was set and actually applied (`--segmentation_model`)
+- Whether the pitch context step ran and how many note pitches it moved (`--pitch_context`)
 
 ```commandline
 -i XYZ --write_settings_info
@@ -1053,6 +1066,40 @@ To share one model between computers, keep it in a (private) GitHub repository a
 **Syllables on the notes of a word:** the hyphenation that splits the words knows where a word is broken in print. It leaves short words whole ("only", "baby", "never") and splits off no single letter ("a-way"), so a word sung on two notes showed as `only` `~`. A word is therefore spread over its notes in as many syllables as it is spoken with (counted from its phonemes by eSpeak NG, which comes with UltraSinger): `on` `ly`. The words are placed onto the notes as before (the syllables of the hyphenation are placed; only a word with an apostrophe that the hyphenation cut there, like "you-'re", and the few words whose spoken syllables cut them at other places are placed as one), and a word on one note stays whole. Measured on 100 songs with hand-made reference charts (`syllable_notes_pct` of the [Chart Benchmark Tool](#chart-benchmark-tool), mean over the songs): of the words that a reference chart writes on two or more syllable notes, 83 % have as many in the generated chart (52 % before); in the English songs 81 % (40 %), in the German ones 88 % (86 %), in the 10 Spanish ones 89 % (84 %), in the 3 Italian ones 82 % (68 %). 93 songs gained, none lost; the notes are the same in 97 of the 100 songs (in the other three the note metrics differ by hundredths of a point), and 0.4 points more of the words start within 100 ms of the reference. Where eSpeak NG has no voice for the language of the song, the hyphenation alone splits the words, so a word such as "only" can stay whole. With `--disable_hyphenation` the words are placed whole.
 
 **Lead-vocal pitch** (on by default with a model; `--disable_lead_vocal_pitch`, GUI: "Lead Vocal Pitch"): harmonies, backing vocals and duet parts make the pitch tracker follow the loudest voice. The vocal stem is therefore split once more into lead and backing vocals with a karaoke separation model, and the note pitches are taken from the lead vocal — but only when the lead stem kept at least 80 % of the singing (otherwise the separation misjudged the melody and the full vocal stem is used). The pitch refinement and the game-score report then compare the notes with the lead stem as well. Where the lead stem has no tone, the full vocal stem counts instead (for the refinement in notes without a detected tone, for the game score in every moment without one): the separation takes a chorus sung by several voices for backing vocals, and its notes would otherwise score as all missed. On a 100-song benchmark this raised the median agreement with hand-made charts by about 1.7 points, mainly on songs with several voices. The separation needs about 2.2 GB of free GPU memory; with less it is skipped, since it would run in shared system memory and take very long, and the note pitches come from the full vocal stem.
+
+#### Note Pitches from Their Musical Context (`--pitch_context`)
+
+A note of the [segmentation model](#model-based-note-segmentation---segmentation_model) has the pitch that was **sung**: the upper middle of the pitch frames inside it. A hand-made chart writes the pitch the melody **means**, and that is often the semitone next to it: a note sung flat, scooped into or left early still is the note of the scale it belongs to. Of the generated notes that sit one to one on a note of a hand-made chart, 71 % have exactly its pitch and 16 % are one semitone off.
+
+With `--pitch_context`, a second small model moves single notes by up to two semitones. It judges each note from how its pitch frames lie around its pitch, from the two notes before and after it, and from the song as a whole (how often each pitch class is sung, the best-fitting scale, the tuning). Off by default; there are two strengths:
+
+- `balanced` moves about one note in eight. More notes are exactly on the pitch of a hand-made chart, and as many as before within one semitone of it (the tolerance of the games on Medium).
+- `strong` moves about one note in five. It gains the most exact pitches and gives a little of the agreement within one semitone for them.
+
+Measured on 100 songs with hand-made reference charts, with a model trained on 1255 other songs (change against the same charts without the step, in points; the value without the step in brackets):
+
+| | `balanced` | `strong` |
+|---|---|---|
+| Reference note time with exactly the reference pitch (68.6 %) | +2.0 | +5.0 |
+| ... within one semitone of it (82.7 %) | ±0.0 | −0.9 |
+| ... within two semitones of it (87.2 %) | +0.2 | +0.1 |
+| The original singing, scored on the chart with no tolerance (68.6 %) | −0.3 | −1.1 |
+| ... with one semitone tolerance (88.6 %) | +0.5 | −0.2 |
+| ... with two semitones tolerance (94.2 %) | +0.3 | +0.1 |
+| Notes moved | 12 % | 18 % |
+| Songs with more / fewer exact pitches | 75 / 23 | 87 / 13 |
+
+So the step is a trade, not a pure gain: the chart reads more like a hand-made one, while a moved note leaves the pitch that was actually sung. On Medium and Easy the score of the original singing hardly changes; scored with no tolerance it drops a little. Convert a song with and without it and compare.
+
+No model is shipped. Train your own with `tools/train_pitch_context.py` from the same extracted examples as the segmentation model; it needs no audio and no GPU and takes a few minutes. Keep the model private.
+
+* 📄 **[Pitch context model documentation](docs/pitch-context-model.md)**
+
+```commandline
+-i XYZ --segmentation_model D:\Models\segmentation.pt --pitch_context balanced --pitch_context_model D:\Models\pitch_context.npz
+```
+
+GUI: Settings → Experimental Features → "Pitch Context Model" and "Pitch Context" (also in the settings of a single song). The step only runs for the notes of a segmentation model and is the last one that changes pitches; it is skipped for the `score` chart style, whose pitches are meant to be the ones the games' pitch detection hears. A note keeps its octave, and freestyle notes are never touched. Without a usable model file, or when anything goes wrong, the conversion says so and keeps the note pitches as they are.
 
 #### ptAKF Chart Refit (`--ptakf_refit`)
 

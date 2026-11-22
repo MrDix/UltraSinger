@@ -193,3 +193,7 @@ on the validation songs.
   the lead stem, otherwise the lead stem (when it was made). Where the pitch
   tracker is sure, the game's detection is more often the one that is wrong,
   e.g. a fourth or fifth off on a harmonic.
+* The notes carry the pitch that was sung. An optional second model, trained
+  from the same extracted examples, moves single notes to the pitch a
+  hand-made chart would write (`--pitch_context`, off by default): see
+  [pitch-context-model.md](pitch-context-model.md).
