@@ -24,7 +24,9 @@ Workflow::
     # 2. train; a tenth of the songs is held out to show what the model gives
     python tools/train_pitch_context.py --data D:/SegTrain --out D:/SegTrain/pitch_context.npz
 
-    # 3. use it
+    # 3. use it, together with a segmentation model (the step only runs for its
+    #    notes; without one yet: python tools/train_segmentation.py train
+    #    D:/SegTrain --out D:/SegTrain/model.pt, see docs/segmentation-model.md)
     python src/UltraSinger.py -i song.mp3 --segmentation_model D:/SegTrain/model.pt \\
         --pitch_context balanced --pitch_context_model D:/SegTrain/pitch_context.npz
 

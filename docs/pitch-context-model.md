@@ -26,13 +26,23 @@ without it.
 #    every song and store the pitch track and the chart's notes (GPU recommended)
 uv run python tools/train_segmentation.py extract "D:\Karaoke\Songs" "D:\SegTrain"
 
-# 2) Train the pitch context model (CPU, a few minutes for ~1000 songs)
+# 2) Once, if you have no segmentation model yet: train it from the same examples
+#    (GPU: about 30 minutes for ~1000 songs, see segmentation-model.md)
+uv run python tools/train_segmentation.py train "D:\SegTrain" --out "D:\SegTrain\model.pt"
+
+# 3) Train the pitch context model (CPU, a few minutes for ~1000 songs)
 uv run python tools/train_pitch_context.py --data "D:\SegTrain" --out "D:\SegTrain\pitch_context.npz"
 
-# 3) Use it together with the segmentation model
+# 4) Use both: the pitch context step only runs for the notes of a segmentation model
 uv run python src/UltraSinger.py -i "song.mp3" --segmentation_model "D:\SegTrain\model.pt" ^
     --pitch_context balanced --pitch_context_model "D:\SegTrain\pitch_context.npz"
 ```
+
+Step 2 is only for those without a segmentation model. Any segmentation model
+you already use will do (`--segmentation_model` or
+`--segmentation_model_repo`, see [segmentation-model.md](segmentation-model.md));
+it does not have to be trained from the same examples as the pitch context
+model.
 
 In the GUI: Settings → Experimental Features → **Pitch Context Model** (the
 file) and **Pitch Context** (Off / Balanced / Strong). Both are also in the
