@@ -1245,7 +1245,13 @@ def _note_pitches_from_context(process_data: ProcessData, note_pitch_audio: str,
     # The stem is only pitched for a model file that is there (without one the step says so)
     track = None
     if settings.pitch_context_model and os.path.isfile(settings.pitch_context_model):
-        track = _stem_pitch_track(process_data, note_pitch_audio)
+        try:
+            track = _stem_pitch_track(process_data, note_pitch_audio)
+        except Exception as e:  # noqa: BLE001 - the step is an improvement, never a requirement
+            reason = f"no pitch track of the vocal ({e!r})"
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} pitch context not applied: {reason} "
+                  f"- the note pitches stay as they are")
+            return PitchContextResult(False, reason=reason)
     return correct_note_pitches(
         process_data.midi_segments, track, settings.pitch_context_model, settings.pitch_context)
 

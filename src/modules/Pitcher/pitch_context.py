@@ -463,7 +463,7 @@ def correct_note_pitches(midi_segments: list, pitched_data, model_path: str | No
         return skipped("no model file is set (--pitch_context_model)")
     if not os.path.isfile(model_path):
         return skipped(f"model file not found: {model_path}")
-    if pitched_data is None or not pitched_data.times:
+    if pitched_data is None or len(pitched_data.times) == 0:
         return skipped("no pitch track of the vocal")
     try:
         import librosa

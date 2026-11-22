@@ -1841,9 +1841,13 @@ class TestNotePitchesFromContext(unittest.TestCase):
             segments[2].note_type = "F"
             return SimpleNamespace(segments=segments, pitch_audio_path="stem.wav")
 
+        def pitch_track_of_stem(data, path):
+            if isinstance(stem_track, Exception):
+                raise stem_track
+            return sung if stem_track == "sung" else None
+
         with contextlib.ExitStack() as stack:
-            stack.enter_context(patch.object(
-                us, "_stem_pitch_track", side_effect=lambda data, path: sung if stem_track == "sung" else None))
+            stack.enter_context(patch.object(us, "_stem_pitch_track", side_effect=pitch_track_of_stem))
             stack.enter_context(patch("ultrastar_score.detect_pitch_frames", return_value=[]))
             if model_notes:
                 stack.enter_context(patch("modules.Segmentation.segmenter.segment_with_model", side_effect=segment))
@@ -1898,6 +1902,14 @@ class TestNotePitchesFromContext(unittest.TestCase):
                                           pitch_context_model=self._model_file(folder))
         self.assertEqual(notes, ["C4", "E4", "C4"])
         self.assertIn("pitch context not applied: no pitch track of the vocal", out)
+
+    def test_an_error_while_pitching_the_stem_leaves_the_notes_as_they_are(self):
+        with tempfile.TemporaryDirectory() as folder:
+            notes, out, info = self._convert(stem_track=TypeError("no audio"), pitch_context="strong",
+                                             pitch_context_model=self._model_file(folder))
+        self.assertEqual(notes, ["C4", "E4", "C4"])
+        self.assertIn("pitch context not applied: no pitch track of the vocal (TypeError('no audio'))", out)
+        self.assertIn("not applied (no pitch track of the vocal (TypeError('no audio')))", info)
 
     def test_only_for_the_notes_of_a_segmentation_model(self):
         with tempfile.TemporaryDirectory() as folder:
