@@ -279,6 +279,19 @@ class TestHeldNoteInSeveralNotes(unittest.TestCase):
         self.assertEqual(_shape(result), [("C5", "hold"), ("A♯4", "~"), ("C5", "~ ")])
         self.assertEqual((result[0].start, result[-1].end), (0.0, 1.0))
 
+    def test_each_piece_of_the_whole_carries_the_mark_of_the_note_it_lies_in(self):
+        """Only one of the two notes was set by the pitch refinement: its time keeps the mark,
+        the time of the other one does not get it."""
+        for marks, expected in (((False, True), [False, True, True]), ((True, False), [True, False, False]),
+                                ((True, True), [True, True, True]), ((False, False), [False, False, False])):
+            pieces = self._pieces()
+            pieces[0].pitch_refined, pieces[1].pitch_refined = marks
+            result = split_notes_at_vocal_runs(pieces, _flip(-2.0, 0.4, 0.5), bpm=120.0)
+            with self.subTest(marks=marks):
+                self.assertEqual(_shape(result), [("C5", "hold"), ("A♯4", "~"), ("C5", "~ ")])
+                self.assertEqual([seg.pitch_refined for seg in result], expected)
+                self.assertEqual([piece.pitch_refined for piece in pieces], list(marks))  # the given notes stay
+
     def test_the_line_break_stays_at_the_end(self):
         pieces = self._pieces()
         pieces[1].line_break_after = True
