@@ -1081,16 +1081,16 @@ Measured on 100 songs with hand-made reference charts, with a model trained on 1
 
 | | `balanced` | `strong` |
 |---|---|---|
-| Reference note time with exactly the reference pitch (68.6 %) | +3.1 | +5.7 |
-| ... within one semitone of it (82.7 %) | +0.1 | −0.6 |
+| Reference note time with exactly the reference pitch (68.6 %) | +3.1 | +5.8 |
+| ... within one semitone of it (82.7 %) | +0.1 | −0.7 |
 | ... within two semitones of it (87.2 %) | ±0.0 | ±0.0 |
 | Sung pitch inside the notes exactly on the note (68.6 %) | −0.5 | −1.4 |
-| ... within one semitone of it (88.6 %) | −0.3 | −0.9 |
+| ... within one semitone of it (88.6 %) | −0.4 | −0.9 |
 | ... within two semitones of it (94.2 %) | −0.3 | −0.4 |
-| Notes moved | 8.5 % | 14.7 % |
-| Songs with more / fewer exact pitches | 94 / 6 | 96 / 4 |
+| Notes moved | 8.5 % | 14.8 % |
+| Songs with more / fewer exact pitches | 97 / 3 | 97 / 3 |
 
-So the step is a trade, not a pure gain: the chart reads more like a hand-made one, while a moved note leaves the pitch that was actually sung. The game score of the original singing, as UltraSinger prints it, was measured on 25 other songs: with `balanced` it drops by 0.1 (Easy), 0.3 (Medium) and 0.1 (Hard) points, with `strong` by 0.1, 0.6 and 0.3. Convert a song with and without the step and compare.
+So the step is a trade, not a pure gain: the chart reads more like a hand-made one, while a moved note leaves the pitch that was actually sung. The game score of the original singing, as UltraSinger prints it, was measured on 25 other songs: with `balanced` it drops by 0.1 (Easy), 0.2 (Medium) and 0.1 (Hard) points, with `strong` by 0.1, 0.6 and 0.2. Convert a song with and without the step and compare.
 
 No model is shipped. Train your own with `tools/train_pitch_context.py` from the same extracted examples as the segmentation model; it needs no audio and no GPU and takes a few minutes. Keep the model private.
 

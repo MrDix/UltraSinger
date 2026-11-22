@@ -54,6 +54,12 @@ For every pitched note the model gets 40 numbers:
   most of the song's note time, how well and how clearly that scale fits, the
   note's step in it, and how far the singing is tuned off the semitones.
 
+The notes around a note and the song are made of the notes that have at least
+two confident pitch frames in the pitch track. A note without them has its
+pitch from elsewhere (the full vocal stem, or the note before it): the
+training leaves such notes out, and so does the conversion when it describes
+the others.
+
 For each shift of −2 to +2 semitones the model predicts two things: on what
 share of the note's time the shifted pitch would be **within one semitone** of
 a hand-made chart, and on what share it would be **exactly** on it. A note
@@ -80,7 +86,8 @@ track of the stem their pitches come from (the lead vocal when the
 * **Freestyle and rap notes** are never touched, and they do not count as
   neighbours of a note.
 * A note **keeps its octave**: it moves by at most two semitones from where it is.
-* A note without at least two confident pitch frames stays as it is.
+* A note without at least two confident pitch frames stays as it is, and it
+  is no neighbour of the notes around it.
 * A note that is **not at the pitch of its frames** stays as it is: more than
   1.5 semitones away from them, octaves aside. Another step put it there: the
   pitch refinement moves a note to the tone the games' pitch detection hears
@@ -106,24 +113,24 @@ charts without the step, in points.
 
 | | without | `balanced` | `strong` |
 |---|---|---|---|
-| Reference note time with exactly the reference pitch | 68.6 % | +3.1 | +5.7 |
-| ... within one semitone of it | 82.7 % | +0.1 | −0.6 |
+| Reference note time with exactly the reference pitch | 68.6 % | +3.1 | +5.8 |
+| ... within one semitone of it | 82.7 % | +0.1 | −0.7 |
 | ... within two semitones of it | 87.2 % | ±0.0 | ±0.0 |
 | Sung pitch inside the notes exactly on the note | 68.6 % | −0.5 | −1.4 |
-| ... within one semitone of it | 88.6 % | −0.3 | −0.9 |
+| ... within one semitone of it | 88.6 % | −0.4 | −0.9 |
 | ... within two semitones of it | 94.2 % | −0.3 | −0.4 |
-| Notes moved | | 8.5 % | 14.7 % |
+| Notes moved | | 8.5 % | 14.8 % |
 
 Songs that gain / lose more than 0.05 points:
 
 | | `balanced` | `strong` |
 |---|---|---|
-| Exactly the reference pitch | 94 / 6 | 96 / 4 |
-| Within one semitone | 54 / 37 | 19 / 77 |
-| Within two semitones | 42 / 30 | 41 / 37 |
-| Sung pitch exactly on the note | 22 / 76 | 13 / 85 |
+| Exactly the reference pitch | 97 / 3 | 97 / 3 |
+| Within one semitone | 56 / 35 | 17 / 78 |
+| Within two semitones | 42 / 34 | 39 / 38 |
+| Sung pitch exactly on the note | 21 / 74 | 13 / 85 |
 | Sung pitch within one semitone | 15 / 77 | 1 / 97 |
-| Sung pitch within two semitones | 5 / 86 | 4 / 88 |
+| Sung pitch within two semitones | 3 / 86 | 3 / 88 |
 
 "Sung pitch inside the notes" is the share of the confident pitch frames of
 the separated vocal inside the notes that lie within the tolerance of their
@@ -137,23 +144,23 @@ that have no reference chart:
 | | without | `balanced` | `strong` |
 |---|---|---|---|
 | Easy | 87.9 % | −0.1 | −0.1 |
-| Medium | 82.1 % | −0.3 | −0.6 |
-| Hard | 68.4 % | −0.1 | −0.3 |
+| Medium | 82.1 % | −0.2 | −0.6 |
+| Hard | 68.4 % | −0.1 | −0.2 |
 
 It is a trade, not a pure gain. The chart agrees more often with what a
 charter writes, most of all in the exact pitch, which is what a chart looks
 like on screen. A moved note leaves the pitch that was actually sung, so the
 original singing scores a little less on it. Single songs can lose: of the
-100 songs, the worst three lost 5.9, 1.6 and 0.7 points of exact agreement
-with `balanced` and 8.8, 3.5 and 0.5 with `strong`; the best gained 12.8 and
-15.1. Nine in ten songs gain about half a point or more with `balanced` and
-about 1.4 points or more with `strong`.
+100 songs, the worst three lost 5.9, 1.6 and 0.5 points of exact agreement
+with `balanced` and 8.8, 3.6 and 0.5 with `strong`; the best gained 12.8 and
+17.1. Nine in ten songs gain about half a point or more with `balanced` and
+about 1.2 points or more with `strong`.
 
 Without the rule that leaves notes alone which are not at the pitch of their
-frames, the same model gains less exact agreement (+2.0 and +5.0) and fares
-worse within one semitone (±0.0 and −0.9), 23 and 13 songs lose exact
-agreement instead of 6 and 4, and the game score drops by up to 1.1 points
-(`balanced`, Hard) and 1.3 points (`strong`, Hard) instead of 0.3 and 0.6 at
+frames, the same model gains less exact agreement (+2.0 and +5.1) and fares
+worse within one semitone (−0.1 and −0.9), 23 and 14 songs lose exact
+agreement instead of 3 and 3, and the game score drops by up to 1.1 points
+(`balanced`, Hard) and 1.2 points (`strong`, Hard) instead of 0.2 and 0.6 at
 most.
 
 ## Training
@@ -200,8 +207,8 @@ the hand-made chart, generated notes do not.
 | `--seed` | 0 | Seed of the held-out choice and of the training |
 
 A small library is enough to start with: a model trained on 80 songs gave
-most of the gain of the one trained on 1255 (exact pitch +2.6 and +5.4
-instead of +3.1 and +5.7 in the table above). More songs make it somewhat
+most of the gain of the one trained on 1255 (exact pitch +2.5 and +5.3
+instead of +3.1 and +5.8 in the table above). More songs make it somewhat
 better and more careful; it then moves fewer notes for a larger gain. Songs
 whose chart is poorly timed against the recording teach the model wrong
 pitches; `--min-ref-fit` leaves them out.
