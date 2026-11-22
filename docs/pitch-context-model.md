@@ -226,9 +226,9 @@ example can be left out by name with `--exclude` here.
 The model is a set of gradient-boosted regression trees, stored as plain
 arrays of numbers in a numpy `.npz` archive of about 2 MB. Loading a model
 file never runs code: nothing in it is unpickled, and every array is checked
-before it is read (numbers of the expected kind, and exactly as much data as
-its header names, so a crafted file cannot ask for more memory than its
-size). A pickle, an archive of another program or arrays that are no trees
+before it is read: numbers of the expected kind, packed the way numpy packs
+them, and exactly as much data as its header names. So a crafted file cannot
+ask for more memory than its size. A pickle, an archive of another program or arrays that are no trees
 are refused, and the conversion then goes on without the step. Predicting
 needs only numpy, and the same notes and pitch track always give the same
 result.

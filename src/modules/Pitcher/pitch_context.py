@@ -381,8 +381,18 @@ def _read_array(archive: zipfile.ZipFile, name: str, kind: str, ndim: int,
     the array must be of numbers of the expected ``kind`` (never of Python
     objects, which would be unpickled) and its data must be exactly the rest
     of the archive member, at most ``max_bytes``.
+
+    A member is stored or deflated, as numpy writes it. Other compressions are
+    refused before a byte is read: Python unpacks a whole chunk of a bzip2 or
+    lzma member at once, however much that is (a few bytes can stand for
+    gigabytes of zeros), and only then cuts it down to the size the archive
+    names.
     """
     entry = archive.getinfo(name + ".npy")
+    if entry.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        raise ValueError(f"the array '{name}' is packed in a way a model file never is")
+    if entry.flag_bits & 0x1:
+        raise ValueError(f"the array '{name}' is encrypted")
     with archive.open(entry) as member:
         version = np.lib.format.read_magic(member)
         if version == (1, 0):

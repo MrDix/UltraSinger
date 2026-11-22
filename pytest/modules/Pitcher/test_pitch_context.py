@@ -472,6 +472,26 @@ class TestCraftedModelFiles:
         path = self._crafted(tmp_path, value=_array_file("<f8", (nodes,), _toy_model().value.tobytes()))
         assert np.array_equal(load_model(path).value, _toy_model().value)
 
+    @pytest.mark.parametrize("method", ["ZIP_BZIP2", "ZIP_LZMA"])
+    def test_a_member_packed_in_another_way_is_not_unpacked(self, tmp_path, method):
+        """Python unpacks a chunk of such a member at once, whatever its size: a few
+        hundred bytes of bzip2 stand for hundreds of megabytes of zeros."""
+        good = tmp_path / "good.npz"
+        _toy_model().save(good)
+        with zipfile.ZipFile(good) as archive:
+            files = {name: archive.read(name) for name in archive.namelist()}
+        header = _array_file("<U1", (), b"")[:128]
+        files["kind.npy"] = header + bytes(200 * 1024 * 1024)
+        path = tmp_path / "packed.npz"
+        try:
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for name, data in files.items():
+                    archive.writestr(name, data, getattr(zipfile, method) if name == "kind.npy" else None)
+        except (RuntimeError, NotImplementedError):
+            pytest.skip(f"{method} is not available here")
+        assert path.stat().st_size < 1024 * 1024
+        assert self._refused(str(path)) < 20
+
     def test_a_header_that_names_more_values_than_the_file_holds(self, tmp_path):
         """numpy makes the array a header names before it reads the data: 2.4 GB here,
         and for the larger one more memory than there is (a MemoryError)."""
