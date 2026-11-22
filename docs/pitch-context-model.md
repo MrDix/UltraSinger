@@ -197,9 +197,12 @@ the hand-made chart, generated notes do not.
 | `--limit` | 0 | Only use the first N examples (0 = all) |
 | `--seed` | 0 | Seed of the held-out choice and of the training |
 
-More songs did not help beyond a point: 80 songs gave nearly the same result
-as 1255. Songs whose chart is poorly timed against the recording teach the
-model wrong pitches; `--min-ref-fit` leaves them out.
+A small library is enough to start with: a model trained on 80 songs gave
+most of the gain of the one trained on 1255 (exact pitch +2.6 and +5.4
+instead of +3.1 and +5.7 in the table above). More songs make it somewhat
+better and more careful; it then moves fewer notes for a larger gain. Songs
+whose chart is poorly timed against the recording teach the model wrong
+pitches; `--min-ref-fit` leaves them out.
 
 ### Measuring a model honestly
 
