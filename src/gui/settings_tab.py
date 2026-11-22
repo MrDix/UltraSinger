@@ -110,6 +110,13 @@ _OCTAVE_CONSISTENCY_CHOICES = (
     ("Off", "off"),
 )
 
+# "Pitch Context" choices: (shown text, config value)
+_PITCH_CONTEXT_CHOICES = (
+    ("Off", "off"),
+    ("Balanced", "balanced"),
+    ("Strong", "strong"),
+)
+
 # Download limits of a video link: (shown text, config value), 0 = no limit
 _DOWNLOAD_RATE_LIMIT_CHOICES = (
     ("500 KiB/s (about 4 Mbit/s)", 500),
@@ -849,6 +856,53 @@ class ConversionSettingsForm(QWidget):
                             "shared system memory and take very long.",
                             reset_callback=lambda: self._lead_vocal_pitch.setChecked(
                                 _DEFAULTS["lead_vocal_pitch"]))
+
+        pitch_context_model_tooltip = (
+            "Trained pitch context model (.npz) for the Pitch Context setting below. "
+            "No model is shipped: train your own on your UltraStar song library with "
+            "tools/train_pitch_context.py, from the same extracted examples as the "
+            "segmentation model (see docs/pitch-context-model.md). Only used when "
+            "Pitch Context is set to Balanced or Strong."
+        )
+        self._pitch_context_model = QLineEdit()
+        self._pitch_context_model.setPlaceholderText("Optional: trained model file (.npz)")
+        self._pitch_context_model.setText(self._config.get("pitch_context_model", ""))
+        pitch_context_row = QHBoxLayout()
+        pitch_context_row.setContentsMargins(0, 0, 0, 0)
+        pitch_context_row.addWidget(self._pitch_context_model, 1)
+        pitch_context_browse = QPushButton("Browse")
+        pitch_context_browse.setToolTip("Pick a trained pitch context model file (.npz).")
+        pitch_context_browse.clicked.connect(
+            lambda: self._browse_file(self._pitch_context_model, "Pitch context model (*.npz)")
+        )
+        pitch_context_row.addWidget(pitch_context_browse)
+        pitch_context_container = QWidget()
+        pitch_context_container.setLayout(pitch_context_row)
+        card.add_row("Pitch Context Model", pitch_context_container, pitch_context_model_tooltip,
+                     reset_callback=lambda: self._pitch_context_model.setText(
+                         _DEFAULTS["pitch_context_model"]))
+
+        self._pitch_context = _NoScrollComboBox()
+        for text, value in _PITCH_CONTEXT_CHOICES:
+            self._pitch_context.addItem(text, value)
+        self._set_pitch_context(self._config.get("pitch_context"))
+        card.add_row("Pitch Context", self._pitch_context,
+                     "Only with a Segmentation Model and a Pitch Context Model: move single "
+                     "notes by up to two semitones, from the pitch that was sung to the pitch "
+                     "a hand-made chart would write. A note sung flat, scooped into or left "
+                     "early still is the note of the scale it belongs to; the model judges "
+                     "that from the note's pitch frames, the notes around it and the song's "
+                     "key. 'Off' (default): the notes keep the sung pitch. 'Balanced': moves "
+                     "about one note in eighteen; more notes are exactly on the pitch of a "
+                     "hand-made chart, as many as before within one semitone of it. 'Strong': "
+                     "moves about one note in nine; the most notes exactly on the charted "
+                     "pitch, a few less within one semitone (the tolerance of the games on "
+                     "Medium). The singer's own game score drops a little with both, more "
+                     "with 'Strong'. A note keeps its octave; freestyle notes are never "
+                     "touched, nor the notes the pitch refinement moved to the tone the "
+                     "games' pitch detection hears. Without a usable model file the "
+                     "conversion says so and goes on without it.",
+                     reset_callback=lambda: self._set_pitch_context(_DEFAULTS["pitch_context"]))
 
         self._vocal_gap_fill = ToggleSwitch(
             checked=self._config.get("vocal_gap_fill", False)
@@ -1768,6 +1822,11 @@ class ConversionSettingsForm(QWidget):
         self._octave_consistency.setCurrentIndex(
             self._octave_consistency.findData(octave_consistency_choice(value)))
 
+    def _set_pitch_context(self, value) -> None:
+        # A value the setting does not offer (e.g. from a hand-edited config) shows as Off
+        index = self._pitch_context.findData(value)
+        self._pitch_context.setCurrentIndex(index if index >= 0 else 0)
+
     def _load_lyrics_file(self):
         """Put the text of a lyrics file into the field of the song's own lyrics."""
         path, _ = QFileDialog.getOpenFileName(
@@ -1831,6 +1890,8 @@ class ConversionSettingsForm(QWidget):
             "segmentation_model_repo": self._segmentation_model_repo.text().strip(),
             "segmentation_model_token": self._segmentation_model_token.text().strip(),
             "lead_vocal_pitch": self._lead_vocal_pitch.isChecked(),
+            "pitch_context": self._pitch_context.currentData(),
+            "pitch_context_model": self._pitch_context_model.text().strip(),
             "keep_numbers": self._keep_numbers.isChecked(),
             "disable_lyrics_lookup": not self._lyrics_lookup.isChecked(),
             "disable_reference_lyrics": not self._reference_lyrics.isChecked(),

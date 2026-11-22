@@ -584,6 +584,18 @@ class UltraSingerRunner(QObject):
             args.extend(["--segmentation_model_repo", config["segmentation_model_repo"]])
         if not config.get("lead_vocal_pitch", True):
             args.append("--disable_lead_vocal_pitch")
+        # Note pitches from their musical context (off by default). A strength
+        # without a model file is passed on: the conversion then says that the
+        # model is missing and goes on without the step.
+        pitch_context = config.get("pitch_context") or "off"
+        if pitch_context in ("balanced", "strong"):
+            args.extend(["--pitch_context", pitch_context])
+            model_file = config.get("pitch_context_model")
+            if isinstance(model_file, str) and model_file.strip():
+                args.extend(["--pitch_context_model", model_file.strip()])
+        elif pitch_context != "off":
+            # e.g. from a hand-edited queue file: the CLI would stop instead of converting
+            logger.warning("Pitch context %r is not off, balanced or strong; using off", pitch_context)
         if config.get("golden_notes"):
             args.append("--golden_notes")
         if config.get("vocal_runs_as_notes"):

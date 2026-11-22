@@ -154,6 +154,18 @@ def print_help() -> None:
                             singing; this avoids charting harmonies or backing vocals. Use this flag to take the
                             pitches from the full vocal stem instead (saves the extra separation, e.g. on a CPU).
                             The separation is skipped when the GPU has less than about 2.2 GB free.
+    --pitch_context         off|balanced|strong, default off. With a segmentation model and a pitch context model
+                            (--pitch_context_model): move single notes by up to two semitones, from the pitch that
+                            was sung to the pitch a hand-made chart would write, judged from the note's pitch
+                            frames, its neighbour notes and the song's key. balanced moves about one note in eighteen:
+                            more notes exactly on the charted pitch, as many within one semitone of it. strong
+                            moves about one note in nine: the most exact pitches, a few less within one semitone.
+                            The octave of a note stays; freestyle notes and the notes the pitch refinement moved
+                            are never touched. Without a usable model file the conversion says so and goes on
+                            without it.
+    --pitch_context_model   Path to a trained pitch context model (.npz). Train your own on your UltraStar library
+                            with tools/train_pitch_context.py (see docs/pitch-context-model.md). No model is shipped.
+                            Only used together with --pitch_context balanced or strong.
     --disable_lyrics_lookup Disable LRCLIB lyrics lookup and correction. Lyrics lookup is enabled by default
                             and fetches verified reference lyrics to correct Whisper transcription errors.
                             When LRCLIB has no lyrics of the song, far too few, only plain ones, or ones

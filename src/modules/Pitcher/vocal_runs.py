@@ -533,6 +533,12 @@ def _split_notes(midi_segments: list[MidiSegment], pitched_data: PitchedData, bp
             whole_pieces, whole_steps, whole_flips = split(whole)
             if whole_steps + whole_flips > steps + flips:
                 pieces, steps, flips = whole_pieces, whole_steps, whole_flips
+                # The whole has the mark of the pitch refinement of its first note
+                # only: a piece gets the mark when a part of it lies in a note that has
+                # it, so no time the refinement set a pitch for is left without it
+                marked = [part for part in midi_segments[index:last + 1] if part.pitch_refined]
+                for piece in pieces:
+                    piece.pitch_refined = any(part.start < piece.end and piece.start < part.end for part in marked)
         result.extend(pieces)
         steps_total += steps
         flips_total += flips

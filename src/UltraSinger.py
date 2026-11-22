@@ -82,6 +82,10 @@ from modules.Pitcher.Pitcher import (
 )
 from modules.Pitcher.pitched_data import PitchedData
 from modules.Pitcher.pitch_change_splitter import split_notes_and_words_at_pitch_changes
+from modules.Pitcher.pitch_context import (
+    STRENGTH_CHOICES as PITCH_CONTEXT_STRENGTHS,
+    STRENGTH_OFF as PITCH_CONTEXT_OFF,
+)
 from modules.Speech_Recognition.TranscriptionResult import TranscriptionResult
 from modules.Speech_Recognition.hyphenation import (
     hyphenate_each_word,
@@ -235,6 +239,10 @@ def run() -> tuple[str, Score, Score]:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Model-based note segmentation: {os.path.basename(settings.segmentation_model)}')}")
     elif settings.segmentation_model_repo:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Model-based note segmentation: model from repository {settings.segmentation_model_repo}')}")
+    if settings.pitch_context != PITCH_CONTEXT_OFF:
+        pitch_context_model = (os.path.basename(settings.pitch_context_model) if settings.pitch_context_model
+                               else "no model file set")
+        print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted(f'Note pitches from their musical context ({settings.pitch_context}): {pitch_context_model}')}")
     if settings.golden_notes:
         print(f"{ULTRASINGER_HEAD} {bright_green_highlighted('Option:')} {cyan_highlighted('Golden note generation enabled')}")
     if settings.vocal_runs_as_notes:
@@ -985,6 +993,7 @@ def run() -> tuple[str, Score, Score]:
     # ptAKF chart refit — rebuild note boundaries and pitches from the
     # scorer's own detector (score-first chart). Same vocal-only rule as
     # the refinement pass above.
+    notes_refit = False  # whether the refit made the notes that are there now
     if (
         not settings.ignore_audio
         and settings.ptakf_refit
@@ -992,7 +1001,7 @@ def run() -> tuple[str, Score, Score]:
     ):
         from modules.Refinement.ptakf_refit import refit_notes_ptakf
 
-        process_data.midi_segments = refit_notes_ptakf(
+        refit_segments = refit_notes_ptakf(
             process_data.midi_segments,
             vocal_audio_path=note_pitch_audio,
             bpm=process_data.media_info.bpm,
@@ -1002,6 +1011,11 @@ def run() -> tuple[str, Score, Score]:
             language=process_data.media_info.language,
             pitch_frames=pitch_frames,
         )
+        # The refit fails open: when it cannot run (its package is missing, the
+        # notes do not match the chart it parses, any error) it hands back the
+        # very list it was given; new notes come in a new list
+        notes_refit = refit_segments is not process_data.midi_segments
+        process_data.midi_segments = refit_segments
 
     # A note made from a word that is charted beside the pitch the singing
     # clearly stays on takes that pitch. After the refinement, which can move
@@ -1054,6 +1068,17 @@ def run() -> tuple[str, Score, Score]:
             _stem_pitch_track(process_data, note_pitch_audio),
             bpm=process_data.media_info.bpm,
         )
+
+    # Note pitches from their musical context — a trained model moves single
+    # notes of the segmentation model by up to two semitones, from the pitch
+    # that was sung to the pitch a hand-made chart would write. The last step
+    # that changes pitches: after the octave steps, the refinement and the
+    # split at vocal runs, before the golden notes, the chart and the game
+    # score. Off by default.
+    pitch_context_result = None
+    if settings.pitch_context != PITCH_CONTEXT_OFF:
+        pitch_context_result = _note_pitches_from_context(
+            process_data, note_pitch_audio, model_segmentation_used, notes_refit)
 
     # Golden notes — mark long held notes the singing stays on, spread over
     # the song, as golden ("*") bonus notes. Runs last, on the final note
@@ -1154,6 +1179,7 @@ def run() -> tuple[str, Score, Score]:
             synced_lyrics_check=process_data.synced_lyrics_check,
             plain_from_synced=process_data.plain_lyrics_from_synced,
             model_segmentation_used=model_segmentation_used,
+            pitch_context_result=pitch_context_result,
             phoneme_word_starts_result=phoneme_word_starts_result,
             lyrics_source=process_data.lyrics_source,
             lyrics_heard=process_data.lyrics_heard,
@@ -1199,6 +1225,44 @@ def _stem_pitch_track(process_data: ProcessData, stem_path: str) -> PitchedData 
         pitched_data = None
     process_data.stem_pitch_tracks[stem_path] = pitched_data
     return pitched_data
+
+
+def _note_pitches_from_context(process_data: ProcessData, note_pitch_audio: str,
+                               model_segmentation_used: bool, notes_refit: bool = False) -> "PitchContextResult":
+    """Run the pitch context step (``--pitch_context``) where it applies; the
+    notes that move are changed in place.
+
+    Only for the notes of the segmentation model: the step is trained and
+    measured on their pitches, the upper middle of the pitch frames inside a
+    note. Not for notes the ptAKF refit made (``notes_refit``; the score chart
+    style switches the refit on unless ``--disable_ptakf_refit`` is given):
+    their pitches are meant to be the ones the games' pitch detection hears.
+    A refit that was asked for but kept the notes as they were (it fails
+    open) is no reason to skip the step. The notes are compared with the
+    pitch track of the stem their pitches come from.
+    """
+    from modules.Pitcher.pitch_context import PitchContextResult, correct_note_pitches
+
+    reason = None
+    if not model_segmentation_used:
+        reason = "the notes are not from a segmentation model"
+    elif notes_refit:
+        reason = "the notes are refit to the games' pitch detection (ptAKF refit)"
+    if reason:
+        print(f"{ULTRASINGER_HEAD} {gold_highlighted('Note:')} pitch context not applied: {reason}")
+        return PitchContextResult(False, reason=reason)
+    # The stem is only pitched for a model file that is there (without one the step says so)
+    track = None
+    if settings.pitch_context_model and os.path.isfile(settings.pitch_context_model):
+        try:
+            track = _stem_pitch_track(process_data, note_pitch_audio)
+        except Exception as e:  # noqa: BLE001 - the step is an improvement, never a requirement
+            reason = f"no pitch track of the vocal ({e!r})"
+            print(f"{ULTRASINGER_HEAD} {gold_highlighted('Warning:')} pitch context not applied: {reason} "
+                  f"- the note pitches stay as they are")
+            return PitchContextResult(False, reason=reason)
+    return correct_note_pitches(
+        process_data.midi_segments, track, settings.pitch_context_model, settings.pitch_context)
 
 
 def _cover_of_special_version(process_data: ProcessData) -> None:
@@ -1372,6 +1436,7 @@ def _write_settings_info_file(
         synced_lyrics_check: "SyncedLyricsCheck | str | None" = None,
         plain_from_synced: bool = False,
         model_segmentation_used: bool = False,
+        pitch_context_result: "PitchContextResult | None" = None,
         phoneme_word_starts_result: str | None = None,
         lyrics_source: str | None = None,
         lyrics_heard: str | None = None,
@@ -1562,6 +1627,13 @@ def _write_settings_info_file(
                 f.write(f"  Lead-vocal pitch:         {settings.lead_vocal_pitch}\n")
             else:
                 f.write(f"  Segmentation model:       (none, word-based notes)\n")
+            if settings.pitch_context == PITCH_CONTEXT_OFF:
+                f.write("  Pitch context:            off\n")
+            else:
+                pitch_context_model = (os.path.basename(settings.pitch_context_model)
+                                       if settings.pitch_context_model else "no model file")
+                f.write(f"  Pitch context:            {settings.pitch_context} ({pitch_context_model}): "
+                        f"{pitch_context_result or 'not applied'}\n")
             f.write(f"  Freestyle detection:      {settings.freestyle_detection}\n")
             f.write(f"  Noise reduction:          {settings.denoise_noise_reduction} dB\n")
             f.write(f"  Noise floor:              {settings.denoise_noise_floor} dB\n")
@@ -3308,6 +3380,16 @@ def init_settings(argv: list[str]) -> Settings:
             settings.segmentation_model_repo = arg or None
         elif opt == "--segmentation_model_token":
             settings.segmentation_model_token = arg or None
+        elif opt == "--pitch_context":
+            if arg.strip().lower() not in PITCH_CONTEXT_STRENGTHS:
+                print(f"{ULTRASINGER_HEAD} {red_highlighted('Error:')} Unknown pitch context strength '{arg}'. "
+                      f"Use: {blue_highlighted(', '.join(PITCH_CONTEXT_STRENGTHS))}")
+                sys.exit(1)
+            settings.pitch_context = arg.strip().lower()
+        elif opt == "--pitch_context_model":
+            # A missing file is not fatal: the step warns and leaves the note pitches
+            # as they are (e.g. a stale path in a saved GUI config).
+            settings.pitch_context_model = arg or None
         elif opt in ("--disable_lyrics_lookup"):
             settings.lyrics_lookup = False
         elif opt == "--lyrics_file":
@@ -3515,6 +3597,8 @@ def arg_options():
         "segmentation_model_repo=",
         "segmentation_model_token=",
         "disable_lead_vocal_pitch",
+        "pitch_context=",
+        "pitch_context_model=",
         "disable_lyrics_lookup",
         "lyrics_file=",
         "lyrics_sources_dir=",

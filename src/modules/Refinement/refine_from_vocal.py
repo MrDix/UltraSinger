@@ -212,6 +212,9 @@ def refine_pitch_with_uscore(
     Segments with a locked pitch (``MidiSegment.pitch_locked``) keep it unless
     the correction lands on the pitch class of their ``check_midi``.
 
+    A corrected segment is marked (``MidiSegment.pitch_refined``), so that a
+    later step that puts notes on the sung pitch does not move it back.
+
     Args:
         midi_segments: Notes to refine (modified in-place).
         vocal_audio_path: Path to vocal-only audio file.
@@ -263,9 +266,11 @@ def refine_pitch_with_uscore(
             for i in unchecked:
                 stage(i, _corrected_note(midi_segments[i], fallback_scores[i], hit_ratio_threshold))
 
-    # Commit all corrections at once (transactional)
+    # Commit all corrections at once (transactional). A corrected note is marked:
+    # its pitch is no longer the sung one but the one the games' detection hears
     for idx, new_note in staged:
         midi_segments[idx].note = new_note
+        midi_segments[idx].pitch_refined = True
 
     if kept:
         print(f"{ULTRASINGER_HEAD} Pitch refinement kept {kept} well-tracked note pitches "

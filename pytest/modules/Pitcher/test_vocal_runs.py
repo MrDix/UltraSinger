@@ -102,6 +102,17 @@ class TestSplitNotesAtVocalRuns(unittest.TestCase):
         result = split_notes_at_vocal_runs([_held(note_type="*")], _flip(-2.0), bpm=120.0)
         self.assertEqual([seg.note_type for seg in result], ["*", "*", "*"])
 
+    def test_pieces_of_a_note_the_refinement_set_carry_its_mark(self):
+        # the pieces are placed from the note's pitch: the pitch context step leaves them alone too
+        refined = _held()
+        refined.pitch_refined = True
+        flips = split_notes_at_vocal_runs([refined], _flip(-2.0), bpm=120.0)
+        self.assertEqual([seg.pitch_refined for seg in flips], [True, True, True])
+        steps = split_notes_at_vocal_runs([refined], _track((0.0, 0.5, 0.0), (0.5, 1.0, -2.0)), bpm=120.0)
+        self.assertEqual([seg.pitch_refined for seg in steps], [True, True])
+        self.assertEqual([seg.pitch_refined for seg in split_notes_at_vocal_runs([_held()], _flip(-2.0), bpm=120.0)],
+                         [False, False, False])
+
     def test_unconfident_frames_are_not_used(self):
         track = _flip(-2.0)
         track.confidence = [0.5] * len(track.confidence)
@@ -267,6 +278,32 @@ class TestHeldNoteInSeveralNotes(unittest.TestCase):
         result = split_notes_at_vocal_runs(self._pieces(), track, bpm=120.0)
         self.assertEqual(_shape(result), [("C5", "hold"), ("A♯4", "~"), ("C5", "~ ")])
         self.assertEqual((result[0].start, result[-1].end), (0.0, 1.0))
+
+    def test_a_piece_of_the_whole_carries_the_mark_of_the_notes_it_lies_in(self):
+        """Only one of the two notes was set by the pitch refinement: the pieces in its time
+        keep the mark, the pieces in the time of the other one alone do not get it. (The flip
+        is cut a few milliseconds before the second note starts: it lies in both notes.)"""
+        for marks, expected in (((False, True), [False, True, True]), ((True, False), [True, True, False]),
+                                ((True, True), [True, True, True]), ((False, False), [False, False, False])):
+            pieces = self._pieces()
+            pieces[0].pitch_refined, pieces[1].pitch_refined = marks
+            result = split_notes_at_vocal_runs(pieces, _flip(-2.0, 0.4, 0.5), bpm=120.0)
+            with self.subTest(marks=marks):
+                self.assertEqual(_shape(result), [("C5", "hold"), ("A♯4", "~"), ("C5", "~ ")])
+                self.assertEqual([seg.pitch_refined for seg in result], expected)
+                self.assertEqual([piece.pitch_refined for piece in pieces], list(marks))  # the given notes stay
+
+    def test_a_piece_across_the_cut_is_marked_when_one_of_its_notes_is(self):
+        """The flip starts a moment after the cut: the piece before it holds the first note and
+        the start of the second one. No time the refinement set a pitch for loses the mark."""
+        for marks, expected in (((False, True), [True, True, True]), ((True, False), [True, False, False])):
+            pieces = self._pieces(cut=0.4)
+            pieces[0].pitch_refined, pieces[1].pitch_refined = marks
+            result = split_notes_at_vocal_runs(pieces, _flip(-2.0, 0.43, 0.53), bpm=120.0)
+            with self.subTest(marks=marks):
+                self.assertEqual(_shape(result), [("C5", "hold"), ("A♯4", "~"), ("C5", "~ ")])
+                self.assertGreater(result[0].end, 0.4)
+                self.assertEqual([seg.pitch_refined for seg in result], expected)
 
     def test_the_line_break_stays_at_the_end(self):
         pieces = self._pieces()
