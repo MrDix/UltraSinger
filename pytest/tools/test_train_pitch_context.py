@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 
 import train_pitch_context as tp  # noqa: E402
-from modules.Pitcher.pitch_context import SHIFTS, load_model  # noqa: E402
+from modules.Pitcher.pitch_context import SHIFTS, PitchTrack, load_model, note_features, track_pitch  # noqa: E402
 
 FRAME_S = 0.016
 
@@ -109,6 +109,25 @@ class TestExamples:
         late = _example(3)
         late["notes"][-5:, :2] += 1e6  # a part appended after the end of the audio
         assert len(tp.example_rows(late).weights) == 55
+
+    def test_training_and_conversion_describe_a_note_alike(self):
+        """The conversion hands in every pitched note of a chart, also those its pitch
+        track has no frames for; the training leaves them out before it asks for the
+        features. The notes both have get the same features."""
+        example = _example(8, notes=80)
+        silent = np.arange(80) % 5 == 2
+        for start, end in example["notes"][silent, :2] / 1000.0:
+            example["f0_conf"][(example["f0_t"] >= start - 0.01) & (example["f0_t"] < end + 0.01)] = 0.0
+        rows = tp.example_rows(example)
+        assert len(rows.weights) == 64
+
+        notes = np.asarray(example["notes"], dtype=float)
+        track = PitchTrack(example["f0_t"], example["f0_hz"], example["f0_conf"])
+        # (a note without frames has its pitch from elsewhere in a conversion: any pitch here)
+        pitches = [track_pitch(track.frames(start, end)) or 60 for start, end in notes[:, :2]]
+        features, judged = note_features(notes[:, 0], notes[:, 1], pitches, track)
+        assert judged.tolist() == (~silent).tolist()
+        assert np.array_equal(features[judged], rows.features, equal_nan=True)
 
     def test_too_few_notes(self):
         assert tp.example_rows(_example(4, notes=20)) is None

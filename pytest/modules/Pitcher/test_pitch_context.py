@@ -199,9 +199,50 @@ class TestNoteFeatures:
     def test_a_note_without_pitch_frames_is_not_judged(self):
         features, judged = note_features([0.0, 2000.0], [500.0, 2500.0], [60, 62], _track([(0.0, 0.5, 60.0)]))
         assert judged.tolist() == [True, False]
-        assert np.isnan(features[1, :_column("duration_ms")]).all()
-        assert features[1, _column("duration_ms")] == 500.0
-        assert features[1, _column("note_-1_pitch")] == -2
+        assert np.isnan(features[1]).all()
+        # one frame is not enough either
+        _, judged = note_features([0.0, 2000.0], [500.0, 2500.0], [60, 62],
+                                  _track([(0.0, 0.5, 60.0), (2.0, 2.01, 62.0)]))
+        assert judged.tolist() == [True, False]
+
+    def test_a_note_without_pitch_frames_does_not_describe_the_others(self):
+        """Its pitch is from elsewhere (another stem, or the note before it): it is no
+        neighbour and no part of the song. Training never sees such a note."""
+        starts = [0.0, 600.0, 1200.0, 1800.0, 2400.0]
+        ends = [500.0, 1100.0, 1700.0, 2300.0, 2900.0]
+        pitches = [60, 66, 62, 61, 64]  # the second and the fourth are not sung in the track
+        track = _track([(0.0, 0.5, 60.2), (1.2, 1.7, 62.0), (2.4, 2.9, 63.8)])
+        features, judged = note_features(starts, ends, pitches, track)
+        assert judged.tolist() == [True, False, True, False, True]
+        first, third, fifth = features[0], features[2], features[4]
+        assert first[_column("note_+1_pitch")] == 2 and first[_column("note_+1_gap_ms")] == 700
+        assert first[_column("note_+2_pitch")] == 4
+        assert third[_column("note_-1_pitch")] == -2 and third[_column("note_+1_pitch")] == 2
+        assert np.isnan(third[_column("note_-2_pitch")]) and np.isnan(third[_column("note_+2_pitch")])
+        assert fifth[_column("note_-1_gap_ms")] == 700 and np.isnan(fifth[_column("note_+1_pitch")])
+        # the song is C, D and E, a third of its time each: no F sharp, no C sharp
+        assert first[_column("song_share_+0")] == pytest.approx(1 / 3)
+        assert first[_column("song_share_+1")] == 0
+        assert third[_column("song_share_-1")] == 0 and third[_column("song_share_-2")] == pytest.approx(1 / 3)
+
+    def test_the_notes_with_pitch_frames_get_the_same_features_alone(self):
+        """What the training does (it leaves the other notes out before it asks for the
+        features) and what the conversion does (it hands in every pitched note) is the same."""
+        rng = np.random.default_rng(3)
+        starts = np.arange(40) * 500.0
+        ends = starts + rng.integers(150, 450, 40)
+        pitches = rng.integers(55, 70, 40)
+        sung = rng.random(40) > 0.3
+        track = _track([(a / 1000, b / 1000, p + rng.normal(0, 0.3)) for a, b, p, s in
+                        zip(starts, ends, pitches, sung) if s], length=21.0)
+        features, judged = note_features(starts, ends, pitches, track)
+        assert judged.tolist() == sung.tolist() and 5 < (~judged).sum() < 20
+        alone, all_judged = note_features(starts[judged], ends[judged], pitches[judged], track)
+        assert all_judged.all()
+        assert np.array_equal(features[judged], alone, equal_nan=True)
+        # and whatever pitch the other notes have
+        other = np.where(judged, pitches, pitches + 5)
+        assert np.array_equal(note_features(starts, ends, other, track)[0], features, equal_nan=True)
 
     def test_no_notes(self):
         features, judged = note_features([], [], [], _track([]))
@@ -652,6 +693,18 @@ class TestCorrectNotePitches:
         _quiet(correct_note_pitches, segments, sung, model, "strong")
         # C4 has no note before it (missing: moves); D4 has C4 two below (-2 is not above -1.5: stays)
         assert [_midi(s) for s in segments] == [61, 69, 62]
+
+    def test_notes_without_pitch_frames_are_no_neighbours_and_stay(self, tmp_path):
+        # as above, with a pitched note in between that the pitch track has nothing for
+        # (its pitch is from another stem, or continues the note before it)
+        model = _model_file(tmp_path, feature="note_-1_pitch", threshold=-1.5)
+        segments = [MidiSegment("C4", 0.0, 0.5, "one "), MidiSegment("A4", 0.6, 1.0, "two "),
+                    MidiSegment("D4", 1.2, 1.6, "three ")]
+        sung = _pitched_data([(0.0, 0.5, 60.0), (1.2, 1.6, 62.0)])
+        result, _ = _quiet(correct_note_pitches, segments, sung, model, "strong")
+        # with A4 as the note before it, D4 would move
+        assert [_midi(s) for s in segments] == [61, 69, 62]
+        assert (result.notes, result.moved) == (3, 1)
 
     def test_golden_notes_move_like_other_notes(self, tmp_path):
         segments, sung = _notes()

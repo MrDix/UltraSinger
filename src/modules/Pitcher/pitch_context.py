@@ -89,7 +89,8 @@ FEATURE_NAMES = (
     *(f"frames_near_{d:+d}" for d in SHIFTS),
     "frames_slope",
     "duration_ms", "duration_log",
-    # the two pitched notes before and after: semitones from the note, pause in between
+    # the two pitched notes before and after (of the notes that have pitch frames
+    # themselves): semitones from the note, pause in between
     *(f"note_{k:+d}_{what}" for k in _NEIGHBOURS for what in ("pitch", "gap_ms")),
     # the song: share of the note time on the pitch class of each candidate pitch,
     # and whether it lies in the major scale that holds most of the note time
@@ -174,49 +175,52 @@ def note_features(starts_ms, ends_ms, pitches, track: PitchTrack) -> tuple[np.nd
     from. Returns the feature matrix (notes x ``N_FEATURES``, float32; NaN
     where a note has nothing to measure, e.g. no note before it) and, per
     note, whether it has enough confident pitch frames to be judged.
+
+    Only the judged notes describe each other and the song. A note without
+    enough pitch frames has its pitch from elsewhere (another stem, or the
+    note before it): it is no neighbour of a note, adds nothing to the song's
+    pitch classes, and its own row stays empty (NaN). Training leaves such
+    notes out before it asks for the features and the conversion hands in
+    every pitched note; this way both get the same features for a note.
     """
     starts = np.asarray(starts_ms, dtype=float)
     ends = np.asarray(ends_ms, dtype=float)
     pitches = np.asarray(pitches, dtype=np.int64)
     n = len(pitches)
     features = np.full((n, N_FEATURES), np.nan, dtype=np.float64)
-    judged = np.zeros(n, dtype=bool)
-    if n == 0:
-        return features.astype(np.float32), judged
     durations = ends - starts
     note_frames = [track.frames(starts[i], ends[i]) for i in range(n)]
+    judged = np.array([len(frames) >= MIN_FRAMES for frames in note_frames], dtype=bool)
+    known = np.flatnonzero(judged)  # the notes with a pitch of their own in the track, in order
+    if not len(known):
+        return features.astype(np.float32), judged
 
     # The song: time on each pitch class, best-fitting scale, tuning
-    pitch_class_time = np.bincount(pitches % 12, weights=durations, minlength=12)
+    pitch_class_time = np.bincount(pitches[known] % 12, weights=durations[known], minlength=12)
     song_share = pitch_class_time / max(float(pitch_class_time.sum()), 1.0)
     scale, tonic, scale_fit, scale_lead = _best_scale(pitch_class_time)
-    sung = np.concatenate(note_frames) if note_frames else np.zeros(0)
-    tuning = 0.0
-    if len(sung):
-        # how far the singing lies from the semitones on average (-0.5 ... 0.5)
-        tuning = float(np.angle(np.mean(np.exp(2j * np.pi * (sung - np.round(sung))))) / (2 * np.pi))
+    sung = np.concatenate([note_frames[i] for i in known])
+    # how far the singing lies from the semitones on average (-0.5 ... 0.5)
+    tuning = float(np.angle(np.mean(np.exp(2j * np.pi * (sung - np.round(sung))))) / (2 * np.pi))
 
     shifts = np.array(SHIFTS)
-    for i in range(n):
+    for position, i in enumerate(known):
         pitch = int(pitches[i])
         row = features[i]
-        frames = note_frames[i]
-        if len(frames) >= MIN_FRAMES:
-            judged[i] = True
-            # in the octave of the note (the octave steps of the conversion may have moved it)
-            frames = frames + 12.0 * np.round((pitch - np.median(frames)) / 12.0)
-            row[0:6] = np.percentile(frames, [10, 25, 50, NOTE_PITCH_PERCENTILE, 75, 90]) - pitch
-            row[6] = frames.mean() - pitch
-            row[7] = frames.std()
-            row[8] = len(frames)
-            row[9] = len(frames) * track.frame_ms / max(durations[i], 1.0)
-            row[10:15] = [np.mean(np.abs(frames - (pitch + d)) <= 0.5) for d in SHIFTS]
-            row[15] = _slope(frames)
+        # in the octave of the note (the octave steps of the conversion may have moved it)
+        frames = note_frames[i] + 12.0 * np.round((pitch - np.median(note_frames[i])) / 12.0)
+        row[0:6] = np.percentile(frames, [10, 25, 50, NOTE_PITCH_PERCENTILE, 75, 90]) - pitch
+        row[6] = frames.mean() - pitch
+        row[7] = frames.std()
+        row[8] = len(frames)
+        row[9] = len(frames) * track.frame_ms / max(durations[i], 1.0)
+        row[10:15] = [np.mean(np.abs(frames - (pitch + d)) <= 0.5) for d in SHIFTS]
+        row[15] = _slope(frames)
         row[16] = durations[i]
         row[17] = np.log(max(durations[i], 10.0))
         for k, offset in enumerate(_NEIGHBOURS):
-            j = i + offset
-            if 0 <= j < n:
+            if 0 <= position + offset < len(known):
+                j = known[position + offset]
                 gap = starts[i] - ends[j] if offset < 0 else starts[j] - ends[i]
                 row[18 + 2 * k] = np.clip(pitches[j] - pitch, -12, 12)
                 row[19 + 2 * k] = np.clip(gap, -100.0, 2000.0)
@@ -456,8 +460,9 @@ def choose_shifts(within_one: np.ndarray, exact: np.ndarray, strength: str) -> n
 def predict_shifts(model: PitchContextModel, starts_ms, ends_ms, pitches, track: PitchTrack,
                    strength: str) -> np.ndarray:
     """The shift (semitones) of each pitched note of a song; see ``note_features``
-    for the notes. A note without enough confident pitch frames stays, and so
-    does a note that is not at the pitch of its frames (``MAX_FRAME_DISTANCE``)."""
+    for the notes. A note without enough confident pitch frames stays (and is
+    no neighbour of the notes around it), and so does a note that is not at
+    the pitch of its frames (``MAX_FRAME_DISTANCE``)."""
     features, judged = note_features(starts_ms, ends_ms, pitches, track)
     if not len(features):
         return np.zeros(0, dtype=np.int64)
