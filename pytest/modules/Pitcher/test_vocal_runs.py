@@ -281,8 +281,9 @@ class TestHeldNoteInSeveralNotes(unittest.TestCase):
 
     def test_a_piece_of_the_whole_carries_the_mark_of_the_notes_it_lies_in(self):
         """Only one of the two notes was set by the pitch refinement: the pieces in its time
-        keep the mark, the pieces in the time of the other one alone do not get it."""
-        for marks, expected in (((False, True), [False, True, True]), ((True, False), [True, False, False]),
+        keep the mark, the pieces in the time of the other one alone do not get it. (The flip
+        is cut a few milliseconds before the second note starts: it lies in both notes.)"""
+        for marks, expected in (((False, True), [False, True, True]), ((True, False), [True, True, False]),
                                 ((True, True), [True, True, True]), ((False, False), [False, False, False])):
             pieces = self._pieces()
             pieces[0].pitch_refined, pieces[1].pitch_refined = marks
