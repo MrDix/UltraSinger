@@ -148,8 +148,8 @@ with `balanced` and 8.8, 3.5 and 0.5 with `strong`; the best gained 12.8 and
 about 1.4 points or more with `strong`.
 
 Without the rule that leaves notes alone which are not at the pitch of their
-frames, the same model gains less exact agreement (+2.0 and +5.0) and loses
-more of it within one semitone (±0.0 and −0.9), 23 and 13 songs lose exact
+frames, the same model gains less exact agreement (+2.0 and +5.0) and fares
+worse within one semitone (±0.0 and −0.9), 23 and 13 songs lose exact
 agreement instead of 6 and 4, and the game score drops by up to 1.1 points
 (`balanced`, Hard) and 1.3 points (`strong`, Hard) instead of 0.3 and 0.6 at
 most.
