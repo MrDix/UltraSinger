@@ -744,6 +744,25 @@ class TestChooseShifts:
         # octaves aside: a note charted an octave above its frames is at their pitch
         assert predict_shifts(_toy_model(), starts, ends, [72, 72, 72], track, "strong").tolist() == [1, 0, 0]
 
+    def test_a_note_another_step_set_stays_and_is_still_a_neighbour(self):
+        """The pitch refinement moves a note to the tone the games' pitch detection hears,
+        often by one semitone: by its distance to the frames alone, such a note looks like
+        one that was sung a little off."""
+        # the second note moves when the note before it is two semitones below
+        model = _toy_model(feature="note_-1_pitch", threshold=-2.5)
+        track = _track([(0.0, 0.5, 61.0), (1.0, 1.5, 62.0)])
+        notes = ([0.0, 1000.0], [500.0, 1500.0], [60, 62], track, "strong")
+        assert predict_shifts(model, *notes).tolist() == [1, 1]
+        assert predict_shifts(model, *notes, set_by_another_step=[True, False]).tolist() == [0, 1]
+        assert predict_shifts(model, *notes, set_by_another_step=[False, True]).tolist() == [1, 0]
+        assert predict_shifts(model, *notes, set_by_another_step=[False, False]).tolist() == [1, 1]
+        # a model that moves a note which has a note before it, after a pause: were the set
+        # note left out as a neighbour, the second one had no note before it and would stay
+        after_a_pause = _toy_model(feature="note_-1_gap_ms", threshold=100.0)
+        after_a_pause.missing_left[:] = True
+        assert predict_shifts(after_a_pause, *notes).tolist() == [0, 1]
+        assert predict_shifts(after_a_pause, *notes, set_by_another_step=[True, False]).tolist() == [0, 1]
+
     def test_the_same_notes_get_the_same_shifts(self):
         track = _track([(0.0, 0.5, 60.5), (0.6, 0.9, 62.0)])
         args = (_toy_model(), [0.0, 600.0], [500.0, 900.0], [60, 62], track, "strong")
@@ -824,12 +843,35 @@ class TestCorrectNotePitches:
         _quiet(correct_note_pitches, segments, sung, _model_file(tmp_path), "strong")
         assert [_midi(s) for s in segments] == [73, 72]
 
-    def test_a_note_the_refinement_moved_away_from_its_frames_stays(self, tmp_path):
+    def test_a_note_far_from_its_frames_stays(self, tmp_path):
         segments, sung = _notes()
         segments[0].note = "G4"  # sung around C4: seven semitones from its frames
         result, _ = _quiet(correct_note_pitches, segments, sung, _model_file(tmp_path), "strong")
         assert [_midi(s) for s in segments] == [67, 62, 65, 60]
         assert (result.notes, result.moved) == (4, 2)
+
+    def test_a_note_the_pitch_refinement_moved_stays(self, tmp_path):
+        """Also one semitone from its frames, where the model would pull it back to the
+        sung pitch: the refinement put it on the tone the games' pitch detection hears."""
+        def notes():
+            # all sung a semitone above their pitch: the model moves each of them up
+            segments = [MidiSegment("C4", 0.0, 0.5, "one "), MidiSegment("D4", 0.6, 1.0, "two "),
+                        MidiSegment("E4", 1.2, 1.6, "three ")]
+            return segments, _pitched_data([(0.0, 0.5, 61.0), (0.6, 1.0, 63.0), (1.2, 1.6, 65.0)])
+
+        segments, sung = notes()
+        result, out = _quiet(correct_note_pitches, segments, sung, _model_file(tmp_path), "strong")
+        assert [_midi(s) for s in segments] == [61, 63, 65] and (result.moved, result.refined) == (3, 0)
+        assert "pitch refinement" not in out and str(result) == "3 of 3 note pitches moved"
+
+        segments, sung = notes()
+        segments[0].pitch_refined = segments[2].pitch_refined = True
+        result, out = _quiet(correct_note_pitches, segments, sung, _model_file(tmp_path), "strong")
+        assert [_midi(s) for s in segments] == [60, 63, 64]
+        assert (result.notes, result.moved, result.refined) == (3, 1, 2)
+        assert "of 3 note pitches moved (1 up, 0 down); 2 notes set by the pitch refinement left as they are" in out
+        assert str(result) == "1 of 3 note pitches moved (2 set by the pitch refinement left as they are)"
+        assert [s.pitch_refined for s in segments] == [True, False, True]
 
     def test_a_note_stays_inside_the_pitches_there_are(self, tmp_path, monkeypatch):
         """A pitch below MIDI 0 or above 127 has a name, but the MIDI file of the song
@@ -837,8 +879,9 @@ class TestCorrectNotePitches:
         def convert(pitches, shifts):
             segments = [MidiSegment(librosa.midi_to_note(pitch), i * 1.0, i + 0.5, "la ")
                         for i, pitch in enumerate(pitches)]
-            monkeypatch.setattr(pitch_context, "predict_shifts", lambda *args: np.array(shifts))
+            monkeypatch.setattr(pitch_context, "predict_shifts", lambda *args, **kwargs: np.array(shifts))
             result, out = _quiet(correct_note_pitches, segments, _notes()[1], _model_file(tmp_path), "strong")
+            assert result.applied, out
             return [_midi(s) for s in segments], result.moved, out
 
         pitches, moved, out = convert([0, 1, 60, 126, 127], [-1, -2, 1, 2, 1])

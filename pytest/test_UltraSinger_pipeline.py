@@ -1893,13 +1893,16 @@ class TestNotePitchesFromContext(unittest.TestCase):
                           tree_output=list(range(N_OUTPUTS)), baseline=np.zeros(N_OUTPUTS)).save(path)
         return path
 
-    def _convert(self, model_notes=True, stem_track="sung", **settings_values):
+    def _convert(self, model_notes=True, stem_track="sung", sung_at=60.5, game_hears=None, **settings_values):
         """The notes run() wrote, its output and info file. The first note is sung
-        half a semitone sharp, the second on its pitch, the third (sung sharp too)
-        is a freestyle note."""
+        half a semitone sharp (at the MIDI pitch ``sung_at``), the second on its pitch,
+        the third (sung sharp too) is a freestyle note.
+
+        ``game_hears``: the tone (0 = C2) the games' pitch detection hears in the first
+        note, which then scores badly: the real pitch refinement moves the note there."""
         process_data = _process_data()
         process_data.process_data_paths.vocals_audio_file_path = "stem.wav"
-        sharp = float(librosa.midi_to_hz(60.5))
+        sharp = float(librosa.midi_to_hz(sung_at))
         sung = _pitch_track([(0.0, 0.24, "C4"), (0.40, 0.64, "E4"), (0.80, 1.04, "C4")])
         sung.frequencies = [sharp if hz and not 0.39 < t < 0.65 else hz
                             for t, hz in zip(sung.times, sung.frequencies)]
@@ -1919,6 +1922,12 @@ class TestNotePitchesFromContext(unittest.TestCase):
             if model_notes:
                 stack.enter_context(patch("modules.Segmentation.segmenter.segment_with_model", side_effect=segment))
                 settings_values["segmentation_model"] = "model.pt"
+            if game_hears is not None:
+                scores = [SimpleNamespace(beats_total=10, hit_ratio=0.1, detected_tones=[game_hears] * 10),
+                          SimpleNamespace(beats_total=10, hit_ratio=0.9, detected_tones=[28] * 10),
+                          SimpleNamespace(beats_total=10, hit_ratio=0.0, detected_tones=[])]
+                stack.enter_context(patch("modules.Refinement.refine_from_vocal._note_scores", return_value=scores))
+                settings_values["refine_from_vocal"] = True
             pitched = _pitch_track([(0.0, 0.24, "C4"), (0.40, 0.64, "E4"), (0.80, 1.04, "C4")])
             notes, out, files = _run(process_data, pitched, _transcription(self.WORDS, "en"), bpm_override=60.0,
                                      write_settings_info=True, **settings_values)
@@ -1935,6 +1944,45 @@ class TestNotePitchesFromContext(unittest.TestCase):
                     self.assertIn("of 2 note pitches moved (1 up, 0 down)", out)
                     self.assertIn(f"  Pitch context:            {strength} (pitch_context.npz): "
                                   "1 of 2 note pitches moved\n", info)
+
+    def test_a_note_the_pitch_refinement_moved_stays_where_that_put_it(self):
+        """The refinement moves a note to the tone the games' pitch detection hears, here a
+        semitone below the note: 1.4 semitones from the singing, where the model would
+        move it up again."""
+        with tempfile.TemporaryDirectory() as folder:
+            model = self._model_file(folder)
+            # as a note that was not refined, this note moves
+            notes, _, _ = self._convert(sung_at=60.4, pitch_context="strong", pitch_context_model=model)
+            self.assertEqual([int(librosa.note_to_midi(note)) for note in notes], [61, 64, 60])
+            # the refinement alone puts it on B3 ...
+            notes, _, _ = self._convert(sung_at=60.4, game_hears=23)
+            self.assertEqual([int(librosa.note_to_midi(note)) for note in notes], [59, 64, 60])
+            # ... and there it stays
+            notes, out, info = self._convert(sung_at=60.4, game_hears=23, pitch_context="strong",
+                                             pitch_context_model=model)
+            self.assertEqual([int(librosa.note_to_midi(note)) for note in notes], [59, 64, 60])
+            self.assertIn("of 2 note pitches moved (0 up, 0 down); 1 notes set by the pitch refinement "
+                          "left as they are", out)
+            self.assertIn("  Pitch context:            strong (pitch_context.npz): 0 of 2 note pitches moved "
+                          "(1 set by the pitch refinement left as they are)\n", info)
+
+    def test_without_the_mark_of_the_refinement_the_note_would_move_back(self):
+        """What the mark is for: by its distance to the singing alone, the note of the
+        test above is judged like any other."""
+        from modules.Pitcher import pitch_context
+
+        step = pitch_context.correct_note_pitches
+
+        def step_that_sees_no_marks(segments, *args):
+            for segment in segments:
+                segment.pitch_refined = False
+            return step(segments, *args)
+
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(pitch_context, "correct_note_pitches", step_that_sees_no_marks):
+            notes, _, _ = self._convert(sung_at=60.4, game_hears=23, pitch_context="strong",
+                                        pitch_context_model=self._model_file(folder))
+        self.assertEqual([int(librosa.note_to_midi(note)) for note in notes], [60, 64, 60])
 
     def test_off_by_default(self):
         with tempfile.TemporaryDirectory() as folder:

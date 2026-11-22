@@ -204,6 +204,10 @@ class TestPitchContextInfoLine(unittest.TestCase):
         info = self._info("balanced", "D:/Models/pc.npz", model_segmentation_used=True,
                           pitch_context_result=PitchContextResult(True, notes=498, moved=37))
         self.assertIn("  Pitch context:            balanced (pc.npz): 37 of 498 note pitches moved\n", info)
+        info = self._info("balanced", "D:/Models/pc.npz", model_segmentation_used=True,
+                          pitch_context_result=PitchContextResult(True, notes=498, moved=25, refined=41))
+        self.assertIn("  Pitch context:            balanced (pc.npz): 25 of 498 note pitches moved "
+                      "(41 set by the pitch refinement left as they are)\n", info)
 
     def test_not_applied(self):
         result = PitchContextResult(False, reason="the notes are not from a segmentation model")

@@ -17,11 +17,13 @@ time the shifted pitch would be within one semitone of a hand-made chart,
 and on what share it would be exactly on it. A note moves when a shift
 promises more than staying, by a margin that the chosen strength sets.
 
-Only a note that is at the pitch of its frames is judged. A note that
-another step moved away from them stays where that step put it: the pitch
-refinement moves a note to the tone the games' pitch detection hears, and
-pulling it back to the sung pitch costs game score and agreement with
-hand-made charts alike.
+A note whose pitch another step set on purpose stays where that step put
+it. The pitch refinement moves a note to the tone the games' pitch detection
+hears in it, in about half of the cases by one semitone, and marks the note
+(``MidiSegment.pitch_refined``): the model, which only knows notes at the
+pitch they were sung on, would move about half of these back to the sung
+pitch and undo what the refinement was for. A note that lies far from its
+frames without such a mark stays as well.
 
 Training (``tools/train_pitch_context.py``) and the conversion share the
 feature code of this module, so a model always sees the features it was
@@ -52,8 +54,8 @@ _KEEP = SHIFTS.index(0)
 # The strengths of the setting: how much being exactly on the charted pitch
 # counts next to being within one semitone of it (the tolerance most games
 # score with), and by how much a shift has to beat staying.
-# "balanced" moves about one note in twelve and keeps the agreement within one
-# semitone; "strong" moves about one in seven, gains the most exact pitches
+# "balanced" moves about one note in eighteen and keeps the agreement within
+# one semitone; "strong" moves about one in nine, gains the most exact pitches
 # and gives a little of the agreement within one semitone for them.
 STRENGTH_OFF = "off"
 STRENGTHS = {
@@ -68,10 +70,12 @@ MIN_HZ = 40.0
 NOTE_PITCH_PERCENTILE = 60
 MIN_FRAMES = 2  # confident pitch frames a note needs to be judged
 # A note that lies further than this from the pitch of its frames (semitones,
-# octaves aside) was put there by another step: the pitch refinement moves a
-# note to the tone the games' pitch detection hears in it. The model has seen
-# no such note - in training every note has the pitch of its frames - and
-# would mostly pull it back to the frames. Such a note stays as it is.
+# octaves aside) was put there by another step. The model has seen no such
+# note - in training every note has the pitch of its frames - and would mostly
+# pull it back to the frames. Such a note stays as it is. (The notes the pitch
+# refinement moves are marked and stay for that, also one semitone from their
+# frames; this distance holds for a note that is away from its frames without
+# a mark.)
 MAX_FRAME_DISTANCE = 1.5
 DEFAULT_FRAME_MS = 16.0
 PITCHED_TYPES = (":", "*")  # freestyle and rap notes are charted without a sung pitch
@@ -493,16 +497,24 @@ def choose_shifts(within_one: np.ndarray, exact: np.ndarray, strength: str) -> n
 
 
 def predict_shifts(model: PitchContextModel, starts_ms, ends_ms, pitches, track: PitchTrack,
-                   strength: str) -> np.ndarray:
+                   strength: str, set_by_another_step=None) -> np.ndarray:
     """The shift (semitones) of each pitched note of a song; see ``note_features``
     for the notes. A note without enough confident pitch frames stays (and is
     no neighbour of the notes around it), and so does a note that is not at
-    the pitch of its frames (``MAX_FRAME_DISTANCE``)."""
+    the pitch of its frames (``MAX_FRAME_DISTANCE``).
+
+    ``set_by_another_step`` marks the notes whose pitch another step chose on
+    purpose (the pitch refinement, see ``MidiSegment.pitch_refined``): they
+    stay whatever the model promises, also one semitone from their frames,
+    where the distance alone does not tell them from a note sung a little off.
+    They still are neighbours of the notes around them."""
     features, judged = note_features(starts_ms, ends_ms, pitches, track)
     if not len(features):
         return np.zeros(0, dtype=np.int64)
     with np.errstate(invalid="ignore"):  # (no frames: no distance, not judged anyway)
         judged &= np.abs(features[:, FEATURE_NAMES.index("frames_p60")]) <= MAX_FRAME_DISTANCE
+    if set_by_another_step is not None:
+        judged &= ~np.asarray(set_by_another_step, dtype=bool)
     within_one, exact = model.predict(features)
     return np.where(judged, choose_shifts(within_one, exact, strength), 0)
 
@@ -529,11 +541,13 @@ class PitchContextResult:
     notes: int = 0
     moved: int = 0
     reason: str = ""  # why it did not run
+    refined: int = 0  # notes left alone because the pitch refinement set their pitch
 
     def __str__(self) -> str:
         if not self.applied:
             return f"not applied ({self.reason})"
-        return f"{self.moved} of {self.notes} note pitches moved"
+        left = f" ({self.refined} set by the pitch refinement left as they are)" if self.refined else ""
+        return f"{self.moved} of {self.notes} note pitches moved{left}"
 
 
 def correct_note_pitches(midi_segments: list, pitched_data, model_path: str | None,
@@ -542,7 +556,8 @@ def correct_note_pitches(midi_segments: list, pitched_data, model_path: str | No
 
     Args:
         midi_segments: The notes; a note that moves is changed in place, in its octave.
-            Freestyle and rap notes are neither moved nor looked at.
+            Freestyle and rap notes are neither moved nor looked at. A note the pitch
+            refinement moved (``MidiSegment.pitch_refined``) stays where that put it.
         pitched_data: Pitch track of the stem the note pitches come from.
         model_path: The model file (see ``tools/train_pitch_context.py``).
         strength: "balanced" or "strong" (see ``STRENGTHS``).
@@ -570,9 +585,10 @@ def correct_note_pitches(midi_segments: list, pitched_data, model_path: str | No
         notes = [segment for segment in midi_segments if segment.note_type in PITCHED_TYPES]
         notes.sort(key=lambda segment: segment.start)
         pitches = [int(librosa.note_to_midi(segment.note)) for segment in notes]
+        refined = [bool(getattr(segment, "pitch_refined", False)) for segment in notes]
         shifts = predict_shifts(
             model, [segment.start * 1000.0 for segment in notes], [segment.end * 1000.0 for segment in notes],
-            pitches, PitchTrack.from_pitched_data(pitched_data), strength)
+            pitches, PitchTrack.from_pitched_data(pitched_data), strength, set_by_another_step=refined)
         # A note at the edge of the pitches there are stays inside them: a pitch below
         # MIDI 0 or above 127 has a name, but the MIDI file of the song cannot hold it
         shifts = [int(shift) if _LOWEST_PITCH <= pitch + int(shift) <= _HIGHEST_PITCH else 0
@@ -585,7 +601,9 @@ def correct_note_pitches(midi_segments: list, pitched_data, model_path: str | No
     for segment, note in moved:
         segment.note = note
     up = sum(1 for shift in shifts if shift > 0)
+    left = sum(refined)
     print(f"{ULTRASINGER_HEAD} Pitch context ({strength}, model {blue_highlighted(os.path.basename(model_path))}): "
           f"{blue_highlighted(str(len(moved)))} of {len(notes)} note pitches moved "
-          f"({up} up, {len(moved) - up} down)")
-    return PitchContextResult(True, notes=len(notes), moved=len(moved))
+          f"({up} up, {len(moved) - up} down)"
+          + (f"; {left} notes set by the pitch refinement left as they are" if left else ""))
+    return PitchContextResult(True, notes=len(notes), moved=len(moved), refined=left)
