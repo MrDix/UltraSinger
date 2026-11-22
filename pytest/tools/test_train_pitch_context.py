@@ -250,7 +250,8 @@ class TestTraining:
         _write(tmp_path, "tr_0001", _example(50))
         with pytest.raises(SystemExit, match="only 1 usable songs"):
             tp.main(["--data", str(tmp_path), "--out", str(tmp_path / "m.npz")])
-        for arguments in (["--trees", "0"], ["--val-fraction", "1"]):
+        # (a model file with more trees than any real one is refused when it is read)
+        for arguments in (["--trees", "0"], ["--trees", "2001"], ["--val-fraction", "1"]):
             with pytest.raises(SystemExit):
                 tp.main(["--data", str(tmp_path), "--out", str(tmp_path / "m.npz"), *arguments])
         assert not (tmp_path / "m.npz").exists()

@@ -416,6 +416,37 @@ class TestFilesThatAreNoModel:
         with pytest.raises(ValueError, match="more nodes than any real one"):
             _toy_model()
 
+    def test_a_model_with_more_trees_than_any_real_one_is_refused(self, monkeypatch):
+        """Every tree is walked for every note: very many trees on one leaf are a tiny file
+        and gigabytes of memory at the first prediction."""
+        trees = len(_toy_model().tree_root)
+        monkeypatch.setattr(pitch_context, "_MAX_TREES", trees)
+        _toy_model()
+        monkeypatch.setattr(pitch_context, "_MAX_TREES", trees - 1)
+        with pytest.raises(ValueError, match="more trees than any real one"):
+            _toy_model()
+
+    def test_the_limits_come_before_the_arrays_are_widened(self, monkeypatch):
+        """A refused model must not first be turned into the wide arrays of the walk."""
+        made = []
+        real = np.asarray
+        monkeypatch.setattr(pitch_context, "_MAX_NODES", 1)
+        monkeypatch.setattr(pitch_context.np, "asarray", lambda *a, **k: made.append(a) or real(*a, **k))
+        with pytest.raises(ValueError, match="more nodes than any real one"):
+            PitchContextModel(feature=[-1, -1], threshold=[0.0, 0.0], left=[0, 0], right=[0, 0],
+                              missing_left=[False, False], value=[0.0, 0.0], tree_root=[0],
+                              tree_output=[0], baseline=[0.0] * N_OUTPUTS)
+        assert made == []
+
+    def test_many_notes_and_trees_are_walked_in_pieces(self, monkeypatch):
+        model = _toy_model()
+        features = np.full((40, N_FEATURES), np.nan)
+        features[::3, _column("frames_p50")] = 0.9
+        whole = model.predict(features)
+        monkeypatch.setattr(pitch_context, "_PREDICT_CELLS", 1)  # one note at a time
+        piece_by_piece = model.predict(features)
+        assert np.array_equal(whole[0], piece_by_piece[0]) and np.array_equal(whole[1], piece_by_piece[1])
+
     def test_arrays_that_are_no_trees_are_refused(self, tmp_path):
         def root_points_to_itself(left):
             left = left.copy()

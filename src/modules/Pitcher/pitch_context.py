@@ -108,8 +108,10 @@ N_OUTPUTS = 2 * len(SHIFTS)
 _MAX_TREE_DEPTH = 64
 _MAX_MODEL_BYTES = 64 * 1024 * 1024  # unpacked; a real model unpacks to about 5 MB
 _MAX_NODES = 2_000_000  # of all trees of a model together; a real model has about 200 000
+_MAX_TREES = 20_000  # a real model has 3000
 _MAX_TEXT_BYTES = 256 * 1024  # of the names and of the info of a model (text takes 4 bytes a character)
 _PREDICT_CHUNK = 256  # notes predicted at once (bounds the memory of the tree walk)
+_PREDICT_CELLS = 4_000_000  # notes x trees walked at once at most
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +264,12 @@ class PitchContextModel:
     info: dict = field(default_factory=dict)
 
     def __post_init__(self):
+        # (before the arrays are made as wide as the walk needs them, and before the check
+        # of the trees, which both take memory for every node and tree)
+        if np.size(self.feature) > _MAX_NODES:
+            raise ValueError("the model has more nodes than any real one")
+        if np.size(self.tree_root) > _MAX_TREES or np.size(self.tree_output) > _MAX_TREES:
+            raise ValueError("the model has more trees than any real one")
         self.feature = np.asarray(self.feature, dtype=np.int32)
         self.threshold = np.asarray(self.threshold, dtype=np.float64)
         self.left = np.asarray(self.left, dtype=np.int32)
@@ -281,8 +289,6 @@ class PitchContextModel:
             raise ValueError("the arrays of the model have a wrong shape")
         if nodes == 0 or any(len(a) != nodes for a in per_node):
             raise ValueError("the node arrays of the model differ in length")
-        if nodes > _MAX_NODES:
-            raise ValueError("the model has more nodes than any real one")
         if len(self.tree_root) == 0 or len(self.tree_root) != len(self.tree_output):
             raise ValueError("the tree arrays of the model differ in length")
         if self.baseline.shape != (N_OUTPUTS,) or not np.isfinite(self.baseline).all():
@@ -319,8 +325,9 @@ class PitchContextModel:
             raise ValueError(f"the features need {N_FEATURES} columns")
         out = np.empty((len(features), N_OUTPUTS), dtype=np.float64)
         of_output = [np.flatnonzero(self.tree_output == k) for k in range(N_OUTPUTS)]
-        for a in range(0, len(features), _PREDICT_CHUNK):
-            x = features[a:a + _PREDICT_CHUNK]
+        chunk = max(1, min(_PREDICT_CHUNK, _PREDICT_CELLS // len(self.tree_root)))
+        for a in range(0, len(features), chunk):
+            x = features[a:a + chunk]
             rows = np.arange(len(x))[:, None]
             node = np.broadcast_to(self.tree_root, (len(x), len(self.tree_root))).copy()
             for _ in range(self._depth):
@@ -425,9 +432,10 @@ def load_model(path: str | Path) -> PitchContextModel:
     The file is a numpy ``.npz`` archive of number and text arrays. Each array
     is checked before it is read (see ``_read_array``): nothing in the file is
     ever executed, and a pickle or an archive that holds one is refused. A
-    file may unpack to ``_MAX_MODEL_BYTES`` and hold ``_MAX_NODES`` nodes at
-    most: the most a crafted file can make the loader hold, before it is
-    refused or loaded, is a few hundred megabytes.
+    file may unpack to ``_MAX_MODEL_BYTES`` and hold ``_MAX_NODES`` nodes in
+    ``_MAX_TREES`` trees at most: the most a crafted file can make the loader
+    hold, before it is refused or loaded, is a few hundred megabytes, and a
+    model that loads is walked in pieces of a bounded size.
     """
     try:
         with zipfile.ZipFile(str(path)) as archive:

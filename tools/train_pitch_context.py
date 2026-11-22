@@ -48,6 +48,7 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from modules.Pitcher import pitch_context  # noqa: E402
 from modules.Pitcher.pitch_context import (  # noqa: E402
     N_OUTPUTS, SHIFTS, STRENGTHS, PitchContextModel, PitchTrack, choose_shifts, note_features, track_pitch,
 )
@@ -343,8 +344,9 @@ def main(argv: list[str] | None = None) -> int:
     out = require_outside_repo(Path(args.out), "model file")
     if not data.is_dir():
         raise SystemExit(f"data folder not found: {data}")
-    if args.trees < 1:
-        raise SystemExit("--trees must be at least 1")
+    most_trees = pitch_context._MAX_TREES // N_OUTPUTS  # (a model file with more trees is refused)
+    if not 1 <= args.trees <= most_trees:
+        raise SystemExit(f"--trees must be at least 1 and at most {most_trees}")
     if not 0.0 <= args.val_fraction < 1.0:
         raise SystemExit("--val-fraction must be at least 0 and below 1")
     try:
